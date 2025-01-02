@@ -53,6 +53,7 @@ logger:
   sample_reporting_frequency: 1  # how often to do detailed reporting with figures
   log_figures: True
   stats_reporting_frequency: 1
+  dataset_reporting_time: 600 # seconds
 
 sample_steps: 100
 

@@ -1,4 +1,5 @@
 import gc
+import multiprocessing as mp
 import os
 from argparse import Namespace
 from pathlib import Path
@@ -15,7 +16,7 @@ from torch.nn import functional as F
 from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter
 from tqdm import tqdm
-import multiprocessing as mp
+
 from mxtaltools.common.geometry_calculations import batch_molecule_principal_axes_torch
 from mxtaltools.common.geometry_calculations import rotvec2sph
 from mxtaltools.common.training_utils import instantiate_models
@@ -30,9 +31,9 @@ from mxtaltools.crystal_search.sampling import Sampler
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.dataset_management.data_manager import DataManager
 from mxtaltools.dataset_management.dataloader_utils import get_dataloaders, update_dataloader_batch_size
-from mxtaltools.dataset_management.utils import quick_combine_dataloaders
 from mxtaltools.dataset_management.otf_conf_gen import async_generate_random_conformer_dataset, \
     async_generate_random_crystal_dataset
+from mxtaltools.dataset_management.utils import quick_combine_dataloaders
 from mxtaltools.modelling.utils import get_model_sizes, copy_source_to_workdir
 from mxtaltools.models.functions.crystal_rdf import new_crystal_rdf
 from mxtaltools.models.functions.vdw_overlap import vdw_overlap, vdw_analysis
@@ -170,7 +171,7 @@ class Modeller:
 
     def load_dataset_and_dataloaders(self,
                                      override_test_fraction=None,
-                                     override_shuffle=False,
+                                     override_shuffle=None,
                                      override_batch_size=None):
         """
         use data manager to load and filter dataset
@@ -192,7 +193,7 @@ class Modeller:
             filter_duplicate_molecules=self.config.dataset.filter_duplicate_molecules,
             filter_protons=self.config.autoencoder.filter_protons if self.train_models_dict['autoencoder'] else False,
             conv_cutoff=conv_cutoff,
-            do_shuffle=override_shuffle,
+            do_shuffle=True,
             precompute_edges=not nonzero_positional_noise and (  # TODO have a better think about this
                     self.config.mode not in ['gan', 'discriminator', 'generator']),
             single_identifier=self.config.dataset.single_identifier,
@@ -457,7 +458,7 @@ class Modeller:
                 + self.config.model_paths.embedding_regressor.split("\\")[-1] + '_results.npy',
                 {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
 
-    def ae_analysis(self):
+    def ae_analysis(self, save_results=True):
         """prep workdir"""
         self.source_directory = os.getcwd()
         self.prep_new_working_directory()
@@ -508,7 +509,8 @@ class Modeller:
                     data = data.to(self.device)
                     data.x = data.x.flatten()
                     data, input_data = self.preprocess_ae_inputs(data,
-                                                                 no_noise=self.epoch_type == 'test')
+                                                                 noise=0.01,
+                                                                 no_noise=False)
                     self.ae_step(input_data, data, update_weights, step=i, last_step=True)
 
                 # post epoch processing
@@ -519,15 +521,18 @@ class Modeller:
                 for i, data in enumerate(tqdm(test_loader, miniters=int(len(test_loader) / 25))):
                     data = data.to(self.device)
                     data.x = data.x.flatten()
-                    data, input_data = self.preprocess_ae_inputs(data, no_noise=self.epoch_type == 'test')
+                    data, input_data = self.preprocess_ae_inputs(data,
+                                                                 noise=0.01,
+                                                                 no_noise=False)
                     self.ae_step(input_data, data, update_weights, step=i, last_step=True)
 
                 # post epoch processing
                 self.logger.concatenate_stats_dict(self.epoch_type)
 
             # save results
-            np.save(self.config.model_paths.autoencoder[:-3] + '_results.npy',
-                    {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
+            if save_results:
+                np.save(self.config.model_paths.autoencoder[:-3] + '_results.npy',
+                        {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
 
     def pd_analysis(self, samples_per_molecule: int = 1):
         """prep workdir"""
@@ -747,7 +752,7 @@ class Modeller:
 
                     try:  # try this batch size
                         self.train_test_validate(epoch, extra_test_loader, steps_override, test_loader, train_loader)
-                        self.post_epoch_logging_analysis(test_loader, epoch)
+                        self.post_epoch_logging_analysis(train_loader, test_loader, epoch)
                         if hasattr(self, 'train_loader_to_replace'):  # dynamically update train loader
                             train_loader = self.train_loader_to_replace
                             del self.train_loader_to_replace
@@ -777,7 +782,7 @@ class Modeller:
                     self.times = {}
                     epoch += 1
 
-                self.logger.evaluation_analysis(test_loader, self.config.mode)
+                self.logger.polymorph_classification_eval_analysis(test_loader, self.config.mode)
 
     def handle_nan(self, e, epoch):
         print(e)
@@ -861,8 +866,8 @@ class Modeller:
                                    update_weights=False,
                                    )
 
-                self.post_epoch_logging_analysis(data_loader, 0)
-                self.logger.evaluation_analysis(data_loader, self.config.mode)
+                self.post_epoch_logging_analysis(None, data_loader, 0)
+                self.logger.polymorph_classification_eval_analysis(data_loader, self.config.mode)
                 for model_name in self.model_names:
                     if self.train_models_dict[model_name]:
                         self.logger.save_stats_dict(prefix=f'best_{model_name}_')
@@ -895,13 +900,18 @@ class Modeller:
 
         self.num_naned_epochs = 0
 
-    def post_epoch_logging_analysis(self, test_loader, epoch):
+    def post_epoch_logging_analysis(self, train_loader, test_loader, epoch):
         """check convergence status and record metrics & analysis"""
         self.times['reporting_start'] = time()
         self.logger.numpyize_current_losses()
         self.logger.update_loss_record()
         self.logger.log_training_metrics()
-        self.logger.log_detailed_analysis(test_loader)
+        if (self.logger.epoch % self.logger.sample_reporting_frequency) == 0:
+            self.logger.log_detailed_analysis()
+        if (time() - self.logger.last_logged_dataset_stats) > self.config.logger.dataset_reporting_time:
+            if self.config.mode == 'autoencoder' or self.config.mode == 'proxy_discriminator':
+                self.logger.log_dataset_analysis(train_loader, test_loader)
+
         self.logger.check_model_convergence()
         self.times['reporting_end'] = time()
 
@@ -1239,10 +1249,37 @@ class Modeller:
                                           tracking_loss.mean().cpu().detach().numpy(),
                                           tracking_loss.cpu().detach().numpy())
 
+        mol_samples, decoded_mol_samples = [], []
+        for ind in range(mol_batch.num_graphs):
+            b1 = mol_batch.batch == ind
+            mol_samples.append(
+                CrystalData(
+                    x=mol_batch.x[b1],
+                    pos=mol_batch.pos[b1],
+                    radius=mol_batch.radius[ind],
+                    smiles=mol_batch.smiles[ind],
+                    identifier=mol_batch.identifier[ind],
+                    mol_volume=mol_batch.mol_volume[ind],
+                ).cpu().detach()
+            )
+
+            b2 = decoded_mol_batch.batch == ind
+            decoded_mol_samples.append(
+                CrystalData(
+                    x=decoded_mol_batch.x[b2],
+                    pos=decoded_mol_batch.pos[b2],
+                    radius=decoded_mol_batch.radius[ind],
+                    smiles=decoded_mol_batch.smiles[ind],
+                    identifier=decoded_mol_batch.identifier[ind],
+                    mol_volume=decoded_mol_batch.mol_volume[ind],
+                    aux_ind=decoded_mol_batch.aux_ind[b2]
+                ).cpu().detach()
+            )
+
         self.logger.update_stats_dict(self.epoch_type,
                                       ['sample', 'decoded_sample'],
-                                      [mol_batch.cpu().detach(), decoded_mol_batch.cpu().detach()
-                                       ], mode='append')
+                                      [mol_samples, decoded_mol_samples],
+                                      mode='extend')
 
     def ae_equivariance_loss(self, data: CrystalData) -> Tuple[torch.Tensor, torch.Tensor]:
         rotations = torch.tensor(
@@ -1286,11 +1323,11 @@ class Modeller:
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
             data = data.to(self.device)
             data.x = data.x.flatten()
-
             data, input_data = self.preprocess_ae_inputs(data,
-                                                         no_noise=self.epoch_type == 'test',
-                                                         noise=self.config.positional_noise.autoencoder,
-                                                         affine_scale=self.config.autoencoder.affine_scale_factor)
+                                                         no_noise=False,
+                                                         noise=self.config.positional_noise.autoencoder if self.epoch_type == 'train' else 0.01,
+                                                         affine_scale=self.config.autoencoder.affine_scale_factor if self.epoch_type == 'train' else None
+                                                         )
             self.ae_step(input_data, data, update_weights, step=i,
                          last_step=(i == len(data_loader) - 1) or (i == iteration_override))
 

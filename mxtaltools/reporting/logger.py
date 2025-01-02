@@ -1,8 +1,12 @@
 import numpy as np
+from torch_geometric.loader.dataloader import Collater
 
 from mxtaltools.common.utils import update_stats_dict, softmax_np
+from mxtaltools.dataset_management.molecule_dataset_analysis import analyze_mol_dataset, property_comparison_fig, \
+    distribution_comparison
 from mxtaltools.models.utils import check_convergence, softmax_and_score
 from mxtaltools.reporting.online import detailed_reporting, polymorph_classification_trajectory_analysis
+from time import time
 
 
 class Logger:
@@ -32,6 +36,7 @@ class Logger:
         self.batch_size = None
         self.train_buffer_size = None
         self.test_buffer_size = None
+        self.last_logged_dataset_stats = -360000
 
         self.converged_flags = {model_name: False for model_name in self.model_names}
 
@@ -244,13 +249,53 @@ class Logger:
 
         return metrics_to_log
 
-    def log_detailed_analysis(self, test_loader):
+    def log_detailed_analysis(self):
         """sometimes do detailed reporting"""
-        if (self.epoch % self.sample_reporting_frequency) == 0:
-            detailed_reporting(self.config, self.dataDims,
-                               self.train_stats, self.test_stats, extra_test_dict=self.extra_stats)
+        detailed_reporting(self.config, self.dataDims,
+                           self.train_stats,
+                           self.test_stats,
+                           extra_test_dict=self.extra_stats)
 
-    def evaluation_analysis(self, test_loader, mode):
+    def log_dataset_analysis(self, train_loader, test_loader):
+        collater = Collater(0, 0)
+        rands1 = np.random.choice(len(test_loader.dataset), min(1000, len(test_loader.dataset)), replace=False)
+        test_feats_dict = analyze_mol_dataset(collater([test_loader.dataset[ind] for ind in rands1]))
+        test_bins = {key: bins for (key, bins) in test_feats_dict.items() if '_bin' in key}
+
+        rands1 = np.random.choice(len(train_loader.dataset), min(1000, len(train_loader.dataset)), replace=False)
+        train_feats_dict = analyze_mol_dataset(collater([train_loader.dataset[ind] for ind in rands1]),
+                                               bins_set=test_bins)
+
+        dataset_names = ['train', 'test']
+        feat_keys = [key for key in train_feats_dict.keys() if 'bins' not in key]
+        rdf_keys = [key for key in feat_keys if 'rdf' in key]
+        frag_keys = [key for key in feat_keys if 'fragment_count' in key]
+        remainder_keys = [key for key in feat_keys if key not in rdf_keys + frag_keys]
+        clipped_frag_keys = [key.split('_fragment_count')[0] for key in frag_keys]
+
+        fig_dict = {'mol_properties': property_comparison_fig([train_feats_dict, test_feats_dict],
+                                                              remainder_keys, dataset_names, num_cols=5,
+                                                              titles=remainder_keys,
+                                                              log=False),
+                    'mol_rdfs': property_comparison_fig([train_feats_dict, test_feats_dict],
+                                                        rdf_keys, dataset_names, num_cols=5, titles=rdf_keys,
+                                                        log=False),
+                    'mol_fragments': property_comparison_fig([train_feats_dict, test_feats_dict],
+                                                             frag_keys, dataset_names, num_cols=12,
+                                                             titles=clipped_frag_keys,
+                                                             log=True)}
+        dists_dict, fig_dict['dataset_comparison'] = distribution_comparison(train_feats_dict, test_feats_dict,
+                                                                             feat_keys)
+
+        for key, fig in fig_dict.items():
+            fig.write_image(key + 'fig.png', width=2048,
+                            height=1024)  # save the image rather than the fig, for size reasons
+            fig_dict[key] = self.wandb.Image(key + 'fig.png')
+
+        self.wandb.log(data=fig_dict, commit=False)
+        self.last_logged_dataset_stats = time()
+
+    def polymorph_classification_eval_analysis(self, test_loader, mode):
         """
         log analysis of an evaluation dataset
         Parameters
@@ -261,11 +306,12 @@ class Logger:
         Returns
         -------
 
-
         """
 
         if mode == 'polymorph_classification':
-            assert len(self.config.dataset.dumps_dirs) == 1, "Polymorph classification trajectory analysis only implemented for single trajectory files"
-            polymorph_classification_trajectory_analysis(test_loader, self.test_stats, traj_name=self.config.dataset.dumps_dirs)
+            assert len(
+                self.config.dataset.dumps_dirs) == 1, "Polymorph classification trajectory analysis only implemented for single trajectory files"
+            polymorph_classification_trajectory_analysis(test_loader, self.test_stats,
+                                                         traj_name=self.config.dataset.dumps_dirs)
 
             aa = 1

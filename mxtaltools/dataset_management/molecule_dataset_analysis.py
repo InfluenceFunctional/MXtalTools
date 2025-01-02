@@ -39,14 +39,17 @@ def get_mol_prop_distribution(mol_batch, prop: str, min: float = 0, max: float =
 
 def get_heavy_atom_distribution(mol_batch, min: float = 0, max: float = 15, nbins: int = 100):
     bins = torch.linspace(min, max, nbins)
-    atom_is_heavy = mol_batch.x > 1
+    atom_is_heavy = mol_batch.x.flatten() > 1
     num_heavy_atoms = scatter(atom_is_heavy.float(), mol_batch.batch, reduce='sum', dim_size=mol_batch.num_graphs)
     hist, bins = torch.histogram(num_heavy_atoms.float(), bins=bins, density=True)
     return hist, bins
 
 
-def get_edge_distribution(dataset, max_edge_length: float, relevant_elements: list = [1, 6, 7, 8, 9],
+def get_edge_distribution(dataset,
+                          max_edge_length: float,
+                          relevant_elements: list = [1, 6, 7, 8, 9],
                           device: str = 'cpu'):
+    collater = Collater(0, 0)
     with torch.no_grad():
         batch_size = 100
         num_chunks = dataset.num_graphs // 100
@@ -142,7 +145,7 @@ def rdkit_dataset_analysis(dataset, bins_set=None):
     return hist_dict
 
 
-def make_fig(dicts_to_plot, keys_to_plot, num_cols, titles, log=False):
+def property_comparison_fig(dicts_to_plot, keys_to_plot, dataset_names, num_cols, titles, log=False):
     colors = ['rgb(250, 50, 50)', 'rgb(50,50,250)']
 
     num_feats = len(keys_to_plot)
@@ -246,13 +249,16 @@ def generate_otf_dataset(generate_samples: int,
     return otf_dataset
 
 
-def dists_plot(qm9_properties_dict, otf_properties_dict, show_fig=True):
+def distribution_comparison(qm9_properties_dict, otf_properties_dict, feat_keys):
     dists_dict = {}
     for key in feat_keys:
-        v1 = torch.tensor(qm9_properties_dict[key])
-        v2 = torch.tensor(otf_properties_dict[key])
-        bins = otf_properties_dict[key + '_bins']
-        dists_dict[key] = earth_movers_distance_torch(v1 / v1.sum(), v2 / v2.sum()) / len(bins)
+        try:
+            v1 = torch.tensor(qm9_properties_dict[key])
+            v2 = torch.tensor(otf_properties_dict[key])
+            bins = otf_properties_dict[key + '_bins']
+            dists_dict[key] = earth_movers_distance_torch(v1 / v1.sum(), v2 / v2.sum()) / len(bins)
+        except:
+            pass
 
     fig = make_subplots(rows=2, cols=1)
     keys = list(dists_dict.keys())
@@ -268,9 +274,8 @@ def dists_plot(qm9_properties_dict, otf_properties_dict, show_fig=True):
                 showlegend=False,
                 row=2, col=1)
     fig.update_layout(title="Distribution Distances")
-    if show_fig:
-        fig.show()
-    return dists_dict
+
+    return dists_dict, fig
 
 
 """
@@ -288,7 +293,7 @@ if __name__ == '__main__':
     dataset_path = Path(r'D:\crystal_datasets\qm9_dataset.pt')
     qm9_properties_path = Path('D:\crystal_datasets\otf_chunks\qm9_properties_dict.pt')
     dataset_size = 130000
-    generate_samples = 200000
+    generate_samples = 10000
     force_qm9_reanalyzis = False
 
     """get evaluation dataset"""
@@ -316,13 +321,14 @@ if __name__ == '__main__':
     remainder_keys = [key for key in feat_keys if key not in rdf_keys + frag_keys]
     clipped_frag_keys = [key.split('_fragment_count')[0] for key in frag_keys]
 
-    make_fig([qm9_properties_dict, otf_properties_dict], remainder_keys, num_cols=5, titles=remainder_keys,
-             log=False).show()
-    make_fig([qm9_properties_dict, otf_properties_dict], rdf_keys, num_cols=5, titles=rdf_keys, log=False).show()
-    make_fig([qm9_properties_dict, otf_properties_dict], frag_keys, num_cols=12, titles=clipped_frag_keys,
-             log=True).show()
+    property_comparison_fig([qm9_properties_dict, otf_properties_dict], remainder_keys, dataset_names, num_cols=5, titles=remainder_keys,
+                            log=False).show()
+    property_comparison_fig([qm9_properties_dict, otf_properties_dict], rdf_keys, dataset_names, num_cols=5, titles=rdf_keys, log=False).show()
+    property_comparison_fig([qm9_properties_dict, otf_properties_dict], frag_keys, dataset_names, num_cols=12, titles=clipped_frag_keys,
+                            log=True).show()
 
     """check overlaps"""
-    dists_dict = dists_plot(qm9_properties_dict, otf_properties_dict, show_fig=True)
+    dists_dict, dists_fig = distribution_comparison(qm9_properties_dict, otf_properties_dict, feat_keys)
+    dists_fig.show()
 
     aa = 1

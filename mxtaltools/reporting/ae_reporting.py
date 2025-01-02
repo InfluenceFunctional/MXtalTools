@@ -34,9 +34,9 @@ def autoencoder_evaluation_overlaps(data, decoded_data, config, dataDims):
     return coord_overlap, full_overlap, self_coord_overlap, self_overlap, self_type_overlap, type_overlap
 
 
-def gaussian_3d_overlap_plots(mol_batch, decoded_mol_batch, max_point_types):
+def gaussian_3d_overlap_plots(mol_batch, decoded_mol_batch, atom_types, graph_ind):
     # 3D swarm fig
-    fig = swarm_vs_tgt_fig(mol_batch, decoded_mol_batch, max_point_types)
+    fig = swarm_vs_tgt_fig(mol_batch, decoded_mol_batch, atom_types, graph_ind=graph_ind)
 
     # rmsd, nodewise_dist, matched_graph, matched_node, pred_particle_points = batch_rmsd(
     #     mol_batch,
@@ -244,7 +244,7 @@ def swarm_cluster_fig(atom_types,
     return fig2
 
 
-def swarm_vs_tgt_fig(data, decoded_data, max_point_types, graph_ind=0):
+def swarm_vs_tgt_fig(data, decoded_data, atom_types = [1,6,7,8,9], graph_ind=0):
     cmax = 1
     fig = go.Figure()  # scatter all the true & predicted points, colorweighted by atom type
     colors = ['rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)',
@@ -253,27 +253,52 @@ def swarm_vs_tgt_fig(data, decoded_data, max_point_types, graph_ind=0):
     colorscales = [[[0, 'rgba(0, 0, 0, 0)'], [1, color]] for color in colors]
     points_true = data.pos[data.batch == graph_ind].cpu().detach().numpy()
     points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
-    for j in range(max_point_types):
-        ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
+    pred_weights = decoded_data.aux_ind[decoded_data.batch == graph_ind]
+    for j in range(len(atom_types)):
+        ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == atom_types[j])[:, 0].cpu().detach().numpy()
 
-        pred_type_weights = (decoded_data.aux_ind[decoded_data.batch == graph_ind] * decoded_data.x[
-            decoded_data.batch == graph_ind, j]).cpu().detach().numpy()
+        pred_type_weights = (pred_weights * decoded_data.x[decoded_data.batch == graph_ind, j]).cpu().detach().numpy()
 
-        fig.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1],
+        fig.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0],
+                                   y=points_true[ref_type_inds][:, 1],
                                    z=points_true[ref_type_inds][:, 2],
-                                   mode='markers', marker_color=colors[j], marker_size=7, marker_line_width=5,
+                                   mode='markers', marker_color=colors[j], marker_size=10, marker_line_width=7,
                                    marker_line_color='black',
-                                   showlegend=True if (j == 0 and graph_ind == 0) else False,
+                                   showlegend=True if j == 0 else False,
                                    name=f'True type', legendgroup=f'True type'
                                    ))
 
-        fig.add_trace(go.Scatter3d(x=points_pred[:, 0], y=points_pred[:, 1], z=points_pred[:, 2],
+        fig.add_trace(go.Scatter3d(x=points_pred[:, 0],
+                                   y=points_pred[:, 1],
+                                   z=points_pred[:, 2],
                                    mode='markers',
                                    marker=dict(size=10, color=pred_type_weights, colorscale=colorscales[j], cmax=cmax,
-                                               cmin=0), opacity=1, marker_line_color='white',
+                                               cmin=0),
+                                   opacity=1, marker_line_color='white',
                                    showlegend=True,
                                    name=f'Predicted type {j}'
                                    ))
+
+    '''add bonds'''
+    distmat = cdist(points_true, points_true) + np.eye(len(points_true)) * 100
+    from mxtaltools.constants.atom_properties import VDW_RADII
+    atom_radii = np.array([VDW_RADII[elem] for elem in data.x[data.batch == graph_ind].cpu().numpy().tolist()])
+    max_bond_lengths = (atom_radii[:, None] + atom_radii[None, :]) / 1.75
+    edges = np.stack(np.where(distmat < max_bond_lengths))
+    for e_ind, edge in enumerate(edges.T):
+        points = np.vstack([points_true[edge[0]], points_true[edge[1]]])
+        fig.add_trace(go.Scatter3d(
+            x=points[:, 0],
+            y=points[:, 1],
+            z=points[:, 2],
+            mode='lines',
+            marker=dict(size=0, color='black'),
+            line=dict(color='black', width=4),
+            showlegend=False,
+            name='True type',
+            legendgroup='True type',
+        ))
+
     return fig
 
 

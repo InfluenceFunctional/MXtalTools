@@ -11,6 +11,7 @@ import plotly.express as px
 import pandas as pd
 from sklearn.metrics import roc_auc_score, f1_score, confusion_matrix
 from torch import scatter
+from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter
 import torch.nn.functional as F
 
@@ -1682,13 +1683,14 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
     type_translation_index = np.zeros(allowed_types.max() + 1) - 1
     for ind, atype in enumerate(allowed_types):
         type_translation_index[atype] = ind
-    type_index_tensor = torch.tensor(type_translation_index, dtype=torch.long, device='cpu')
 
     # get samples
-    mol_batch = epoch_stats_dict['sample'][0]
-    mol_batch.x = type_index_tensor[mol_batch.x.flatten().long()]
-    decoded_mol_batch = epoch_stats_dict['decoded_sample'][0]
+    collater = Collater(0, 0)
+    mol_batch = collater(epoch_stats_dict['sample'])
+    type_index_tensor = torch.tensor(type_translation_index, dtype=torch.long, device=mol_batch.x.device)
+    decoded_mol_batch = collater(epoch_stats_dict['decoded_sample'])
 
+    mol_batch.x = type_index_tensor[mol_batch.x.flatten().long()]
     # compute various distribution overlaps
     (coord_overlap, full_overlap,
      self_coord_overlap, self_overlap,
@@ -1729,15 +1731,29 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
               commit=False)
 
     if config.logger.log_figures:
+        mol_batch = collater(epoch_stats_dict['sample'])
+
+        atom_types = dataDims['allowed_atom_types']
+
+        worst_graph_ind = overall_overlap.argmin()
         fig = (
             gaussian_3d_overlap_plots(mol_batch, decoded_mol_batch,
-                                      dataDims['num_atom_types'],
+                                      atom_types,
+                                      graph_ind=worst_graph_ind
                                       ))
         wandb.log(data={
-            epoch_type + "_pointwise_sample_distribution": fig,
-            #epoch_type + "_cluster_sample_distribution": fig2,
-        },
-            commit=False)
+            epoch_type + "_worst_pointwise_sample_distribution": fig,
+        }, commit=False)
+
+        best_graph_ind = overall_overlap.argmax()
+        fig = (
+            gaussian_3d_overlap_plots(mol_batch, decoded_mol_batch,
+                                      atom_types,
+                                      graph_ind=best_graph_ind
+                                      ))
+        wandb.log(data={
+            epoch_type + "_best_pointwise_sample_distribution": fig,
+        }, commit=False)
 
     return None
 
