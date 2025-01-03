@@ -178,7 +178,7 @@ def property_comparison_fig(dicts_to_plot, keys_to_plot, dataset_names, num_cols
     return fig
 
 
-def analyze_mol_dataset(dataset, bins_set=None):
+def analyze_mol_dataset(dataset, device, bins_set=None):
     mol_feats_dict = rdkit_dataset_analysis(dataset, bins_set)
 
     mol_feats_dict['atom_types'], mol_feats_dict['atom_types_bins'] = (
@@ -201,7 +201,7 @@ def analyze_mol_dataset(dataset, bins_set=None):
 
                                     0, 15,
                                     15))
-    rdfs, bin_edges, rdfs_dict = get_edge_distribution(dataset, max_edge_length=6, device='cuda')
+    rdfs, bin_edges, rdfs_dict = get_edge_distribution(dataset, max_edge_length=6, device=device)
     for ind in range(len(rdfs)):
         rdf_name = rdfs_dict[ind]
         mol_feats_dict[f'{rdf_name}_rdf'] = rdfs[ind][1:] / rdfs[ind][1:].sum()
@@ -291,7 +291,7 @@ if __name__ == '__main__':
     """get evaluation dataset"""
     if not os.path.exists(qm9_properties_path) or force_qm9_reanalyzis:
         qm9_dataset = collater(torch.load(dataset_path)[:dataset_size])
-        qm9_properties_dict = analyze_mol_dataset(qm9_dataset)
+        qm9_properties_dict = analyze_mol_dataset(qm9_dataset, 'cpu')
         del qm9_dataset
         torch.save(qm9_properties_dict, 'D:\crystal_datasets\otf_chunks\qm9_properties_dict.pt')
     else:
@@ -302,7 +302,7 @@ if __name__ == '__main__':
                                        dataset_length=dataset_size,
                                        num_processes=7)
     qm9_bins_dict = {key: bins for (key, bins) in qm9_properties_dict.items() if '_bin' in key}
-    otf_properties_dict = analyze_mol_dataset(otf_dataset, bins_set=qm9_bins_dict)
+    otf_properties_dict = analyze_mol_dataset(otf_dataset, 'cpu', bins_set=qm9_bins_dict)
     del otf_dataset
 
     """visualize property distributions"""

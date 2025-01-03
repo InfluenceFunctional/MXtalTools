@@ -259,11 +259,11 @@ class Logger:
     def log_dataset_analysis(self, train_loader, test_loader):
         collater = Collater(0, 0)
         rands1 = np.random.choice(len(test_loader.dataset), min(1000, len(test_loader.dataset)), replace=False)
-        test_feats_dict = analyze_mol_dataset(collater([test_loader.dataset[ind] for ind in rands1]))
+        test_feats_dict = analyze_mol_dataset(collater([test_loader.dataset[ind] for ind in rands1]), 'cpu')
         test_bins = {key: bins for (key, bins) in test_feats_dict.items() if '_bin' in key}
 
         rands1 = np.random.choice(len(train_loader.dataset), min(1000, len(train_loader.dataset)), replace=False)
-        train_feats_dict = analyze_mol_dataset(collater([train_loader.dataset[ind] for ind in rands1]),
+        train_feats_dict = analyze_mol_dataset(collater([train_loader.dataset[ind] for ind in rands1]), 'cpu',
                                                bins_set=test_bins)
 
         dataset_names = ['train', 'test']
