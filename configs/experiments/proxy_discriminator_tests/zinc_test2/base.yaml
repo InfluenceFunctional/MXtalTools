@@ -18,7 +18,7 @@ dataset:
   regression_target: null
   single_identifier: null
   buffer_size: 1000000
-  otf_build_size: 1000
+  otf_build_size: 100
   smiles_source: /scratch/mk8347/zinc22
   num_processes: 4
 
