@@ -52,7 +52,7 @@ if __name__ == '__main__':
                                         kwds={
                                             'max_num_atoms': 30,
                                             'max_num_heavy_atoms': 9,
-                                            'pare_to_size': None,
+                                            'pare_to_size': 9,
                                             'max_radius': 15,
                                             'protonate': True,
                                             'rotamers_per_sample': 1,

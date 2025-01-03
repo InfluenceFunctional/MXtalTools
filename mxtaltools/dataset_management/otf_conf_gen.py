@@ -55,6 +55,20 @@ def async_generate_random_crystal_dataset(dataset_length, smiles_source, workdir
     chunks = get_smiles_list(dataset_length, num_processes, smiles_path)
     os.chdir(chunks_path)
 
+    # chunk_ind = 0
+    # chunk_path = os.path.join(chunks_path, f'chunk_{chunk_ind}.pkl')
+    # process_smiles_to_crystal_opt(
+    #     chunks[chunk_ind], chunk_path, allowed_atom_types, 1, False,
+    #     **{
+    #                          'max_num_atoms': max_num_atoms,
+    #                          'max_num_heavy_atoms': max_num_heavy_atoms,
+    #                          'pare_to_size': pare_to_size,
+    #                          'max_radius': max_radius,
+    #                          'protonate': True,
+    #                          'rotamers_per_sample': 1,
+    #                          'allow_simple_hydrogen_rotations': False
+    #                      })
+
     # generate samples
     min_ind = len(os.listdir(chunks_path)) + 1  # always add one
     for ind, chunk in enumerate(chunks):

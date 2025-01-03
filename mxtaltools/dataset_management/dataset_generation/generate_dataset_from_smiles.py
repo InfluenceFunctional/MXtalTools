@@ -14,56 +14,23 @@ from mxtaltools.common.utils import init_sym_info
 from mxtaltools.conformer_generation.conformer_generator import generate_random_conformers_from_smiles
 from mxtaltools.dataset_management.CrystalData import CrystalData
 
-
-from collections.abc import Mapping
-from typing import Any, List, Optional, Sequence, Union
+from typing import Any, List, Optional
 
 import torch.utils.data
-from torch.utils.data.dataloader import default_collate
 
-from torch_geometric.data import Batch, Dataset
-from torch_geometric.data.data import BaseData
-from torch_geometric.data.datapipes import DatasetAdapter
-from torch_geometric.typing import TensorFrame, torch_frame
+from torch_geometric.data import Batch
 
 
 class Collater:
     def __init__(
-        self,
-        dataset: Union[Dataset, Sequence[BaseData], DatasetAdapter],
-        follow_batch: Optional[List[str]] = None,
-        exclude_keys: Optional[List[str]] = None,
+            self,
     ):
-        self.dataset = dataset
-        self.follow_batch = follow_batch
-        self.exclude_keys = exclude_keys
+        self.abc = 1
 
     def __call__(self, batch: List[Any]) -> Any:
-        elem = batch[0]
-        if isinstance(elem, BaseData):
-            return Batch.from_data_list(
-                batch,
-                follow_batch=self.follow_batch,
-                exclude_keys=self.exclude_keys,
-            )
-        elif isinstance(elem, torch.Tensor):
-            return default_collate(batch)
-        elif isinstance(elem, TensorFrame):
-            return torch_frame.cat(batch, dim=0)
-        elif isinstance(elem, float):
-            return torch.tensor(batch, dtype=torch.float)
-        elif isinstance(elem, int):
-            return torch.tensor(batch)
-        elif isinstance(elem, str):
-            return batch
-        elif isinstance(elem, Mapping):
-            return {key: self([data[key] for data in batch]) for key in elem}
-        elif isinstance(elem, tuple) and hasattr(elem, '_fields'):
-            return type(elem)(*(self(s) for s in zip(*batch)))
-        elif isinstance(elem, Sequence) and not isinstance(elem, str):
-            return [self(s) for s in zip(*batch)]
-
-        raise TypeError(f"DataLoader found invalid type: '{type(elem)}'")
+        return Batch.from_data_list(
+            batch,
+        )
 
 
 def process_smiles_list_to_file(lines: list, file_path, allowed_atom_types, **conf_kwargs):
@@ -97,10 +64,9 @@ def process_smiles_to_crystal_opt(lines: list,
     """"""
     mol_samples = process_smiles_list(lines, allowed_atom_types, **conf_kwargs)
     if len(mol_samples) == 0:
-        torch.save([], file_path)
-        return None
+        assert False, "Zero valid molecules in batch, increase crystal generation batch size"
 
-    collater = Collater(0, 0)
+    collater = Collater()
     mol_batch = collater(mol_samples)
 
     print('''sample random crystals''')
@@ -167,8 +133,8 @@ def process_smiles_to_crystal_opt(lines: list,
 
             samples.append(sample)
 
-    print(
-        f"finished processing smiles list with {mol_batch.num_graphs} molecules and optimizing crystals with {len(samples)} samples")
+    print(f"finished processing smiles list with {mol_batch.num_graphs} "
+          f"molecules and optimizing crystals with {len(samples)} samples")
 
     if run_tests:
         test_crystal_rebuild_from_embedding(
@@ -376,7 +342,7 @@ def process_smiles(smile: str,
             #excess_atoms = resulting_num_atoms - pare_to_size
             # select a fragment randomly, weighted towards smaller pieces
             fragment_to_pare = \
-            np.random.choice(len(fragment_size), 1, p=np.exp(-fragment_size) / np.sum(np.exp(-fragment_size)))[0]
+                np.random.choice(len(fragment_size), 1, p=np.exp(-fragment_size) / np.sum(np.exp(-fragment_size)))[0]
             atoms_to_pare = mask_rotate[fragment_to_pare, :]
             coords, atom_types = coords[~atoms_to_pare], atom_types[~atoms_to_pare]
             mask_rotate = np.delete(mask_rotate, fragment_to_pare, axis=0)
