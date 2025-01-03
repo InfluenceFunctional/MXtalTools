@@ -22,9 +22,9 @@ to-test:
 -: embedding type
 """
 
-layers = [2, 4, 8]
-filters = [64, 128, 256]
-batch_sizes = [100, 1000, 10000]
+layers = [8, 16, 32]
+filters = [256, 512, 1024]
+batch_sizes = [1000, 10000, 100000]
 
 default_config = {
         'num_layers': 2,
@@ -38,7 +38,7 @@ default_config = {
         'lr_growth_lambda': 1.01,
         'lr_shrink_lambda': 0.99975,
         'weight_decay': 0.0001,
-        'device': 'cpu',
+        'device': 'cuda',
     }  # 0 - baseline
 
 configs = []

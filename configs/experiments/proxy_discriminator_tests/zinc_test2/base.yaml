@@ -2,7 +2,7 @@ machine: "cluster"  # or "cluster"
 device: "cpu"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: proxy_discriminator
-dataset_name: 'test_pd_dataset.pt' #'test_dataset.pt'
+dataset_name: 'pd_dataset.pt' #'test_dataset.pt'
 dataset_yaml_path: '/proxy_discriminator.yaml'
 save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
@@ -12,15 +12,15 @@ sweep_path: null
 
 dataset:
   type: 'molecule'
-  max_dataset_length: 10000000
+  max_dataset_length: 100000
   test_fraction: 0.2
   filter_protons: False
   regression_target: null
   single_identifier: null
-  buffer_size: 1000000
-  otf_build_size: 100
+  buffer_size: 200000
+  otf_build_size: 200
   smiles_source: /scratch/mk8347/zinc22
-  num_processes: 4
+  num_processes: 10
 
 # batching & convergence
 early_epochs_step_override: 5
@@ -37,8 +37,8 @@ gradient_norm_clip: 1
 extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
-  run_name: otf_zinc_crystals_dev
-  experiment_tag: otf_zinc_crystals_dev
+  run_name: zinc_test2
+  experiment_tag: zinc_test2
   mini_csp_frequency: 5  # how often to run CSP-style search WIP
   sample_reporting_frequency: 25  # how often to do detailed reporting with figures
   stats_reporting_frequency: 25
