@@ -12,7 +12,7 @@ dataset:
   smiles_source: /scratch/mk8347/zinc22
   test_fraction: 0.2
   type: molecule
-dataset_name: pd_dataset.pt
+dataset_name: test_pd_dataset.pt
 dataset_yaml_path: /proxy_discriminator.yaml
 device: cpu
 early_epochs_step_override: 5
