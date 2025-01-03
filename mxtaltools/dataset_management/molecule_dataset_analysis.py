@@ -216,20 +216,12 @@ def generate_otf_dataset(generate_samples: int,
     num_processes = num_processes
     if generate_samples > 0:
         pool = mp.Pool(num_processes)
-        async_generate_random_conformer_dataset(
-            dataset_length=generate_samples,
-            smiles_source=r'D:\crystal_datasets\zinc22',
-            dataset_name='otf_dataset',
-            workdir=r'D:\crystal_datasets\otf_chunks',
-            allowed_atom_types=[1, 6, 7, 8, 9],
-            num_processes=num_processes,
-            pool=pool,
-            max_num_atoms=32,
-            max_num_heavy_atoms=9,
-            pare_to_size=9,
-            max_radius=15,
-            synchronize=True
-        )
+        async_generate_random_conformer_dataset(dataset_length=generate_samples,
+                                                smiles_source=r'D:\crystal_datasets\zinc22',
+                                                workdir=r'D:\crystal_datasets\otf_chunks',
+                                                allowed_atom_types=[1, 6, 7, 8, 9], num_processes=num_processes,
+                                                pool=pool, max_num_atoms=32, max_num_heavy_atoms=9, pare_to_size=9,
+                                                max_radius=15, synchronize=True)
     chunks = os.listdir(r'D:\crystal_datasets\otf_chunks')
     chunks = [elem for elem in chunks if 'chunk' in elem]
     os.chdir(r'D:\crystal_datasets\otf_chunks')

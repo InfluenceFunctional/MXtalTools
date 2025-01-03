@@ -389,7 +389,7 @@ config_list = [
                     'num_nodes': 64
                 }}}
     },  # 7 - baseline gnn with noise, wider decoder, 64
-{
+    {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
         'autoencoder': {

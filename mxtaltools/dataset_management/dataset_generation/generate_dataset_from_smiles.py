@@ -1,12 +1,4 @@
-import gzip
-import multiprocessing as mp
-import os
-from pathlib import Path
-from time import time
-from typing import Optional
-
 from rdkit import RDLogger
-from torch_geometric.loader.dataloader import Collater
 
 from mxtaltools.common.geometry_calculations import batch_molecule_vdW_volume
 from mxtaltools.crystal_search.sampling import Sampler
@@ -17,12 +9,61 @@ RDLogger.DisableLog('rdApp.*')
 
 import numpy as np
 import torch
-from tqdm import tqdm
 
-from mxtaltools.common.utils import chunkify, init_sym_info
+from mxtaltools.common.utils import init_sym_info
 from mxtaltools.conformer_generation.conformer_generator import generate_random_conformers_from_smiles
 from mxtaltools.dataset_management.CrystalData import CrystalData
-from mxtaltools.dataset_management.data_manager import DataManager
+
+
+from collections.abc import Mapping
+from typing import Any, List, Optional, Sequence, Union
+
+import torch.utils.data
+from torch.utils.data.dataloader import default_collate
+
+from torch_geometric.data import Batch, Dataset
+from torch_geometric.data.data import BaseData
+from torch_geometric.data.datapipes import DatasetAdapter
+from torch_geometric.typing import TensorFrame, torch_frame
+
+
+class Collater:
+    def __init__(
+        self,
+        dataset: Union[Dataset, Sequence[BaseData], DatasetAdapter],
+        follow_batch: Optional[List[str]] = None,
+        exclude_keys: Optional[List[str]] = None,
+    ):
+        self.dataset = dataset
+        self.follow_batch = follow_batch
+        self.exclude_keys = exclude_keys
+
+    def __call__(self, batch: List[Any]) -> Any:
+        elem = batch[0]
+        if isinstance(elem, BaseData):
+            return Batch.from_data_list(
+                batch,
+                follow_batch=self.follow_batch,
+                exclude_keys=self.exclude_keys,
+            )
+        elif isinstance(elem, torch.Tensor):
+            return default_collate(batch)
+        elif isinstance(elem, TensorFrame):
+            return torch_frame.cat(batch, dim=0)
+        elif isinstance(elem, float):
+            return torch.tensor(batch, dtype=torch.float)
+        elif isinstance(elem, int):
+            return torch.tensor(batch)
+        elif isinstance(elem, str):
+            return batch
+        elif isinstance(elem, Mapping):
+            return {key: self([data[key] for data in batch]) for key in elem}
+        elif isinstance(elem, tuple) and hasattr(elem, '_fields'):
+            return type(elem)(*(self(s) for s in zip(*batch)))
+        elif isinstance(elem, Sequence) and not isinstance(elem, str):
+            return [self(s) for s in zip(*batch)]
+
+        raise TypeError(f"DataLoader found invalid type: '{type(elem)}'")
 
 
 def process_smiles_list_to_file(lines: list, file_path, allowed_atom_types, **conf_kwargs):
@@ -43,7 +84,7 @@ def process_smiles_list(lines: list, allowed_atom_types, **conf_kwargs):
         if sample is not None:
             samples.append(sample)
 
-    #print(f"finished processing smiles list with {len(samples)} samples")
+    print(f"finished processing smiles list with {len(samples)} samples")
     return samples
 
 
@@ -54,24 +95,25 @@ def process_smiles_to_crystal_opt(lines: list,
                                   run_tests=False,
                                   **conf_kwargs):
     """"""
-    #print('''build molecules''')
-    collater = Collater(0, 0)
-    mol_samples = process_smiles_list(lines,allowed_atom_types, **conf_kwargs)
+    mol_samples = process_smiles_list(lines, allowed_atom_types, **conf_kwargs)
     if len(mol_samples) == 0:
         torch.save([], file_path)
         return None
 
+    collater = Collater(0, 0)
     mol_batch = collater(mol_samples)
 
-    #print('''sample random crystals''')
+    print('''sample random crystals''')
     crystal_generator = CSDPrior(
         sym_info=init_sym_info(),
         device="cpu",
-        cell_means=None, cell_stds=None, lengths_cov_mat=None)
+        cell_means=None,
+        cell_stds=None,
+        lengths_cov_mat=None)
     normed_cell_params = crystal_generator(mol_batch.num_graphs, space_group * torch.ones(mol_batch.num_graphs))
     mol_batch.sg_ind = space_group * torch.ones(mol_batch.num_graphs)
 
-    #print('''optimize crystals and save opt trajectory''')
+    print('''optimize crystals and save opt trajectory''')
     sampler = Sampler(0,
                       'cpu',
                       'local',
@@ -85,14 +127,14 @@ def process_smiles_to_crystal_opt(lines: list,
                       num_cpus=1,
                       )
 
-    #print('''batch compute vdw volume''')
+    print('''batch compute vdw volume''')
     mol_batch.mol_volume = batch_molecule_vdW_volume(mol_batch.x.flatten(),
                                                      mol_batch.pos,
                                                      mol_batch.batch,
                                                      mol_batch.num_graphs,
                                                      sampler.vdw_radii_tensor)
 
-    #print('''do local opt''')
+    print('''do local opt''')
     opt_vdw_pot, opt_vdw_loss, opt_packing_coeff, opt_cell_params, opt_aunits = sampler.sample_and_optimize_random_crystals(
         mol_batch.clone().cpu(),
         normed_cell_params.cpu(),
@@ -100,7 +142,7 @@ def process_smiles_to_crystal_opt(lines: list,
         post_scramble_each=10,
     )
 
-    #print('''extract samples''')
+    print('''extract samples''')
     samples = []
     for graph_ind in range(mol_batch.num_graphs):
         graph_inds = mol_batch.batch == graph_ind
@@ -243,28 +285,31 @@ def test_crystal_rebuild_from_embedding(mol_batch,
         from plotly.subplots import make_subplots
         fig = make_subplots(rows=1, cols=min(5, mol_batch.num_graphs))
         for ind in range(min(5, mol_batch.num_graphs)):
-            fig.add_scatter(y=(rebuild_pot[:, ind] - opt_vdw_pot[:, ind].amin() + 0.1).flatten().log(), row=1, col=ind + 1)
-            fig.add_scatter(y=(opt_vdw_pot[:, ind] - opt_vdw_pot[:, ind].amin() + 0.1).flatten().log(), row=1, col=ind + 1)
+            fig.add_scatter(y=(rebuild_pot[:, ind] - opt_vdw_pot[:, ind].amin() + 0.1).flatten().log(), row=1,
+                            col=ind + 1)
+            fig.add_scatter(y=(opt_vdw_pot[:, ind] - opt_vdw_pot[:, ind].amin() + 0.1).flatten().log(), row=1,
+                            col=ind + 1)
         fig.show()
         fig = go.Figure()
-        fig.add_scatter(y=(((rebuild_pot.flatten() - opt_vdw_pot.flatten()).flatten()).abs() + 1).log10(),)
+        fig.add_scatter(y=(((rebuild_pot.flatten() - opt_vdw_pot.flatten()).flatten()).abs() + 1).log10(), )
         fig.add_scatter(y=(rebuild_pot.flatten() - opt_vdw_pot.amin() + 1).log10(), )
         fig.add_scatter(y=(opt_vdw_pot.flatten() - opt_vdw_pot.amin() + 1).log10(), )
         fig.show()
         fig = go.Figure()
-        fig.add_scatter(y=(((rebuild_pot.flatten() - opt_vdw_pot.flatten())/opt_vdw_pot.flatten()).abs() + 1).log10(),)
+        fig.add_scatter(
+            y=(((rebuild_pot.flatten() - opt_vdw_pot.flatten()) / opt_vdw_pot.flatten()).abs() + 1).log10(), )
         fig.show()
 
         fig = go.Figure()
-        fig.add_scatter(y=(((rebuild_loss.flatten() - opt_vdw_loss.flatten())).abs()),)
-        fig.add_scatter(y=(((rebuild_loss.flatten()))),)
-        fig.add_scatter(y=(((opt_vdw_loss.flatten()))),)
+        fig.add_scatter(y=(((rebuild_loss.flatten() - opt_vdw_loss.flatten())).abs()), )
+        fig.add_scatter(y=(((rebuild_loss.flatten()))), )
+        fig.add_scatter(y=(((opt_vdw_loss.flatten()))), )
         fig.show()
 
         deviations = torch.zeros(mol_batch.num_graphs)
         for ind in range(mol_batch.num_graphs):
             deviations[ind] = (
-                        rebuild_aunit[0, mol_batch.batch == ind] - opt_aunits[0, mol_batch.batch == ind]).abs().std()
+                    rebuild_aunit[0, mol_batch.batch == ind] - opt_aunits[0, mol_batch.batch == ind]).abs().std()
         fig = go.Figure(go.Scatter(y=deviations)).show()
 
     mae = (rebuild_loss.flatten() - opt_vdw_loss.flatten()).abs()
@@ -330,7 +375,8 @@ def process_smiles(smile: str,
             #resulting_num_atoms = num_heavy_atoms - fragment_size
             #excess_atoms = resulting_num_atoms - pare_to_size
             # select a fragment randomly, weighted towards smaller pieces
-            fragment_to_pare = np.random.choice(len(fragment_size),1,  p=np.exp(-fragment_size)/np.sum(np.exp(-fragment_size)))[0]
+            fragment_to_pare = \
+            np.random.choice(len(fragment_size), 1, p=np.exp(-fragment_size) / np.sum(np.exp(-fragment_size)))[0]
             atoms_to_pare = mask_rotate[fragment_to_pare, :]
             coords, atom_types = coords[~atoms_to_pare], atom_types[~atoms_to_pare]
             mask_rotate = np.delete(mask_rotate, fragment_to_pare, axis=0)
