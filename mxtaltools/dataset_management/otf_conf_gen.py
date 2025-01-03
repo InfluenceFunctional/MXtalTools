@@ -2,6 +2,7 @@ import gzip
 import os
 from pathlib import Path
 from random import shuffle
+from typing import Optional
 
 import numpy as np
 
@@ -47,7 +48,7 @@ def async_generate_random_conformer_dataset(dataset_length, smiles_source, workd
 
 def async_generate_random_crystal_dataset(dataset_length, smiles_source, workdir, allowed_atom_types: list,
                                           num_processes: int, pool, max_num_atoms: int, max_num_heavy_atoms: int,
-                                          pare_to_size: int, max_radius: float, synchronize=True):
+                                          pare_to_size: Optional[int], max_radius: float, synchronize=True):
     chunks_path = Path(workdir)
     smiles_path = Path(smiles_source)
     # get batch of smiles, and chunkify

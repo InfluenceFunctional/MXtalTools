@@ -1428,7 +1428,7 @@ class Modeller:
                     allowed_atom_types=list(self.dataDims['allowed_atom_types'].cpu().detach().numpy()),
                     num_processes=num_processes,
                     pool=self.mp_pool, max_num_atoms=30,
-                    max_num_heavy_atoms=9, pare_to_size=None,
+                    max_num_heavy_atoms=9, pare_to_size=9,
                     max_radius=15, synchronize=False)
                 self.integrated_dataset = False
 
