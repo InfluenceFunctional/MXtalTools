@@ -251,7 +251,7 @@ class Logger:
 
     def log_detailed_analysis(self):
         """sometimes do detailed reporting"""
-        detailed_repobrting(self.config, self.dataDims,
+        detailed_reporting(self.config, self.dataDims,
                            self.train_stats,
                            self.test_stats,
                            extra_test_dict=self.extra_stats)
