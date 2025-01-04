@@ -38,7 +38,7 @@ default_config = {
         'lr_growth_lambda': 1.01,
         'lr_shrink_lambda': 0.99975,
         'weight_decay': 0.0001,
-        'device': 'cuda',
+        'device': 'cpu',
     }  # 0 - baseline
 
 configs = []
