@@ -23,7 +23,7 @@ gradient_norm_clip: 1
 grow_batch_size: true
 history: 200
 logger:
-  dataset_reporting_time: 300
+  dataset_reporting_time: 1200
   experiment_tag: zinc_test2
   log_figures: true
   mini_csp_frequency: 5
