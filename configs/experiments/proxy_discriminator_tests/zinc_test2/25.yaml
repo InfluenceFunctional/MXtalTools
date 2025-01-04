@@ -5,7 +5,7 @@ dataset:
   buffer_size: 200000
   filter_protons: false
   max_dataset_length: 100000
-  num_processes: 10
+  num_processes: 4
   otf_build_size: 200
   regression_target: null
   single_identifier: null
