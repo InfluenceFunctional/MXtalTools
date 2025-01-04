@@ -12,15 +12,15 @@ sweep_path: null
 
 dataset:
   type: 'molecule'
-  max_dataset_length: 100000
+  max_dataset_length: 10000000
   test_fraction: 0.2
   filter_protons: False
   regression_target: null
   single_identifier: null
-  buffer_size: 200000
+  buffer_size: 100000
   otf_build_size: 100
   smiles_source: /scratch/mk8347/zinc22
-  num_processes: 4
+  num_processes: 1
 
 # batching & convergence
 early_epochs_step_override: 5
