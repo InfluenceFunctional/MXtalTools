@@ -1987,72 +1987,72 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
 
 '''
 
-    def update_buffers(self):
-        # reprocess buffers
-        if self.epoch_type == 'train':
-            buffer = self.train_buffer
-        elif self.epoch_type == 'test':
-            buffer = self.test_buffer
-        else:
-            assert False
+    # def update_buffers(self):
+    #     # reprocess buffers
+    #     if self.epoch_type == 'train':
+    #         buffer = self.train_buffer
+    #     elif self.epoch_type == 'test':
+    #         buffer = self.test_buffer
+    #     else:
+    #         assert False
+    #
+    #     new_samples = torch.stack(buffer['new_samples'], dim=0)
+    #     new_values = torch.tensor(buffer['new_values'], dtype=torch.float32, device='cpu')
+    #
+    #     if self.logger.epoch == 0:
+    #         # first epoch, no new samples
+    #         buffer['samples'] = new_samples
+    #         buffer['values'] = new_values
+    #
+    #     elif len(buffer['new_samples']) + len(buffer['samples']) <= self.config.dataset.buffer_size:
+    #         # take everything during the buffer building phase
+    #         buffer['samples'] = torch.cat([buffer['samples'], new_samples], dim=0)
+    #         buffer['values'] = torch.cat([buffer['values'], new_values], dim=0)
+    #     else:
+    #         # more samples than we need
+    #         # replace old samples with new samples
+    #         # weigh samples to replace by energy
+    #
+    #         temperature = 10
+    #         old_samples = buffer['samples']
+    #         old_values = buffer['values']
+    #         samples_to_add = min(len(new_samples), self.config.dataset.buffer_size)
+    #         # old_values = old_values.clip(max=100)
+    #         # probs = np.exp(old_values.numpy() / temperature) / np.sum(
+    #         #     np.exp(old_values.numpy() / temperature))
+    #         # probs = np.nan_to_num(probs, posinf=0, neginf=0, nan=0)
+    #         # probs /= probs.sum()
+    #         old_rands = np.random.choice(len(old_samples),
+    #                                      samples_to_add,
+    #                                      #p=probs,
+    #                                      replace=False
+    #                                      )
+    #         old_samples[old_rands] = new_samples[:self.config.dataset.buffer_size]
+    #         old_values[old_rands] = new_values[:self.config.dataset.buffer_size]
+    #         buffer['samples'] = old_samples[:self.config.dataset.buffer_size]
+    #         buffer['values'] = old_values[:self.config.dataset.buffer_size]
+    #
+    #     buffer['new_samples'], buffer['new_values'] = [], []
+    #     if self.epoch_type == 'train':
+    #         self.logger.train_buffer_size = len(buffer['samples'])
+    #     elif self.epoch_type == 'test':
+    #         self.logger.test_buffer_size = len(buffer['samples'])
 
-        new_samples = torch.stack(buffer['new_samples'], dim=0)
-        new_values = torch.tensor(buffer['new_values'], dtype=torch.float32, device='cpu')
-
-        if self.logger.epoch == 0:
-            # first epoch, no new samples
-            buffer['samples'] = new_samples
-            buffer['values'] = new_values
-
-        elif len(buffer['new_samples']) + len(buffer['samples']) <= self.config.dataset.buffer_size:
-            # take everything during the buffer building phase
-            buffer['samples'] = torch.cat([buffer['samples'], new_samples], dim=0)
-            buffer['values'] = torch.cat([buffer['values'], new_values], dim=0)
-        else:
-            # more samples than we need
-            # replace old samples with new samples
-            # weigh samples to replace by energy
-
-            temperature = 10
-            old_samples = buffer['samples']
-            old_values = buffer['values']
-            samples_to_add = min(len(new_samples), self.config.dataset.buffer_size)
-            # old_values = old_values.clip(max=100)
-            # probs = np.exp(old_values.numpy() / temperature) / np.sum(
-            #     np.exp(old_values.numpy() / temperature))
-            # probs = np.nan_to_num(probs, posinf=0, neginf=0, nan=0)
-            # probs /= probs.sum()
-            old_rands = np.random.choice(len(old_samples),
-                                         samples_to_add,
-                                         #p=probs,
-                                         replace=False
-                                         )
-            old_samples[old_rands] = new_samples[:self.config.dataset.buffer_size]
-            old_values[old_rands] = new_values[:self.config.dataset.buffer_size]
-            buffer['samples'] = old_samples[:self.config.dataset.buffer_size]
-            buffer['values'] = old_values[:self.config.dataset.buffer_size]
-
-        buffer['new_samples'], buffer['new_values'] = [], []
-        if self.epoch_type == 'train':
-            self.logger.train_buffer_size = len(buffer['samples'])
-        elif self.epoch_type == 'test':
-            self.logger.test_buffer_size = len(buffer['samples'])
-
-    def init_sample_buffers(self):
-        self.train_buffer = {'samples': torch.zeros((self.config.dataset.buffer_size,
-                                                     self.config.proxy_discriminator.model.bottleneck_dim + 9),
-                                                    dtype=torch.float32, device='cpu'),
-                             'values': torch.zeros(self.config.proxy_discriminator.model.bottleneck_dim,
-                                                   dtype=torch.float32, device='cpu'),
-                             'new_samples': [], 'new_values': []
-                             }
-        self.test_buffer = {'samples': torch.zeros((self.config.dataset.buffer_size,
-                                                    self.config.proxy_discriminator.model.bottleneck_dim + 9),
-                                                   dtype=torch.float32, device='cpu'),
-                            'values': torch.zeros(self.config.dataset.buffer_size,
-                                                  dtype=torch.float32, device='cpu'),
-                            'new_samples': [], 'new_values': []
-                            }
+    # def init_sample_buffers(self):
+    #     self.train_buffer = {'samples': torch.zeros((self.config.dataset.buffer_size,
+    #                                                  self.config.proxy_discriminator.model.bottleneck_dim + 9),
+    #                                                 dtype=torch.float32, device='cpu'),
+    #                          'values': torch.zeros(self.config.proxy_discriminator.model.bottleneck_dim,
+    #                                                dtype=torch.float32, device='cpu'),
+    #                          'new_samples': [], 'new_values': []
+    #                          }
+    #     self.test_buffer = {'samples': torch.zeros((self.config.dataset.buffer_size,
+    #                                                 self.config.proxy_discriminator.model.bottleneck_dim + 9),
+    #                                                dtype=torch.float32, device='cpu'),
+    #                         'values': torch.zeros(self.config.dataset.buffer_size,
+    #                                               dtype=torch.float32, device='cpu'),
+    #                         'new_samples': [], 'new_values': []
+    #                         }
 
     def generator_epoch(self,
                         data_loader=None,

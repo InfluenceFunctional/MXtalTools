@@ -51,6 +51,17 @@ for l in layers:
             config['max_batch_size'] = b
             configs.append(config)
 
+""" findings
+
+-: some oom kills, looks like when datasets get ~> 300k samples
+-: due to differences in training epoch time, dataset length vs epoch is non-uniform
+-: big models really train slow, and losses are not saturating
+
+TODO:
+> fix max buffer size
+> try to get GPU back
+"""
+
 ind = 0
 for ii, config_i in enumerate(configs):
     config = copy(base_config)
