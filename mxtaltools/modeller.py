@@ -85,6 +85,8 @@ class Modeller:
         self.crystal_builder = CrystalBuilder(device=self.config.device,
                                               rotation_basis='spherical' if self.config.mode != 'generator' else 'cartesian')
 
+        self.nan_lr_shrink_lambda = 0.9
+        self.overall_minimum_lr = 1e-7
         self.collater = Collater(None, None)
 
         self.train_models_dict = {
@@ -786,7 +788,7 @@ class Modeller:
 
     def handle_nan(self, e, epoch):
         print(e)
-        if self.num_naned_epochs > 3:
+        if self.num_naned_epochs > 5:
             for model_name in self.model_names:
                 if self.train_models_dict[model_name]:
                     print(f"Saving {model_name} crash checkpoint")
@@ -802,12 +804,14 @@ class Modeller:
 
         self.reload_best_test_checkpoint(epoch)
 
-        if self.num_naned_epochs > 1:
-            # pre-store current learning rates for downstream update
+        if self.num_naned_epochs > 2:
+            # shrink learning rate
             override_lrs = {}
             for model_name in self.model_names:
                 if self.config.__dict__[model_name].optimizer is not None:
-                    override_lrs[model_name] = self.optimizers_dict[model_name].param_groups[0]['lr']
+                    current_lr =  self.optimizers_dict[model_name].param_groups[0]['lr']
+                    if current_lr > self.overall_minimum_lr:  # absolute minimum LR we will allow
+                        override_lrs[model_name] = self.nan_lr_shrink_lambda * current_lr
 
             # resetting optimizer state
             self.optimizers_dict = {
@@ -819,7 +823,7 @@ class Modeller:
         else:
             override_lrs = None
 
-        self.update_lr(update_lr_ratio=0.75, override_current_lr=override_lrs)  # reduce LR and try again
+        self.update_lr(override_lr=override_lrs)  # reduce LR and try again
         self.hit_max_lr_dict = {key: True for key in self.hit_max_lr_dict.keys()}
 
     def handle_oom(self, prev_epoch_failed, test_loader, train_loader):
@@ -3023,19 +3027,9 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
                                     self.dataDims)
         self.times['checkpointing_end'] = time()
 
-    def update_lr(self, update_lr_ratio: float = None, override_current_lr: dict = None):
+    def update_lr(self, override_lr: dict = None):
         for model_name in self.model_names:
             if self.config.__dict__[model_name].optimizer is not None:
-
-                if update_lr_ratio is not None:
-                    if override_current_lr is not None:
-                        current_lr = override_current_lr[model_name]
-                    else:
-                        current_lr = self.optimizers_dict[model_name].param_groups[0]['lr']
-                    override_lr = current_lr * update_lr_ratio
-                else:
-                    override_lr = None
-
                 self.optimizers_dict[model_name], learning_rate = set_lr(
                     self.schedulers_dict[model_name],
                     self.optimizers_dict[model_name],
