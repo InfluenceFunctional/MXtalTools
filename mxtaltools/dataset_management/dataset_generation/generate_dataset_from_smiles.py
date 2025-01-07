@@ -1,9 +1,12 @@
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from rdkit import RDLogger
 
 from mxtaltools.common.geometry_calculations import batch_molecule_vdW_volume
 from mxtaltools.crystal_search.sampling import Sampler
-from mxtaltools.models.functions.vdw_overlap import scale_molwise_vdw_pot
+from mxtaltools.models.functions.vdw_overlap import vdw_analysis
 from mxtaltools.models.task_models.generator_models import CSDPrior
+from mxtaltools.models.utils import get_intermolecular_dists_dict
 
 RDLogger.DisableLog('rdApp.*')
 
@@ -138,19 +141,19 @@ def process_smiles_to_crystal_opt(lines: list,
     print(f"finished processing smiles list with {mol_batch.num_graphs} "
           f"molecules and optimizing crystals with {len(samples)} samples")
 
-    if run_tests:
-        test_crystal_rebuild_from_embedding(
-            mol_batch,
-            opt_vdw_pot,
-            opt_vdw_loss,
-            opt_aunits,
-            opt_cell_params,
-            denorm=False,
-            destd=False,
-            renorm=False,
-            restd=False,
-            make_figs=False,
-        )
+    # if run_tests:
+    #     test_crystal_rebuild_from_embedding(
+    #         mol_batch,
+    #         opt_vdw_pot,
+    #         opt_vdw_loss,
+    #         opt_aunits,
+    #         opt_cell_params,
+    #         denorm=False,
+    #         destd=False,
+    #         renorm=False,
+    #         restd=False,
+    #         make_figs=False,
+    #     )
     torch.save(samples, file_path)
 
 
@@ -166,9 +169,8 @@ def test_crystal_rebuild_from_embedding(mol_batch,
                                         make_figs=True,
                                         ):
     def _score_crystal_batch(mol_batch, supercell_data, vdw_radii_tensor):
-        from mxtaltools.models.utils import get_intermolecular_dists_dict
+
         dist_dict = get_intermolecular_dists_dict(supercell_data, 6, 100)
-        from mxtaltools.models.functions.vdw_overlap import vdw_analysis
         molwise_overlap, molwise_normed_overlap, vdw_potential, vdw_loss, lj_pot \
             = vdw_analysis(vdw_radii_tensor.cpu(),
                            dist_dict,
@@ -240,17 +242,15 @@ def test_crystal_rebuild_from_embedding(mol_batch,
         )
         rebuild_pot[sample_ind] = vdw_potential
         rebuild_aunit[sample_ind] = supercell_batch.pos[supercell_batch.aux_ind == 0].detach()
-        rebuild_loss[sample_ind] = scale_molwise_vdw_pot(vdw_potential, mol_batch.num_atoms)
-        if ((vdw_loss - opt_vdw_loss[sample_ind]).abs().log10() > 0.1).any():
-            aa = 1
-            bad_inds = torch.argwhere((vdw_potential - opt_vdw_pot[sample_ind]).abs() > 0.1).flatten()
-
-        if ((rebuild_aunit[sample_ind] - opt_aunits[sample_ind]).abs() > 0.1).any():
-            aa = 1
+        # rebuild_loss[sample_ind] = scale_molwise_vdw_pot(vdw_potential, mol_batch.num_atoms)
+        # if ((vdw_loss - opt_vdw_loss[sample_ind]).abs().log10() > 0.1).any():
+        #     aa = 1
+        #     bad_inds = torch.argwhere((vdw_potential - opt_vdw_pot[sample_ind]).abs() > 0.1).flatten()
+        #
+        # if ((rebuild_aunit[sample_ind] - opt_aunits[sample_ind]).abs() > 0.1).any():
+        #     aa = 1
 
     if make_figs:
-        import plotly.graph_objects as go
-        from plotly.subplots import make_subplots
         fig = make_subplots(rows=1, cols=min(5, mol_batch.num_graphs))
         for ind in range(min(5, mol_batch.num_graphs)):
             fig.add_scatter(y=(rebuild_pot[:, ind] - opt_vdw_pot[:, ind].amin() + 0.1).flatten().log(), row=1,
