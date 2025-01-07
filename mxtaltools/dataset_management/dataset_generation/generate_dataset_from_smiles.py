@@ -47,6 +47,7 @@ def process_smiles_list_to_file(lines: list, file_path, allowed_atom_types, **co
 def process_smiles_list(lines: list, allowed_atom_types, **conf_kwargs):
     samples = []
     for line in lines:
+        print(f'processing smile {line}')
         sample, reason = process_smiles(line, allowed_atom_types, to_dict=False, **conf_kwargs)
         if sample is not None:
             samples.append(sample)
@@ -62,6 +63,7 @@ def process_smiles_to_crystal_opt(lines: list,
                                   run_tests=False,
                                   **conf_kwargs):
     """"""
+    'starting chunk pool'
     mol_samples = process_smiles_list(lines, allowed_atom_types, **conf_kwargs)
     if len(mol_samples) == 0:
         assert False, "Zero valid molecules in batch, increase crystal generation batch size"
