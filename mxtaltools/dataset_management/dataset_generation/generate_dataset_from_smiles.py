@@ -1,27 +1,23 @@
+from typing import Any, List, Optional
+
+import numpy as np
 import plotly.graph_objects as go
+import torch
+import torch.utils.data
 from plotly.subplots import make_subplots
 from rdkit import RDLogger
+from torch_geometric.data import Batch
 
 from mxtaltools.common.geometry_calculations import batch_molecule_vdW_volume
+from mxtaltools.common.utils import init_sym_info
+from mxtaltools.conformer_generation.conformer_generator import generate_random_conformers_from_smiles
 from mxtaltools.crystal_search.sampling import Sampler
+from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.models.functions.vdw_overlap import vdw_analysis
 from mxtaltools.models.task_models.generator_models import CSDPrior
 from mxtaltools.models.utils import get_intermolecular_dists_dict
 
 RDLogger.DisableLog('rdApp.*')
-
-import numpy as np
-import torch
-
-from mxtaltools.common.utils import init_sym_info
-from mxtaltools.conformer_generation.conformer_generator import generate_random_conformers_from_smiles
-from mxtaltools.dataset_management.CrystalData import CrystalData
-
-from typing import Any, List, Optional
-
-import torch.utils.data
-
-from torch_geometric.data import Batch
 
 
 class Collater:
@@ -70,76 +66,76 @@ def process_smiles_to_crystal_opt(lines: list,
     mol_samples = process_smiles_list(lines, allowed_atom_types, **conf_kwargs)
     if len(mol_samples) == 0:
         assert False, "Zero valid molecules in batch, increase crystal generation batch size"
-
-    collater = Collater()
-    mol_batch = collater(mol_samples)
-
-    print('''sample random crystals''')
-    crystal_generator = CSDPrior(
-        sym_info=init_sym_info(),
-        device="cpu",
-        cell_means=None,
-        cell_stds=None,
-        lengths_cov_mat=None)
-    normed_cell_params = crystal_generator(mol_batch.num_graphs, space_group * torch.ones(mol_batch.num_graphs))
-    mol_batch.sg_ind = space_group * torch.ones(mol_batch.num_graphs)
-
-    print('''optimize crystals and save opt trajectory''')
-    sampler = Sampler(0,
-                      'cpu',
-                      'local',
-                      None,
-                      None,
-                      None,
-                      None,
-                      show_tqdm=False,
-                      skip_rdf=True,
-                      gd_score_func='vdW',
-                      num_cpus=1,
-                      )
-
-    print('''batch compute vdw volume''')
-    mol_batch.mol_volume = batch_molecule_vdW_volume(mol_batch.x.flatten(),
-                                                     mol_batch.pos,
-                                                     mol_batch.batch,
-                                                     mol_batch.num_graphs,
-                                                     sampler.vdw_radii_tensor)
-
-    print('''do local opt''')
-    opt_vdw_pot, opt_vdw_loss, opt_packing_coeff, opt_cell_params, opt_aunits = sampler.sample_and_optimize_random_crystals(
-        mol_batch.clone().cpu(),
-        normed_cell_params.cpu(),
-        opt_eps=1e-1,
-        post_scramble_each=10,
-    )
-
-    print('''extract samples''')
-    samples = []
-    for graph_ind in range(mol_batch.num_graphs):
-        graph_inds = mol_batch.batch == graph_ind
-        for sample_ind in range(len(opt_vdw_pot)):
-            cell_params = opt_cell_params[sample_ind, graph_ind]
-            sample = CrystalData(
-                x=mol_batch.x[graph_inds],
-                pos=opt_aunits[sample_ind, graph_inds],
-                smiles=mol_batch.smiles[graph_ind],
-                identifier=mol_batch.smiles[graph_ind],
-                y=torch.zeros(1, dtype=torch.float32),
-                require_crystal_features=True,
-                sg_ind=int(mol_batch.sg_ind[graph_ind]),
-                z_prime=1,
-                cell_lengths=cell_params[:3],
-                cell_angles=cell_params[3:6],
-                pose_parameters=cell_params[None, 6:],
-                vdw_pot=opt_vdw_pot[sample_ind, graph_ind],
-                vdw_loss=opt_vdw_loss[sample_ind, graph_ind],
-                packing_coeff=opt_packing_coeff[sample_ind, graph_ind]
-            )
-
-            samples.append(sample)
-
-    print(f"finished processing smiles list with {mol_batch.num_graphs} "
-          f"molecules and optimizing crystals with {len(samples)} samples")
+    #
+    # collater = Collater()
+    # mol_batch = collater(mol_samples)
+    #
+    # print('''sample random crystals''')
+    # crystal_generator = CSDPrior(
+    #     sym_info=init_sym_info(),
+    #     device="cpu",
+    #     cell_means=None,
+    #     cell_stds=None,
+    #     lengths_cov_mat=None)
+    # normed_cell_params = crystal_generator(mol_batch.num_graphs, space_group * torch.ones(mol_batch.num_graphs))
+    # mol_batch.sg_ind = space_group * torch.ones(mol_batch.num_graphs)
+    #
+    # print('''optimize crystals and save opt trajectory''')
+    # sampler = Sampler(0,
+    #                   'cpu',
+    #                   'local',
+    #                   None,
+    #                   None,
+    #                   None,
+    #                   None,
+    #                   show_tqdm=False,
+    #                   skip_rdf=True,
+    #                   gd_score_func='vdW',
+    #                   num_cpus=1,
+    #                   )
+    #
+    # print('''batch compute vdw volume''')
+    # mol_batch.mol_volume = batch_molecule_vdW_volume(mol_batch.x.flatten(),
+    #                                                  mol_batch.pos,
+    #                                                  mol_batch.batch,
+    #                                                  mol_batch.num_graphs,
+    #                                                  sampler.vdw_radii_tensor)
+    #
+    # print('''do local opt''')
+    # opt_vdw_pot, opt_vdw_loss, opt_packing_coeff, opt_cell_params, opt_aunits = sampler.sample_and_optimize_random_crystals(
+    #     mol_batch.clone().cpu(),
+    #     normed_cell_params.cpu(),
+    #     opt_eps=1e-1,
+    #     post_scramble_each=10,
+    # )
+    #
+    # print('''extract samples''')
+    # samples = []
+    # for graph_ind in range(mol_batch.num_graphs):
+    #     graph_inds = mol_batch.batch == graph_ind
+    #     for sample_ind in range(len(opt_vdw_pot)):
+    #         cell_params = opt_cell_params[sample_ind, graph_ind]
+    #         sample = CrystalData(
+    #             x=mol_batch.x[graph_inds],
+    #             pos=opt_aunits[sample_ind, graph_inds],
+    #             smiles=mol_batch.smiles[graph_ind],
+    #             identifier=mol_batch.smiles[graph_ind],
+    #             y=torch.zeros(1, dtype=torch.float32),
+    #             require_crystal_features=True,
+    #             sg_ind=int(mol_batch.sg_ind[graph_ind]),
+    #             z_prime=1,
+    #             cell_lengths=cell_params[:3],
+    #             cell_angles=cell_params[3:6],
+    #             pose_parameters=cell_params[None, 6:],
+    #             vdw_pot=opt_vdw_pot[sample_ind, graph_ind],
+    #             vdw_loss=opt_vdw_loss[sample_ind, graph_ind],
+    #             packing_coeff=opt_packing_coeff[sample_ind, graph_ind]
+    #         )
+    #
+    #         samples.append(sample)
+    #
+    # print(f"finished processing smiles list with {mol_batch.num_graphs} "
+    #       f"molecules and optimizing crystals with {len(samples)} samples")
 
     # if run_tests:
     #     test_crystal_rebuild_from_embedding(
