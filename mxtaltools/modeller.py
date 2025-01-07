@@ -1433,7 +1433,7 @@ class Modeller:
                     num_processes=num_processes,
                     pool=self.mp_pool, max_num_atoms=30,
                     max_num_heavy_atoms=9, pare_to_size=9,
-                    max_radius=15, synchronize=False)
+                    max_radius=15, synchronize=True)
                 self.integrated_dataset = False
 
         # if a batch is finished, merge it with our existing dataset
