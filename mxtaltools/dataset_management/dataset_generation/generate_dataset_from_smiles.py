@@ -150,7 +150,7 @@ def process_smiles_to_crystal_opt(lines: list,
     #         restd=False,
     #         make_figs=False,
     #     )
-    torch.save(samples, file_path)
+    #torch.save(samples, file_path)
 
 
 def test_crystal_rebuild_from_embedding(mol_batch,
