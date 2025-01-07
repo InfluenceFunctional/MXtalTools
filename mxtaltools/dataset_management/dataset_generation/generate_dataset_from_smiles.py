@@ -95,13 +95,13 @@ def process_smiles_to_crystal_opt(lines: list,
                       )
 
     print('''batch compute vdw volume''')
-    # mol_batch.mol_volume = batch_molecule_vdW_volume(mol_batch.x.flatten(),
-    #                                                  mol_batch.pos,
-    #                                                  mol_batch.batch,
-    #                                                  mol_batch.num_graphs,
-    #                                                  sampler.vdw_radii_tensor)
-    #
-    # print('''do local opt''')
+    mol_batch.mol_volume = batch_molecule_vdW_volume(mol_batch.x.flatten(),
+                                                     mol_batch.pos,
+                                                     mol_batch.batch,
+                                                     mol_batch.num_graphs,
+                                                     sampler.vdw_radii_tensor)
+
+    print('''do local opt''')
     # opt_vdw_pot, opt_vdw_loss, opt_packing_coeff, opt_cell_params, opt_aunits = sampler.sample_and_optimize_random_crystals(
     #     mol_batch.clone().cpu(),
     #     normed_cell_params.cpu(),
