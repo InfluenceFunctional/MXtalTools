@@ -333,6 +333,7 @@ class Sampler:
                                             opt_eps,
                                             post_scramble_each: int = None):
 
+        print("embed mols for opt")
         mol_batch, scalar_mol_embedding, vector_mol_embedding = self.embed_molecule_for_sampling(
             mol_batch,
             'as is',
@@ -340,6 +341,7 @@ class Sampler:
             skip_embedding=True
         )
 
+        print("doing opt")
         (_, _, _, _,
          optimization_record) = self._gradient_descent_optimization(
             init_state,

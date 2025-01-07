@@ -102,14 +102,14 @@ def process_smiles_to_crystal_opt(lines: list,
                                                      sampler.vdw_radii_tensor)
 
     print('''do local opt''')
-    # opt_vdw_pot, opt_vdw_loss, opt_packing_coeff, opt_cell_params, opt_aunits = sampler.sample_and_optimize_random_crystals(
-    #     mol_batch.clone().cpu(),
-    #     normed_cell_params.cpu(),
-    #     opt_eps=1e-1,
-    #     post_scramble_each=10,
-    # )
-    #
-    # print('''extract samples''')
+    opt_vdw_pot, opt_vdw_loss, opt_packing_coeff, opt_cell_params, opt_aunits = sampler.sample_and_optimize_random_crystals(
+        mol_batch.clone().cpu(),
+        normed_cell_params.cpu(),
+        opt_eps=1e-1,
+        post_scramble_each=10,
+    )
+
+    print('''extract samples''')
     # samples = []
     # for graph_ind in range(mol_batch.num_graphs):
     #     graph_inds = mol_batch.batch == graph_ind
