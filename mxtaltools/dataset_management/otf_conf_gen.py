@@ -71,11 +71,13 @@ def async_generate_random_crystal_dataset(dataset_length, smiles_source, workdir
     #                      })
 
     # generate samples
+    outs = []
     min_ind = len(os.listdir(chunks_path)) + 1  # always add one
     for ind, chunk in enumerate(chunks):
         print(f'starting chunk {ind} with {len(chunk)} smiles')
         chunk_ind = min_ind + ind
         chunk_path = os.path.join(chunks_path, f'chunk_{chunk_ind}.pkl')
+        outs.append(
         pool.apply_async(process_smiles_to_crystal_opt,
                          args=(chunk, chunk_path, allowed_atom_types, 1, False),
                          kwds={
@@ -86,11 +88,12 @@ def async_generate_random_crystal_dataset(dataset_length, smiles_source, workdir
                              'protonate': True,
                              'rotamers_per_sample': 1,
                              'allow_simple_hydrogen_rotations': False
-                         })
+                         }))
 
     pool.close()
     if synchronize:
         pool.join()
+        [print(out.get()) for out in outs]
     else:
         return pool
 
