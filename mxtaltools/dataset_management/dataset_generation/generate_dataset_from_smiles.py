@@ -80,21 +80,21 @@ def process_smiles_to_crystal_opt(lines: list,
     normed_cell_params = crystal_generator(mol_batch.num_graphs, space_group * torch.ones(mol_batch.num_graphs))
     mol_batch.sg_ind = space_group * torch.ones(mol_batch.num_graphs)
 
-    # print('''optimize crystals and save opt trajectory''')
-    # sampler = Sampler(0,
-    #                   'cpu',
-    #                   'local',
-    #                   None,
-    #                   None,
-    #                   None,
-    #                   None,
-    #                   show_tqdm=False,
-    #                   skip_rdf=True,
-    #                   gd_score_func='vdW',
-    #                   num_cpus=1,
-    #                   )
-    #
-    # print('''batch compute vdw volume''')
+    print('''optimize crystals and save opt trajectory''')
+    sampler = Sampler(0,
+                      'cpu',
+                      'local',
+                      None,
+                      None,
+                      None,
+                      None,
+                      show_tqdm=False,
+                      skip_rdf=True,
+                      gd_score_func='vdW',
+                      num_cpus=1,
+                      )
+
+    print('''batch compute vdw volume''')
     # mol_batch.mol_volume = batch_molecule_vdW_volume(mol_batch.x.flatten(),
     #                                                  mol_batch.pos,
     #                                                  mol_batch.batch,
