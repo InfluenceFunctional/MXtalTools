@@ -149,7 +149,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 2 - new baseline with only encoder norm
+    },  # 2 - new baseline with only encoder norm # died, my bad, was a bit better than baseline
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
@@ -197,7 +197,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 3 - new baseline with only decoder norm
+    },  # 3 - new baseline with only decoder norm # died - horrible
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
@@ -245,7 +245,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 4 - new baseline with scalar norms, smaller decoder
+    },  # 4 - new baseline with scalar norms, smaller decoder # bit worse than baseline, loss levelling out earlier
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
@@ -293,7 +293,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 5 - new baseline with scalar norms, 64 bottleneck
+    },  # 5 - new baseline with scalar norms, 64 bottleneck # even a bit worse than 4
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
@@ -341,7 +341,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 6 - new baseline with scalar norms, 0.1 dropout
+    },  # 6 - new baseline with scalar norms, 0.1 dropout # low overfit, good test losses, train losses possibly levelling
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
@@ -389,7 +389,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 7 - big model, 64 bottleneck, norms
+    },  # 7 - big model, 64 bottleneck, norms # similar to baseline, maybe slightly better
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
@@ -437,7 +437,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 8 - narrower
+    },  # 8 - narrower # uniformly a bit worse than baseline
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
@@ -485,21 +485,19 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 9 - new baseline with scalar norms, faster lambdas
+    },  # 9 - new baseline with scalar norms, faster lr lambdas # amazin
 
 ]
 
 '''
--: overall, with high noise, we saw low overfitting and train rmsds levelling out pretty high, 
-though might also be caused by LR annealing factor
--: several runs started annealing LR quite aggressively early on, potentially causing observed loss saturation.
-possibly due to high noise levels
--: norming solves stability issue
+-: faster LR lambdas makes a huge difference, also overfits more
+-: vector norms maybe slightly improvement
+-: was an issue in new lr annealing protocol - bug
+-: decoder layer norms appear to be bad
+-: a little dropout may not be a bad thing
 
-TODO:
-> bit lower noise maybe
-> a kinder gentler loss annealing in handle_nan
-> play with norming
+upshots:
+-: big model, tight bottleneck, no decoder norms, yes to vector norms, shallow network, fat, lr lambdas
 '''
 
 

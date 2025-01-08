@@ -3036,7 +3036,7 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
                     self.config.__dict__[model_name].optimizer,
                     self.logger.current_losses[model_name]['mean_train'],
                     self.hit_max_lr_dict[model_name],
-                    override_lr)
+                    override_lr[model_name])
 
                 if learning_rate >= self.config.__dict__[model_name].optimizer.max_lr:
                     self.hit_max_lr_dict[model_name] = True
