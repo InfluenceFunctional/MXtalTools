@@ -47,7 +47,7 @@ config_list = [
                     'fc': {
                         'hidden_dim': 64,
                         'num_layers': 4,
-                        'dropout': 0.05,
+                        'dropout': 0,
                         'norm': None,
                         'vector_norm': None,
                     },
