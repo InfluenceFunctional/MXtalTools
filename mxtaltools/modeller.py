@@ -3030,13 +3030,17 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
     def update_lr(self, override_lr: dict = None):
         for model_name in self.model_names:
             if self.config.__dict__[model_name].optimizer is not None:
+                if override_lr is not None:
+                    override =override_lr[model_name]
+                else:
+                    override = None
                 self.optimizers_dict[model_name], learning_rate = set_lr(
                     self.schedulers_dict[model_name],
                     self.optimizers_dict[model_name],
                     self.config.__dict__[model_name].optimizer,
                     self.logger.current_losses[model_name]['mean_train'],
                     self.hit_max_lr_dict[model_name],
-                    override_lr[model_name])
+                    override)
 
                 if learning_rate >= self.config.__dict__[model_name].optimizer.max_lr:
                     self.hit_max_lr_dict[model_name] = True
