@@ -800,16 +800,18 @@ class Modeller:
                                     self.dataDims)
             raise e
         self.num_naned_epochs += 1
-        print("Reloading prior best checkpoint and restarting training at low LR")
+
+        print("Reloading prior best checkpoint")
 
         self.reload_best_test_checkpoint(epoch)
 
-        if self.num_naned_epochs > 2:
+        if self.num_naned_epochs > 0:
+            print("Restarting training at low LR")
             # shrink learning rate
             override_lrs = {}
             for model_name in self.model_names:
                 if self.config.__dict__[model_name].optimizer is not None:
-                    current_lr =  self.optimizers_dict[model_name].param_groups[0]['lr']
+                    current_lr = self.optimizers_dict[model_name].param_groups[0]['lr']
                     if current_lr > self.overall_minimum_lr:  # absolute minimum LR we will allow
                         override_lrs[model_name] = self.nan_lr_shrink_lambda * current_lr
 

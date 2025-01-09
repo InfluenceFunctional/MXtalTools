@@ -48,7 +48,7 @@ config_list = [
                         'hidden_dim': 64,
                         'num_layers': 4,
                         'dropout': 0,
-                        'norm': None,
+                        'norm': 'batch',
                         'vector_norm': None,
                     },
                     'num_nodes': 64
