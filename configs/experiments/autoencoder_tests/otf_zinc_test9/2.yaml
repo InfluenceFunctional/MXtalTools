@@ -12,8 +12,8 @@ autoencoder:
       activation: gelu
       fc:
         dropout: 0
-        hidden_dim: 64
-        norm: null
+        hidden_dim: 128
+        norm: layer
         num_layers: 4
         vector_norm: null
       model_type: gnn
@@ -30,7 +30,7 @@ autoencoder:
       graph:
         atom_type_embedding_dim: 32
         cutoff: 3
-        dropout: 0.05
+        dropout: 0
         embedding_dim: 512
         envelope_exponent: 5
         fcs_per_gc: 2
@@ -41,7 +41,7 @@ autoencoder:
         num_convs: 2
         num_radial: 50
         radial_embedding: bessel
-        vector_norm: graph vector layer
+        vector_norm: null
   nearest_component_loss_coefficient: 0.1
   nearest_node_loss_coefficient: 0.01
   node_weight_temperature: 1
@@ -54,7 +54,7 @@ autoencoder:
     init_lr: 5.0e-05
     lr_growth_lambda: 1.1
     lr_schedule: true
-    lr_shrink_lambda: 0.995
+    lr_shrink_lambda: 0.985
     max_lr: 0.001
     min_lr: 1.0e-06
     optimizer: adamw
