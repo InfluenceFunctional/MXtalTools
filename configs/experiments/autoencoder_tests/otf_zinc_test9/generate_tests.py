@@ -101,7 +101,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 1 - going back to best baseline
+    },  # 1 - going back to best baseline, but tight bottleneck
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
@@ -149,7 +149,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 2 - going back to best baseline
+    },  # 2 - going back to best baseline, tight bottleneck, fat layers
 
 ]
 
