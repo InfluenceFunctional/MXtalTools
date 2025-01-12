@@ -9,8 +9,8 @@ from mxtaltools.common.config_processing import load_yaml, process_main_config
 from mxtaltools.modeller import Modeller
 
 if __name__ == '__main__':
-    filter_protons = [False, True, False]
-    infer_protons = [False, False, True]
+    filter_protons = [False, True]
+    infer_protons = [False, False]
     max_dataset_length = 1000000000
 
     mxt_path = r'C:\\Users\\mikem\\PycharmProjects\\Python_Codes\\MXtalTools'

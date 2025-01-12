@@ -1,0 +1,114 @@
+autoencoder:
+  affine_scale_factor: 1
+  clumping_loss_coefficient: 0.01
+  evaluation_sigma: 0.35
+  filter_protons: true
+  infer_protons: false
+  init_sigma: 2
+  max_overlap_threshold: 0.25
+  model:
+    bottleneck_dim: 64
+    decoder:
+      activation: gelu
+      fc:
+        dropout: 0
+        hidden_dim: 128
+        norm: layer
+        num_layers: 4
+        vector_norm: null
+      model_type: gnn
+      num_nodes: 64
+      ramp_depth: true
+    encoder:
+      activation: gelu
+      fc:
+        dropout: 0.1
+        hidden_dim: 256
+        norm: null
+        num_layers: 0
+        vector_norm: vector layer
+      graph:
+        atom_type_embedding_dim: 32
+        cutoff: 3
+        dropout: 0
+        embedding_dim: 512
+        envelope_exponent: 5
+        fcs_per_gc: 2
+        max_num_neighbors: 100
+        message_dim: 64
+        node_dim: 512
+        norm: graph layer
+        num_convs: 2
+        num_radial: 50
+        radial_embedding: bessel
+        vector_norm: null
+  nearest_component_loss_coefficient: 0.1
+  nearest_node_loss_coefficient: 0.01
+  node_weight_temperature: 1
+  optimizer:
+    beta1: 0.9
+    beta2: 0.999
+    convergence_eps: 1.0e-07
+    decoder_init_lr: 0.0001
+    encoder_init_lr: 0.0001
+    init_lr: 5.0e-05
+    lr_growth_lambda: 1.1
+    lr_schedule: true
+    lr_shrink_lambda: 0.985
+    max_lr: 0.001
+    min_lr: 1.0e-06
+    optimizer: adamw
+    overwrite_on_reload: false
+    use_plateau_scheduler: false
+    weight_decay: 0.005
+  overlap_eps:
+    test: 0.001
+  sigma_lambda: 0.99
+  sigma_threshold: 0.15
+  type_distance_scaling: 2
+  weight_constraint_factor: 0.9
+base_config_path: /experiments/base/autoencoder.yaml
+batch_growth_increment: 0.05
+dataset:
+  max_dataset_length: 200000
+  num_processes: 4
+  otf_build_size: 10000
+  smiles_source: /scratch/mk8347/zinc22
+  test_fraction: 0.5
+dataset_name: eval_qm9_dataset.pt
+device: cuda
+early_epochs_step_override: 5
+extra_test_period: 5
+extra_test_set_name: null
+gradient_norm_clip: 1
+grow_batch_size: true
+history: 50
+logger:
+  dataset_reporting_time: 600
+  experiment_tag: otf_zinc_test9
+  run_name: otf_zinc_test9
+  sample_reporting_frequency: 20
+  stats_reporting_frequency: 20
+machine: cluster
+max_batch_size: 1000
+max_epoch_steps: 1000
+max_epochs: 10000
+min_batch_size: 10
+minimum_epochs: 10000
+model_paths:
+  autoencoder: null
+  discriminator: null
+  embedding_regressor: null
+  generator: null
+  polymorph_classifier: null
+  regressor: null
+num_early_epochs: 0
+overfit_tolerance: 4
+positional_noise:
+  autoencoder: 0.1
+  discriminator: 0
+  generator: 0
+  regressor: 0
+save_checkpoints: true
+seeds:
+  dataset: 1
