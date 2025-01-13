@@ -9,12 +9,13 @@ import os
 from scipy.interpolate import interpn
 from scipy.stats import linregress
 from model_paths import ae_results_paths, er_results_paths, targets, proxy_results_paths
+from mxtaltools.common.geometry_calculations import scatter_compute_Ip
 
 stats_dict_names = ["With Hydrogen",
                     "Without Hydrogen",
                     "Inferred Hydrogen"]
 
-colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', len(ae_results_paths), colortype='rgb')
+colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', max(2, len(ae_results_paths)), colortype='rgb')
 
 
 def get_fraction(atomic_numbers, target: int):
@@ -92,7 +93,7 @@ def RMSD_fig():
 
     bandwidth = 0.005
     fig = make_subplots(rows=1, cols=2, subplot_titles=['(a) Whole Molecule', '(b) Atomwise'], horizontal_spacing=0.2)
-    for ind, run_name in enumerate(['Without Hydrogen', 'With Hydrogen', 'Inferred Hydrogen']):
+    for ind, run_name in enumerate(['With Hydrogen', 'With Hydrogen']):
         stats_dict = stats_dicts[run_name]
 
         x = np.concatenate(stats_dict['RMSD_dist'])
@@ -101,7 +102,7 @@ def RMSD_fig():
         finite_x = x[matched]
 
         fig.add_annotation(x=0.6, y=ind + 0.3, showarrow=False,
-                           text=f'Matched RMSD: {finite_x.mean():.2f} <br> Unmatched Frac.: {unmatched * 100:.0f}%',
+                           text=f'Matched RMSD: {finite_x.mean():.2f} <br> Unmatched Frac.: {unmatched * 100:.1f}%',
                            font_size=20,
                            row=1, col=1)
         fig.add_trace(go.Violin(  # y=np.zeros_like(x),
@@ -121,7 +122,7 @@ def RMSD_fig():
         finite_x = x[matched]
 
         fig.add_annotation(x=0.6, y=ind + 0.3, showarrow=False,
-                           text=f'Matched RMSD: {finite_x.mean():.2f} <br> Unmatched Frac.: {unmatched * 100:.0f}%',
+                           text=f'Matched RMSD: {finite_x.mean():.2f} <br> Unmatched Frac.: {unmatched * 100:.2f}%',
                            font_size=20,
                            row=1, col=2)
         fig.add_trace(go.Violin(  # y=np.zeros_like(x),
@@ -241,32 +242,33 @@ def UMAP_fig(max_entries=10000000):
     stats_dict = np.load(ae_results_paths[0], allow_pickle=True).item()
     import umap
     # combine train and test stats
-    for key in stats_dict['train_stats'].keys():
-        try:
-            combo = np.concatenate([stats_dict['train_stats'][key], stats_dict['test_stats'][key]])
-
-
-        except:
+    if stats_dict['train_stats'] is not None:
+        for key in stats_dict['test_stats'].keys():
             try:
-                combo = np.concatenate([np.concatenate(stats_dict['train_stats'][key]),
-                                        np.concatenate(stats_dict['test_stats'][key])])
+                combo = np.concatenate([stats_dict['train_stats'][key], stats_dict['test_stats'][key]])
+
+
             except:
                 try:
-                    combo = stats_dict['train_stats'][key] + stats_dict['test_stats'][key]
+                    combo = np.concatenate([np.concatenate(stats_dict['train_stats'][key]),
+                                            np.concatenate(stats_dict['test_stats'][key])])
                 except:
-                    print(key)
-                    print('noo!')
-        stats_dict[key] = combo
+                    try:
+                        combo = stats_dict['train_stats'][key] + stats_dict['test_stats'][key]
+                    except:
+                        print(key)
+                        print('noo!')
+            stats_dict[key] = combo
+    else:
+        stats_dict = stats_dict['test_stats']
 
-    del stats_dict['train_stats'], stats_dict['test_stats']
+    #del stats_dict['train_stats'], stats_dict['test_stats']
 
-    from mxtaltools.common.geometry_calculations import batch_molecule_principal_axes_torch
-    Ipm = []
-    for elem in stats_dict['sample']:
-        _, ipm, _ = batch_molecule_principal_axes_torch([elem.pos[elem.batch == ind] for ind in range(elem.num_graphs)])
-        Ipm.extend(ipm)
+    from torch_geometric.loader.dataloader import Collater
+    collater = Collater(0,0)
+    stats_dict['sample'] = collater(stats_dict['sample'])
+    _, Ipm, _ = scatter_compute_Ip(stats_dict['sample'].pos, stats_dict['sample'].batch)
 
-    Ipm = np.stack(Ipm)
     Ip1 = Ipm[:, 0]
     Ip2 = Ipm[:, 1]
     Ip3 = Ipm[:, 2]
@@ -344,8 +346,8 @@ def UMAP_fig(max_entries=10000000):
 
     reducer = umap.UMAP(n_components=2,
                         metric='cosine',
-                        n_neighbors=50,
-                        min_dist=0.01)
+                        n_neighbors=25,
+                        min_dist=0.1)
     scalar_encodings = stats_dict['scalar_embedding'][:max_entries]
 
     embedding = reducer.fit_transform((scalar_encodings - scalar_encodings.mean()) / scalar_encodings.std())
@@ -373,7 +375,8 @@ def UMAP_fig(max_entries=10000000):
         embedding /= embedding.max(0)
         fig2.add_trace(go.Scattergl(x=embedding[:, 0], y=embedding[:, 1],
                                     mode='markers',
-                                    opacity=.1,
+                                    opacity=.3,
+                                    marker_size=10,
                                     showlegend=False,
                                     marker_color=point_colors
                                     ), row=1, col=ind2 + 1)

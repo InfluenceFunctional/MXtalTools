@@ -11,7 +11,7 @@ from model_paths import er_ae_path, er_paths, targets
 ae_path = er_ae_path
 mxt_path = r'C:\\Users\\mikem\\PycharmProjects\\Python_Codes\\MXtalTools'
 
-max_dataset_length = 10000
+max_dataset_length = 100000
 if __name__ == '__main__':
     for er_path, target in zip(er_paths, targets):
         os.chdir(mxt_path)
@@ -24,6 +24,7 @@ if __name__ == '__main__':
         config['embedding_regressor']['prediction_type'] = target[1]
         config['embedding_regressor']['num_targets'] = target[2]
         config['dataset_name'] = 'test_' + target[3]
+        config['dataset']['test_fraction'] = 1
 
         with open('configs/analyses/analysis.yaml', 'w') as outfile:
             yaml.dump(config, outfile, default_flow_style=False)

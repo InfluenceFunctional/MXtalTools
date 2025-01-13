@@ -474,7 +474,7 @@ class Modeller:
         }
 
         '''initialize datasets and useful classes'''
-        train_loader, test_loader, _ = self.load_dataset_and_dataloaders(override_test_fraction=0.2)
+        train_loader, test_loader, _ = self.load_dataset_and_dataloaders()
         self.initialize_models_optimizers_schedulers()
 
         self.config.autoencoder_sigma = self.config.autoencoder.evaluation_sigma
@@ -507,16 +507,19 @@ class Modeller:
             with torch.no_grad():
                 self.epoch_type = 'train'
 
-                for i, data in enumerate(tqdm(train_loader, miniters=int(len(train_loader) / 25))):
-                    data = data.to(self.device)
-                    data.x = data.x.flatten()
-                    data, input_data = self.preprocess_ae_inputs(data,
-                                                                 noise=0.01,
-                                                                 no_noise=False)
-                    self.ae_step(input_data, data, update_weights, step=i, last_step=True)
+                if train_loader is not None:
+                    for i, data in enumerate(tqdm(train_loader, miniters=int(len(train_loader) / 25))):
+                        data = data.to(self.device)
+                        data.x = data.x.flatten()
+                        data, input_data = self.preprocess_ae_inputs(data,
+                                                                     noise=0.01,
+                                                                     no_noise=False)
+                        self.ae_step(input_data, data, update_weights, step=i, last_step=True)
 
-                # post epoch processing
-                self.logger.concatenate_stats_dict(self.epoch_type)
+                    # post epoch processing
+                    self.logger.concatenate_stats_dict(self.epoch_type)
+                else:
+                    self.logger.train_stats = None
 
                 self.epoch_type = 'test'
 
@@ -1366,7 +1369,7 @@ class Modeller:
                     self.config.dataset.otf_build_size,
                     self.config.dataset.smiles_source,
                     workdir=chunks_path,
-                    allowed_atom_types=list(self.dataDims['allowed_atom_types'].cpu().detach().numpy()),
+                    allowed_atom_types=[1, 6, 7, 8, 9], #list(self.dataDims['allowed_atom_types'].cpu().detach().numpy()),
                     num_processes=num_processes,
                     pool=self.mp_pool, max_num_atoms=30,
                     max_num_heavy_atoms=9, pare_to_size=9,
@@ -1431,7 +1434,7 @@ class Modeller:
                     self.config.dataset.otf_build_size,
                     self.config.dataset.smiles_source,
                     workdir=chunks_path,
-                    allowed_atom_types=list(self.dataDims['allowed_atom_types'].cpu().detach().numpy()),
+                    allowed_atom_types=[1, 6, 7, 8, 9], #list(self.dataDims['allowed_atom_types'].cpu().detach().numpy()),
                     num_processes=num_processes,
                     pool=self.mp_pool, max_num_atoms=30,
                     max_num_heavy_atoms=9, pare_to_size=9,

@@ -9,8 +9,8 @@ from mxtaltools.common.config_processing import load_yaml, process_main_config
 from mxtaltools.modeller import Modeller
 
 if __name__ == '__main__':
-    filter_protons = [False, True]
-    infer_protons = [False, False]
+    filter_protons = [False]#, True]
+    infer_protons = [False]#, False]
     max_dataset_length = 1000000000
 
     mxt_path = r'C:\\Users\\mikem\\PycharmProjects\\Python_Codes\\MXtalTools'
@@ -24,6 +24,7 @@ if __name__ == '__main__':
         config['autoencoder']['filter_protons'] = filter
         config['autoencoder']['infer_protons'] = infer
         config['dataset']['max_dataset_length'] = max_dataset_length
+        config['dataset']['test_fraction'] = 1
 
         with open('configs/analyses/analysis.yaml', 'w') as outfile:
             yaml.dump(config, outfile, default_flow_style=False)

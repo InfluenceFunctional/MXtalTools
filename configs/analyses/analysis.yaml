@@ -67,11 +67,11 @@ batch_growth_increment: 0.05
 checkpointing_loss_type: test
 dataset:
   filter_protons: false
-  max_dataset_length: 10000
+  max_dataset_length: 1000000000
   regression_target: null
-  test_fraction: 0.2
+  test_fraction: 1
   type: molecule
-dataset_name: test_qm9_dataset.pt
+dataset_name: eval_qm9_dataset.pt
 dataset_yaml_path: /qm9_autoencoder.yaml
 device: cuda
 early_epochs_step_override: 5
@@ -97,7 +97,7 @@ mode: autoencoder
 model_names:
 - autoencoder
 model_paths:
-  autoencoder: C:\Users\mikem\crystals\CSP_runs\models\cluster/best_autoencoder_experiments_autoencoder_tests_otf_zinc_test3_7_05-12-14-03-45
+  autoencoder: C:\Users\mikem\crystals\CSP_runs\models\ae_draft2_models_and_artifacts\autoencoder\with_protons.pt
   discriminator: null
   embedding_regressor: null
   generator: null

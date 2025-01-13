@@ -2,7 +2,7 @@ machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: autoencoder
-dataset_name: 'qm9_dataset.pt'
+dataset_name: 'eval_qm9_dataset.pt'
 misc_dataset_name: 'misc_data_for_qm9_dataset.npy'
 dataset_yaml_path: '/qm9_autoencoder.yaml' # '/dataset/full_discriminator.yaml' #
 extra_test_set_name: null

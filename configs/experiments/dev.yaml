@@ -55,11 +55,11 @@ model_paths:
   discriminator: null #best_discriminator_experiments_dev_27-09-19-24-55
   generator: null #cluster/best_generator_experiments_generator_tests_run1_dev_8_18-09-12-52-04
   regressor: null #'volume_model.pt'
-  autoencoder: cluster/best_autoencoder_experiments_autoencoder_tests_otf_zinc_test3_7_05-12-14-03-45
+  autoencoder: null #cluster/best_autoencoder_experiments_autoencoder_tests_otf_zinc_test3_7_05-12-14-03-45
   embedding_regressor: null
   polymorph_classifier: null # 'best_polymorph_classifier_experiments_dev_25-06-17-41-37'
 
 autoencoder:
   infer_protons: False
-  filter_protons: False
+  filter_protons: True
 
