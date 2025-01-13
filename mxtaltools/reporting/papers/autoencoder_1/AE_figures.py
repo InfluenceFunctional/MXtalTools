@@ -239,7 +239,7 @@ def UMAP_fig(max_entries=10000000):
     generate and plot embeddings
     correlate against molecule features - maybe a mixed colour scheme?
     """
-    stats_dict = np.load(ae_results_paths[0], allow_pickle=True).item()
+    stats_dict = np.load(ae_results_paths[-1], allow_pickle=True).item()
     import umap
     # combine train and test stats
     if stats_dict['train_stats'] is not None:
@@ -375,8 +375,8 @@ def UMAP_fig(max_entries=10000000):
         embedding /= embedding.max(0)
         fig2.add_trace(go.Scattergl(x=embedding[:, 0], y=embedding[:, 1],
                                     mode='markers',
-                                    opacity=.3,
-                                    marker_size=10,
+                                    opacity=.1,
+                                    marker_size=8,
                                     showlegend=False,
                                     marker_color=point_colors
                                     ), row=1, col=ind2 + 1)
@@ -749,8 +749,8 @@ def proxy_discriminator_figure():
 
 
 if __name__ == '__main__':
-    fig = RMSD_fig()
-    fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
+    # fig = RMSD_fig()
+    # fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
 
     fig2 = UMAP_fig(max_entries=100000000)
     fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)

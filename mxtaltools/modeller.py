@@ -460,7 +460,7 @@ class Modeller:
                 + self.config.model_paths.embedding_regressor.split("\\")[-1] + '_results.npy',
                 {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
 
-    def ae_analysis(self, save_results=True):
+    def ae_analysis(self, save_results=True, path_prepend = str()):
         """prep workdir"""
         self.source_directory = os.getcwd()
         self.prep_new_working_directory()
@@ -536,7 +536,7 @@ class Modeller:
 
             # save results
             if save_results:
-                np.save(self.config.model_paths.autoencoder[:-3] + '_results.npy',
+                np.save(self.config.model_paths.autoencoder[:-3] + path_prepend + '_results.npy',
                         {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
 
     def pd_analysis(self, samples_per_molecule: int = 1):

@@ -10,7 +10,7 @@ ae_paths = ['with_protons.pt',
             ]
 ae_results_paths = ['with_protons_results.npy',
                     #'without_protons_results.npy',
-                    #'inferred_protons_results.npy'
+                    'with_protonsfull__results.npy'
                     ]
 ae_paths = [ae_path.joinpath(path) for path in ae_paths]
 ae_results_paths = [ae_path.joinpath(path) for path in ae_results_paths]
