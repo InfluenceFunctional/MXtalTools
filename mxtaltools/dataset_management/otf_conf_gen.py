@@ -59,6 +59,7 @@ def async_generate_random_crystal_dataset(dataset_length, smiles_source, workdir
     chunk_ind = 0
     chunk_path = os.path.join(chunks_path, f'chunk_{chunk_ind}.pkl')
     print('running test chunk')
+    import torch
     print(torch.cuda.is_available())
     process_smiles_to_crystal_opt(
         chunks[chunk_ind], chunk_path, allowed_atom_types, 1, False,
