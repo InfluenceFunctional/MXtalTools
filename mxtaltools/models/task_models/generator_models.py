@@ -1,13 +1,14 @@
-import torch
 import os
+
 import numpy as np
-from torch import nn as nn
+import torch
 import torch.nn.functional as F
-from torch.distributions import MultivariateNormal, Uniform, LogNormal
+from torch import nn as nn
+from torch.distributions import MultivariateNormal, Uniform
 
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
 from mxtaltools.constants.space_group_feature_tensor import SG_FEATURE_TENSOR
-from mxtaltools.models.modules.components import vectorMLP, scalarMLP
+from mxtaltools.models.modules.components import scalarMLP
 from mxtaltools.models.utils import enforce_crystal_system, enforce_1d_bound, clean_cell_params
 
 
