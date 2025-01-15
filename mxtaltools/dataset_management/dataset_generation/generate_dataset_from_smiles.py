@@ -81,64 +81,64 @@ def process_smiles_to_crystal_opt(lines: list,
     normed_cell_params = crystal_generator(mol_batch.num_graphs, space_group * torch.ones(mol_batch.num_graphs))
     mol_batch.sg_ind = space_group * torch.ones(mol_batch.num_graphs)
 
-    # print('''batch compute vdw volume''')
-    # vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()), device='cpu')
-    # mol_batch.mol_volume = batch_molecule_vdW_volume(mol_batch.x.flatten(),
-    #                                                  mol_batch.pos,
-    #                                                  mol_batch.batch,
-    #                                                  mol_batch.num_graphs,
-    #                                                  vdw_radii_tensor)
-    #
-    # print('''do local opt''')
-    # opt_vdw_pot, opt_vdw_loss, opt_packing_coeff, opt_cell_params, opt_aunits = standalone_opt_random_crystals(
-    #     mol_batch.clone().cpu(),
-    #     normed_cell_params.cpu(),
-    #     opt_eps=1e-1,
-    #     post_scramble_each=10,
-    #     device='cpu',
-    # )
-    #
-    # print('''extract samples''')
-    # samples = []
-    # for graph_ind in range(mol_batch.num_graphs):
-    #     graph_inds = mol_batch.batch == graph_ind
-    #     for sample_ind in range(len(opt_vdw_pot)):
-    #         cell_params = opt_cell_params[sample_ind, graph_ind]
-    #         sample = CrystalData(
-    #             x=mol_batch.x[graph_inds],
-    #             pos=opt_aunits[sample_ind, graph_inds],
-    #             smiles=mol_batch.smiles[graph_ind],
-    #             identifier=mol_batch.smiles[graph_ind],
-    #             y=torch.zeros(1, dtype=torch.float32),
-    #             require_crystal_features=True,
-    #             sg_ind=int(mol_batch.sg_ind[graph_ind]),
-    #             z_prime=1,
-    #             cell_lengths=cell_params[:3],
-    #             cell_angles=cell_params[3:6],
-    #             pose_parameters=cell_params[None, 6:],
-    #             vdw_pot=opt_vdw_pot[sample_ind, graph_ind],
-    #             vdw_loss=opt_vdw_loss[sample_ind, graph_ind],
-    #             packing_coeff=opt_packing_coeff[sample_ind, graph_ind]
-    #         )
-    #
-    #         samples.append(sample)
-    #
-    # print(f"finished processing smiles list with {mol_batch.num_graphs} "
-    #       f"molecules and optimizing crystals with {len(samples)} samples")
-    # if run_tests:
-    #     test_crystal_rebuild_from_embedding(
-    #         mol_batch,
-    #         opt_vdw_pot,
-    #         opt_vdw_loss,
-    #         opt_aunits,
-    #         opt_cell_params,
-    #         denorm=False,
-    #         destd=False,
-    #         renorm=False,
-    #         restd=False,
-    #         make_figs=False,
-    #     )
-    # torch.save(samples, file_path)
+    print('''batch compute vdw volume''')
+    vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()), device='cpu')
+    mol_batch.mol_volume = batch_molecule_vdW_volume(mol_batch.x.flatten(),
+                                                     mol_batch.pos,
+                                                     mol_batch.batch,
+                                                     mol_batch.num_graphs,
+                                                     vdw_radii_tensor)
+
+    print('''do local opt''')
+    opt_vdw_pot, opt_vdw_loss, opt_packing_coeff, opt_cell_params, opt_aunits = standalone_opt_random_crystals(
+        mol_batch.clone().cpu(),
+        normed_cell_params.cpu(),
+        opt_eps=1e-1,
+        post_scramble_each=10,
+        device='cpu',
+    )
+
+    print('''extract samples''')
+    samples = []
+    for graph_ind in range(mol_batch.num_graphs):
+        graph_inds = mol_batch.batch == graph_ind
+        for sample_ind in range(len(opt_vdw_pot)):
+            cell_params = opt_cell_params[sample_ind, graph_ind]
+            sample = CrystalData(
+                x=mol_batch.x[graph_inds],
+                pos=opt_aunits[sample_ind, graph_inds],
+                smiles=mol_batch.smiles[graph_ind],
+                identifier=mol_batch.smiles[graph_ind],
+                y=torch.zeros(1, dtype=torch.float32),
+                require_crystal_features=True,
+                sg_ind=int(mol_batch.sg_ind[graph_ind]),
+                z_prime=1,
+                cell_lengths=cell_params[:3],
+                cell_angles=cell_params[3:6],
+                pose_parameters=cell_params[None, 6:],
+                vdw_pot=opt_vdw_pot[sample_ind, graph_ind],
+                vdw_loss=opt_vdw_loss[sample_ind, graph_ind],
+                packing_coeff=opt_packing_coeff[sample_ind, graph_ind]
+            )
+
+            samples.append(sample)
+
+    print(f"finished processing smiles list with {mol_batch.num_graphs} "
+          f"molecules and optimizing crystals with {len(samples)} samples")
+    if run_tests:
+        test_crystal_rebuild_from_embedding(
+            mol_batch,
+            opt_vdw_pot,
+            opt_vdw_loss,
+            opt_aunits,
+            opt_cell_params,
+            denorm=False,
+            destd=False,
+            renorm=False,
+            restd=False,
+            make_figs=False,
+        )
+    torch.save(samples, file_path)
 
 
 def test_crystal_rebuild_from_embedding(mol_batch,
