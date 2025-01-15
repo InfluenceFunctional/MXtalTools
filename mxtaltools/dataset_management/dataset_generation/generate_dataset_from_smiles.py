@@ -81,13 +81,13 @@ def process_smiles_to_crystal_opt(lines: list,
     normed_cell_params = crystal_generator(mol_batch.num_graphs, space_group * torch.ones(mol_batch.num_graphs))
     mol_batch.sg_ind = space_group * torch.ones(mol_batch.num_graphs)
 
-    # print('''batch compute vdw volume''')
-    # vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()), device='cpu')
-    # mol_batch.mol_volume = batch_molecule_vdW_volume(mol_batch.x.flatten(),
-    #                                                  mol_batch.pos,
-    #                                                  mol_batch.batch,
-    #                                                  mol_batch.num_graphs,
-    #                                                  vdw_radii_tensor)
+    print('''batch compute vdw volume''')
+    vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()), device='cpu')
+    mol_batch.mol_volume = batch_molecule_vdW_volume(mol_batch.x.flatten(),
+                                                     mol_batch.pos,
+                                                     mol_batch.batch,
+                                                     mol_batch.num_graphs,
+                                                     vdw_radii_tensor)
 
     # print('''do local opt''')
     # opt_vdw_pot, opt_vdw_loss, opt_packing_coeff, opt_cell_params, opt_aunits = standalone_opt_random_crystals(
