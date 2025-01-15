@@ -1430,7 +1430,7 @@ class Modeller:
         if len(os.listdir(chunks_path)) == 0:  # only make a new batch if the previous batch has been integrated
             if self.logger.epoch == 0 or self.integrated_dataset == True:
                 print('sending crystal opt jobs to mp pool')
-                self.mp_pool = mp.Pool(num_processes)
+                self.mp_pool = None #mp.Pool(num_processes)
                 self.mp_pool = async_generate_random_crystal_dataset(
                     self.config.dataset.otf_build_size,
                     self.config.dataset.smiles_source,
