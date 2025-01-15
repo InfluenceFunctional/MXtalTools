@@ -67,20 +67,20 @@ def process_smiles_to_crystal_opt(lines: list,
     mol_samples = process_smiles_list(lines, allowed_atom_types, **conf_kwargs)
     if len(mol_samples) == 0:
         assert False, "Zero valid molecules in batch, increase crystal generation batch size"
-    #
-    # collater = Collater()
-    # mol_batch = collater(mol_samples)
-    #
-    # print('''sample random crystals''')
-    # crystal_generator = CSDPrior(
-    #     sym_info=init_sym_info(),
-    #     device="cpu",
-    #     cell_means=None,
-    #     cell_stds=None,
-    #     lengths_cov_mat=None)
-    # normed_cell_params = crystal_generator(mol_batch.num_graphs, space_group * torch.ones(mol_batch.num_graphs))
-    # mol_batch.sg_ind = space_group * torch.ones(mol_batch.num_graphs)
-    #
+
+    collater = Collater()
+    mol_batch = collater(mol_samples)
+
+    print('''sample random crystals''')
+    crystal_generator = CSDPrior(
+        sym_info=init_sym_info(),
+        device="cpu",
+        cell_means=None,
+        cell_stds=None,
+        lengths_cov_mat=None)
+    normed_cell_params = crystal_generator(mol_batch.num_graphs, space_group * torch.ones(mol_batch.num_graphs))
+    mol_batch.sg_ind = space_group * torch.ones(mol_batch.num_graphs)
+
     # print('''batch compute vdw volume''')
     # vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()), device='cpu')
     # mol_batch.mol_volume = batch_molecule_vdW_volume(mol_batch.x.flatten(),
