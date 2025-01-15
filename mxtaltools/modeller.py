@@ -1442,6 +1442,8 @@ class Modeller:
                     max_radius=15, synchronize=True)
                 self.integrated_dataset = False
 
+        assert False, "stop for debugging"
+
         # if a batch is finished, merge it with our existing dataset
         if len(os.listdir(chunks_path)) >= num_processes:  # only integrate when the batch is exactly complete
             self.times['otf_dataset_join_start'] = time()
