@@ -164,8 +164,8 @@ config_list = [
             'nearest_component_loss_coefficient': 0.1,
             'optimizer': {
                 'init_lr': 5e-5,
-                'encoder_init_lr': 1e-4,
-                'decoder_init_lr': 1e-4,
+                'encoder_init_lr': 5e-5,
+                'decoder_init_lr': 5e-5,
                 'max_lr': 1e-3,
                 'min_lr': 1e-6,
                 'weight_decay': 0.005,
@@ -197,7 +197,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 2 - going back to best baseline, tight bottleneck, fat layers
+    },  # 3 - going back to best baseline, tight bottleneck, fat layers
 
 ]
 

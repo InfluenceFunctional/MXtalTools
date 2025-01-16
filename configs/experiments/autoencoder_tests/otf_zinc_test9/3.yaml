@@ -49,8 +49,8 @@ autoencoder:
     beta1: 0.9
     beta2: 0.999
     convergence_eps: 1.0e-07
-    decoder_init_lr: 0.0001
-    encoder_init_lr: 0.0001
+    decoder_init_lr: 5.0e-05
+    encoder_init_lr: 5.0e-05
     init_lr: 5.0e-05
     lr_growth_lambda: 1.1
     lr_schedule: true
