@@ -49,8 +49,8 @@ autoencoder:
     beta1: 0.9
     beta2: 0.999
     convergence_eps: 1.0e-07
-    decoder_init_lr: 5.0e-05
-    encoder_init_lr: 5.0e-05
+    decoder_init_lr: 0.0001
+    encoder_init_lr: 0.0001
     init_lr: 5.0e-05
     lr_growth_lambda: 1.1
     lr_schedule: true
@@ -105,7 +105,7 @@ model_paths:
 num_early_epochs: 0
 overfit_tolerance: 4
 positional_noise:
-  autoencoder: 0.1
+  autoencoder: 0.05
   discriminator: 0
   generator: 0
   regressor: 0

@@ -152,7 +152,7 @@ config_list = [
     },  # 2 - going back to best baseline, tight bottleneck, fat layers
     {
         'dataset': {'otf_build_size': 10000},
-        'positional_noise': {'autoencoder': 0.1},
+        'positional_noise': {'autoencoder': 0.05},
         'autoencoder': {
             'affine_scale_factor': 1,
             'filter_protons': True,
@@ -164,8 +164,8 @@ config_list = [
             'nearest_component_loss_coefficient': 0.1,
             'optimizer': {
                 'init_lr': 5e-5,
-                'encoder_init_lr': 5e-5,
-                'decoder_init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
                 'max_lr': 1e-3,
                 'min_lr': 1e-6,
                 'weight_decay': 0.005,

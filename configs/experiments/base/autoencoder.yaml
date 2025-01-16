@@ -66,7 +66,7 @@ autoencoder:
   weight_constraint_factor: 0.9
   affine_scale_factor: 1  # null or float
   infer_protons: False
-  filter_protons: True
+  filter_protons: False
   nearest_node_loss_coefficient: 0.01
   clumping_loss_coefficient: 0.01
   nearest_component_loss_coefficient: 1

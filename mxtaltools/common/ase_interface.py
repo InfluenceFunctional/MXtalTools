@@ -144,7 +144,11 @@ def ase_mol_from_crystaldata(data,
             numbers = data.x[atom_inds].cpu().detach().numpy()
 
     if index is not None:
-        cell = data.T_fc[index].T.cpu().detach().numpy()
+        try:
+            cell = data.T_fc[index].T.cpu().detach().numpy()
+        except IndexError:
+            cell = data.T_fc[0].T.cpu().detach().numpy()
+
     else:
         cell = data.T_fc[0].T.cpu().detach().numpy()
 
