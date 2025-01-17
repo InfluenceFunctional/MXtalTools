@@ -152,9 +152,9 @@ config_list = [
     },  # 2 - going back to best baseline, tight bottleneck, fat layers
     {
         'dataset': {'otf_build_size': 10000},
-        'positional_noise': {'autoencoder': 0.05},
+        'positional_noise': {'autoencoder': 0.001},
         'autoencoder': {
-            'affine_scale_factor': 1,
+            'affine_scale_factor': None,
             'filter_protons': True,
             'infer_protons': False,
             'sigma_threshold': 0.15,

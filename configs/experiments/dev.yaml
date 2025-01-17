@@ -108,7 +108,7 @@ model_paths:
 num_early_epochs: 0
 overfit_tolerance: 4
 positional_noise:
-  autoencoder: 0.1
+  autoencoder: 0.01
   discriminator: 0
   generator: 0
   regressor: 0
