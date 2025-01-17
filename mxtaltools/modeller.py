@@ -460,7 +460,7 @@ class Modeller:
                 + self.config.model_paths.embedding_regressor.split("\\")[-1] + '_results.npy',
                 {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
 
-    def ae_analysis(self, save_results=True, path_prepend = str()):
+    def ae_analysis(self, save_results=True, path_prepend=str()):
         """prep workdir"""
         self.source_directory = os.getcwd()
         self.prep_new_working_directory()
@@ -1369,7 +1369,8 @@ class Modeller:
                     self.config.dataset.otf_build_size,
                     self.config.dataset.smiles_source,
                     workdir=chunks_path,
-                    allowed_atom_types=[1, 6, 7, 8, 9], #list(self.dataDims['allowed_atom_types'].cpu().detach().numpy()),
+                    allowed_atom_types=[1, 6, 7, 8, 9],
+                    #list(self.dataDims['allowed_atom_types'].cpu().detach().numpy()),
                     num_processes=num_processes,
                     pool=self.mp_pool, max_num_atoms=30,
                     max_num_heavy_atoms=9, pare_to_size=9,
@@ -1435,7 +1436,8 @@ class Modeller:
                     self.config.dataset.otf_build_size,
                     self.config.dataset.smiles_source,
                     workdir=chunks_path,
-                    allowed_atom_types=[1, 6, 7, 8, 9], #list(self.dataDims['allowed_atom_types'].cpu().detach().numpy()),
+                    allowed_atom_types=[1, 6, 7, 8, 9],
+                    #list(self.dataDims['allowed_atom_types'].cpu().detach().numpy()),
                     num_processes=num_processes,
                     pool=self.mp_pool, max_num_atoms=30,
                     max_num_heavy_atoms=9, pare_to_size=9,
@@ -2178,16 +2180,20 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
             ], dim=1)
             mol_batch.y = self._embed_mol(mol_batch, mol_batch.pos, cell_params)
 
-        prediction = self.models_dict['proxy_discriminator'](x=mol_batch.y[:, :-3])[:, 0]  # cut trailing 3 dimensions for P1 modelling
+        prediction = self.models_dict['proxy_discriminator'](x=mol_batch.y[:, :-3])[:,
+                     0]  # cut trailing 3 dimensions for P1 modelling
 
         discriminator_losses = F.smooth_l1_loss(prediction.flatten(),
-                                                (mol_batch.vdw_loss.flatten() - self.models_dict['proxy_discriminator'].target_mean) / self.models_dict['proxy_discriminator'].target_std,
+                                                (mol_batch.vdw_loss.flatten() - self.models_dict[
+                                                    'proxy_discriminator'].target_mean) / self.models_dict[
+                                                    'proxy_discriminator'].target_std,
                                                 reduction='none')
 
         discriminator_loss = discriminator_losses.mean()
 
         if update_weights and (not skip_step):
-            self.optimizers_dict['proxy_discriminator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
+            self.optimizers_dict['proxy_discriminator'].zero_grad(
+                set_to_none=True)  # reset gradients from previous passes
             if self.config.proxy_discriminator.embedding_type == 'autoencoder' and self.config.proxy_discriminator.train_encoder:
                 self.optimizers_dict['autoencoder'].zero_grad(
                     set_to_none=True)  # reset gradients from previous passes
@@ -2207,7 +2213,8 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
 
         if not skip_stats:
             stats = {
-                'vdw_prediction': (prediction * self.models_dict['proxy_discriminator'].target_std + self.models_dict['proxy_discriminator'].target_mean).detach(),
+                'vdw_prediction': (prediction * self.models_dict['proxy_discriminator'].target_std + self.models_dict[
+                    'proxy_discriminator'].target_mean).detach(),
                 'vdw_score': mol_batch.vdw_loss.detach(),
             }
 
@@ -3039,7 +3046,7 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
         for model_name in self.model_names:
             if self.config.__dict__[model_name].optimizer is not None:
                 if override_lr is not None:
-                    override =override_lr[model_name]
+                    override = override_lr[model_name]
                 else:
                     override = None
                 self.optimizers_dict[model_name], learning_rate = set_lr(

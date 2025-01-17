@@ -12,12 +12,12 @@ autoencoder:
       activation: gelu
       fc:
         dropout: 0
-        hidden_dim: 128
+        hidden_dim: 64
         norm: layer
         num_layers: 4
-        vector_norm: null
+        vector_norm: vector layer
       model_type: gnn
-      num_nodes: 64
+      num_nodes: 32
       ramp_depth: true
     encoder:
       activation: gelu
@@ -31,17 +31,17 @@ autoencoder:
         atom_type_embedding_dim: 32
         cutoff: 3
         dropout: 0
-        embedding_dim: 512
+        embedding_dim: 256
         envelope_exponent: 5
         fcs_per_gc: 2
         max_num_neighbors: 100
         message_dim: 64
-        node_dim: 512
+        node_dim: 256
         norm: graph layer
         num_convs: 2
         num_radial: 50
         radial_embedding: bessel
-        vector_norm: null
+        vector_norm: graph vector layer
   nearest_component_loss_coefficient: 0.1
   nearest_node_loss_coefficient: 0.01
   node_weight_temperature: 1

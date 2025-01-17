@@ -86,20 +86,20 @@ autoencoder:
     init_lr: 5.0E-5  # dummy
     encoder_init_lr: 1.0E-4
     decoder_init_lr: 1.0E-4
-    max_lr: 1.0E-6
+    max_lr: 1.0E-1
     min_lr: 1.0E-6
     lr_schedule: True
     beta1: 0.9
     beta2: 0.999
     weight_decay: 0.05
     convergence_eps: 1.0E-5
-    lr_growth_lambda: 1.05
+    lr_growth_lambda: 1.5
     lr_shrink_lambda: 0.99
     use_plateau_scheduler: False
     overwrite_on_reload: False
 
   model:
-    bottleneck_dim: 128
+    bottleneck_dim: 64
     encoder:
       activation: 'gelu'
       graph:
@@ -109,7 +109,7 @@ autoencoder:
         num_convs: 2
         fcs_per_gc: 2
         num_radial: 50
-        norm: null
+        norm: 'graph layer'
         dropout: 0
         vector_norm: null
 
@@ -133,7 +133,7 @@ autoencoder:
         hidden_dim: 128
         num_layers: 4
         dropout: 0
-        norm: null
+        norm: 'layer'
         vector_norm: null
 
       num_nodes: 64

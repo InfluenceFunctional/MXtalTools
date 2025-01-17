@@ -176,26 +176,26 @@ config_list = [
                 'bottleneck_dim': 64,
                 'encoder': {
                     'graph': {
-                        'node_dim': 512,
+                        'node_dim': 256,
                         'message_dim': 64,
-                        'embedding_dim': 512,
+                        'embedding_dim': 256,
                         'num_convs': 2,
                         'fcs_per_gc': 2,
                         'dropout': 0,
                         'cutoff': 3,
                         'norm': 'graph layer',
-                        'vector_norm': None,
+                        'vector_norm': 'graph vector layer',
                     }},
                 'decoder': {
                     'model_type': 'gnn',
                     'fc': {
-                        'hidden_dim': 128,
+                        'hidden_dim': 64,
                         'num_layers': 4,
                         'dropout': 0,
                         'norm': 'layer',
-                        'vector_norm': None,
+                        'vector_norm': 'vector layer',
                     },
-                    'num_nodes': 64
+                    'num_nodes': 32
                 }}}
     },  # 3 - going back to best baseline, tight bottleneck, fat layers
 
