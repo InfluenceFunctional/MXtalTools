@@ -1162,6 +1162,8 @@ class Modeller:
             torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
                                            self.config.gradient_norm_clip)  # gradient clipping by norm
             self.optimizers_dict['autoencoder'].step()  # update parameters
+            if not torch.stack([torch.isfinite(p).any() for p in self.models_dict['autoencoder'].parameters()]).all():
+                raise ValueError("Numerical Error: model has NaN weights!")
 
         if not skip_stats:
             if self.always_do_analysis:
@@ -3079,6 +3081,9 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
                     self.models_dict[model_name], self.device, self.optimizers_dict[model_name],
                     model_path
                 )
+
+                if not torch.stack([torch.isfinite(p).any() for p in self.models_dict[model_name].parameters()]).all():
+                    assert False, "Reloaded model contains NaN weights! Something really wrong happened"
 
     def reload_model_checkpoint_configs(self):
         for model_name, model_path in self.config.model_paths.__dict__.items():

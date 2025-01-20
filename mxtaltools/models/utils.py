@@ -127,13 +127,13 @@ def init_optimizer(model_name, optim_config, model, amsgrad=False, freeze_params
         beta2 = 0.99
         weight_decay = 0.01
         momentum = 0
-        optimizer = 'adam'
+        optimizer_name = 'adam'
         init_lr = 1e-3
     else:
         beta1 = optim_config.beta1  # 0.9
         beta2 = optim_config.beta2  # 0.999
         weight_decay = optim_config.weight_decay  # 0.01
-        optimizer = optim_config.optimizer
+        optimizer_name = optim_config.optimizer
         init_lr = optim_config.init_lr
 
     amsgrad = amsgrad
@@ -143,7 +143,7 @@ def init_optimizer(model_name, optim_config, model, amsgrad=False, freeze_params
             assert False, "params freezing not implemented for autoencoder"
 
         params_dict = [
-            {'params': model.encoder.parameters(), 'lr': optim_config.encoder_init_lr},
+            {'params': list(model.scalarizer.parameters()) + list(model.encoder.parameters()), 'lr': optim_config.encoder_init_lr},
             {'params': model.decoder.parameters(), 'lr': optim_config.decoder_init_lr}
         ]
 
@@ -153,13 +153,13 @@ def init_optimizer(model_name, optim_config, model, amsgrad=False, freeze_params
         else:
             params_dict = model.parameters()
 
-    if optimizer.lower() == 'adam':
+    if optimizer_name.lower() == 'adam':
         optimizer = optim.Adam(params_dict, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2),
                                weight_decay=weight_decay)
-    elif optimizer.lower() == 'adamw':
+    elif optimizer_name.lower() == 'adamw':
         optimizer = optim.AdamW(params_dict, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2),
                                 weight_decay=weight_decay)
-    elif optimizer.lower() == 'sgd':
+    elif optimizer_name.lower() == 'sgd':
         optimizer = optim.SGD(params_dict, lr=init_lr, momentum=momentum, weight_decay=weight_decay)
     else:
         print(optim_config.optimizer + ' is not a valid optimizer')

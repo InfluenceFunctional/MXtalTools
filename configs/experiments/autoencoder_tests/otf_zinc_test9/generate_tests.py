@@ -6,7 +6,7 @@ import os
 base_config = load_yaml('base.yaml')
 
 config_list = [
-       {
+    {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
         'autoencoder': {
@@ -152,7 +152,7 @@ config_list = [
     },  # 2 - going back to best baseline, tight bottleneck, fat layers
     {
         'dataset': {'otf_build_size': 10000},
-        'positional_noise': {'autoencoder': 0.001},
+        'positional_noise': {'autoencoder': 0.1},
         'autoencoder': {
             'affine_scale_factor': None,
             'filter_protons': True,
@@ -197,8 +197,103 @@ config_list = [
                     },
                     'num_nodes': 32
                 }}}
-    },  # 3 - going back to best baseline, tight bottleneck, fat layers
-
+    },  # 3 - 2 without protons
+    {
+        'dataset': {'otf_build_size': 10000},
+        'positional_noise': {'autoencoder': 0.1},
+        'autoencoder': {
+            'affine_scale_factor': 1,
+            'filter_protons': False,
+            'infer_protons': False,
+            'sigma_threshold': 0.15,
+            'init_sigma': 2,
+            'nearest_node_loss_coefficient': 0.01,
+            'clumping_loss_coefficient': 0.01,
+            'nearest_component_loss_coefficient': 0.1,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.005,
+                'lr_growth_lambda': 1.1,
+                'lr_shrink_lambda': 0.985,
+            },
+            'model': {
+                'bottleneck_dim': 64,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 64,
+                        'embedding_dim': 512,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': None,
+                        'vector_norm': None,
+                    }},
+                'decoder': {
+                    'model_type': 'gnn',
+                    'fc': {
+                        'hidden_dim': 128,
+                        'num_layers': 4,
+                        'dropout': 0,
+                        'norm': None,
+                        'vector_norm': None,
+                    },
+                    'num_nodes': 64
+                }}}
+    },  # 4 - 2 without norms
+    {
+        'dataset': {'otf_build_size': 10000},
+        'positional_noise': {'autoencoder': 0.1},
+        'autoencoder': {
+            'affine_scale_factor': 1,
+            'filter_protons': False,
+            'infer_protons': False,
+            'sigma_threshold': 0.15,
+            'init_sigma': 2,
+            'nearest_node_loss_coefficient': 0.01,
+            'clumping_loss_coefficient': 0.01,
+            'nearest_component_loss_coefficient': 0.1,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.005,
+                'lr_growth_lambda': 1.1,
+                'lr_shrink_lambda': 0.985,
+            },
+            'model': {
+                'bottleneck_dim': 64,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 128,
+                        'embedding_dim': 512,
+                        'num_convs': 4,
+                        'fcs_per_gc': 1,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': 'graph layer',
+                        'vector_norm': None,
+                    }},
+                'decoder': {
+                    'model_type': 'gnn',
+                    'fc': {
+                        'hidden_dim': 128,
+                        'num_layers': 4,
+                        'dropout': 0,
+                        'norm': 'layer',
+                        'vector_norm': None,
+                    },
+                    'num_nodes': 64
+                }}}
+    },  # 5 - 2, even bigger
 ]
 
 '''
