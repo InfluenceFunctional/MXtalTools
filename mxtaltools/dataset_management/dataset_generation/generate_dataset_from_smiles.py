@@ -303,7 +303,8 @@ def process_smiles(smile: str,
                    protonate: bool = True,
                    rotamers_per_sample: int = 1,
                    allow_simple_hydrogen_rotations: bool = False,
-                   pare_to_size: Optional[int] = None):
+                   pare_to_size: Optional[int] = None,
+                   min_num_heavy_atoms: int = 5):
     if rotamers_per_sample > 1:
         assert False, "Multiple rotamers not implemented"
     coords, atom_types, mask_rotate, mask_edges = generate_random_conformers_from_smiles(
@@ -337,13 +338,13 @@ def process_smiles(smile: str,
     # molecule sizes filter
     if np.sum(atom_types > 1) > max_num_heavy_atoms:
         return None, "too many heavy atoms"
-    elif len(atom_types) < 5:
-        return None, "too few atoms"
+    elif np.sum(atom_types > 1) < min_num_heavy_atoms:
+        return None, "too few heavy atoms"
     elif len(atom_types) > max_num_atoms:
         return None, "too many atoms"
 
     # atom types filter
-    if not set(atom_types).issubset(allowed_atom_types):  #[1, 5, 6, 7, 8, 9, 14, 15, 16, 17, 35, 53]):
+    if not set(atom_types).issubset(allowed_atom_types):
         return None, "invalid atom types"
 
     sample = CrystalData(
