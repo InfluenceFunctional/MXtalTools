@@ -256,6 +256,7 @@ class Mo3ENetGraphDecoder(nn.Module):
         self.v_to_pos = nn.Linear(bottleneck_dim, num_nodes, bias=False)
 
     def forward(self, x, v):
+        eps = 1e-2
         num_graphs = len(x)
 
         # all combinations of edges within each graph
@@ -273,7 +274,7 @@ class Mo3ENetGraphDecoder(nn.Module):
 
         x = self.s_to_nodes(x).reshape(num_graphs * self.num_nodes, self.hidden_dim)
         directions = self.v_to_pos(v).permute(0, 2, 1).reshape(num_graphs * self.num_nodes, 3, 1)[..., 0]
-        pos = directions / (1e-4 + torch.linalg.norm(directions, dim=1))[:, None]
+        pos = directions / (eps + torch.linalg.norm(directions, dim=1))[:, None]
         v = self.v_to_nodes(v).permute(0, 2, 1).reshape(num_graphs * self.num_nodes, self.hidden_dim, 3).permute(0, 2, 1)
 
         return self.model(x, v, pos, batch, edges_dict)

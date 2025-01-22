@@ -70,7 +70,7 @@ autoencoder:
 base_config_path: /experiments/base/autoencoder.yaml
 batch_growth_increment: 0.05
 dataset:
-  max_dataset_length: 5000
+  max_dataset_length: 200000
   num_processes: 4
   otf_build_size: 10000
   smiles_source: 'D:\crystal_datasets\zinc22'
@@ -105,7 +105,7 @@ model_paths:
 num_early_epochs: 0
 overfit_tolerance: 4
 positional_noise:
-  autoencoder: 0.001
+  autoencoder: 0.1
   discriminator: 0
   generator: 0
   regressor: 0
