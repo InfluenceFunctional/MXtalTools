@@ -256,7 +256,7 @@ class Mo3ENetGraphDecoder(nn.Module):
         self.v_to_pos = nn.Linear(bottleneck_dim, num_nodes, bias=False)
 
     def forward(self, x, v):
-        eps = 1e-2
+        eps = 1e-1
         num_graphs = len(x)
 
         # all combinations of edges within each graph

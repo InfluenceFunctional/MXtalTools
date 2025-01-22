@@ -1161,6 +1161,12 @@ class Modeller:
             mean_loss.backward()  # back-propagation
             if not torch.stack([torch.isfinite(p.grad).any() if p.grad is not None else torch.isfinite(torch.ones_like(p)).any() for p in self.models_dict['autoencoder'].parameters()]).all():
                 raise ValueError("Numerical Error: model has NaN gradients!")
+
+                '''
+                pp = {name:bool(torch.isfinite(p.grad).any()) if p.grad is not None else None for name, p in self.models_dict['autoencoder'].named_parameters()}
+                for key in pp.keys():
+                    print(key, pp[key])
+                '''
             torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
                                            self.config.gradient_norm_clip)  # gradient clipping by norm
             self.optimizers_dict['autoencoder'].step()  # update parameters
