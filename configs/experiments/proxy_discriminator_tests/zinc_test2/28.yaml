@@ -27,11 +27,11 @@ logger:
   experiment_tag: zinc_test2
   log_figures: true
   mini_csp_frequency: 5
-  run_name: zinc_test2_0
+  run_name: zinc_test2_0_1_2_3_4_5_6_7_8_9_10_11_12_13_14_15_16_17_18_19_20_21_22_23_24_25_26_27_28
   sample_reporting_frequency: 25
   stats_reporting_frequency: 25
 machine: cluster
-max_batch_size: 1000
+max_batch_size: 100000
 max_epochs: 10000
 min_batch_size: 50
 minimum_epochs: 100000
@@ -57,13 +57,13 @@ positional_noise:
   regressor: 0
 proxy_discriminator:
   cutoff: 6
-  embedding_type: autoencoder
+  embedding_type: mol_volume
   model:
     depth: 256
     dropout: 0
     hidden_dim: 256
     norm: null
-    num_layers: 8
+    num_layers: 32
     vector_norm: null
   optimizer:
     beta1: 0.9

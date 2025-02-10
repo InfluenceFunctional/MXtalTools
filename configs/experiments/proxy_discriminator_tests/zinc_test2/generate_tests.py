@@ -22,9 +22,9 @@ to-test:
 -: embedding type
 """
 
-layers = [8, 16, 32]
-filters = [256, 512, 1024]
-batch_sizes = [1000, 10000, 100000]
+layers = [8, 32]
+filters = [256, 512]
+batch_sizes = [1000, 100000]
 
 default_config = {
         'num_layers': 2,
@@ -38,18 +38,20 @@ default_config = {
         'lr_growth_lambda': 1.01,
         'lr_shrink_lambda': 0.99975,
         'weight_decay': 0.0001,
-        'device': 'cpu',
+        'device': 'cuda',
     }  # 0 - baseline
 
 configs = []
 for l in layers:
     for f in filters:
         for b in batch_sizes:
-            config = copy(default_config)
-            config['num_layers'] = l
-            config['depth'] = f
-            config['max_batch_size'] = b
-            configs.append(config)
+            for embed in embedding_types:
+                config = copy(default_config)
+                config['embedding_type'] = embed
+                config['num_layers'] = l
+                config['depth'] = f
+                config['max_batch_size'] = b
+                configs.append(config)
 
 """ findings
 

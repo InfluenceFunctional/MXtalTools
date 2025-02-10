@@ -14,7 +14,7 @@ dataset:
   type: molecule
 dataset_name: test_pd_dataset.pt
 dataset_yaml_path: /proxy_discriminator.yaml
-device: cpu
+device: cuda
 early_epochs_step_override: 5
 extra_test_period: 1
 generate_sgs:
@@ -59,7 +59,7 @@ proxy_discriminator:
   cutoff: 6
   embedding_type: principal_axes
   model:
-    depth: 512
+    depth: 256
     dropout: 0
     hidden_dim: 256
     norm: null

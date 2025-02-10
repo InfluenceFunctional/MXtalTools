@@ -14,7 +14,7 @@ dataset:
   type: molecule
 dataset_name: test_pd_dataset.pt
 dataset_yaml_path: /proxy_discriminator.yaml
-device: cpu
+device: cuda
 early_epochs_step_override: 5
 extra_test_period: 1
 generate_sgs:
@@ -31,7 +31,7 @@ logger:
   sample_reporting_frequency: 25
   stats_reporting_frequency: 25
 machine: cluster
-max_batch_size: 10000
+max_batch_size: 100000
 max_epochs: 10000
 min_batch_size: 50
 minimum_epochs: 100000
@@ -57,9 +57,9 @@ positional_noise:
   regressor: 0
 proxy_discriminator:
   cutoff: 6
-  embedding_type: principal_axes
+  embedding_type: autoencoder
   model:
-    depth: 1024
+    depth: 256
     dropout: 0
     hidden_dim: 256
     norm: null
