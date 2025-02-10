@@ -2191,8 +2191,7 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
             ], dim=1)
             mol_batch.y = self._embed_mol(mol_batch, mol_batch.pos, cell_params)
 
-        prediction = self.models_dict['proxy_discriminator'](x=mol_batch.y[:, :-3])[:,
-                     0]  # cut trailing 3 dimensions for P1 modelling
+        prediction = self.models_dict['proxy_discriminator'](x=mol_batch.y[:, :-3])[:,0]  # cut trailing 3 dimensions for P1 modelling
 
         discriminator_losses = F.smooth_l1_loss(prediction.flatten(),
                                                 (mol_batch.vdw_loss.flatten() - self.models_dict[

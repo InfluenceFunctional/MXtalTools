@@ -363,7 +363,7 @@ def compute_reduced_volume_fraction(cell_lengths: torch.tensor,
     return (cell_volumes / crystal_multiplicity) / scatter(4 / 3 * torch.pi * atom_radii ** 3, batch, reduce='sum')
 
 
-def compute_num_h_bonds(supercell_data, atom_acceptor_ind, atom_donor_ind, i):
+def old_compute_num_h_bonds(supercell_data, atom_acceptor_ind, atom_donor_ind, i):
     """
     compute the number of hydrogen bonds, up to a loose range (3.3 angstroms), and non-directionally
     @param atom_donor_ind: index in tracking_features to find donor status
@@ -387,6 +387,107 @@ def compute_num_h_bonds(supercell_data, atom_acceptor_ind, atom_donor_ind, i):
     acceptors_pos = supercell_data.pos[batch_inds[canonical_conformers_inds[canonical_conformer_acceptors_inds]]]
 
     return torch.sum(torch.cdist(donors_pos, acceptors_pos, p=2) < 3.3)
+
+def hydrogen_bond_analysis(supercell_data, dist_dict, cutoff: float = 2.2):
+    """
+    dist_dict.keys()
+    dict_keys(['edge_index', 'edge_index_inter',
+    'inside_inds', 'outside_inds', 'inside_batch',
+    'n_repeats', 'num_graphs','graph_size', 'outside_batch',
+    'intramolecular_dist', 'intramolecular_dist_atoms',
+    'intermolecular_dist', 'intermolecular_dist_batch',
+    'intermolecular_dist_atoms'])
+    """
+    # identify donors as H in O-H or N-H
+    proton_intra_edges_bool = dist_dict['intramolecular_dist_atoms'][0] == 1
+    nitrogen_intra_edges_bool = dist_dict['intramolecular_dist_atoms'][1] == 7
+    oxygen_intra_edges_bool = dist_dict['intramolecular_dist_atoms'][1] == 8
+
+    intra_NH_bool = proton_intra_edges_bool * nitrogen_intra_edges_bool
+    intra_OH_bool = proton_intra_edges_bool * oxygen_intra_edges_bool
+
+    proton_is_NH_donor = dist_dict['edge_index'][0][(dist_dict['intramolecular_dist'] <= 1.5) * intra_NH_bool]
+    proton_is_OH_donor = dist_dict['edge_index'][0][(dist_dict['intramolecular_dist'] <= 1.5) * intra_OH_bool]
+
+    # identify acceptors in intermolecular edges
+    N_acceptors = supercell_data.x.flatten() == 7
+    O_acceptors = supercell_data.x.flatten() == 8
+
+    # get hydrogen bonds
+    NH_donors_pos = supercell_data.pos[proton_is_NH_donor]
+    NH_donors_batch = supercell_data.batch[proton_is_NH_donor]
+    OH_donors_pos = supercell_data.pos[proton_is_OH_donor]
+    OH_donors_batch = supercell_data.batch[proton_is_OH_donor]
+
+    outside_inds = supercell_data.aux_ind == 1
+    N_acceptors_pos = supercell_data.pos[N_acceptors * outside_inds]
+    N_acceptors_batch = supercell_data.batch[N_acceptors * outside_inds]
+    O_acceptors_pos = supercell_data.pos[O_acceptors * outside_inds]
+    O_acceptors_batch = supercell_data.batch[O_acceptors * outside_inds]
+
+    NH_N_edge_index = radius(
+        NH_donors_pos,
+        N_acceptors_pos,
+        cutoff,
+        NH_donors_batch,
+        N_acceptors_batch,
+        max_num_neighbors=100,
+    )
+    NH_O_edge_index = radius(
+        NH_donors_pos,
+        O_acceptors_pos,
+        cutoff,
+        NH_donors_batch,
+        O_acceptors_batch,
+        max_num_neighbors=100,
+    )
+    OH_N_edge_index = radius(
+        OH_donors_pos,
+        N_acceptors_pos,
+        cutoff,
+        OH_donors_batch,
+        N_acceptors_batch,
+        max_num_neighbors=100,
+    )
+    OH_O_edge_index = radius(
+        OH_donors_pos,
+        O_acceptors_pos,
+        cutoff,
+        OH_donors_batch,
+        O_acceptors_batch,
+        max_num_neighbors=100,
+    )
+
+    # collect all bonds
+    num_NH_N_bonds = scatter(torch.ones(NH_N_edge_index.shape[1]),
+                             NH_donors_batch[NH_N_edge_index[1, :]],
+                             dim_size=supercell_data.num_graphs)
+    num_NH_O_bonds = scatter(torch.ones(NH_O_edge_index.shape[1]),
+                             NH_donors_batch[NH_O_edge_index[1, :]],
+                             dim_size=supercell_data.num_graphs)
+    num_OH_N_bonds = scatter(torch.ones(OH_N_edge_index.shape[1]),
+                             OH_donors_batch[OH_N_edge_index[1, :]],
+                             dim_size=supercell_data.num_graphs)
+    num_OH_O_bonds = scatter(torch.ones(OH_O_edge_index.shape[1]),
+                             OH_donors_batch[OH_O_edge_index[1, :]],
+                             dim_size=supercell_data.num_graphs)
+
+    return num_NH_N_bonds, num_NH_O_bonds, num_OH_N_bonds, num_OH_O_bonds
+
+
+def compute_H_bond_energy(supercell_data, dist_dict):
+    """
+    Roughly scale energies as the following
+
+    O−H···:N (29 kJ/mol or 6.9 kcal/mol), illustrated water-ammonia
+    O−H···:O (21 kJ/mol or 5.0 kcal/mol), illustrated water-water, alcohol-alcohol
+    N−H···:N (13 kJ/mol or 3.1 kcal/mol), illustrated by ammonia-ammonia
+    N−H···:O (8 kJ/mol or 1.9 kcal/mol), illustrated water-amide
+
+    """
+    num_NH_N_bonds, num_NH_O_bonds, num_OH_N_bonds, num_OH_O_bonds = hydrogen_bond_analysis(supercell_data, dist_dict)
+
+    return -(num_NH_N_bonds * 3.1 + num_NH_O_bonds * 1.9 + num_OH_N_bonds * 6.9 + num_OH_O_bonds * 5.0)
 
 
 def save_checkpoint(epoch: int,
@@ -1111,6 +1212,18 @@ def get_intermolecular_dists_dict(supercell_data: CrystalData,
         mol_ind=supercell_data.mol_ind,
     )
     dist_dict.update(edges_dict)
+    dist_dict['num_graphs'] = supercell_data.num_graphs
+    dist_dict['graph_size'] = supercell_data.num_atoms
+    dist_dict['outside_batch'] = supercell_data.batch
+    dist_dict['intramolecular_dist'] = (
+        (supercell_data.pos[edges_dict['edge_index'][0]] - supercell_data.pos[
+            edges_dict['edge_index'][1]]).pow(2).sum(
+            dim=-1).sqrt())
+
+    dist_dict['intramolecular_dist_atoms'] = \
+        [supercell_data.x[edges_dict['edge_index'][0], 0].long(),
+         supercell_data.x[edges_dict['edge_index'][1], 0].long()]
+
     dist_dict['intermolecular_dist'] = (
         (supercell_data.pos[edges_dict['edge_index_inter'][0]] - supercell_data.pos[
             edges_dict['edge_index_inter'][1]]).pow(2).sum(
@@ -1121,8 +1234,6 @@ def get_intermolecular_dists_dict(supercell_data: CrystalData,
     dist_dict['intermolecular_dist_atoms'] = \
         [supercell_data.x[edges_dict['edge_index_inter'][0], 0].long(),
          supercell_data.x[edges_dict['edge_index_inter'][1], 0].long()]
-
-    dist_dict['intermolecular_dist_inds'] = edges_dict['edge_index_inter']
 
     return dist_dict
 

@@ -15,7 +15,7 @@ from mxtaltools.models.functions.crystal_rdf import new_crystal_rdf
 
 from mxtaltools.models.functions.vdw_overlap import vdw_analysis, scale_molwise_vdw_pot
 from mxtaltools.models.utils import get_intermolecular_dists_dict, denormalize_generated_cell_params, enforce_1d_bound, \
-    enforce_crystal_system
+    enforce_crystal_system, compute_H_bond_energy
 
 
 def standalone_add_scrambled_molecule_samples(aunit_poses, dist_dict, handedness_record, hit_max_lr, loss, loss_record,
@@ -76,6 +76,9 @@ def standalone_score_crystal_batch(mol_batch, score_func, supercell_data, vdw_ra
         = vdw_analysis(vdw_radii_tensor,
                        dist_dict,
                        mol_batch.num_graphs, )
+    # h_bond_energy = compute_H_bond_energy(supercell_data, dist_dict)
+    # vdw_potential += h_bond_energy
+    # vdw_loss += h_bond_energy
     if score_func == 'discriminator':
         loss = F.softplus(output[:, 2])
     elif score_func.lower() == 'vdw':
