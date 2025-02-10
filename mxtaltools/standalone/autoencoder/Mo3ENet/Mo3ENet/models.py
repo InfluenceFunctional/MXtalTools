@@ -1,15 +1,16 @@
 import sys
 from argparse import Namespace
-from math import pi as PI
 from typing import Optional
 from typing import Tuple, Union
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+from math import pi as PI
 from torch import Tensor
 from torch import nn as nn
 from torch.nn import Parameter
+from torch_cluster import radius
 from torch_geometric import nn as gnn
 from torch_geometric.nn import MessagePassing
 from torch_geometric.nn.aggr import Aggregation
@@ -137,36 +138,45 @@ def radius(x: torch.Tensor, y: torch.Tensor, r: float,
         y = torch.Tensor([[-1, 0], [1, 0]])
         batch_y = torch.tensor([0, 0])
         assign_index = radius(x, y, 1.5, batch_x, batch_y)
-    """
+    """  # TODO this function has duplicates - refactor
 
     x = x.view(-1, 1) if x.dim() == 1 else x
     y = y.view(-1, 1) if y.dim() == 1 else y
     x, y = x.contiguous(), y.contiguous()
+    #
+    # ptr_x: Optional[torch.Tensor] = None
+    # if batch_x is not None:
+    #     assert x.size(0) == batch_x.numel()
+    #     batch_size = int(batch_x.max()) + 1
+    #
+    #     deg = x.new_zeros(batch_size, dtype=torch.long)
+    #     deg.scatter_add_(0, batch_x, torch.ones_like(batch_x))
+    #
+    #     ptr_x = deg.new_zeros(batch_size + 1)
+    #     torch.cumsum(deg, 0, out=ptr_x[1:])
+    #
+    # ptr_y: Optional[torch.Tensor] = None
+    # if batch_y is not None:
+    #     assert y.size(0) == batch_y.numel()
+    #     batch_size = int(batch_y.max()) + 1
+    #
+    #     deg = y.new_zeros(batch_size, dtype=torch.long)
+    #     deg.scatter_add_(0, batch_y, torch.ones_like(batch_y))
+    #
+    #     ptr_y = deg.new_zeros(batch_size + 1)
+    #     torch.cumsum(deg, 0, out=ptr_y[1:])
 
-    ptr_x: Optional[torch.Tensor] = None
-    if batch_x is not None:
-        assert x.size(0) == batch_x.numel()
-        batch_size = int(batch_x.max()) + 1
-
-        deg = x.new_zeros(batch_size, dtype=torch.long)
-        deg.scatter_add_(0, batch_x, torch.ones_like(batch_x))
-
-        ptr_x = deg.new_zeros(batch_size + 1)
-        torch.cumsum(deg, 0, out=ptr_x[1:])
-
-    ptr_y: Optional[torch.Tensor] = None
-    if batch_y is not None:
-        assert y.size(0) == batch_y.numel()
-        batch_size = int(batch_y.max()) + 1
-
-        deg = y.new_zeros(batch_size, dtype=torch.long)
-        deg.scatter_add_(0, batch_y, torch.ones_like(batch_y))
-
-        ptr_y = deg.new_zeros(batch_size + 1)
-        torch.cumsum(deg, 0, out=ptr_y[1:])
-
-    return torch.ops.torch_cluster.radius(x, y, ptr_x, ptr_y, r,
-                                          max_num_neighbors, num_workers)
+    return radius(
+        x,
+        y,
+        r,
+        batch_x,
+        batch_y,
+        max_num_neighbors,
+        num_workers
+    )
+    # return torch.ops.torch_cluster.radius(x, y, ptr_x, ptr_y, r,
+    #                                       max_num_neighbors, num_workers)
 
 
 # @torch.jit.script
