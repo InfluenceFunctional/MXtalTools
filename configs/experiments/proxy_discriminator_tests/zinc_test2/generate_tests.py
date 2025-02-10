@@ -51,6 +51,7 @@ for l in layers:
                 config['num_layers'] = l
                 config['depth'] = f
                 config['max_batch_size'] = b
+
                 configs.append(config)
 
 """ findings
