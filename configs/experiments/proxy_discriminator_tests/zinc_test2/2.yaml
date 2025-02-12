@@ -1,5 +1,5 @@
 anomaly_detection: false
-batch_growth_increment: 0.01
+batch_growth_increment: 0.1
 checkpointing_loss_type: test
 dataset:
   buffer_size: 100000
@@ -12,7 +12,7 @@ dataset:
   smiles_source: /scratch/mk8347/zinc22
   test_fraction: 0.2
   type: molecule
-dataset_name: test_pd_dataset.pt
+dataset_name: pd_dataset.pt
 dataset_yaml_path: /proxy_discriminator.yaml
 device: cuda
 early_epochs_step_override: 5
@@ -59,9 +59,8 @@ proxy_discriminator:
   cutoff: 6
   embedding_type: principal_moments
   model:
-    depth: 512
     dropout: 0
-    hidden_dim: 256
+    hidden_dim: 512
     norm: null
     num_layers: 32
     vector_norm: null
