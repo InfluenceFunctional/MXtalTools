@@ -28,7 +28,7 @@ batch_sizes = [100000]
 
 default_config = {
         'num_layers': 2,
-        'depth': 256,
+        'hidden_dim': 256,
         'dropout': 0,
         'norm': None,
         'max_batch_size': 1000,
@@ -49,7 +49,7 @@ for l in layers:
                 config = copy(default_config)
                 config['embedding_type'] = embed
                 config['num_layers'] = l
-                config['depth'] = f
+                config['hidden_dim'] = f
                 config['max_batch_size'] = b
                 configs.append(config)
 
@@ -69,7 +69,7 @@ for ii, config_i in enumerate(configs):
     config = copy(base_config)
     config['logger']['run_name'] = config['logger']['run_name'] + '_' + str(ind)
     config['proxy_discriminator']['model']['num_layers'] = config_i['num_layers']
-    config['proxy_discriminator']['model']['depth'] = config_i['depth']
+    config['proxy_discriminator']['model']['hidden_dim'] = config_i['hidden_dim']
     config['max_batch_size'] = config_i['max_batch_size']
     config['proxy_discriminator']['model']['norm'] = config_i['norm']
     config['proxy_discriminator']['model']['dropout'] = config_i['dropout']

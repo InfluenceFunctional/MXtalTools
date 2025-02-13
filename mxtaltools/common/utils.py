@@ -1,6 +1,3 @@
-import os
-from datetime import datetime
-
 import numpy as np
 
 import torch
@@ -10,12 +7,9 @@ from typing import List, Optional, Union
 import collections
 from copy import copy
 
-from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE, POINT_GROUPS, SPACE_GROUPS
-
 '''
 general utilities
 '''
-
 
 def batch_compute_dipole(pos, batch, z, electronegativity_tensor):
     """
@@ -186,92 +180,6 @@ def softmax_np(x: np.ndarray, temperature: float = 1):
     return probabilities
 
 
-def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None, return_numpy: bool=False):
-    """
-    Compute a distance metric between two radial distribution functions including sub_rdfs where sub_rdfs are e.g., particular interatomic RDFS within a certain sample (elementwise or atomwise modes).
-
-    If all inputs are numpy arrays, output will be a numpy array, and vice-versa with torch tensors.
-    Parameters
-    ----------
-    rdf1 : array(n_sub_rdfs, n_bins)
-    rdf2 : array(n_sub_rdfs, n_bins)
-    rr : array(n_bins + 1)
-        is the bin edges used for both rdfs
-    n_parallel_rdf2: int, optional
-        Optionally in parallel compare many rdf2's to a single rdf1
-    Returns
-    -------
-
-    """
-
-    if not torch.is_tensor(rdf1):
-        torch_rdf1 = torch.Tensor(rdf1)
-        torch_rdf2 = torch.Tensor(rdf2)
-        return_numpy = True
-    else:
-        torch_rdf1 = rdf1
-        torch_rdf2 = rdf2
-
-    if not torch.is_tensor(rr):
-        torch_range = torch.Tensor(rr)
-    else:
-        torch_range = rr
-
-    if n_parallel_rdf2 is not None:
-        torch_rdf1_f = torch_rdf1.tile(n_parallel_rdf2, 1, 1)
-    else:
-        torch_rdf1_f = torch_rdf1
-
-    emd = earth_movers_distance_torch(torch_rdf1_f, torch_rdf2)
-
-    # rescale the distance from units of bins to the real physical range
-    range_normed_emd = emd / len(torch_range) ** 2 * (torch_range[-1] - torch_range[0])
-    # do not adjust the above - distance is extensive weirdly extensive in bin scaling
-
-    # aggregate rdf components according to pairwise mean weight
-    aggregation_weight = (torch_rdf1_f.sum(-1) + torch_rdf2.sum(-1)) / 2
-    distance = (range_normed_emd * aggregation_weight).mean(-1)
-
-    assert torch.sum(torch.isnan(distance)) == 0, "NaN EMD Distances Computed"
-    if return_numpy:
-        distance = distance.cpu().detach().numpy()
-
-    return distance
-
-
-def earth_movers_distance_torch(pdf1: torch.tensor, pdf2: torch.tensor):
-    """
-    earth mover's distance between two PDFs
-    not normalized or aggregated
-    Parameters
-    ----------
-    pdf1 : torch.tensor(n,i)
-    pdf2 : torch.tensor(n,i)
-
-    Returns
-    -------
-    emd: torch.tensor(n)
-    """
-
-    return torch.sum(torch.abs(torch.cumsum(pdf1, dim=-1) - torch.cumsum(pdf2, dim=-1)), dim=-1)
-
-
-def earth_movers_distance_np(pdf1: np.ndarray, pdf2: np.ndarray):
-    """
-    earth mover's distance between two PDFs
-    not normalized or aggregated
-    Parameters
-    ----------
-    pdf1 : np.array(n,i)
-    pdf2 : np.array(n,i)
-
-    Returns
-    -------
-    emd: np.array(n)
-    """
-    return np.sum(np.abs(np.cumsum(pdf1, axis=-1) - np.cumsum(pdf2, axis=-1)), axis=-1)
-
-
 def histogram_overlap_np(d1: np.ndarray, d2: np.ndarray):
     """
     Compute the symmetric overlap of two histograms
@@ -288,128 +196,13 @@ def histogram_overlap_np(d1: np.ndarray, d2: np.ndarray):
     return np.sum(np.minimum(d1, d2)) / np.average((d1.sum(), d2.sum()))
 
 
-def update_stats_dict(dictionary: dict, keys, values, mode='append'):
-    """
-    Append/extend dict of key:list pairs or one at a time
-
-    Parameters
-    ----------
-    dictionary
-    keys
-    values
-    mode: 'append' or 'extend'
-
-    Returns
-    -------
-    updated_dictionary
-    """
-
-    if isinstance(keys, list):
-        for key, value in zip(keys, values):
-            if key not in dictionary.keys():
-                dictionary[key] = []
-
-            if (mode == 'append') or ('crystaldata' in str(type(value)).lower()):
-                dictionary[key].append(value)
-            elif mode == 'extend':
-                dictionary[key].extend(value)
-    else:
-        key, value = keys, values
-        if key not in dictionary.keys():
-            dictionary[key] = []
-
-        if mode == 'append':
-            dictionary[key].append(value)
-        elif mode == 'extend':
-            dictionary[key].extend(value)
-
-    return dictionary
-
-
-def init_sym_info():
-    """
-    Initialize dict containing symmetry info for crystals with standard settings and general positions.
-
-    Returns
-    -------
-    sym_info : dict
-    """
-    sym_ops = SYM_OPS
-    point_groups = POINT_GROUPS
-    lattice_type = LATTICE_TYPE
-    space_groups = SPACE_GROUPS
-    sym_info = {  # collect space group info into single dict
-        'sym_ops': sym_ops,
-        'point_groups': point_groups,
-        'lattice_type': lattice_type,
-        'space_groups': space_groups}
-
-    return sym_info
-
-
-def norm_circular_components(components: torch.tensor):
-    """
-    Use Pythagoras to norm the sum of squares to the unit circle.
-    Parameters
-    ----------
-    components : torch.tensor(n, 2)
-
-    Returns
-    -------
-    normed_components : torch.tensor(n, 2)
-    """
-
-    return components / torch.sqrt(torch.sum(components ** 2, dim=-1))[:, None]
-
-
-def components2angle(components: torch.tensor, norm_components=True):
-    """
-    Take two non-normalized components[n, 2] representing sin(angle) and cos(angle), compute the resulting angle,
-    following     https://ai.stackexchange.com/questions/38045/how-can-i-encode-angle-data-to-train-neural-networks
-
-    Optionally norm the sum of squares - doesn't appear to do much though.
-
-    Parameters
-    ----------
-    components : torch.tensor(n, 2)
-    norm_components : bool, optional
-
-    Returns
-    -------
-    angles : torch.tensor(n, 2)
-    """
-
-    if norm_components:
-        normed_components = norm_circular_components(components)
-        angles = torch.atan2(normed_components[:, 0], normed_components[:, 1])
-    else:
-        angles = torch.atan2(components[:, 0], components[:, 1])
-
-    return angles
-
-
-def angle2components(angle: torch.tensor):
-    """
-    Tecompose an angle input into sin(angle) and cos(angle)
-
-    Parameters
-    ----------
-    angle : torch.tensor(n)
-
-    Returns
-    -------
-    sin(angle), cos(angle) : torch.tensor, torch.tensor
-    """
-
-    return torch.cat((torch.sin(angle)[:, None], torch.cos(angle)[:, None]), dim=1)
-
-
 def repeat_interleave(
         repeats: List[int],
         device: Optional[torch.device] = None,
 ):
     """
-    # todo why do we have this? There are builtin methods.
+    # todo why do we have this? There are builtin methods in torch.
+    # TODO replace and deprecate
     Alternate implementation of torch.repeat_interleave
     borrowed from torch_geometric.data.collate
 
@@ -478,57 +271,6 @@ def flatten_dict(dictionary, parent_key=False, separator='_'):
         else:
             items.append((new_key, value))
     return dict(items)
-
-
-def make_sequential_directory(yaml_path, workdir):  # make working directory
-    """
-    make a new working directory labelled by the time & date
-    hopefully does not overlap with any other workdirs
-    :return:
-    """
-    run_identifier = str(yaml_path).split('.yaml')[0].split('configs')[1].replace('\\', '_').replace(
-        '/', '_') + '_' + datetime.today().strftime("%d-%m-%H-%M-%S")
-    working_directory = workdir + run_identifier
-    os.mkdir(working_directory)
-    return run_identifier, working_directory
-
-
-def flatten_wandb_params(config):
-    """Initialize "flat" config for wandb parameter logging"""
-    flat_config_dict = flatten_dict(namespace2dict(config.__dict__), separator='_')
-    for key in flat_config_dict.keys():
-        if 'path' in str(type(flat_config_dict[key])).lower():
-            flat_config_dict[key] = str(flat_config_dict[key])
-    config.__dict__.update(flat_config_dict)
-    return config
-
-
-def scale_edgewise_vdw_pot(lj_pot: Union[np.ndarray, torch.tensor],
-                           turnover_pot: float = 5,
-                           clip_max: float = 100) \
-        -> Union[np.ndarray, torch.tensor]:
-    if torch.is_tensor(lj_pot):
-        scaled_lj_pot = torch.log(2 + lj_pot) / np.log(2) - 1
-        #scaled_lj_pot = lj_pot.clone()
-        #scaled_lj_pot[high_bools] = turnover_pot + torch.log10(scaled_lj_pot[high_bools] + 1 - turnover_pot)
-    else:
-        scaled_lj_pot = torch.log(2 + lj_pot) / torch.log(torch.Tensor([2])) - 1
-        #scaled_lj_pot = lj_pot.copy()
-        #scaled_lj_pot[high_bools] = turnover_pot + np.log10(scaled_lj_pot[high_bools] + 1 - turnover_pot)
-    return scaled_lj_pot.clip(max=clip_max)
-
-'''
-import torch
-import plotly.graph_objects as go
-xx = torch.linspace(0.001, 5, 1001)
-lj = 4 * (1/xx**12 - 1/xx**6)
-scaled_lj = torch.log(lj+2) / torch.log(torch.Tensor([2])) - 1
-fig = go.Figure()
-#fig.add_scatter(x=xx,y=lj)
-fig.add_scatter(x=xx,y=scaled_lj)
-fig.update_layout(yaxis_range=[-5,10])
-fig.show()
-'''
 
 
 def signed_log(y: Union[torch.tensor, np.ndarray]

@@ -9,7 +9,7 @@ import os
 from scipy.interpolate import interpn
 from scipy.stats import linregress
 from model_paths import ae_results_paths, er_results_paths, targets, proxy_results_paths
-from mxtaltools.common.geometry_calculations import scatter_compute_Ip
+from mxtaltools.common.geometry_utils import scatter_compute_Ip
 
 stats_dict_names = ["With Hydrogen",
                     "Without Hydrogen",

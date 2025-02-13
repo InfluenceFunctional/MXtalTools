@@ -4,6 +4,9 @@ from ovito.data import DataCollection
 from ovito.io import export_file
 from ovito.pipeline import Pipeline, PythonScriptSource
 
+"""
+utilities for working with ovito I/O
+"""
 
 def write_ovito_xyz(coords_in, atom_types_in, mol_flags_in, filename):
     """ # todo generalize to mixtures of molecules

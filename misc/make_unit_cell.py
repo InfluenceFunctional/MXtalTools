@@ -5,7 +5,7 @@ from ase.visualize import view
 from ase import Atoms
 from mxtaltools.crystal_building.utils import aunit2unit_cell, unit_cell_to_convolution_cluster, fractional_transform_np
 from mxtaltools.constants.space_group_info import SYM_OPS
-from mxtaltools.common.geometry_calculations import coor_trans_matrix_np
+from mxtaltools.common.geometry_utils import coor_trans_matrix_np
 
 import torch
 

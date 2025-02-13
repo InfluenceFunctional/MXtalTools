@@ -18,9 +18,9 @@ import torch.nn.functional as F
 from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
 from mxtaltools.common.utils import get_point_density, softmax_np
 
-from mxtaltools.common.geometry_calculations import cell_vol_np
+from mxtaltools.common.geometry_utils import cell_vol_np
 from mxtaltools.constants.mol_classifier_constants import polymorph2form
-from mxtaltools.models.utils import batch_rmsd
+from mxtaltools.models.autoencoder_utils import batch_rmsd
 from mxtaltools.reporting.ae_reporting import autoencoder_evaluation_overlaps, gaussian_3d_overlap_plots
 from mxtaltools.reporting.crystal_search_visualizations import stacked_property_distribution_lists
 

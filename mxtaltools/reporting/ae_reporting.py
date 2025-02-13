@@ -9,8 +9,9 @@ from torch.nn import functional as F
 from torch_scatter import scatter_softmax
 
 from mxtaltools.models.functions.asymmetric_radius_graph import radius
-from mxtaltools.models.utils import compute_full_evaluation_overlap, compute_coord_evaluation_overlap, \
-    compute_type_evaluation_overlap, compute_gaussian_overlap, collate_decoded_data, get_node_weights, batch_rmsd
+from mxtaltools.models.autoencoder_utils import compute_gaussian_overlap, compute_type_evaluation_overlap, \
+    compute_coord_evaluation_overlap, compute_full_evaluation_overlap, get_node_weights, collate_decoded_data, \
+    batch_rmsd
 
 
 def autoencoder_evaluation_overlaps(data, decoded_data, config, dataDims):

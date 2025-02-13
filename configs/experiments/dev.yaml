@@ -1,7 +1,7 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/proxy_discriminator.yaml #/experiments/base/generator.yaml #/experiments/base/discriminator.yaml
-dataset_name: test_pd_dataset.pt #CSD_QM9_dataset.pt  #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
+base_config_path: /experiments/base/discriminator.yaml #/experiments/base/generator.yaml #/experiments/base/discriminator.yaml
+dataset_name: test_CSD_dataset.pt #CSD_QM9_dataset.pt  #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
 #misc_dataset_name: 'misc_data_for_qm9_dataset.npy' #
 extra_test_set_name: null
 save_checkpoints: True
@@ -13,7 +13,7 @@ dataset:
   max_dataset_length: 1000  # non-functional for on-disk datasets.
   test_fraction: 0.2
   otf_build_size: 100
-  smiles_source: '/home/mkilgour/crystal_datasets/zinc22/'  # /scratch/mk8347/zinc22
+  smiles_source: null #'/home/mkilgour/crystal_datasets/zinc22/'  # /scratch/mk8347/zinc22
   num_processes: 4
 
   #on_disk_data_dir: '/zinc22_3d/zinc3d.lmdb/'
@@ -55,11 +55,11 @@ model_paths:
   discriminator: null #best_discriminator_experiments_dev_27-09-19-24-55
   generator: null #cluster/best_generator_experiments_generator_tests_run1_dev_8_18-09-12-52-04
   regressor: null #'volume_model.pt'
-  autoencoder: cluster/best_autoencoder_experiments_autoencoder_tests_otf_zinc_test3_7_05-12-14-03-45
+  autoencoder: null #cluster/best_autoencoder_experiments_autoencoder_tests_otf_zinc_test3_7_05-12-14-03-45
   embedding_regressor: null
   polymorph_classifier: null # 'best_polymorph_classifier_experiments_dev_25-06-17-41-37'
 
 autoencoder:
   infer_protons: False
-  filter_protons: True
+  filter_protons: False
 

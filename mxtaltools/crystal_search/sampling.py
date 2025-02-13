@@ -10,16 +10,17 @@ from math import ceil
 import torch.nn.functional as F
 
 import mxtaltools.crystal_search.standalone_crystal_opt
-from mxtaltools.common.utils import init_sym_info
+from mxtaltools.common.training_utils import init_sym_info
 from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.crystal_building.builder import CrystalBuilder
 from mxtaltools.crystal_building.utils import set_molecule_alignment, overwrite_symmetry_info
 from mxtaltools.crystal_search.standalone_crystal_opt import _init_for_local_opt, cleanup_sample
 from mxtaltools.crystal_search.utils import cell_clustering, coarse_filter, get_topk_samples
-from mxtaltools.dataset_management.CrystalData import CrystalData
+from mxtaltools.dataset_utils.CrystalData import CrystalData
 from mxtaltools.models.functions.crystal_rdf import new_crystal_rdf
 from mxtaltools.models.functions.vdw_overlap import vdw_analysis, scale_molwise_vdw_pot
-from mxtaltools.models.utils import denormalize_generated_cell_params, get_intermolecular_dists_dict
+from mxtaltools.models.utils import denormalize_generated_cell_params
+from mxtaltools.analysis.crystals_analysis import get_intermolecular_dists_dict
 
 
 class Sampler:

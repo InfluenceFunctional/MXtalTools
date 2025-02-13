@@ -4,7 +4,7 @@ from shutil import copy
 
 import numpy as np
 
-from mxtaltools.models.utils import get_n_config
+from mxtaltools.common.training_utils import get_n_config
 
 
 def get_model_sizes(models_dict: dict):

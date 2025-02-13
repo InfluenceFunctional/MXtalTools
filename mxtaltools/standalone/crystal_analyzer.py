@@ -15,10 +15,11 @@ from mxtaltools.common.config_processing import process_main_config
 from mxtaltools.common.utils import parse_to_torch
 from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.crystal_building.builder import CrystalBuilder
-from mxtaltools.dataset_management.CrystalData import CrystalData
+from mxtaltools.dataset_utils.CrystalData import CrystalData
 from mxtaltools.models.functions.vdw_overlap import vdw_analysis
-from mxtaltools.models.utils import get_intermolecular_dists_dict, clean_cell_params, \
+from mxtaltools.models.utils import clean_cell_params, \
     denormalize_generated_cell_params
+from mxtaltools.analysis.crystals_analysis import get_intermolecular_dists_dict
 
 module_path = str(pathlib.Path(__file__).parent.resolve())
 

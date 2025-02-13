@@ -9,7 +9,7 @@ from models.vdw_overlap import vdw_overlap
 from crystal_building.utils import \
     (random_crystaldata_alignment, align_crystaldata_to_principal_axes,
      batch_asymmetric_unit_pose_analysis_torch, DEPRECATED_write_sg_to_all_crystals)
-from common.geometry_calculations import batch_molecule_principal_axes_torch, compute_Ip_handedness
+from common.geometry_utils import batch_molecule_principal_axes_torch, compute_Ip_handedness
 
 '''
 This script uses Markov Chain Monte Carlo, including the STUN algorithm, to optimize a given function

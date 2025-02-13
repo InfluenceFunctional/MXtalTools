@@ -2,7 +2,7 @@ import torch
 from torch_geometric.typing import OptTensor
 
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
-from mxtaltools.dataset_management.CrystalData import CrystalData
+from mxtaltools.dataset_utils.CrystalData import CrystalData
 
 
 class BaseGraphModel(torch.nn.Module):

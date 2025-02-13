@@ -1,10 +1,11 @@
 import numpy as np
 from torch_geometric.loader.dataloader import Collater
 
-from mxtaltools.common.utils import update_stats_dict, softmax_np
-from mxtaltools.dataset_management.molecule_dataset_analysis import analyze_mol_dataset, property_comparison_fig, \
+from mxtaltools.common.utils import softmax_np
+from mxtaltools.common.training_utils import update_stats_dict, check_convergence
+from mxtaltools.dataset_utils.molecule_dataset_analysis import analyze_mol_dataset, property_comparison_fig, \
     distribution_comparison
-from mxtaltools.models.utils import check_convergence, softmax_and_score
+from mxtaltools.models.utils import softmax_and_score
 from mxtaltools.reporting.online import detailed_reporting, polymorph_classification_trajectory_analysis
 from time import time
 

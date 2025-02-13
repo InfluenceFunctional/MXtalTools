@@ -6,7 +6,7 @@ dataset:
   filter_protons: false
   max_dataset_length: 10000000
   num_processes: 10
-  otf_build_size: 100
+  otf_build_size: 400
   regression_target: null
   single_identifier: null
   smiles_source: /scratch/mk8347/zinc22

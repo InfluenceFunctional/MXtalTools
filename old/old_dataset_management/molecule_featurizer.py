@@ -2,7 +2,7 @@ import os
 
 import pandas as pd
 
-from common.geometry_calculations import compute_principal_axes_np, compute_Ip_handedness, initialize_fractional_vectors
+from common.geometry_utils import compute_principal_axes_np, compute_Ip_handedness, initialize_fractional_vectors
 from common.utils import *
 import numpy.linalg as linalg
 import tqdm

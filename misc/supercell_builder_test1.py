@@ -28,8 +28,9 @@ supercell_data2, n_copies2 = new_unit_cell_to_convolution_cluster(supercell_data
                                                                   self.sorted_fractional_translations, self.device)
 times.append(time())
 from mxtaltools.models.functions.crystal_rdf import new_crystal_rdf
-from mxtaltools.models.utils import get_intermolecular_dists_dict
-from mxtaltools.common.utils import compute_rdf_distance
+from mxtaltools.analysis.crystals_analysis import get_intermolecular_dists_dict
+from mxtaltools.analysis.crystal_rdf import compute_rdf_distance
+
 times.append(time())
 dist_dict1 = get_intermolecular_dists_dict(supercell_data1, 6, 100)
 times.append(time())

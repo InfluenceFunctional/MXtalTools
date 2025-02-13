@@ -2,7 +2,7 @@ machine: "cluster"  # or "cluster"
 device: "cpu"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: proxy_discriminator
-dataset_name: 'test_pd_dataset.pt' #'test_dataset.pt'
+dataset_name: 'pd_dataset.pt' #'test_dataset.pt'
 dataset_yaml_path: '/proxy_discriminator.yaml'
 save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
@@ -18,7 +18,7 @@ dataset:
   regression_target: null
   single_identifier: null
   buffer_size: 100000
-  otf_build_size: 100
+  otf_build_size: 400
   smiles_source: /scratch/mk8347/zinc22
   num_processes: 10
 
@@ -28,7 +28,7 @@ num_early_epochs: 0
 grow_batch_size: True
 min_batch_size: 50
 max_batch_size: 10000
-batch_growth_increment: 0.01 # fraction of batch size to grow by each epoch
+batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 100000
 max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)

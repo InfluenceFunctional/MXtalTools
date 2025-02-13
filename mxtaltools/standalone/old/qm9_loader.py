@@ -4,8 +4,8 @@ script for standalone loading of QM9 dataset
 requires numpy, torch, torch_geometric, torch_scatter, torch_cluster, scipy, tqdm
 """
 from mxtaltools.common.config_processing import load_yaml, dict2namespace
-from mxtaltools.dataset_management.data_manager import DataManager
-from mxtaltools.dataset_management.dataloader_utils import get_dataloaders
+from mxtaltools.dataset_utils.dataset_manager import DataManager
+from mxtaltools.dataset_utils.utils import get_dataloaders
 
 datasets_path = 'D:/crystal_datasets/'
 dataset_name = '/qm9_dataset.pkl'

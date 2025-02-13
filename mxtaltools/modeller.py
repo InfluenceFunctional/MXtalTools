@@ -17,36 +17,33 @@ from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter
 from tqdm import tqdm
 
-from mxtaltools.common.geometry_calculations import batch_molecule_principal_axes_torch
-from mxtaltools.common.geometry_calculations import rotvec2sph
-from mxtaltools.common.training_utils import instantiate_models
-from mxtaltools.common.utils import init_sym_info, compute_rdf_distance, make_sequential_directory, \
-    flatten_wandb_params, sample_uniform
+from mxtaltools.analysis.crystal_rdf import compute_rdf_distance, new_crystal_rdf
+from mxtaltools.analysis.crystals_analysis import get_intermolecular_dists_dict
+from mxtaltools.analysis.vdw_analysis import vdw_analysis, vdw_overlap
+from mxtaltools.common.geometry_utils import batch_molecule_principal_axes_torch
+from mxtaltools.common.geometry_utils import rotvec2sph
+from mxtaltools.common.training_utils import instantiate_models, init_sym_info, make_sequential_directory, \
+    flatten_wandb_params, set_lr, init_optimizer, init_scheduler, reload_model, save_checkpoint, slash_batch
+from mxtaltools.common.utils import sample_uniform
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
 from mxtaltools.crystal_building.builder import CrystalBuilder
 from mxtaltools.crystal_building.utils import overwrite_symmetry_info
 from mxtaltools.crystal_building.utils import (set_molecule_alignment)
 from mxtaltools.crystal_search.sampling import Sampler
-from mxtaltools.dataset_management.CrystalData import CrystalData
-from mxtaltools.dataset_management.data_manager import DataManager
-from mxtaltools.dataset_management.dataloader_utils import get_dataloaders, update_dataloader_batch_size
-from mxtaltools.dataset_management.otf_conf_gen import async_generate_random_conformer_dataset, \
-    async_generate_random_crystal_dataset
-from mxtaltools.dataset_management.utils import quick_combine_dataloaders
+from mxtaltools.dataset_utils.CrystalData import CrystalData
+from mxtaltools.dataset_utils.dataset_manager import DataManager
+from mxtaltools.dataset_utils.synthesis.otf_dataset_synthesis import otf_synthesize_molecules, otf_synthesize_crystals
+from mxtaltools.dataset_utils.utils import quick_combine_dataloaders, get_dataloaders, update_dataloader_batch_size
 from mxtaltools.modelling.utils import get_model_sizes, copy_source_to_workdir
-from mxtaltools.models.functions.crystal_rdf import new_crystal_rdf
-from mxtaltools.models.functions.vdw_overlap import vdw_overlap, vdw_analysis
+from mxtaltools.models.autoencoder_utils import compute_type_evaluation_overlap, compute_coord_evaluation_overlap, \
+    compute_full_evaluation_overlap, test_decoder_equivariance, test_encoder_equivariance, collate_decoded_data, \
+    ae_reconstruction_loss, batch_rmsd
 from mxtaltools.models.task_models.generator_models import CSDPrior
-from mxtaltools.models.utils import (reload_model, init_scheduler, softmax_and_score, save_checkpoint, set_lr,
-                                     init_optimizer, get_regression_loss,
-                                     slash_batch, compute_type_evaluation_overlap,
-                                     compute_coord_evaluation_overlap,
-                                     compute_full_evaluation_overlap, compute_reduced_volume_fraction,
+from mxtaltools.models.utils import (softmax_and_score, get_regression_loss,
+                                     compute_reduced_volume_fraction,
                                      dict_of_tensors_to_cpu_numpy,
-                                     test_decoder_equivariance, test_encoder_equivariance, collate_decoded_data,
-                                     ae_reconstruction_loss, clean_cell_params, get_intermolecular_dists_dict,
-                                     denormalize_generated_cell_params, compute_prior_loss, batch_rmsd,
+                                     clean_cell_params, denormalize_generated_cell_params, compute_prior_loss,
                                      renormalize_generated_cell_params)
 from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering
 from mxtaltools.reporting.logger import Logger
@@ -363,9 +360,6 @@ class Modeller:
             np.save(self.config.checkpoint_dir_path + self.config.model_paths.autoencoder.split('autoencoder')[-1],
                     {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
 
-            # analysis & visualization
-            # autoencoder_embedding_map(self.logger.test_stats)
-            aa = 1
 
             ''' >>> noisy embeddings
             data = data.to(self.device)
@@ -1375,14 +1369,14 @@ class Modeller:
         if len(os.listdir(chunks_path)) == 0:  # only make a new batch if the previous batch has been integrated
             if self.logger.epoch == 0 or self.integrated_dataset == True:
                 self.mp_pool = mp.Pool(num_processes)
-                self.mp_pool = async_generate_random_conformer_dataset(
+                self.mp_pool = otf_synthesize_molecules(
                     self.config.dataset.otf_build_size,
                     self.config.dataset.smiles_source,
                     workdir=chunks_path,
                     allowed_atom_types=[1, 6, 7, 8, 9],
                     #list(self.dataDims['allowed_atom_types'].cpu().detach().numpy()),
                     num_processes=num_processes,
-                    pool=self.mp_pool, max_num_atoms=30,
+                    mp_pool=self.mp_pool, max_num_atoms=30,
                     max_num_heavy_atoms=9, pare_to_size=9,
                     max_radius=15, synchronize=False)
                 self.integrated_dataset = False
@@ -1443,14 +1437,14 @@ class Modeller:
                 print('sending crystal opt jobs to mp pool')
                 mp.set_start_method('spawn', force=True)
                 self.mp_pool = mp.Pool(num_processes)
-                self.mp_pool = async_generate_random_crystal_dataset(
+                self.mp_pool = otf_synthesize_crystals(
                     self.config.dataset.otf_build_size,
                     self.config.dataset.smiles_source,
                     workdir=chunks_path,
                     allowed_atom_types=[1, 6, 7, 8, 9],
                     #list(self.dataDims['allowed_atom_types'].cpu().detach().numpy()),
                     num_processes=num_processes,
-                    pool=self.mp_pool, max_num_atoms=30,
+                    mp_pool=self.mp_pool, max_num_atoms=30,
                     max_num_heavy_atoms=9, pare_to_size=9,
                     max_radius=15, synchronize=False)
                 self.integrated_dataset = False
@@ -2562,6 +2556,7 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
             fake_supercell_data, return_latent=False)
 
         '''recompute reduced volumes'''
+        # TODO convert this back to packing coefficient calculations
         real_volume_fractions = compute_reduced_volume_fraction(cell_lengths=real_supercell_data.cell_lengths,
                                                                 cell_angles=real_supercell_data.cell_angles,
                                                                 atom_radii=self.vdw_radii_tensor[

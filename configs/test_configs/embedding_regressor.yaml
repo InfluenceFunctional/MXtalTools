@@ -1,15 +1,9 @@
 machine: "local"  # or "cluster"
-device: "cuda"  # or "cpu"
+device: "cpu"  # or "cpu"
 base_config_path: /experiments/base/embedding_regressor.yaml
+dataset_path: /tests/datasets/mini_qm9_dataset.pt
 
-dataset:
-  max_dataset_length: 100
-  filter_protons: True
-
-# batching & convergence
-grow_batch_size: True
 min_batch_size: 10
-max_batch_size: 10000
 minimum_epochs: 2
 max_epochs: 2 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 

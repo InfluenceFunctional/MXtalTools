@@ -13,7 +13,7 @@ from torch_geometric.typing import EdgeType, NodeType, OptTensor
 from torch_geometric.utils import subgraph
 from torch_sparse import SparseTensor
 
-from constants.space_group_info import SYM_OPS
+from mxtaltools.constants.space_group_info import SYM_OPS
 
 
 ###############################################################################
@@ -101,6 +101,7 @@ class CrystalData(BaseData):
 
     def __init__(self,
                  x: OptTensor = None,
+                 p_charges: OptTensor = None,
                  graph_x: OptTensor = None,
                  edge_index: OptTensor = None,
                  edge_attr: OptTensor = None,
@@ -121,6 +122,8 @@ class CrystalData(BaseData):
                  aunit_handedness: list = None,
                  is_well_defined: bool = True,
                  require_crystal_features: bool = True,
+                 vdw_pot: float = None,
+                 vdw_loss: float = None,
                  **kwargs):
         super().__init__()
         self.__dict__['_store'] = GlobalStorage(_parent=self)
@@ -132,6 +135,10 @@ class CrystalData(BaseData):
         if x is not None:
             self.x = x
             self.num_atoms = len(x)
+        if p_charges is not None:
+            self.p_charges = p_charges
+        else:
+            self.p_charges = torch.zeros_like(self.x)
         if graph_x is not None:
             self.graph_x = graph_x
         if edge_index is not None:
@@ -145,6 +152,10 @@ class CrystalData(BaseData):
             if self.radius is None:
                 centroid = pos.mean(dim=0)
                 self.radius = torch.amax(torch.linalg.norm(pos - centroid, dim=1))
+        if vdw_pot is not None:
+            self.vdw_pot = vdw_pot
+        if vdw_loss is not None:
+            self.vdw_loss = vdw_loss
 
         # fix identifiers
         if smiles is not None:
@@ -163,7 +174,7 @@ class CrystalData(BaseData):
 
             # fix symmetries
             self.sg_ind = sg_ind
-            if nonstandard_symmetry:  # set as list fo correct collation behavior
+            if nonstandard_symmetry:  # set as list for correct collation behavior
                 self.symmetry_operators = symmetry_operators
                 self.nonstandard_symmetry = True
             else:  # standard symmetry
@@ -510,6 +521,10 @@ class CrystalData(BaseData):
         return self['x'] if 'x' in self._store else None
 
     @property
+    def p_charges(self) -> Any:
+        return self['p_charges'] if 'p_charges' in self._store else None
+
+    @property
     def graph_x(self) -> Any:
         return self['graph_x'] if 'graph_x' in self._store else None
 
@@ -528,6 +543,13 @@ class CrystalData(BaseData):
     @property
     def y(self) -> Any:
         return self['y'] if 'y' in self._store else None
+
+    @property
+    def vdw_pot(self) -> Any:
+        return self['vdw_pot'] if 'vdw_pot' in self._store else None
+    @property
+    def vdw_loss(self) -> Any:
+        return self['vdw_loss'] if 'vdw_loss' in self._store else None
 
     @property
     def pos(self) -> Any:

@@ -1,0 +1,13 @@
+machine: "local"  # or "cluster"
+device: "cpu"  # or "cpu"
+base_config_path: /experiments/base/proxy_discriminator.yaml
+dataset_path: /tests/datasets/mini_pd_dataset.pt
+
+min_batch_size: 10
+minimum_epochs: 2
+max_epochs: 2 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+
+logger:
+  sample_reporting_frequency: 1  # how often to do detailed reporting with figures
+  run_name: regressor_test
+  experiment_tag: test

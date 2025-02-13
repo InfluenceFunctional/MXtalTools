@@ -1,12 +1,12 @@
 import torch
 from torch import nn as nn
 
-from mxtaltools.dataset_management.CrystalData import CrystalData
+from mxtaltools.dataset_utils.CrystalData import CrystalData
 from mxtaltools.models.graph_models.base_graph_model import BaseGraphModel
 from mxtaltools.models.graph_models.graph_neural_network import VectorGNN
 from mxtaltools.models.graph_models.molecule_graph_model import VectorMoleculeGraphModel
 from mxtaltools.models.modules.components import Scalarizer, vectorMLP
-from mxtaltools.models.utils import collate_decoded_data, ae_reconstruction_loss
+from mxtaltools.models.autoencoder_utils import collate_decoded_data, ae_reconstruction_loss
 from mxtaltools.reporting.ae_reporting import swarm_vs_tgt_fig
 
 

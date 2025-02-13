@@ -2,7 +2,7 @@ import numpy as np
 from torch.nn.utils import rnn as rnn
 from torch_scatter import scatter
 
-from mxtaltools.common.geometry_calculations import single_molecule_principal_axes_torch, \
+from mxtaltools.common.geometry_utils import single_molecule_principal_axes_torch, \
     batch_molecule_principal_axes_torch, compute_Ip_handedness, rotvec2sph, sph2rotvec, \
     compute_fractional_transform_torch
 from scipy.spatial.transform import Rotation
@@ -150,34 +150,43 @@ def unit_cell_to_convolution_cluster(unit_cell_pos_list: list,
     return supercell_coords_list, supercell_atoms_list, ref_mol_inds_list, n_copies
 
 
-def update_supercell_data(supercell_data,
+def update_supercell_data(supercell_batch,
                           supercell_atoms_list,
                           supercell_coords_list,
                           ref_mol_inds_list,
-                          reference_cell_list):
+                          reference_cell_list,
+                          ):
     """
     copy new supercell data back onto original supercell objects, omitting symmetry information
     """
-    device = supercell_data.x.device
-    for i in range(supercell_data.num_graphs):
+    device = supercell_batch.x.device
+    for i in range(supercell_batch.num_graphs):
         if i == 0:
             new_batch = torch.ones(len(supercell_atoms_list[i]), device=device).int() * i
-            new_ptr = torch.zeros(supercell_data.num_graphs + 1, device=device)
+            new_ptr = torch.zeros(supercell_batch.num_graphs + 1, device=device)
             new_ptr[1] = len(supercell_coords_list[0])
         else:
             new_batch = torch.cat((new_batch, torch.ones(len(supercell_atoms_list[i]), device=device).int() * i))
             new_ptr[i + 1] = new_ptr[i] + len(supercell_coords_list[i])
 
-    # update crystaldata batch with cell info
-    supercell_data.x = torch.cat(supercell_atoms_list).type(dtype=torch.float32)
-    supercell_data.pos = torch.cat(supercell_coords_list).type(dtype=torch.float32)
-    supercell_data.batch = new_batch.type(dtype=torch.int64)
-    supercell_data.ptr = new_ptr.type(dtype=torch.int64)
-    supercell_data.aux_ind = torch.cat(ref_mol_inds_list).type(dtype=torch.int)
-    supercell_data.unit_cell_pos = reference_cell_list
-    supercell_data.mol_ind = torch.zeros_like(supercell_data.aux_ind)  # mol ind is always 0 for zp=1 cells
+    molwise_batch = supercell_batch.batch.clone()
 
-    return supercell_data
+    # update crystaldata batch with cell info
+    supercell_batch.x = torch.cat(supercell_atoms_list).type(dtype=torch.float32)
+    supercell_batch.pos = torch.cat(supercell_coords_list).type(dtype=torch.float32)
+    supercell_batch.batch = new_batch.type(dtype=torch.int64)
+    supercell_batch.ptr = new_ptr.type(dtype=torch.int64)
+    supercell_batch.aux_ind = torch.cat(ref_mol_inds_list).type(dtype=torch.int)
+    supercell_batch.unit_cell_pos = reference_cell_list
+    supercell_batch.mol_ind = torch.zeros_like(supercell_batch.aux_ind)  # mol ind is always 0 for zp=1 cells
+
+    inside_batch = supercell_batch.batch[supercell_batch.aux_ind == 0]
+    n_repeats = torch.tensor([int(torch.sum(supercell_batch.batch == ii) / torch.sum(inside_batch == ii)) for ii in
+                              range(supercell_batch.num_graphs)])  # number of molecules in convolution region
+    supercell_partial_charges = [supercell_batch.p_charges[molwise_batch==ii].repeat(n_repeats[ii]) for ii in range(supercell_batch.num_graphs)]
+    supercell_batch.p_charges = torch.cat(supercell_partial_charges)
+
+    return supercell_batch
 
 
 def fractional_transform(coords, transform_matrix):

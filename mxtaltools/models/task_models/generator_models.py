@@ -9,7 +9,8 @@ from torch.distributions import MultivariateNormal, Uniform
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
 from mxtaltools.constants.space_group_feature_tensor import SG_FEATURE_TENSOR
 from mxtaltools.models.modules.components import scalarMLP
-from mxtaltools.models.utils import enforce_crystal_system, enforce_1d_bound, clean_cell_params
+from mxtaltools.models.utils import enforce_1d_bound, clean_cell_params
+from mxtaltools.common.geometry_utils import enforce_crystal_system
 
 
 def softplus_shift(x: torch.Tensor) -> torch.Tensor:

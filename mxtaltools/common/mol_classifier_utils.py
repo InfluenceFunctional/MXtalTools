@@ -3,13 +3,17 @@ import torch
 import torch.nn.functional as F
 
 from mxtaltools.common.utils import softmax_np
-from mxtaltools.common.geometry_calculations import coor_trans_matrix_np
+from mxtaltools.common.geometry_utils import coor_trans_matrix_np
 from mxtaltools.constants.classifier_constants import defect_names
 
 from sklearn.metrics import roc_auc_score, confusion_matrix, f1_score
 import plotly.graph_objects as go
 
 import pandas as pd
+
+"""
+utility functions for the molecular crystal local environment classification module
+"""
 
 
 def delete_pandas_dataframe_rows(df: pd.DataFrame, inds):

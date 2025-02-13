@@ -7,8 +7,8 @@ from plotly.subplots import make_subplots
 from sklearn.cluster import AgglomerativeClustering
 
 import constants.asymmetric_units
-from mxtaltools.common.geometry_calculations import cell_vol_torch
-from mxtaltools.common.utils import compute_rdf_distance
+from mxtaltools.common.geometry_utils import cell_vol_torch
+from mxtaltools.analysis.crystal_rdf import compute_rdf_distance
 from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
 from mxtaltools.crystal_building.utils import overwrite_symmetry_info, DEPRECATED_write_sg_to_all_crystals
 from mxtaltools.models.functions.crystal_rdf import crystal_rdf

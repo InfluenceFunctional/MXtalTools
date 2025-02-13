@@ -12,7 +12,7 @@ from plotly.subplots import make_subplots
 from torch_scatter import scatter
 
 from mxtaltools.common.config_processing import load_yaml, process_main_config
-from mxtaltools.common.geometry_calculations import scatter_compute_Ip
+from mxtaltools.common.geometry_utils import scatter_compute_Ip
 from mxtaltools.modeller import Modeller
 from mxtaltools.reporting.ae_reporting import gaussian_3d_overlap_plots
 

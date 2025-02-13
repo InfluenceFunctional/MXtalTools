@@ -8,7 +8,8 @@ import torch
 from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.crystal_building.builder import CrystalBuilder
 from mxtaltools.models.task_models.generator_models import CSDPrior
-from mxtaltools.models.utils import denormalize_generated_cell_params, get_intermolecular_dists_dict
+from mxtaltools.models.utils import denormalize_generated_cell_params
+from mxtaltools.analysis.crystals_analysis import get_intermolecular_dists_dict
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)  # ignore numpy error
 warnings.filterwarnings("ignore", category=DeprecationWarning)  # ignore numpy error
@@ -16,8 +17,8 @@ warnings.filterwarnings("ignore", category=UserWarning)  # ignore w&b error
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
 
-from mxtaltools.common.geometry_calculations import compute_fractional_transform_torch, batch_molecule_vdW_volume
-from mxtaltools.dataset_management.CrystalData import CrystalData
+from mxtaltools.common.geometry_utils import compute_fractional_transform_torch, batch_molecule_vdW_volume
+from mxtaltools.dataset_utils.CrystalData import CrystalData
 from torch_geometric.loader.dataloader import Collater
 from mxtaltools.constants.space_group_info import SYM_OPS, POINT_GROUPS, LATTICE_TYPE, SPACE_GROUPS
 from mxtaltools.common.ase_interface import ase_mol_from_crystaldata

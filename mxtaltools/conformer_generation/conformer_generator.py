@@ -19,7 +19,8 @@ from scipy.spatial.transform import Rotation as R
 from torch_geometric.utils import to_networkx
 
 from mxtaltools.common.utils import chunkify
-from mxtaltools.dataset_management.CrystalData import CrystalData
+from mxtaltools.dataset_utils.CrystalData import CrystalData
+from mxtaltools.dataset_utils.construction.featurization_utils import get_partial_charges
 
 bonds = {BT.SINGLE: 0, BT.DOUBLE: 1, BT.TRIPLE: 2, BT.AROMATIC: 3}
 
@@ -134,6 +135,7 @@ def generate_random_conformers_from_smiles(smile: str,
                                            protonate: bool = True,
                                            max_rotamers_per_samples: int = 10,
                                            allow_simple_hydrogen_rotations: bool = False,
+                                           do_partial_charges: bool = False,
                                            ):
     mol = embed_mol(smile, protonate)
     if not mol:  # embedding failed
@@ -197,7 +199,11 @@ def generate_random_conformers_from_smiles(smile: str,
     if len(coords) == 0:
         return False, False, False, False
 
-    return coords, types, mask_rotate, mask_edges
+    if do_partial_charges:
+        charges = get_partial_charges(mol)
+    else:
+        charges = np.zeros_like(types)
+    return coords, types, mask_rotate, mask_edges, charges
 
 
 def generate_random_conformers_from_smiles_list(smiles, dump_path, chunk_ind):

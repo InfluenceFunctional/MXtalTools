@@ -3,15 +3,15 @@ from typing import Optional
 import torch
 from torch_geometric.loader.dataloader import Collater
 
-from mxtaltools.common.utils import init_sym_info
+from mxtaltools.common.training_utils import init_sym_info
 from mxtaltools.crystal_building.utils import \
     (update_supercell_data, unit_cell_to_convolution_cluster,
      align_molecules_to_principal_axes,
      batch_asymmetric_unit_pose_analysis_torch, rotvec2rotmat, aunit2unit_cell, generate_sorted_fractional_translations,
      get_symmetry_functions, new_unit_cell_to_convolution_cluster)
-from mxtaltools.common.geometry_calculations import sph2rotvec
+from mxtaltools.common.geometry_utils import sph2rotvec
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
-from mxtaltools.dataset_management.CrystalData import CrystalData
+from mxtaltools.dataset_utils.CrystalData import CrystalData
 
 
 class CrystalBuilder:
@@ -360,6 +360,6 @@ class CrystalBuilder:
             cell_sample = cell_sample.to(self.device)
 
         if target_handedness is not None:
-            target_handedness = target_handedness.clone().detach()
+            target_handedness = torch.tensor(target_handedness).flatten().clone().detach()
 
         return supercell_data, cell_sample, target_handedness

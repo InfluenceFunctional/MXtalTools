@@ -2,7 +2,7 @@ from typing import Tuple, Optional
 
 import torch
 
-from mxtaltools.dataset_management.CrystalData import CrystalData
+from mxtaltools.dataset_utils.CrystalData import CrystalData
 from mxtaltools.models.graph_models.base_graph_model import BaseGraphModel
 from mxtaltools.models.graph_models.molecule_graph_model import MoleculeClusterModel
 

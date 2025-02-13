@@ -7,7 +7,7 @@ import torch
 from scipy.spatial.distance import cdist
 from tqdm import tqdm
 
-from mxtaltools.common.geometry_calculations import batch_molecule_principal_axes_torch
+from mxtaltools.common.geometry_utils import batch_molecule_principal_axes_torch
 from mxtaltools.crystal_building.utils import align_molecules_to_principal_axes
 from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering, swarm_vs_tgt_fig
 

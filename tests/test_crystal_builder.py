@@ -1,6 +1,7 @@
 from torch_geometric.loader.dataloader import Collater
 
-from mxtaltools.common.utils import compute_rdf_distance, init_sym_info
+from mxtaltools.common.training_utils import init_sym_info
+from mxtaltools.analysis.crystal_rdf import compute_rdf_distance
 from mxtaltools.crystal_building.utils import batch_asymmetric_unit_pose_analysis_torch, get_intra_mol_dists
 from mxtaltools.models.utils import clean_cell_params
 from mxtaltools.models.functions.crystal_rdf import crystal_rdf

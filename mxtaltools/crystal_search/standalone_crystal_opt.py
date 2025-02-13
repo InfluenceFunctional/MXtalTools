@@ -6,16 +6,18 @@ from torch.nn import functional as F
 from torch_scatter import scatter
 from tqdm import tqdm
 
-from mxtaltools.common.utils import init_sym_info
+from mxtaltools.common.training_utils import init_sym_info
 from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.crystal_building.builder import CrystalBuilder
 from mxtaltools.crystal_building.utils import set_molecule_alignment, overwrite_symmetry_info
-from mxtaltools.dataset_management.CrystalData import CrystalData
+from mxtaltools.dataset_utils.CrystalData import CrystalData
 from mxtaltools.models.functions.crystal_rdf import new_crystal_rdf
 
 from mxtaltools.models.functions.vdw_overlap import vdw_analysis, scale_molwise_vdw_pot
-from mxtaltools.models.utils import get_intermolecular_dists_dict, denormalize_generated_cell_params, enforce_1d_bound, \
-    enforce_crystal_system, compute_H_bond_energy
+from mxtaltools.models.utils import denormalize_generated_cell_params, enforce_1d_bound
+from mxtaltools.analysis.crystals_analysis import get_intermolecular_dists_dict
+from mxtaltools.common.geometry_utils import enforce_crystal_system
+from mxtaltools.analysis.vdw_analysis import electrostatic_analysis
 
 
 def standalone_add_scrambled_molecule_samples(aunit_poses, dist_dict, handedness_record, hit_max_lr, loss, loss_record,
@@ -69,16 +71,17 @@ def standalone_score_crystal_batch(mol_batch, score_func, supercell_data, vdw_ra
             supercell_data.clone(), return_dists=True, return_latent=False)
         dist_dict = extra_outputs['dists_dict']
     elif score_func.lower() == 'vdw':
-        dist_dict = get_intermolecular_dists_dict(supercell_data, cutoff, 100)
+        dist_dict = get_intermolecular_dists_dict(supercell_data,
+                                                  cutoff, 100)
     else:
         assert False, f"{score_func} is not an implemented score function for gradient descent optimization"
     molwise_overlap, molwise_normed_overlap, vdw_potential, vdw_loss, lj_pot \
         = vdw_analysis(vdw_radii_tensor,
                        dist_dict,
-                       mol_batch.num_graphs, )
-    # h_bond_energy = compute_H_bond_energy(supercell_data, dist_dict)
-    # vdw_potential += h_bond_energy
-    # vdw_loss += h_bond_energy
+                       mol_batch.num_graphs)
+    estat_energy = electrostatic_analysis(dist_dict, supercell_data.num_graphs)
+    vdw_potential += estat_energy
+    vdw_loss += estat_energy
     if score_func == 'discriminator':
         loss = F.softplus(output[:, 2])
     elif score_func.lower() == 'vdw':
@@ -121,7 +124,7 @@ def standalone_gradient_descent_optimization(
             while not converged:
                 descaled_cleaned_sample, dist_dict, loss, packing_coeff, supercell_batch, vdw_potential = standalone_gd_opt_step(
                     hit_max_lr, lr_record, max_lr, mol_batch, optimizer, s_ind, sample, scheduler1, scheduler2,
-                    score_func, standardize_pose, 5, 6, supercell_builder
+                    score_func, standardize_pose, 6, 6, supercell_builder
                 )
 
                 sample_to_compare = descaled_cleaned_sample.clone()
@@ -204,7 +207,8 @@ def standalone_gd_opt_step(hit_max_lr, lr_record, max_lr, mol_batch, optimizer, 
     reduced_volume = generated_cell_volumes / supercell_batch.sym_mult
     packing_coeff = mol_batch.mol_volume / reduced_volume
     dist_dict, loss, vdw_potential = standalone_score_crystal_batch(
-        mol_batch, score_func, supercell_batch, vdw_radii_tensor=vdw_radii_tensor, cutoff=cutoff
+        mol_batch, score_func, supercell_batch,
+        vdw_radii_tensor=vdw_radii_tensor, cutoff=cutoff
     )
     loss.mean().backward()  # compute gradients
     optimizer.step()  # apply grad

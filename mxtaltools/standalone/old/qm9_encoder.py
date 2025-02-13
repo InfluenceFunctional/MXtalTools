@@ -19,7 +19,8 @@ from mxtaltools.models.task_models.autoencoder_models import PointAutoencoder
 import numpy as np
 import torch
 
-from mxtaltools.models.utils import compute_full_evaluation_overlap, reload_model
+from mxtaltools.models.autoencoder_utils import compute_full_evaluation_overlap
+from mxtaltools.common.training_utils import reload_model
 
 # NOTE DEPRECATED
 

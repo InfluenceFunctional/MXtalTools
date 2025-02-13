@@ -5,7 +5,6 @@ import torch
 from sklearn.cluster import AgglomerativeClustering
 
 from mxtaltools.common.rdf_calculation import compute_rdf_distmat, compute_rdf_distmat_parallel
-from mxtaltools.models.utils import coarse_crystal_filter
 
 
 def rdf_clustering(packing_coeff, rdf, rdf_cutoff, rr, samples, vdw, num_cpus=None):
@@ -122,3 +121,23 @@ def agglomerative_cluster(sample_score, threshold, dists=None, samples=None):
         good_inds = torch.arange(len(sample_score))
 
     return torch.LongTensor(good_inds), n_clusters, classes
+
+
+def coarse_crystal_filter(lj_record, lj_cutoff, packing_coeff_record, packing_cutoff):
+    """filtering - samples with exactly 0 LJ energy are too diffuse, and more than CUTOFF are overlapping"""
+    bad_inds = []
+    bad_bools1 = lj_record == 0
+    bad_bools2 = lj_record >= lj_cutoff
+    bad_bools3 = packing_coeff_record >= packing_cutoff[-1]
+    bad_bools4 = packing_coeff_record <= packing_cutoff[0]
+
+    # if we got any of these, cut the sample
+    good_bools = (~bad_bools1) * (~bad_bools2) * (~bad_bools3) * (~bad_bools4)
+    good_inds = torch.argwhere(good_bools).flatten()
+
+    print(f"{bad_bools1.sum()} with zero vdW, "
+          f"{bad_bools2.sum()} above vdW cutoff, "
+          f"{bad_bools3.sum()} outside density cutoff,"
+          f"leaving {len(good_inds)} samples")
+
+    return bad_inds, good_inds

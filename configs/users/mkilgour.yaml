@@ -7,7 +7,7 @@ paths:
   local_config_path: '/home/mkilgour/MXtalTools/configs/' #'C:\Users\mikem\PycharmProjects\Python_Codes/MXtalTools/configs/'
   cluster_config_path: '/scratch/mk8347/mcrygan/configs/'
 
-  # where to dfind datasets
+  # where to find datasets
   local_dataset_dir_path: '/home/mkilgour/crystal_datasets/' #"D:/crystal_datasets/"
   cluster_dataset_dir_path: '/scratch/mk8347/csd_runs/datasets/'
 
