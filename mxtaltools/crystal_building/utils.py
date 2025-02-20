@@ -513,7 +513,12 @@ def rotvec2rotmat(mol_rotation: torch.tensor, basis='cartesian'):
     return applied_rotation_list
 
 
-def aunit2unit_cell(symmetry_multiplicity, aunit_coords_list, fc_transform_list, cf_transform_list, sym_ops_list, override_aunit=False):
+def aunit2unit_cell(symmetry_multiplicity,
+                    aunit_coords_list,
+                    fc_transform_list,
+                    cf_transform_list,
+                    sym_ops_list,
+                    override_aunit=False):
     """  # NEW VERSION - faster. See scratch_5 for testing
     use cell symmetry to pattern asymmetric unit into full unit cell
     'unzip' and 'collect' by Z to do the whole thing in a single parallel pass

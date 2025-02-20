@@ -1,12 +1,13 @@
 import os
 
-import numpy as np
-
 import torch
-
 from torch import Tensor
-from torch_geometric.data import DataLoader
-from torch_geometric.loader.dataloader import Collater, DataLoader
+from torch_geometric.data import DataLoader, Batch
+from torch_geometric.loader.dataloader import DataLoader
+
+
+def collate_data_list(data_list):
+    return Batch.from_data_list(data_list,)
 
 
 def quick_combine_dataloaders(dataset, data_loader, batch_size, max_size):

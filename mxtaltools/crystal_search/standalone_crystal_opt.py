@@ -6,18 +6,17 @@ from torch.nn import functional as F
 from torch_scatter import scatter
 from tqdm import tqdm
 
+from mxtaltools.analysis.crystal_rdf import new_crystal_rdf
 from mxtaltools.common.training_utils import init_sym_info
 from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.crystal_building.builder import CrystalBuilder
 from mxtaltools.crystal_building.utils import set_molecule_alignment, overwrite_symmetry_info
 from mxtaltools.dataset_utils.CrystalData import CrystalData
-from mxtaltools.models.functions.crystal_rdf import new_crystal_rdf
 
-from mxtaltools.models.functions.vdw_overlap import vdw_analysis, scale_molwise_vdw_pot
 from mxtaltools.models.utils import denormalize_generated_cell_params, enforce_1d_bound
 from mxtaltools.analysis.crystals_analysis import get_intermolecular_dists_dict
 from mxtaltools.common.geometry_utils import enforce_crystal_system
-from mxtaltools.analysis.vdw_analysis import electrostatic_analysis
+from mxtaltools.analysis.vdw_analysis import electrostatic_analysis, vdw_analysis
 
 
 def standalone_add_scrambled_molecule_samples(aunit_poses, dist_dict, handedness_record, hit_max_lr, loss, loss_record,
@@ -190,7 +189,7 @@ def standalone_gd_opt_step(hit_max_lr, lr_record, max_lr, mol_batch, optimizer, 
     vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()), device=sample.device)
     cleaned_sample = cleanup_sample(sample, mol_batch.sg_ind, supercell_builder.symmetries_dict)
     descaled_cleaned_sample = denormalize_generated_cell_params(
-        cleaned_sample, mol_batch, supercell_builder.asym_unit_dict
+        cleaned_sample, mol_batch, supercell_builder.ASYM_UNITS
     )
     # todo functionalize the below - it seems we do it everywhere
     supercell_batch, generated_cell_volumes = (

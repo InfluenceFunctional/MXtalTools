@@ -121,8 +121,7 @@ def generate_crystaldata_sample(atomic_numbers, crystal_dict, handedness_list, i
                                 pose_params_list, reconstructed_unit_cell_coords_tensor,
                                 reparameterized_aunit_coords_tensor, sym_ops, sym_ops_are_standard):
 
-    # todo automate/simplify
-    crystaldata = CrystalData(
+    crystaldata = CrystalData(  # CRYTODO
         x=torch.tensor(atomic_numbers, dtype=torch.long),
         pos=reparameterized_aunit_coords_tensor,
         mol_ind=torch.tensor(mol_ind, dtype=torch.int32),

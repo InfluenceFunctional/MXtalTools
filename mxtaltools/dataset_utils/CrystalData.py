@@ -8,63 +8,17 @@ from torch import Tensor
 from torch_geometric.data.data import BaseData
 from torch_geometric.data.storage import (BaseStorage, EdgeStorage,
                                           GlobalStorage, NodeStorage)
-from torch_geometric.deprecation import deprecated
 from torch_geometric.typing import EdgeType, NodeType, OptTensor
 from torch_geometric.utils import subgraph
 from torch_sparse import SparseTensor
 
+from mxtaltools.common.geometry_utils import cell_parameters_to_box_vectors
 from mxtaltools.constants.space_group_info import SYM_OPS
-
-
-###############################################################################
-
-
-def cell_parameters_to_box_vectors(opt: str,
-                                   cell_lengths: torch.tensor,
-                                   cell_angles: torch.tensor,
-                                   return_vol: bool = False):
-    """
-    Initially borrowed from Nikos
-    Quickly convert from cell lengths and angles to fractional transform matrices fractional->cartesian or cartesian->fractional
-    """
-    ''' Calculate cos and sin of cell angles '''
-    cos_a = torch.cos(cell_angles)
-    sin_a = torch.sin(cell_angles)
-
-    ''' Calculate volume of the unit cell '''
-    val = 1.0 - cos_a[0] ** 2 - cos_a[1] ** 2 - cos_a[2] ** 2 + 2.0 * cos_a[0] * cos_a[1] * cos_a[2]
-    vol = torch.sign(val) * cell_lengths[0] * cell_lengths[1] * cell_lengths[2] * torch.sqrt(
-        torch.abs(val))  # technically a signed quanitity
-
-    ''' Setting the transformation matrix '''
-    m = torch.zeros((3, 3))
-    if opt == 'c_to_f':
-        ''' Converting from cartesian to fractional '''
-        m[0, 0] = 1.0 / cell_lengths[0]
-        m[0, 1] = -cos_a[2] / cell_lengths[0] / sin_a[2]
-        m[0, 2] = cell_lengths[1] * cell_lengths[2] * (cos_a[0] * cos_a[2] - cos_a[1]) / vol / sin_a[2]
-        m[1, 1] = 1.0 / cell_lengths[1] / sin_a[2]
-        m[1, 2] = cell_lengths[0] * cell_lengths[2] * (cos_a[1] * cos_a[2] - cos_a[0]) / vol / sin_a[2]
-        m[2, 2] = cell_lengths[0] * cell_lengths[1] * sin_a[2] / vol
-    elif opt == 'f_to_c':
-        ''' Converting from fractional to cartesian '''
-        m[0, 0] = cell_lengths[0]
-        m[0, 1] = cell_lengths[1] * cos_a[2]
-        m[0, 2] = cell_lengths[2] * cos_a[1]
-        m[1, 1] = cell_lengths[1] * sin_a[2]
-        m[1, 2] = cell_lengths[2] * (cos_a[0] - cos_a[1] * cos_a[2]) / sin_a[2]
-        m[2, 2] = vol / cell_lengths[0] / cell_lengths[1] / sin_a[2]
-
-    # todo create m in a single-step
-    if return_vol:
-        return m, torch.abs(vol)
-    else:
-        return m
 
 
 # noinspection PyPropertyAccess
 class CrystalData(BaseData):
-    r"""A data object describing a homogeneous graph.  # todo update docstring
+    r"""A data object describing a homogeneous graph.
     The data object can hold node-level, link-level and graph-level attributes.
     In general, :class:`~torch_geometric.data.Data` tries to mimic the
     behaviour of a regular Python dictionary.
@@ -83,7 +37,7 @@ class CrystalData(BaseData):
     tracking: array of graph-wise features for tracking & analysis
     smiles: SMILES strings of molecule in crystal
     csd_identifier: unique identifier string for this crystal structure
-    mol_volume: volume of a single molecule # TODO deprecate this is unreliably computed
+    mol_volume: volume of a single molecule
 
     sg_ind: space group index 1-230. Always assume general Wyckhoff positions
     # todo add z_prime
@@ -187,7 +141,7 @@ class CrystalData(BaseData):
             # fix box
             if cell_lengths is None:
                 self.cell_lengths = torch.ones(3)
-                self.cell_angles = torch.ones(3) * torch.pi/2
+                self.cell_angles = torch.ones(3) * torch.pi / 2
                 self.T_fc, self.T_cf = torch.eye(3), torch.eye(3)
                 self.cell_volume = 1
             else:
@@ -550,6 +504,7 @@ class CrystalData(BaseData):
     @property
     def vdw_pot(self) -> Any:
         return self['vdw_pot'] if 'vdw_pot' in self._store else None
+
     @property
     def vdw_loss(self) -> Any:
         return self['vdw_loss'] if 'vdw_loss' in self._store else None
@@ -615,10 +570,6 @@ class CrystalData(BaseData):
         return self['smiles'] if 'smiles' in self._store else None
 
     @property
-    def identifier(self) -> Any:
-        return self['identifier'] if 'identifier' in self._store else None
-
-    @property
     def unit_cell_pos(self) -> Any:
         return self['unit_cell_pos'] if 'unit_cell_pos' in self._store else None
 
@@ -633,19 +584,6 @@ class CrystalData(BaseData):
     @property
     def nonstandard_symmetry(self) -> Any:
         return self['nonstandard_symmetry'] if 'nonstandard_symmetry' in self._store else None
-
-    # Deprecated functions ####################################################
-
-    @property
-    @deprecated(details="use 'data.face.size(-1)' instead")
-    def num_faces(self) -> Optional[int]:
-        r"""Returns the number of faces in the mesh."""
-        if 'face' in self._store and isinstance(self.face, Tensor):
-            return self.face.size(self.__cat_dim__('face', self.face))
-        return None
-
-
-###############################################################################
 
 
 def size_repr(key: Any, value: Any, indent: int = 0) -> str:

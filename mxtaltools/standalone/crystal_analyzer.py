@@ -215,7 +215,7 @@ class CrystalAnalyzer(torch.nn.Module):
                 atom_types_list[ind] = z[good_inds]
 
         mol_batch = [
-            CrystalData(
+            CrystalData(  # CRYTODO
                 x=atom_types_list[ind],
                 pos=coords_list[ind],
                 mol_size=torch.ones(1) * len(atom_types_list[ind]),

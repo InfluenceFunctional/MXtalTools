@@ -11,7 +11,8 @@ from mxtaltools.dataset_utils.CrystalData import CrystalData
 from mxtaltools.models.functions.asymmetric_radius_graph import asymmetric_radius_graph
 
 
-def crystal_rdf(crystaldata, precomputed_distances_dict=None,
+def crystal_rdf(crystaldata,
+                precomputed_distances_dict=None,
                 rrange: list[int, int] = [0, 10],
                 bins: int = 100,
                 mode: str = 'all',

@@ -11,7 +11,7 @@ from scipy.spatial.distance import cdist
 
 from mxtaltools.common.geometry_utils import compute_principal_axes_np, coor_trans_matrix_np
 from mxtaltools.common.utils import chunkify
-from mxtaltools.constants.asymmetric_units import asym_unit_dict
+from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ELECTRONEGATIVITY, PERIOD, GROUP, VDW_RADII, ATOMIC_SYMBOLS, \
     ATOMIC_NUMBERS
 from mxtaltools.constants.space_group_info import SPACE_GROUPS
@@ -49,7 +49,7 @@ sg_numbers = {}
 for i in range(1, 231):
     sg_numbers[SPACE_GROUPS[i]] = i
 
-asym_unit_dict = asym_unit_dict.copy()
+asym_unit_dict = ASYM_UNITS.copy()
 for key in asym_unit_dict:
     asym_unit_dict[key] = torch.tensor(asym_unit_dict[key], dtype=torch.float32)
 
@@ -483,7 +483,7 @@ def rebuild_reparameterize_unit_cell(molecules, crystal_dict):
         position, orientation, handedness, is_well_defined, mol_coords = (
             batch_asymmetric_unit_pose_analysis_torch(zp_unit_cell_coords,
                                                       [crystal_dict['space_group_number']],
-                                                      asym_unit_dict,
+                                                      ASYM_UNITS,
                                                       T_fc[None, ...],
                                                       rotation_basis='spherical',
                                                       return_asym_unit_coords=True))

@@ -5,7 +5,9 @@ from ase.spacegroup import crystal as ase_crystal
 from ase.visualize import view
 
 
-def crystaldata_batch_to_ase_mols_list(crystaldata_batch, max_ind: int = np.inf, specific_inds=None,
+def crystaldata_batch_to_ase_mols_list(crystaldata_batch,
+                                       max_ind: int = np.inf,
+                                       specific_inds=None,
                                        show_mols: bool = False, **kwargs):
     """
     Helper function for converting Crystaldata batches into lists of ase objects.

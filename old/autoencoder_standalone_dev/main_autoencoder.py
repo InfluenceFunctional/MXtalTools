@@ -120,7 +120,7 @@ with (wandb.init(
             # centered_coords_list = [coords - coords.mean(0) for coords in coords_list]
             types_list = torch.randint(config.max_point_types, size=(point_num_rands.sum(),), device=config.device).split(point_num_rands.tolist())
 
-            data = collater([CrystalData(
+            data = collater([CrystalData(  # CRYTODO
                 x=types_list[n][:, None],
                 pos=coords_list[n],
                 mol_size=torch.tensor(point_num_rands[n], dtype=torch.long, device=config.device),

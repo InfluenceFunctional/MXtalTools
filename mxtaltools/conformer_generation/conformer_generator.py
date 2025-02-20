@@ -16,10 +16,10 @@ from rdkit.Chem import AllChem
 from rdkit.Chem.rdchem import BondType as BT
 from scipy.spatial.distance import cdist
 from scipy.spatial.transform import Rotation as R
+from torch_geometric.data import Data
 from torch_geometric.utils import to_networkx
 
 from mxtaltools.common.utils import chunkify
-from mxtaltools.dataset_utils.CrystalData import CrystalData
 from mxtaltools.dataset_utils.construction.featurization_utils import get_partial_charges
 
 bonds = {BT.SINGLE: 0, BT.DOUBLE: 1, BT.TRIPLE: 2, BT.AROMATIC: 3}
@@ -114,7 +114,7 @@ def extract_mol_info(mol, conf):
     edge_index = torch.tensor([row, col], dtype=torch.long)
     adjacency_matrix = np.zeros((len(z), len(z)), dtype=bool)
     adjacency_matrix[edge_index[0, :], edge_index[1, :]] = True
-    G = to_networkx(CrystalData(x=torch.LongTensor(z), pos=torch.Tensor(pos), edge_index=edge_index))
+    G = to_networkx(Data(x=torch.LongTensor(z), pos=torch.Tensor(pos), edge_index=edge_index))
 
     return mol, conf, pos, z, edge_index, adjacency_matrix, G
 

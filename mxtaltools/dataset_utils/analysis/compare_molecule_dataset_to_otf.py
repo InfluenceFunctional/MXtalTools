@@ -13,11 +13,10 @@ from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter
 
 from mxtaltools.common.geometry_utils import batch_molecule_vdW_volume
-from mxtaltools.analysis.crystal_rdf import earth_movers_distance_torch
+from mxtaltools.analysis.crystal_rdf import earth_movers_distance_torch, get_elementwise_dists, batch_histogram_1d
 from mxtaltools.constants.atom_properties import VDW_RADII
-from mxtaltools.dataset_utils.synthesis.otf_conf_gen import async_generate_random_conformer_dataset
+from mxtaltools.dataset_utils.synthesis.otf_dataset_synthesis import otf_synthesize_molecules
 from mxtaltools.models.functions.asymmetric_radius_graph import radius
-from mxtaltools.models.functions.crystal_rdf import get_elementwise_dists, batch_histogram_1d
 
 HDonorSmarts = Chem.MolFromSmarts(
     '[$([N;!H0;v3]),$([N;!H0;+1;v4]),$([O,S;H1;+0]),$([n;H1;+0])]')  # from rdkit lipinski https://github.com/rdkit/rdkit/blob/7c6d9cf4e9d95b4daa954f4f094e026093dbc13f/rdkit/Chem/Lipinski.py#L26
@@ -215,11 +214,11 @@ def generate_otf_dataset(generate_samples: int,
     num_processes = num_processes
     if generate_samples > 0:
         pool = mp.Pool(num_processes)
-        async_generate_random_conformer_dataset(dataset_length=generate_samples,
+        otf_synthesize_molecules(dataset_length=generate_samples,
                                                 smiles_source=r'D:\crystal_datasets\zinc22',
                                                 workdir=r'D:\crystal_datasets\otf_chunks',
                                                 allowed_atom_types=[1, 6, 7, 8, 9], num_processes=num_processes,
-                                                pool=pool, max_num_atoms=32, max_num_heavy_atoms=9, pare_to_size=9,
+                                                mp_pool=pool, max_num_atoms=32, max_num_heavy_atoms=9, pare_to_size=9,
                                                 max_radius=15, synchronize=True)
     chunks = os.listdir(r'D:\crystal_datasets\otf_chunks')
     chunks = [elem for elem in chunks if 'chunk' in elem]

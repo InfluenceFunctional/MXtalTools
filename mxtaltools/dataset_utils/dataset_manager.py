@@ -12,9 +12,9 @@ from torch_geometric.loader.dataloader import Collater
 from tqdm import tqdm
 
 from mxtaltools.common.geometry_utils import batch_molecule_vdW_volume
-from mxtaltools.constants.asymmetric_units import asym_unit_dict
+from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
-from mxtaltools.dataset_utils.md_data_processing import generate_dataset_from_dumps
+from mxtaltools.dataset_utils.md_analysis.md_data_processing import generate_dataset_from_dumps
 from mxtaltools.dataset_utils.utils import basic_stats, filter_graph_nodewise
 from mxtaltools.models.functions.minimum_image_neighbors import argwhere_minimum_image_convention_edges
 
@@ -73,7 +73,7 @@ class DataManager:
         torch.manual_seed(seed=seed if config is None else config.seed)
         self.collater = Collater(None, None)
 
-        self.asym_unit_dict = asym_unit_dict.copy()
+        self.asym_unit_dict = ASYM_UNITS.copy()
         for key in self.asym_unit_dict:
             self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(device)
 

@@ -403,7 +403,7 @@ def de_clean_samples(supercell_builder, samples, sg_inds):
     # descale asymmetric unit
     descaled_mol_position = mol_position.clone()
     for i, ind in enumerate(sg_inds):
-        descaled_mol_position[i, :] = mol_position[i, :] / constants.asymmetric_units.asym_unit_dict[
+        descaled_mol_position[i, :] = mol_position[i, :] / constants.asymmetric_units.ASYM_UNITS[
             str(int(ind))].cpu()
 
     # undo cleaning

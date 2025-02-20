@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from sklearn.cluster import AgglomerativeClustering
 
-from mxtaltools.common.rdf_calculation import compute_rdf_distmat, compute_rdf_distmat_parallel
+from mxtaltools.analysis.crystal_rdf import compute_rdf_distmat_parallel, compute_rdf_distmat
 
 
 def rdf_clustering(packing_coeff, rdf, rdf_cutoff, rr, samples, vdw, num_cpus=None):

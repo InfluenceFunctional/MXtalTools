@@ -156,8 +156,7 @@ def clean_generator_output(samples=None,
     '''destandardize & decode angles'''
     if destandardize:
         real_lattice_lengths = lattice_lengths * lattice_stds[:3] + lattice_means[:3]
-        real_lattice_angles = lattice_angles * lattice_stds[3:6] + lattice_means[
-                                                                   3:6]  # not bothering to encode as an angle
+        real_lattice_angles = lattice_angles * lattice_stds[3:6] + lattice_means[3:6]  # not bothering to encode as an angle
         real_mol_positions = mol_positions * lattice_stds[6:9] + lattice_means[6:9]
         if mol_orientations.shape[-1] == 3:
             real_mol_orientations = mol_orientations * lattice_stds[9:] + lattice_means[9:]

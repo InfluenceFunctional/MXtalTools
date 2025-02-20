@@ -11,6 +11,7 @@ from copy import copy
 general utilities
 '''
 
+
 def batch_compute_dipole(pos, batch, z, electronegativity_tensor):
     """
     Compute a rough dipole moment for a flat batch of molecules, as the simple weighted sum of electronegativities.

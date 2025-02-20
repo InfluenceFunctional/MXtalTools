@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch import nn as nn
 from torch.distributions import MultivariateNormal, Uniform
 
-from mxtaltools.constants.asymmetric_units import asym_unit_dict
+from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.space_group_feature_tensor import SG_FEATURE_TENSOR
 from mxtaltools.models.modules.components import scalarMLP
 from mxtaltools.models.utils import enforce_1d_bound, clean_cell_params
@@ -122,7 +122,7 @@ class CSDPrior(nn.Module):
         path = os.path.join(os.path.dirname(__file__), '../../constants/prior_norm_factors.npy')
         self.norm_factors = torch.tensor(np.load(path, allow_pickle=True), dtype=torch.float32, device=device)
         # initialize asymmetric unit dict
-        self.asym_unit_dict = asym_unit_dict.copy()
+        self.asym_unit_dict = ASYM_UNITS.copy()
         for key in self.asym_unit_dict:
             self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key])  # .to(self.device)
 
@@ -252,7 +252,7 @@ class IndependentGaussianGenerator(nn.Module):
 
         self.symmetries_dict = sym_info
         # initialize asymmetric unit dict
-        self.asym_unit_dict = asym_unit_dict.copy()
+        self.asym_unit_dict = ASYM_UNITS.copy()
         for key in self.asym_unit_dict:
             self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key])  # .to(self.device)
 

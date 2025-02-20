@@ -438,7 +438,7 @@ def generate_dataset_from_dumps(dumps_dirs: list,
                          molecule_num_atoms, polymorph, molecule_types, cluster_type) = process_cluster(
                             run_config, vals)
 
-                        datapoint = CrystalData(
+                        datapoint = CrystalData(  # CRYTODO
                             x=torch.tensor(vals['element'], dtype=torch.long),
                             mol_ind=torch.tensor(vals['mol'], dtype=torch.long),
                             pos=cluster_coords,

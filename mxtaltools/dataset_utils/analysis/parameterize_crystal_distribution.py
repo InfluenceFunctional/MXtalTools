@@ -11,7 +11,7 @@ from torch_geometric.loader.dataloader import Collater
 
 from mxtaltools.common.geometry_utils import rotvec2sph, batch_molecule_vdW_volume, \
     batch_compute_normed_cell_vectors
-from mxtaltools.constants.asymmetric_units import raw_asym_unit_dict
+from mxtaltools.constants.asymmetric_units import RAW_ASYM_UNITS
 from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.constants.space_group_info import LATTICE_TYPE
 
@@ -100,7 +100,7 @@ if __name__ == '__main__':
     positions = dataset.pose_params0[:, :3].clone()
     for ind in range(len(positions)):
         try:
-            positions[ind] = positions[ind] / torch.Tensor(raw_asym_unit_dict[str(int(dataset.sg_ind[ind]))])
+            positions[ind] = positions[ind] / torch.Tensor(RAW_ASYM_UNITS[str(int(dataset.sg_ind[ind]))])
         except:
             pass
 

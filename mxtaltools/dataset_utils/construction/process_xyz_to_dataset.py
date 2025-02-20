@@ -57,7 +57,7 @@ def process_dataset_chunks(xyzs_path, chunks_path, n_chunks):
 
                     molecule_dict = featurize_xyz_molecule(molecule_dict, text)
 
-                    crystaldata = CrystalData(
+                    crystaldata = CrystalData(  #CRYTODO
                         x=torch.tensor(molecule_dict['atom_atomic_numbers'], dtype=torch.long),
                         pos=torch.tensor(molecule_dict['atom_coordinates'], dtype=torch.float32),
                         smiles=molecule_dict['molecule_smiles'],

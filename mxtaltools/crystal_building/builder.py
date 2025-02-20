@@ -10,7 +10,7 @@ from mxtaltools.crystal_building.utils import \
      batch_asymmetric_unit_pose_analysis_torch, rotvec2rotmat, aunit2unit_cell, generate_sorted_fractional_translations,
      get_symmetry_functions, new_unit_cell_to_convolution_cluster)
 from mxtaltools.common.geometry_utils import sph2rotvec
-from mxtaltools.constants.asymmetric_units import asym_unit_dict
+from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.dataset_utils.CrystalData import CrystalData
 
 
@@ -22,9 +22,9 @@ class CrystalBuilder:
         self.symmetries_dict = init_sym_info()  # other symmetry information
         self.sym_ops = self.symmetries_dict['sym_ops']  # list of symmetry operations
         self.device = device
-        self.numpy_asym_unit_dict = asym_unit_dict.copy()
+        self.numpy_asym_unit_dict = ASYM_UNITS.copy()
         self.rotation_basis = rotation_basis
-        self.asym_unit_dict = asym_unit_dict.copy()
+        self.asym_unit_dict = ASYM_UNITS.copy()
         for key in self.asym_unit_dict:
             self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(device)
 

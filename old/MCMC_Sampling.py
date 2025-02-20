@@ -363,7 +363,7 @@ class mcmcSampler:
             correct_position[jj], correct_rotation[jj], handedness \
                 = asymmetric_unit_pose_analysis_np(proposed_supercells.ref_cell_pos[jj],
                                                    proposed_supercells.sg_ind[jj],
-                                                   constants.asymmetric_units.asym_unit_dict,
+                                                   constants.asymmetric_units.ASYM_UNITS,
                                                    torch.linalg.inv(proposed_supercells.T_fc[jj]),
                                                    enforce_right_handedness = False) # todo replace this with the raw cell params
         # renormalize

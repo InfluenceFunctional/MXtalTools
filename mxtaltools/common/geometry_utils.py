@@ -2,8 +2,10 @@ import sys
 
 import numpy as np
 import torch
+from torch import Tensor
 from torch_scatter import scatter
 
+from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.models.functions.asymmetric_radius_graph import radius
 
 
@@ -643,7 +645,26 @@ def coor_trans_matrix_np(opt, v, a, return_vol=False):
         return m
 
 
-def batch_molecule_vdW_volume(atom_types_in, pos, batch, num_graphs, vdw_radii_tensor):
+def mol_batch_vdW_volume(mol_batch):
+    """
+    wrapper for batch_compute_vdW_volume
+    """
+    return batch_molecule_vdW_volume(
+        mol_batch.z,
+        mol_batch.pos,
+        mol_batch.batch,
+        mol_batch.num_graphs,
+        torch.FloatTensor(list(VDW_RADII.values()),
+                          device=mol_batch.z.device))
+
+
+def batch_molecule_vdW_volume(
+        atom_types_in: torch.LongTensor,
+        pos: torch.FloatTensor,
+        batch: torch.LongTensor,
+        num_graphs: int,
+        vdw_radii_tensor: torch.FloatTensor
+):
     if atom_types_in.ndim > 1:
         atom_types = atom_types_in[:, 0]
     else:
@@ -933,3 +954,82 @@ def enforce_crystal_system(lattice_lengths, lattice_angles, sg_inds, symmetries_
             sys.exit()
 
     return fixed_lengths, fixed_angles
+
+
+def cell_parameters_to_box_vectors(opt: str,
+                                   cell_lengths: torch.tensor,
+                                   cell_angles: torch.tensor,
+                                   return_vol: bool = False):
+    """  # TODO I believe this is a duplicate function
+    Initially borrowed from Nikos
+    Quickly convert from cell lengths and angles to fractional transform matrices fractional->cartesian or cartesian->fractional
+    """
+    ''' Calculate cos and sin of cell angles '''
+    cos_a = torch.cos(cell_angles)
+    sin_a = torch.sin(cell_angles)
+
+    ''' Calculate volume of the unit cell '''
+    val = 1.0 - cos_a[0] ** 2 - cos_a[1] ** 2 - cos_a[2] ** 2 + 2.0 * cos_a[0] * cos_a[1] * cos_a[2]
+    vol = torch.sign(val) * cell_lengths[0] * cell_lengths[1] * cell_lengths[2] * torch.sqrt(
+        torch.abs(val))  # technically a signed quanitity
+
+    ''' Setting the transformation matrix '''
+    m = torch.zeros((3, 3))
+    if opt == 'c_to_f':
+        ''' Converting from cartesian to fractional '''
+        m[0, 0] = 1.0 / cell_lengths[0]
+        m[0, 1] = -cos_a[2] / cell_lengths[0] / sin_a[2]
+        m[0, 2] = cell_lengths[1] * cell_lengths[2] * (cos_a[0] * cos_a[2] - cos_a[1]) / vol / sin_a[2]
+        m[1, 1] = 1.0 / cell_lengths[1] / sin_a[2]
+        m[1, 2] = cell_lengths[0] * cell_lengths[2] * (cos_a[1] * cos_a[2] - cos_a[0]) / vol / sin_a[2]
+        m[2, 2] = cell_lengths[0] * cell_lengths[1] * sin_a[2] / vol
+    elif opt == 'f_to_c':
+        ''' Converting from fractional to cartesian '''
+        m[0, 0] = cell_lengths[0]
+        m[0, 1] = cell_lengths[1] * cos_a[2]
+        m[0, 2] = cell_lengths[2] * cos_a[1]
+        m[1, 1] = cell_lengths[1] * sin_a[2]
+        m[1, 2] = cell_lengths[2] * (cos_a[0] - cos_a[1] * cos_a[2]) / sin_a[2]
+        m[2, 2] = vol / cell_lengths[0] / cell_lengths[1] / sin_a[2]
+
+    # todo create m in a single-step
+    if return_vol:
+        return m, torch.abs(vol)
+    else:
+        return m
+
+
+def compute_mol_radius(coords: torch.FloatTensor) -> Tensor:
+    """
+    compute centroid for each molecule
+    then the distance of all atoms to the centroid
+    most distant atom defines the 'radius'
+    """
+    centroid = coords.mean(0)
+    return torch.amax(torch.linalg.norm(coords - centroid, dim=-1))
+
+
+def batch_compute_mol_radius(coords: torch.FloatTensor,
+                             batch: torch.LongTensor,
+                             num_graphs: int,
+                             nodes_per_graph: torch.LongTensor) -> Tensor:
+    """
+    compute centroid for each molecule
+    then the distance of all atoms to the centroid
+    most distant atom defines the 'radius'
+    """
+    centroids = scatter(coords, batch, dim=0, dim_size=num_graphs, reduce='mean')
+    dists = torch.linalg.norm(coords - centroids.repeat_interleave(nodes_per_graph, 0), dim=-1)
+    return scatter(dists, batch, dim=0, dim_size=num_graphs, reduce='max')
+
+
+def batch_compute_mol_mass(z: torch.LongTensor,
+                           batch: torch.LongTensor,
+                           masses_tensor: torch.FloatTensor,
+                           num_graphs: int) -> Tensor:
+    return scatter(masses_tensor[z], batch, dim=0, dim_size=num_graphs, reduce='sum')
+
+
+def compute_mol_mass(z: torch.LongTensor,
+                     masses_tensor: torch.FloatTensor) -> Tensor:
+    return torch.sum(masses_tensor[z])

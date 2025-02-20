@@ -145,7 +145,7 @@ def otf_synthesize_crystals(dataset_length: int,
 
 
 def generate_smiles_dataset(dataset_length, num_processes, smiles_dirs_path, seed: int = 1):
-    np.random.seed(seed)
+    #np.random.seed(seed)
     h_dirs = os.listdir(smiles_dirs_path)
     h_dirs = [elem for elem in h_dirs if elem[0] == 'H']
     smiles_paths = []
@@ -270,7 +270,7 @@ def process_smiles_to_crystal_opt(lines: list,
         graph_inds = mol_batch.batch == graph_ind
         for sample_ind in range(len(opt_vdw_pot)):
             cell_params = opt_cell_params[sample_ind, graph_ind]
-            sample = CrystalData(
+            sample = CrystalData(  # CRYTODO
                 x=mol_batch.x[graph_inds],
                 p_charges=mol_batch.p_charges[graph_inds],
                 pos=opt_aunits[sample_ind, graph_inds],
@@ -506,7 +506,7 @@ def process_smiles(smile: str,
     if not set(atom_types).issubset(allowed_atom_types):
         return None, "invalid atom types"
 
-    sample = CrystalData(
+    sample = CrystalData(  # CRYTODO
         x=torch.tensor(atom_types, dtype=torch.long),
         pos=torch.tensor(coords, dtype=torch.float32),
         p_charges=charges[atoms_kept],

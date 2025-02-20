@@ -25,7 +25,7 @@ from mxtaltools.common.geometry_utils import rotvec2sph
 from mxtaltools.common.training_utils import instantiate_models, init_sym_info, make_sequential_directory, \
     flatten_wandb_params, set_lr, init_optimizer, init_scheduler, reload_model, save_checkpoint, slash_batch
 from mxtaltools.common.utils import sample_uniform
-from mxtaltools.constants.asymmetric_units import asym_unit_dict
+from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
 from mxtaltools.crystal_building.builder import CrystalBuilder
 from mxtaltools.crystal_building.utils import overwrite_symmetry_info
@@ -1266,7 +1266,7 @@ class Modeller:
         for ind in range(mol_batch.num_graphs):
             b1 = mol_batch.batch == ind
             mol_samples.append(
-                CrystalData(
+                CrystalData(  # CRYTODO
                     x=mol_batch.x[b1],
                     pos=mol_batch.pos[b1],
                     radius=mol_batch.radius[ind],
@@ -1278,7 +1278,7 @@ class Modeller:
 
             b2 = decoded_mol_batch.batch == ind
             decoded_mol_samples.append(
-                CrystalData(
+                CrystalData(  # CRYTODO
                     x=decoded_mol_batch.x[b2],
                     pos=decoded_mol_batch.pos[b2],
                     radius=decoded_mol_batch.radius[ind],
@@ -2112,7 +2112,7 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
 
         '''set space groups to be included and generated'''
         if self.config.generate_sgs == 'all':
-            self.config.generate_sgs = [self.sym_info['space_groups'][int(key)] for key in asym_unit_dict.keys()]
+            self.config.generate_sgs = [self.sym_info['space_groups'][int(key)] for key in ASYM_UNITS.keys()]
 
         self.generator_prior = CSDPrior(
             sym_info=self.sym_info, device=self.config.device,

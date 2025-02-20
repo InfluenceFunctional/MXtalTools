@@ -55,7 +55,7 @@ class TestClass:
             batch_asymmetric_unit_pose_analysis_torch(
                 [torch.Tensor(test_crystals.unit_cell_pos[ii]) for ii in range(test_crystals.num_graphs)],
                 torch.Tensor(test_crystals.sg_ind),
-                supercell_builder.asym_unit_dict,
+                supercell_builder.ASYM_UNITS,
                 torch.Tensor(test_crystals.T_fc),
                 enforce_right_handedness=False,
                 return_asym_unit_coords=True,
@@ -117,7 +117,7 @@ class TestClass:
 
         symmetries_dict = init_sym_info()
         final_samples = clean_cell_params(all_params, mol_batch.sg_ind, modeller.lattice_means, modeller.lattice_stds,
-                                          symmetries_dict, supercell_builder.asym_unit_dict,
+                                          symmetries_dict, supercell_builder.ASYM_UNITS,
                                           rescale_asymmetric_unit=False, destandardize=False, mode='hard')
 
         all_sg_supercells, _ = supercell_builder.build_zp1_supercells(

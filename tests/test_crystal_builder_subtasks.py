@@ -65,9 +65,9 @@ class TestClass:
 
     # todo define an assertion - right now the function itself is the best check unless we do it manually for each SG
     def WIP_scale_asymmetric_unit(self):
-        space_groups = torch.tensor(np.asarray(list(supercell_builder.asym_unit_dict.keys())).astype(int))
+        space_groups = torch.tensor(np.asarray(list(supercell_builder.ASYM_UNITS.keys())).astype(int))
         centroid_coords = torch.Tensor(np.random.uniform(0, 1, size=(len(space_groups), 3)))
-        scaled_centroids = descale_asymmetric_unit(supercell_builder.asym_unit_dict, mol_position=centroid_coords, sg_inds=space_groups)
+        scaled_centroids = descale_asymmetric_unit(supercell_builder.ASYM_UNITS, mol_position=centroid_coords, sg_inds=space_groups)
         return None
 
     # todo this check may fail for high symmetry molecules - need either to get rid of them or find a way to deal with them
@@ -95,7 +95,7 @@ class TestClass:
             batch_asymmetric_unit_pose_analysis_torch(
                 unit_cell_coords_list=[torch.Tensor(test_crystals.unit_cell_pos[ii]) for ii in range(test_crystals.num_graphs)],
                 sg_ind_list=test_crystals.sg_ind,
-                asym_unit_dict=supercell_builder.asym_unit_dict,
+                asym_unit_dict=supercell_builder.ASYM_UNITS,
                 T_fc_list=test_crystals.T_fc,
                 enforce_right_handedness=False,
                 rotation_basis='cartesian',

@@ -63,7 +63,7 @@ def gradient_descent_sampling(discriminator, crystal_batch, supercell_builder,
 
             cleaned_sample = clean_cell_params(sample, crystal_batch.sg_ind,
                                                lattice_means, lattice_stds,
-                                               supercell_builder.symmetries_dict, supercell_builder.asym_unit_dict,
+                                               supercell_builder.symmetries_dict, supercell_builder.ASYM_UNITS,
                                                rescale_asymmetric_unit=True, destandardize=False, mode='hard' if s_ind == 0 else 'soft',
                                                fractional_basis='unit_cell'
                                                )
@@ -154,7 +154,7 @@ def mcmc_sampling(discriminator, crystal_batch, supercell_builder,
 
                 cleaned_proposed_samples = clean_cell_params(proposed_samples, crystal_batch.sg_ind,
                                                              lattice_means, lattice_stds,
-                                                             supercell_builder.symmetries_dict, supercell_builder.asym_unit_dict,
+                                                             supercell_builder.symmetries_dict, supercell_builder.ASYM_UNITS,
                                                              rescale_asymmetric_unit=True, destandardize=False, mode='soft',
                                                              fractional_basis='unit_cell'
                                                              )
@@ -198,7 +198,7 @@ def mcmc_sampling(discriminator, crystal_batch, supercell_builder,
 
                 proposed_samples = clean_cell_params(proposed_samples, crystal_batch.sg_ind,
                                                      lattice_means, lattice_stds,
-                                                     supercell_builder.symmetries_dict, supercell_builder.asym_unit_dict,
+                                                     supercell_builder.symmetries_dict, supercell_builder.ASYM_UNITS,
                                                      rescale_asymmetric_unit=True, destandardize=False, mode='hard',
                                                      fractional_basis='unit_cell'
                                                      )

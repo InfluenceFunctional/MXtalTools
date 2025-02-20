@@ -65,7 +65,7 @@ def test_VectorLayerNorm():
         check_tensor_similarity(output_from_rotated, rotated_output)
 
 
-# @torch.no_grad()
+# @torch.no_grad()  # todo update or delete
 # def test_EMLP():
 #     module = EMLP(layers=1, input_dim=feature_depth, filters=feature_depth, output_dim=feature_depth, activation='gelu',
 #                   dropout=0, norm='layer', add_vector_channel=True, vector_output_dim=feature_depth,
@@ -135,7 +135,7 @@ def test_softmax_aggregator():
     check_tensor_similarity(output_from_rotated, rotated_output)
 
 
-#
+# # todo update or delete
 # @torch.no_grad()
 # def test_graph_convolution():
 #     module = GCBlock(message_depth=feature_depth, node_embedding_depth=feature_depth, radial_dim=10,
@@ -175,7 +175,7 @@ def test_graph_convolution():
 
     check_tensor_similarity(output_from_rotated, rotated_output)
 
-#
+# # todo update or delete
 # @torch.no_grad()
 # def test_equivariant_graph():
 #     module = MoleculeGraphModel(input_node_dim=1,
