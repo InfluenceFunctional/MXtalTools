@@ -245,7 +245,7 @@ class CrystalBuilder:
                                    molecule_batch,
                                    target_handedness,
                                    skip_molecule_posing
-                                   ):
+                                   ):  # todo cleanup/rewrite
         supercell_batch = molecule_batch.clone()
         supercell_batch, cell_parameters, target_handedness = \
             self.move_cell_data_to_device(supercell_batch, cell_parameters, target_handedness)

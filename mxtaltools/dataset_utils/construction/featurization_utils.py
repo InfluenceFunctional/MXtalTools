@@ -147,7 +147,7 @@ def extract_crystal_data(identifier, crystal, unit_cell):
     return crystal_dict
 
 
-def featurize_molecule(crystal, rd_mol, component_num, protonation_state = 'deprotonated'):
+def featurize_molecule(crystal, rd_mol, component_num, protonation_state='deprotonated'):
     """
     extract atom & molecule-scale features
     """
@@ -179,7 +179,8 @@ def featurize_molecule(crystal, rd_mol, component_num, protonation_state = 'depr
     '''atom-wise features'''
     # molecule_dict['atom_mass'] = [atom.GetMass() for atom in atoms]
     molecule_dict['atom_is_H_bond_donor'] = np.array([1 if ind in list(h_donors) else 0 for ind in range(len(atoms))])
-    molecule_dict['atom_is_H_bond_acceptor'] = np.array([1 if ind in list(h_acceptors) else 0 for ind in range(len(atoms))])
+    molecule_dict['atom_is_H_bond_acceptor'] = np.array(
+        [1 if ind in list(h_acceptors) else 0 for ind in range(len(atoms))])
     molecule_dict['atom_valence'] = [atom.GetTotalValence() for atom in atoms]
     # molecule_dict['atom_vdW_radius'] = [vdw_radii_dict[number] for number in molecule_dict['atom_atomic_numbers']]
     # molecule_dict['atom_on_a_ring'] = [atom.IsInRing() for atom in atoms]
@@ -242,9 +243,11 @@ def featurize_molecule(crystal, rd_mol, component_num, protonation_state = 'depr
 
     return molecule_dict
 
+
 def get_partial_charges(rd_mol):
     AllChem.ComputeGasteigerCharges(rd_mol)
     return np.array([float(atom.GetProp('_GasteigerCharge')) for atom in rd_mol.GetAtoms()])
+
 
 def crystal_filter(crystal,
                    max_heavy_atoms=1000,
@@ -340,14 +343,14 @@ def crystal_filter(crystal,
 
                     H_index = mol_formula.index('H')
                     inds = []
-                    for ind in range(1, 3+1):
+                    for ind in range(1, 3 + 1):
                         try:
                             value = int(mol_formula[ind + H_index])
                             inds.append(mol_formula[ind + H_index])
                         except ValueError:
                             break
                     if len(inds) == 0:
-                        passed_molecule_checks = False # zero or one hydrogens
+                        passed_molecule_checks = False  # zero or one hydrogens
                         continue
 
                     num_expected_hydrogens = int(''.join(inds))
@@ -407,7 +410,6 @@ def extract_custom_cif_data(cif_path, crystal_dict):
     return crystal_dict
 
 
-
 def featurize_xyz_molecule(molecule_dict, text):
     """
     Featurize a molecule directly from an xyz file
@@ -453,7 +455,6 @@ def get_qm9_properties(text):
     return molecule_dict, props
 
 
-
 def rebuild_reparameterize_unit_cell(molecules, crystal_dict):
     """
     function for rebuilding a given crystal and confirming correct parameterization
@@ -472,13 +473,14 @@ def rebuild_reparameterize_unit_cell(molecules, crystal_dict):
         # rebuild combined cell and compare to original TODO
         # these functions are built to be fast and parallel - but should be reasonable one at a time as well
 
-        zp_unit_cell_coords = aunit2unit_cell(torch.tensor(len(crystal_dict['symmetry_operators']), dtype=torch.int32)[None],
-                                              [torch.tensor(mol['atom_coordinates'], dtype=torch.float32)],
-                                              T_fc[None, :, :],
-                                              T_cf[None, :, :],
-                                              [torch.tensor(np.stack(crystal_dict['symmetry_operators']),
-                                                            dtype=torch.float32)]
-                                              )
+        zp_unit_cell_coords = aunit2unit_cell(
+            torch.tensor(len(crystal_dict['symmetry_operators']), dtype=torch.int32)[None],
+            [torch.tensor(mol['atom_coordinates'], dtype=torch.float32)],
+            T_fc[None, :, :],
+            T_cf[None, :, :],
+            [torch.tensor(np.stack(crystal_dict['symmetry_operators']),
+                          dtype=torch.float32)]
+        )
 
         position, orientation, handedness, is_well_defined, mol_coords = (
             batch_asymmetric_unit_pose_analysis_torch(zp_unit_cell_coords,

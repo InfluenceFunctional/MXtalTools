@@ -13,10 +13,11 @@ from torch_geometric.typing import OptTensor
 from torch_sparse import SparseTensor
 
 from mxtaltools.common.geometry_utils import cell_parameters_to_box_vectors, batch_molecule_vdW_volume, \
-    compute_mol_radius, batch_compute_mol_radius, batch_compute_mol_mass, compute_mol_mass
+    compute_mol_radius, batch_compute_mol_radius, batch_compute_mol_mass, compute_mol_mass, get_batch_centroids
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
-from mxtaltools.constants.space_group_info import SYM_OPS
+from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE
+from mxtaltools.crystal_building.utils import get_aunit_positions, new_aunit2unit_cell, parameterize_crystal_batch
 
 
 ###############################################################################
@@ -265,6 +266,13 @@ class MolData(MXtalBase):
                 1,
                 vdw_radii_tensor)[0]
 
+    def recenter_molecules(self):
+        if 'Batch' in self.__class__.__name__:
+            centroids = get_batch_centroids(self.pos, self.batch, self.num_graphs)
+            self.pos -= centroids.repeat_interleave(self.num_atoms, 0)
+        else:
+            self.pos -= self.pos.mean(0)
+
     @property
     def x(self) -> Any:
         return self['x'] if 'x' in self._store else None
@@ -354,11 +362,18 @@ class MolCrystalData(MXtalBase):
                     assert False, "symmetry_operators must be given for nonstandard symmetry operations"
                 self.nonstandard_symmetry = True
             else:  # standard symmetry
-                self.symmetry_operators = np.stack(SYM_OPS[sg_ind])
+                self.symmetry_operators = np.stack(SYM_OPS[sg_ind])  # if saved as a tensor, we get collation issues
                 self.nonstandard_symmetry = False
 
             self.sym_mult = torch.ones(1, dtype=torch.long, device=self.device) * len(self.symmetry_operators)
             self.is_well_defined = is_well_defined
+
+            # record prebuilt unit cell coordinates
+            if unit_cell_pos is not None:
+                self.unit_cell_pos = unit_cell_pos.cpu().detach().numpy()  # if it's saved as a tensor, we get problems in collation
+                assert unit_cell_pos.shape == (self.sym_mult, self.num_nodes, 3)
+            else:  # make a placeholder
+                self.unit_cell_pos = np.zeros((self.sym_mult, self.num_nodes, 3))
 
         # cell parameters
         if cell_lengths is not None:
@@ -385,11 +400,6 @@ class MolCrystalData(MXtalBase):
                         self.T_cf is not None and self.cell_volume is not None), "T_fc, T_cf, and cell volume must all be provided all together or not at all"
 
             self.packing_coeff = self.mol_volume * self.sym_mult / self.cell_volume
-
-        # record prebuilt unit cell coordinates
-        if unit_cell_pos is not None:
-            self.unit_cell_pos = unit_cell_pos  # if it's saved as a tensor, we get problems in collation
-            assert unit_cell_pos.shape == (self.sym_mult, self.num_nodes, 3)
 
     def denorm_cell_lengths(self, normed_cell_length):
         """
@@ -450,7 +460,7 @@ class MolCrystalData(MXtalBase):
         """
         asym_unit_dict = ASYM_UNITS.copy()
         for key in asym_unit_dict:
-            asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(self.device)
+            asym_unit_dict[key] = torch.Tensor(asym_unit_dict[key]).to(self.device)
 
         if 'Batch' in self.__class__.__name__:
             return normed_centroid * torch.stack([asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
@@ -466,7 +476,7 @@ class MolCrystalData(MXtalBase):
 
     def compute_denormed_cell_parameters(self, normed_cell_parameters):
         return torch.cat(
-            [self.denorm_cell_lengths(normed_cell_parameters[...,:3]),
+            [self.denorm_cell_lengths(normed_cell_parameters[..., :3]),
              self.cell_angles,
              self.scale_centroid_to_unit_cell(normed_cell_parameters[..., 6:9]),
              self.aunit_orientation],
@@ -474,39 +484,127 @@ class MolCrystalData(MXtalBase):
         )
 
     def standardize_box_parameters(self,
-                                    cell_means: OptTensor = None,
-                                    cell_stds: OptTensor = None):
+                                   cell_means: OptTensor = None,
+                                   cell_stds: OptTensor = None):
         if cell_means is None:
-            means =torch.tensor( # todo replace by call to constants
-            [1.0411, 1.1640, 1.4564, 1.5619, 1.5691, 1.5509],  # use triclinic
-            dtype=torch.float32)
+            means = torch.tensor(  # todo replace by call to constants
+                [1.0411, 1.1640, 1.4564, 1.5619, 1.5691, 1.5509],  # use triclinic
+                dtype=torch.float32)
 
         else:
             means = cell_means
         if cell_stds is None:
             stds = torch.tensor(
-                [0.3846, 0.4280, 0.4864,0.2363, 0.2046, 0.2624],
-            dtype=torch.float32)
+                [0.3846, 0.4280, 0.4864, 0.2363, 0.2046, 0.2624],
+                dtype=torch.float32)
         else:
             stds = cell_stds
         return (torch.cat([self.cell_lengths, self.cell_angles], dim=-1) - means) / stds
+
     def destandardize_box_parameters(self,
-                                    cell_means: OptTensor = None,
-                                    cell_stds: OptTensor = None):
+                                     cell_means: OptTensor = None,
+                                     cell_stds: OptTensor = None):
         if cell_means is None:
-            means =torch.tensor(
-            [1.0411, 1.1640, 1.4564, 1.5619, 1.5691, 1.5509],
-            dtype=torch.float32)
+            means = torch.tensor(
+                [1.0411, 1.1640, 1.4564, 1.5619, 1.5691, 1.5509],
+                dtype=torch.float32)
 
         else:
             means = cell_means
         if cell_stds is None:
             stds = torch.tensor(
-            [0.3846, 0.4280, 0.4864, 0.2363, 0.2046, 0.2624],
-            dtype=torch.float32)
+                [0.3846, 0.4280, 0.4864, 0.2363, 0.2046, 0.2624],
+                dtype=torch.float32)
         else:
             stds = cell_stds
         return torch.cat([self.cell_lengths, self.cell_angles], dim=-1) * stds + means
+
+    def pose_aunit(self):
+        if 'Batch' in self.__class__.__name__:
+            self.pos = get_aunit_positions(
+                self,
+                align_to_standardized_orientation=True,
+                mol_handedness=self.aunit_handedness,
+            )
+        else:  # TODO
+            assert False, "aunit posing not yet implemented for single crystals"
+
+    def build_unit_cell(self):
+        if 'Batch' in self.__class__.__name__:
+            self.unit_cell_pos = new_aunit2unit_cell(self)  # keep in numpy format
+        else:  # TODO
+            assert False, "unit cell construction not yet implemented for single crystals"
+
+    def crystal_system(self):
+        if 'Batch' in self.__class__.__name__:
+            return [LATTICE_TYPE[int(ind)] for ind in self.sg_ind]
+        else:
+            return LATTICE_TYPE[int(self.sg_ind)]
+
+    def validate_cell_params(self, check_crystal_system: bool = True):
+        """
+        checking crystal system slightly slower, can optionally skip
+        """
+        self.validate_cell_params_ranges()
+        if check_crystal_system:
+            self.validate_crystal_system()
+        return True
+
+    def validate_cell_params_ranges(self):
+        # assert valid ranges
+        assert torch.all(self.aunit_centroid >= 0), "Aunit centroids must be greater than 0"
+        assert torch.all(self.aunit_centroid <= 1), "Aunit centroids must be less than 1"
+        assert torch.all(self.cell_lengths > 0), "Cell lengths must be positive"
+        assert torch.all(self.cell_angles > 0), "Cell angles must be greater than 0"
+        assert torch.all(self.cell_angles < torch.pi), "Cell angles must be less than pi"
+        assert torch.all(torch.linalg.norm(self.aunit_orientation,
+                                           dim=-1) <= 2 * torch.pi), "Cell orientation rotvec must have length <=2pi"
+        assert torch.all(
+            torch.linalg.norm(self.aunit_orientation, dim=-1) >= 0), "Cell orientation rotvec must have length >= 0"
+        assert torch.all(self.aunit_orientation[:, -1] >= 0), "Cell orientation rotvec z component must be positive"
+
+    def validate_crystal_system(self):
+        lattices = self.crystal_system()
+        # enforce agreement with crystal system
+        if "Batch" in self.__class__.__name__:
+            for ind in range(self.num_graphs):
+                lattice = lattices[ind]
+                cell_lengths = self.cell_lengths[ind]
+                cell_angles = self.cell_angles[ind]
+                if lattice.lower() == 'triclinic':
+                    pass
+                elif lattice.lower() == 'monoclinic':  # fix alpha and gamma
+                    assert cell_angles[0] == torch.pi/2, "Error in monoclinic alpha angle"
+                    assert cell_angles[2] == torch.pi / 2, "Error in monoclinic gamma angle"
+                elif lattice.lower() == 'orthorhombic':  # fix all angles
+                    assert cell_angles == torch.ones(3) * torch.pi / 2, "Error in orthorhombic cell angles"
+                elif lattice.lower() == 'tetragonal':  # fix all angles and a & b vectors
+                    assert cell_angles == torch.ones(3) * torch.pi / 2, "Error in tetragonal cell angles"
+                    assert cell_lengths[0] == cell_lengths[1], "Error in tetragonal cell lengths"
+                elif lattice.lower() == 'hexagonal':  # for rhombohedral, all angles and lengths equal, but not 90.
+                    # for truly hexagonal, alpha=90, gamma is 120, a=b!=c
+                    # todo implement 3&6 fold lattices
+                    print('hexagonal lattice checks are not implemented!')
+                    pass
+                elif lattice.lower() == 'cubic':  # all angles 90 all lengths equal
+                    assert torch.all(cell_lengths == cell_lengths.mean()), "Error in cubic cell lengths"
+                    assert torch.all(cell_angles == torch.pi /2), "Error in cubic cell angles"
+                else:
+                    assert False, f"{lattice} + ' is not a valid crystal lattice!')"
+
+        return True
+
+    def reparameterize_unit_cell(self):
+        mol_position_list, rotvec_list, handedness_list, well_defined_asym_unit_list, canonical_conformer_coords_list =(
+            parameterize_crystal_batch(self,
+                                       ASYM_UNITS,
+                                       enforce_right_handedness=False,
+                                       return_aunit=True))
+
+        d1 = (self.aunit_centroid - mol_position_list).abs().sum(1)
+        d2 = (rotvec_list - self.aunit_orientation).abs().sum(1)
+        print(torch.vstack((d1, d2, torch.Tensor(well_defined_asym_unit_list))).T)
+        aa = 1
 
     def cell_parameters(self):
         """

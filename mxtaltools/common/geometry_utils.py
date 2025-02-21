@@ -181,13 +181,13 @@ def batch_molecule_principal_axes_torch(coords_list: list = None, skip_centring=
     Ipm_fin : list(torch.tensor(3))
     I : list(torch.tensor(3,3))
     """
-    if not skip_centring:
+    if not skip_centring: # todo accelerate with scatter
         coords_list_centred = [coord - coord.mean(0) for coord in coords_list]
         all_coords = torch.cat(coords_list_centred)
     else:
         all_coords = torch.cat(coords_list)
 
-    batch, ptrs = extract_batching_info(coords_list, all_coords.device)
+    batch, ptrs = extract_batching_info(coords_list, all_coords.device) # todo pass batch info as an argument instead calculating here
 
     Ip, Ipm_fin, I = scatter_compute_Ip(all_coords, batch)
 
@@ -1018,9 +1018,16 @@ def batch_compute_mol_radius(coords: torch.FloatTensor,
     then the distance of all atoms to the centroid
     most distant atom defines the 'radius'
     """
-    centroids = scatter(coords, batch, dim=0, dim_size=num_graphs, reduce='mean')
+    centroids = get_batch_centroids(coords, batch, num_graphs)
     dists = torch.linalg.norm(coords - centroids.repeat_interleave(nodes_per_graph, 0), dim=-1)
     return scatter(dists, batch, dim=0, dim_size=num_graphs, reduce='max')
+
+
+def get_batch_centroids(coords: torch.FloatTensor,
+                        batch: torch.LongTensor,
+                        num_graphs: int,
+                        ) -> Tensor:
+    return scatter(coords, batch, dim=0, dim_size=num_graphs, reduce='mean')
 
 
 def batch_compute_mol_mass(z: torch.LongTensor,
