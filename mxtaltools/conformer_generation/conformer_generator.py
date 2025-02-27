@@ -57,11 +57,11 @@ def get_rotatable_edges(G, edge_index):
     return mask_edges, mask_rotate
 
 
-def modify_conformer(pos,
-                     edge_index,
-                     mask_rotate,
-                     torsion_updates,
-                     as_numpy=False):
+def apply_torsions(pos,
+                   edge_index,
+                   mask_rotate,
+                   torsion_updates,
+                   as_numpy=False):
     if type(pos) != np.ndarray: pos = pos.cpu().numpy()
     for idx_edge, e in enumerate(edge_index.cpu().numpy()):
         if torsion_updates[idx_edge] == 0:
@@ -85,7 +85,7 @@ def modify_conformer(pos,
 def minimal_minimization(mol, conf, pos, adjacency_matrix,
                          iters_per_cycle: int = 10,
                          max_num_iters: int = 10,
-                         cutoff: float = 1):
+                         cutoff: float = 1.2):
     num_min_iters = 0
     d1 = cdist(pos, pos) + np.eye(len(pos)) * 2
     nonbonded_dists = d1.flatten()[~adjacency_matrix.flatten()]
@@ -95,28 +95,33 @@ def minimal_minimization(mol, conf, pos, adjacency_matrix,
         pos = conf.GetPositions()
         d1 = cdist(pos, pos) + np.eye(len(pos)) * 2
         nonbonded_dists = d1.flatten()[~adjacency_matrix.flatten()]
-        converged = np.amin(nonbonded_dists) < cutoff
+        converged = np.amin(nonbonded_dists) > cutoff
         num_min_iters += 1
 
-    return pos, converged
+    return pos, converged, num_min_iters
 
 
-def extract_mol_info(mol, conf):
+def extract_mol_info(mol,
+                     conf,
+                     do_adjacency_analysis: bool = True):
     pos = conf.GetPositions()
     z = np.asarray([atom.GetAtomicNum() for atom in mol.GetAtoms()])
-    row, col, edge_type = [], [], []
-    for bond in mol.GetBonds():
-        start, end = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
-        row += [start, end]
-        col += [end, start]
-        edge_type += 2 * [bonds[bond.GetBondType()]]
+    if do_adjacency_analysis:
+        row, col, edge_type = [], [], []
+        for bond in mol.GetBonds():
+            start, end = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
+            row += [start, end]
+            col += [end, start]
+            edge_type += 2 * [bonds[bond.GetBondType()]]
 
-    edge_index = torch.tensor([row, col], dtype=torch.long)
-    adjacency_matrix = np.zeros((len(z), len(z)), dtype=bool)
-    adjacency_matrix[edge_index[0, :], edge_index[1, :]] = True
-    G = to_networkx(Data(x=torch.LongTensor(z), pos=torch.Tensor(pos), edge_index=edge_index))
+        edge_index = torch.tensor([row, col], dtype=torch.long)
+        adjacency_matrix = np.zeros((len(z), len(z)), dtype=bool)
+        adjacency_matrix[edge_index[0, :], edge_index[1, :]] = True
+        G = to_networkx(Data(x=torch.LongTensor(z), pos=torch.Tensor(pos), edge_index=edge_index))
 
-    return mol, conf, pos, z, edge_index, adjacency_matrix, G
+        return pos, z, edge_index, adjacency_matrix, G
+    else:
+        return pos, z
 
 
 def embed_mol(smile, protonate):
@@ -144,12 +149,34 @@ def generate_random_conformers_from_smiles(smile: str,
         conf = mol.GetConformer()
     except ValueError:
         return False, False, False, False
-    mol, conf, pos, z, edge_index, adjacency_matrix, G = extract_mol_info(mol, conf)
+    pos, z, edge_index, adjacency_matrix, G = extract_mol_info(mol, conf)
 
-    coords, types = [], []
-    "Adjust conformational DoF"
-    mask_edges, mask_rotate = get_rotatable_edges(G, edge_index)
+    converged, pos, mask_edges, mask_rotate = (
+        scramble_dihedral_angles(
+            G, adjacency_matrix, allow_simple_hydrogen_rotations, conf,
+            edge_index, mol,pos, z))
 
+    if not converged:
+        return False, False, False, False
+    if len(pos) == 0:
+        return False, False, False, False
+
+    if do_partial_charges:
+        charges = get_partial_charges(mol)
+    else:
+        charges = np.zeros_like(z)
+    return pos, z, mask_rotate, mask_edges, charges
+
+
+def scramble_dihedral_angles(allow_simple_hydrogen_rotations,
+                             conf,
+                             edge_index,
+                             mask_rotate,
+                             mask_edges,
+                             mol,
+                             pos,
+                             z):
+    """Adjust conformational DoF"""
     "restrict trivial rotations"
     if not allow_simple_hydrogen_rotations:
         nontrivial_rotations = []
@@ -174,36 +201,16 @@ def generate_random_conformers_from_smiles(smile: str,
     else:
         nontrivial_rotations = np.arange(len(mask_rotate))
 
-    "apply rotations"
+    "apply torsions"
     if len(mask_rotate) > len(nontrivial_rotations):  # rotate bonds
-        for c_ind in range(max_rotamers_per_samples):
-            torsion_updates = np.random.uniform(low=-np.pi, high=np.pi, size=len(mask_rotate))
-            pos = modify_conformer(pos, edge_index.T[mask_edges], mask_rotate, torsion_updates, as_numpy=True)
+        torsion_updates = np.random.uniform(low=-np.pi, high=np.pi, size=len(mask_rotate))
+        pos = apply_torsions(pos, edge_index.T[mask_edges], mask_rotate, torsion_updates, as_numpy=True)
 
-            for i in range(mol.GetNumAtoms()):
-                conf.SetAtomPosition(i, pos[i])
+        # apply also to the conformer for downstream RDKit compatibility
+        for i in range(mol.GetNumAtoms()):
+            conf.SetAtomPosition(i, pos[i])
 
-            pos, converged = minimal_minimization(mol, conf, pos, adjacency_matrix)
-            if not converged:
-                break
-
-            coords.append(1 * pos)
-            types.append(z)
-    else:
-        pos, converged = minimal_minimization(mol, conf, pos, adjacency_matrix)
-        if not converged:
-            return False, False, False, False
-        coords.append(pos)
-        types.append(z)
-
-    if len(coords) == 0:
-        return False, False, False, False
-
-    if do_partial_charges:
-        charges = get_partial_charges(mol)
-    else:
-        charges = np.zeros_like(types)
-    return coords, types, mask_rotate, mask_edges, charges
+    return pos, mol, conf
 
 
 def generate_random_conformers_from_smiles_list(smiles, dump_path, chunk_ind):

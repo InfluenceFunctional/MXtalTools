@@ -1,6 +1,7 @@
 import numpy as np
 
 import torch
+from torch.nn import functional as F
 from torch_scatter import scatter
 from scipy.interpolate import interpn
 from typing import List, Optional, Union
@@ -301,3 +302,7 @@ def parse_to_torch(array: Union[torch.Tensor, np.ndarray, list],
             return torch.cat(array, dim=0).to(device)
         else:
             return torch.tensor(array, dtype=dtype, device=device)
+
+
+def softplus_shift(x: torch.Tensor) -> torch.Tensor:
+    return F.softplus(x - 0.01, beta=5) + 0.01

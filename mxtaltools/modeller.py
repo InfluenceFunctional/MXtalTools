@@ -20,7 +20,7 @@ from tqdm import tqdm
 from mxtaltools.analysis.crystal_rdf import compute_rdf_distance, new_crystal_rdf
 from mxtaltools.analysis.crystals_analysis import get_intermolecular_dists_dict
 from mxtaltools.analysis.vdw_analysis import vdw_analysis, vdw_overlap
-from mxtaltools.common.geometry_utils import batch_molecule_principal_axes_torch
+from mxtaltools.common.geometry_utils import list_molecule_principal_axes_torch
 from mxtaltools.common.geometry_utils import rotvec2sph
 from mxtaltools.common.training_utils import instantiate_models, init_sym_info, make_sequential_directory, \
     flatten_wandb_params, set_lr, init_optimizer, init_scheduler, reload_model, save_checkpoint, slash_batch
@@ -648,7 +648,7 @@ class Modeller:
         # rmsd, nodewise_dist, matched_graph, matched_node = batch_rmsd(mol_batch,
         #                                                               decoded_mol_batch)
 
-        Ip, Ipm, I = batch_molecule_principal_axes_torch(
+        Ip, Ipm, I = list_molecule_principal_axes_torch(
             [mol_batch.pos[mol_batch.batch == ind] for ind in range(mol_batch.num_graphs)])
 
         scaffold_rmsds, scaffold_max_dists, scaffold_matched = [], [], []
@@ -2820,7 +2820,7 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
             v_embedding = self.models_dict['autoencoder'].encode(mol_batch.clone())
             s_embedding = self.models_dict['autoencoder'].scalarizer(v_embedding)
         elif self.config.proxy_discriminator.embedding_type == 'principal_axes':
-            v_embedding_i, s_embedding_i, _ = batch_molecule_principal_axes_torch(
+            v_embedding_i, s_embedding_i, _ = list_molecule_principal_axes_torch(
                 [mol_batch.pos[mol_batch.batch == ind] for ind in range(mol_batch.num_graphs)])
 
             if not hasattr(self, 'ipm_means'):
@@ -2830,7 +2830,7 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
             v_embedding = v_embedding_i.permute(0, 2, 1)
 
         elif self.config.proxy_discriminator.embedding_type == 'principal_moments':
-            Ip, s_embedding_i, _ = batch_molecule_principal_axes_torch(
+            Ip, s_embedding_i, _ = list_molecule_principal_axes_torch(
                 [mol_batch.pos[mol_batch.batch == ind] for ind in range(mol_batch.num_graphs)])
             v_embedding = torch.zeros_like(Ip)
 

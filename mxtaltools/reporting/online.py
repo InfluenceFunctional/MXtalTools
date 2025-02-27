@@ -1192,8 +1192,8 @@ def log_crystal_samples(epoch_stats_dict):
 
     mols = [ase_mol_from_crystaldata(sample_crystals,
                                      index=int(topk_samples[ind]),
-                                     exclusion_level='distance',
-                                     inclusion_distance=8) for ind in range(min(6, len(topk_samples)))]
+                                     mode='distance',
+                                     cutoff=8) for ind in range(min(6, len(topk_samples)))]
     [ase.io.write(f'sample_{i}.cif', mols[i]) for i in range(len(mols))]
     for ind in range(len(mols)):
         wandb.log(

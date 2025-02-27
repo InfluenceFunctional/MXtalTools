@@ -263,10 +263,10 @@ def UMAP_fig(max_entries=10000000):
     for elem in stats_dict['samples']:
         smiles.extend(elem.smiles)
 
-    from mxtaltools.common.geometry_utils import batch_molecule_principal_axes_torch
+    from mxtaltools.common.geometry_utils import list_molecule_principal_axes_torch
     Ipm = []
     for elem in stats_dict['samples']:
-        _, ipm, _ = batch_molecule_principal_axes_torch([elem.pos[elem.batch == ind] for ind in range(elem.num_graphs)])
+        _, ipm, _ = list_molecule_principal_axes_torch([elem.pos[elem.batch == ind] for ind in range(elem.num_graphs)])
         Ipm.extend(ipm)
 
     Ipm = np.stack(Ipm)

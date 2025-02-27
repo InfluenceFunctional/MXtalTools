@@ -255,8 +255,8 @@ def construct_radial_graph(pos: torch.FloatTensor,
                            ptr: torch.LongTensor,
                            cutoff: float,
                            max_num_neighbors: int,
-                           aux_ind=None,
-                           mol_ind=None):
+                           aux_ind: torch.LongTensor=None,
+                           mol_ind: torch.LongTensor=None):
     r"""
     Construct edge indices over a radial graph.
     Optionally, compute intra (within ref_mol_inds) and inter (between ref_mol_inds and outside inds) edges.
@@ -294,22 +294,22 @@ def construct_radial_graph(pos: torch.FloatTensor,
                                                    max_num_neighbors=max_num_neighbors, flow='source_to_target',
                                                    inside_inds=inside_inds, convolve_inds=outside_inds)
 
-        # for zp>1 systems, we also need to generate intermolecular edges within the asymmetric unit
-        if mol_ind is not None:
-            # for each inside molecule, get its edges to the Z'-1 other 'inside' symmetry units
-            unique_mol_inds = torch.unique(mol_ind)
-            if len(unique_mol_inds) > 1:
-                for zp in unique_mol_inds:
-                    inside_nodes = torch.where(inside_bool * (mol_ind == zp))[0]
-                    outside_nodes = torch.where(inside_bool * (mol_ind != zp))[0]
-
-                    # intramolecular edges
-                    edge_index_inter = torch.cat([edge_index_inter,
-                                                  asymmetric_radius_graph(
-                                                      pos, batch=batch, r=cutoff,
-                                                      max_num_neighbors=max_num_neighbors, flow='source_to_target',
-                                                      inside_inds=inside_nodes, convolve_inds=outside_nodes)],
-                                                 dim=1)
+        # # for zp>1 systems, we also need to generate intermolecular edges within the asymmetric unit
+        # if mol_ind is not None:  # todo not doing ZP1 right now
+        #     # for each inside molecule, get its edges to the Z'-1 other 'inside' symmetry units
+        #     unique_mol_inds = torch.unique(mol_ind)
+        #     if len(unique_mol_inds) > 1:
+        #         for zp in unique_mol_inds:
+        #             inside_nodes = torch.where(inside_bool * (mol_ind == zp))[0]
+        #             outside_nodes = torch.where(inside_bool * (mol_ind != zp))[0]
+        #
+        #             # intramolecular edges
+        #             edge_index_inter = torch.cat([edge_index_inter,
+        #                                           asymmetric_radius_graph(
+        #                                               pos, batch=batch, r=cutoff,
+        #                                               max_num_neighbors=max_num_neighbors, flow='source_to_target',
+        #                                               inside_inds=inside_nodes, convolve_inds=outside_nodes)],
+        #                                          dim=1)
 
         return {'edge_index': edge_index,
                 'edge_index_inter': edge_index_inter,
@@ -320,7 +320,9 @@ def construct_radial_graph(pos: torch.FloatTensor,
 
     else:
 
-        edge_index = gnn.radius_graph(pos, r=cutoff, batch=batch,
+        edge_index = gnn.radius_graph(pos,
+                                      r=cutoff,
+                                      batch=batch,
                                       max_num_neighbors=max_num_neighbors,
                                       flow='source_to_target')  # note - requires batch be monotonically increasing
 

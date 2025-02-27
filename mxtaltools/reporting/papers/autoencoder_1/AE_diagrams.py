@@ -7,8 +7,8 @@ import torch
 from scipy.spatial.distance import cdist
 from tqdm import tqdm
 
-from mxtaltools.common.geometry_utils import batch_molecule_principal_axes_torch
-from mxtaltools.crystal_building.utils import align_molecules_to_principal_axes
+from mxtaltools.common.geometry_utils import list_molecule_principal_axes_torch
+from mxtaltools.crystal_building.utils import align_mol_batch_to_standard_axes
 from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering, swarm_vs_tgt_fig
 
 from mxtaltools.standalone.qm9_encoder import Qm9Autoencoder
@@ -115,7 +115,7 @@ def process_flat_molecule(loader, flat_ind, encoder):
     data.pos /= encoder.config.autoencoder.molecule_radius_normalization
     data.x = encoder.autoencoder_type_index[data.x.long() - 1]
     # align it to x-y plane
-    data = align_molecules_to_principal_axes(data, 1)
+    data = align_mol_batch_to_standard_axes(data, 1)
     # print(f"Un-flat by {data.pos[:, 2].abs().sum().numpy():.2f}")
     return data
 

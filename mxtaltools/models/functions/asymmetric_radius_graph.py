@@ -1,7 +1,6 @@
 from typing import Optional
 
 import torch
-from torch_cluster import radius
 
 
 def radius(x: torch.Tensor, y: torch.Tensor, r: float,
@@ -91,7 +90,9 @@ def radius(x: torch.Tensor, y: torch.Tensor, r: float,
     #                                       max_num_neighbors,
     #                                       num_workers)
 
+
 from torch_cluster import radius
+
 
 # @torch.jit.script
 def asymmetric_radius_graph(x: torch.Tensor,

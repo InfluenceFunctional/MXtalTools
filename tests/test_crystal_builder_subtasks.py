@@ -1,9 +1,9 @@
 from mxtaltools.common.config_processing import process_main_config
 from mxtaltools.modeller import Modeller
-from mxtaltools.crystal_building.utils import (rotvec2rotmat, aunit2unit_cell, descale_asymmetric_unit,
-                                               align_molecules_to_principal_axes, batch_asymmetric_unit_pose_analysis_torch)
+from mxtaltools.crystal_building.utils import (aunit2unit_cell, descale_asymmetric_unit,
+                                               align_mol_batch_to_standard_axes, batch_asymmetric_unit_pose_analysis_torch)
 from scipy.spatial.transform import Rotation
-from mxtaltools.common.geometry_utils import sph2rotvec, rotvec2sph, batch_molecule_principal_axes_torch
+from mxtaltools.common.geometry_utils import sph2rotvec, rotvec2sph, list_molecule_principal_axes_torch, rotvec2rotmat
 import numpy as np
 import torch
 
@@ -77,10 +77,10 @@ class TestClass:
         then check that this is what happened
         '''
 
-        aligned_test_crystals = align_molecules_to_principal_axes(test_crystals.clone(),
-                                                                  handedness=test_crystals.aunit_handedness)
+        aligned_test_crystals = align_mol_batch_to_standard_axes(test_crystals.clone(),
+                                                                 handedness=test_crystals.aunit_handedness)
         aligned_principal_axes, _, _ = \
-            batch_molecule_principal_axes_torch(
+            list_molecule_principal_axes_torch(
                 [aligned_test_crystals.pos[test_crystals.batch == ii] for ii in range(test_crystals.num_graphs)])
 
         alignment_check = torch.eye(3).tile(aligned_test_crystals.num_graphs, 1, 1)

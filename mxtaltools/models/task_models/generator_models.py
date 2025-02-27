@@ -2,19 +2,16 @@ import os
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch import nn as nn
 from torch.distributions import MultivariateNormal, Uniform
 
+from mxtaltools.common.utils import softplus_shift
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.space_group_feature_tensor import SG_FEATURE_TENSOR
 from mxtaltools.models.modules.components import scalarMLP
 from mxtaltools.models.utils import enforce_1d_bound, clean_cell_params
-from mxtaltools.common.geometry_utils import enforce_crystal_system
-
-
-def softplus_shift(x: torch.Tensor) -> torch.Tensor:
-    return F.softplus(x - 0.01, beta=5) + 0.01
+from mxtaltools.common.geometry_utils import enforce_crystal_system, sample_random_valid_rotvecs, \
+    enforce_crystal_system2
 
 
 class CrystalGenerator(nn.Module):
@@ -213,6 +210,98 @@ class CSDPrior(nn.Module):
 
         # force cells to conform to crystal system
         cell_lengths, cell_angles = enforce_crystal_system(cell_lengths, cell_angles, sg_ind_list, self.symmetries_dict)
+
+        return torch.cat([cell_lengths, cell_angles, pose_params], dim=1)
+
+    def generate_norming_factors(self):
+        norms = np.zeros((231, 12))
+        stds = np.zeros_like(norms)
+        means = np.zeros_like(stds)
+        for ind in range(1, 231):
+            p1 = self.generator_prior(10000, ind * torch.ones(10000))
+            p2 = self.generator_prior(10000, ind * torch.ones(10000))
+
+            d1 = torch.abs(p1 - p2)
+            scale = d1.mean(0)
+
+            norms[ind] = scale.detach().numpy()  # todo normalize this across DoF as well
+            stds[ind] = p1.std(0).detach().numpy()
+            means[ind] = p1.mean(0).detach().numpy()
+
+        np.save('prior_norm_factors', norms)
+        np.save('prior_stds', stds)
+        np.save('prior_means', means)
+
+
+class NewCSDPrior(nn.Module):
+    """
+    sample from the general distribution of the CSD for Z'=1
+    """
+    def __init__(self, sym_info, device):
+        super(NewCSDPrior, self).__init__()
+
+        from mxtaltools.constants.csd_stats import cell_means, cell_stds, cell_lengths_cov_mat
+        self.device = device
+        self.symmetries_dict = sym_info
+        path = os.path.join(os.path.dirname(__file__), '../../constants/prior_norm_factors.npy')
+        self.norm_factors = torch.tensor(np.load(path, allow_pickle=True), dtype=torch.float32, device=device)
+
+        # initialize asymmetric unit dict
+        self.asym_unit_dict = ASYM_UNITS.copy()
+        for key in self.asym_unit_dict:
+            self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key])  # .to(self.device)
+
+        self.lengths_prior = MultivariateNormal(cell_means[:3], cell_lengths_cov_mat)  # apply standardization
+        self.angles_prior = MultivariateNormal(cell_means[3:], torch.eye(3) * cell_stds[3:])  # apply standardization
+        self.pose_prior = Uniform(0, 1)
+
+    def sample_poses(self, num_samples):
+        """
+        prior samples are xyz (fractional positions defined on 0-1)
+        combined with r*(ijk) the rotation matrix defining the orientation of the molecule
+
+        To leverage equivariance of prediction model, we will sample instead directly
+        the rotation vector, (ijk), conditioned to generate the appropriate statistics
+
+        Parameters
+        ----------
+        num_samples
+
+        Returns
+        -------
+
+        """
+        positions = self.pose_prior.sample((num_samples, 3))
+        rotvecs = sample_random_valid_rotvecs(num_samples)
+
+        return torch.cat((positions, rotvecs), dim=1)
+
+    def sample_cell_vectors(self, num_samples):
+        """
+        cell lengths are sampled in the normed basis
+        """
+        return torch.cat([self.lengths_prior.sample((num_samples,)),
+                          self.angles_prior.sample((num_samples,))], dim=1)
+
+    def forward(self, num_samples, sg_ind_list):
+        """
+        sample comes out in non-standardized basis, but with normalized cell lengths
+        so, denormalize cell length (multiply by Z^(1/3) and vol^(1/3)
+        then standardize
+        """
+        cell_samples = self.sample_cell_vectors(num_samples)
+        cell_lengths, cell_angles = cell_samples[:, 0:3], cell_samples[:, 3:6]
+        pose_params = self.sample_poses(num_samples)
+
+        # very gently enforce positive cell lengths
+        cell_lengths = softplus_shift(cell_lengths)
+        # range from (0,pi) with 20% padding to prevent too-skinny cells
+        cell_angles = enforce_1d_bound(cell_angles, x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2, mode='hard')
+
+        # force cells to conform to crystal system
+        lattices = [self.symmetries_dict['lattice_type'][int(sg_ind_list[n])] for n in range(len(sg_ind_list))]
+
+        cell_lengths, cell_angles = enforce_crystal_system2(cell_lengths, cell_angles, lattices)
 
         return torch.cat([cell_lengths, cell_angles, pose_params], dim=1)
 

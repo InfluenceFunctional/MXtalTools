@@ -3,7 +3,7 @@ import sys
 import numpy as np
 import torch
 from torch import Tensor
-from torch_scatter import scatter
+from torch_scatter import scatter, scatter_max
 
 from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.models.functions.asymmetric_radius_graph import radius
@@ -165,7 +165,8 @@ def single_molecule_principal_axes_torch(coords: torch.tensor, masses=None, retu
         return Ip, Ipm, I
 
 
-def batch_molecule_principal_axes_torch(coords_list: list = None, skip_centring=False):
+def list_molecule_principal_axes_torch(coords_list: list = None,
+                                       skip_centring=False):
     """
     Parallel computation of principal inertial axes from a list of coordinate lists.
 
@@ -192,7 +193,7 @@ def batch_molecule_principal_axes_torch(coords_list: list = None, skip_centring=
     Ip, Ipm_fin, I = scatter_compute_Ip(all_coords, batch)
 
     # cardinal direction is vector from CoM to the farthest atom
-    direction = get_cardinal_direction(all_coords, batch, ptrs)
+    direction = batch_get_furthest_node_vector(all_coords, batch, num_graphs=len(coords_list))
     normed_direction = direction / torch.linalg.norm(direction, dim=1)[:, None]
     overlaps, signs = get_overlaps(Ip, normed_direction)
 
@@ -201,19 +202,56 @@ def batch_molecule_principal_axes_torch(coords_list: list = None, skip_centring=
 
     return Ip_fin, Ipm_fin, I
 
+
+def batch_molecule_principal_axes_torch(coords: torch.FloatTensor,
+                                        batch: torch.LongTensor,
+                                        num_graphs: int,
+                                        nodes_per_graph: torch.LongTensor,
+                                        skip_centring: bool = False):
+    """
+    Parallel computation of principal inertial axes from a list of coordinate lists.
+
+    Parameters
+    ----------
+    skip_centring : bool
+        Whether to skip centering each point cloud - e.g., if the input is already centered
+
+    Returns
+    -------
+    Ip_fin : list(torch.tensor(3,3))
+    Ipm_fin : list(torch.tensor(3))
+    I : list(torch.tensor(3,3))
+    """
+
+    if not skip_centring:
+        coords = center_mol_batch(coords, batch, num_graphs, nodes_per_graph)
+
+    Ip, Ipm_fin, I = scatter_compute_Ip(coords, batch)
+
+    # cardinal direction is vector from CoM to the farthest atom
+    direction = batch_get_furthest_node_vector(coords, batch, num_graphs)
+    normed_direction = direction / torch.linalg.norm(direction, dim=1)[:, None]
+    overlaps, signs = get_overlaps(Ip, normed_direction)
+    Ip_fin = correct_Ip_directions(Ip, overlaps, signs)  # somehow, fails for mirror planes, on top of symmetric and spherical tops
+
+    return Ip_fin, Ipm_fin, I
+
     '''  visualize clouds and axes for testing
     import plotly.graph_objects as go
+    
     ind = 16
-    x, y, z = all_coords[batch==ind].T.cpu().detach().numpy()
-    fig = go.Figure(go.Scatter3d(x=x,y=y,z=z,mode='markers'))
+    x, y, z = coords[batch == ind].T.cpu().detach().numpy()
+    fig = go.Figure(go.Scatter3d(x=x, y=y, z=z, mode='markers'))
     a, b, c = torch.stack([torch.zeros_like(direction[ind]), direction[ind]]).T.cpu().detach().numpy()
     fig.add_trace(go.Scatter3d(x=a, y=b, z=c))
+    colors = ['red','green','blue']
     for i in range(3):
         a, b, c = torch.stack([torch.zeros_like(direction[ind]), Ip[ind, i]]).T.cpu().detach().numpy()
-        fig.add_trace(go.Scatter3d(x=a, y=b, z=c))
+        fig.add_trace(go.Scatter3d(x=a, y=b, z=c, marker_color=colors[i], name='Initial principal axes', legendgroup='Initial principal axes', showlegend=i==0))
     for i in range(3):
         a, b, c = torch.stack([torch.zeros_like(direction[ind]), Ip_fin[ind, i]]).T.cpu().detach().numpy()
-        fig.add_trace(go.Scatter3d(x=a, y=b, z=c))
+        fig.add_trace(go.Scatter3d(x=a, y=b, z=c, marker_color=colors[i],name='Fixed principal axes', legendgroup='Fixed principal axes', showlegend=i==0))
+    fig.update_scenes(aspectmode='cube')
     fig.show(renderer='browser')
     '''
 
@@ -236,13 +274,15 @@ def correct_Ip_directions(Ip, overlaps, signs, overlap_threshold: float = 1e-5):
     """
     Ip_fin = torch.zeros_like(Ip)
     for ii, Ip_i in enumerate(Ip):
-        Ip_i = (Ip_i.T * signs[
-            ii]).T  # if the vectors have negative overlap, flip the direction, happens if the cardinal direction is too close to an existing principal axisI
-        if any(torch.abs(overlaps[
-                             ii]) < overlap_threshold):  # if any overlaps are vanishing (up to 32 bit precision), determine the direction via the RHR (if two overlaps are vanishing, this will not work)
-            # enforce right-handedness in the free vector
+        # if the vectors have negative overlap, flip the direction,
+        Ip_i = (Ip_i.T * signs[ii]).T
+        # if any overlaps are vanishing (up to 32 bit precision),
+        # happens if the cardinal direction is too close to an existing principal axis
+        # determine the direction via the RHR (if two overlaps are vanishing, this will not work)
+        if any(torch.abs(overlaps[ii]) < overlap_threshold):
+            # enforce right-handedness in the free vector (vanishing overlap)
             fix_ind = torch.argmin(torch.abs(overlaps[ii]))  # vector with vanishing overlap
-            if compute_Ip_handedness(Ip_i) < 0:  # make sure result is right-handed
+            if compute_Ip_handedness(Ip_i) < 0:  # if result is not right-handed, swap it
                 Ip_i[fix_ind] = -Ip_i[fix_ind]
 
         Ip_fin[ii] = Ip_i
@@ -270,7 +310,7 @@ def get_overlaps(Ip, direction):
     return overlaps, signs
 
 
-def get_cardinal_direction(all_coords, batch, ptrs):
+def batch_get_furthest_node_vector(all_coords: torch.FloatTensor, batch: torch.LongTensor, num_graphs: int) -> Tensor:
     """
     Compute cardinal direction for a list of sets of coordinates, defined as the vector from the centroid to the furthest coordinate.
     Output is not unique for certain symmetric inputs.
@@ -279,18 +319,16 @@ def get_cardinal_direction(all_coords, batch, ptrs):
     ----------
     all_coords : torch.tensor(n,3)
     batch : torch.tensor(n)
-    ptrs : torch.tensor(num_graphs+1)
+    num_graphs : int
 
     Returns
     -------
     direction : torch.tensor(num_graphs, 3)
     """
-    dists = torch.linalg.norm(all_coords, axis=1)  # CoM is at 0,0,0
-    max_ind = torch.stack(
-        [torch.argmax(dists[batch == i]) + ptrs[i] for i in range(len(ptrs) - 1)])  # find the furthest atom in each mol
-    direction = all_coords[max_ind]
+    dists = torch.linalg.norm(all_coords, axis=1)  # CoM is at 0,0,0 by construction
+    max_dist, max_ind = scatter_max(dists, batch, dim_size=num_graphs)
 
-    return direction
+    return all_coords[max_ind]
 
 
 def scatter_compute_Ip(all_coords, batch):
@@ -654,8 +692,9 @@ def mol_batch_vdW_volume(mol_batch):
         mol_batch.pos,
         mol_batch.batch,
         mol_batch.num_graphs,
-        torch.FloatTensor(list(VDW_RADII.values()),
-                          device=mol_batch.z.device))
+        torch.tensor(list(VDW_RADII.values()),
+                     device=mol_batch.z.device,
+                     dtype=torch.float32))
 
 
 def batch_molecule_vdW_volume(
@@ -663,7 +702,7 @@ def batch_molecule_vdW_volume(
         pos: torch.FloatTensor,
         batch: torch.LongTensor,
         num_graphs: int,
-        vdw_radii_tensor: torch.FloatTensor
+        vdw_radii_tensor: torch.Tensor
 ):
     if atom_types_in.ndim > 1:
         atom_types = atom_types_in[:, 0]
@@ -676,7 +715,7 @@ def batch_molecule_vdW_volume(
                               r=2 * vdw_radii_tensor.max(),
                               batch_x=batch,
                               batch_y=batch,
-                              max_num_neighbors=6)
+                              max_num_neighbors=100)
     mask = ~(bonds_i >= bonds_j)  # eliminate duplicates
     bonds_i, bonds_j = bonds_i[mask], bonds_j[mask]
     bond_lengths = torch.linalg.norm(pos[bonds_i] - pos[bonds_j], dim=1)
@@ -956,6 +995,92 @@ def enforce_crystal_system(lattice_lengths, lattice_angles, sg_inds, symmetries_
     return fixed_lengths, fixed_angles
 
 
+def enforce_crystal_system2(lattice_lengths, lattice_angles, lattices):
+    """
+    enforce physical bounds on cell parameters
+    https://en.wikipedia.org/wiki/Crystal_system
+    """  # todo double check these limits
+
+    pi_tensor = torch.ones_like(lattice_lengths[0, 0]) * torch.pi
+
+    fixed_lengths = torch.zeros_like(lattice_lengths)
+    fixed_angles = torch.zeros_like(lattice_angles)
+
+    for i in range(len(lattice_lengths)):
+        lengths = lattice_lengths[i]
+        angles = lattice_angles[i]
+        lattice = lattices[i]
+        # enforce agreement with crystal system
+        if lattice.lower() == 'triclinic':  # anything goes
+            fixed_lengths[i] = lengths * 1
+            fixed_angles[i] = angles * 1
+
+        elif lattice.lower() == 'monoclinic':  # fix alpha and gamma to pi/2
+            fixed_lengths[i] = lengths * 1
+            fixed_angles[i] = torch.stack((
+                pi_tensor.clone() / 2, angles[1], pi_tensor.clone() / 2,
+            ), dim=- 1)
+        elif lattice.lower() == 'orthorhombic':  # fix all angles at pi/2
+            fixed_lengths[i] = lengths * 1
+            fixed_angles[i] = torch.stack((
+                pi_tensor.clone() / 2, pi_tensor.clone() / 2, pi_tensor.clone() / 2,
+            ), dim=- 1)
+        elif lattice.lower() == 'tetragonal':  # fix all angles pi/2 and take the mean of a & b vectors
+            mean_tensor = torch.mean(lengths[0:2])
+            fixed_lengths[i] = torch.stack((
+                mean_tensor, mean_tensor, lengths[2] * 1,
+            ), dim=- 1)
+
+            fixed_angles[i] = torch.stack((
+                pi_tensor.clone() / 2, pi_tensor.clone() / 2, pi_tensor.clone() / 2,
+            ), dim=- 1)
+
+        elif lattice.lower() == 'hexagonal':
+            # mean of ab, c is free
+            # alpha beta are pi/2, gamma is 2pi/3
+
+            mean_tensor = torch.mean(lengths[0:2])
+            fixed_lengths[i] = torch.stack((
+                mean_tensor, mean_tensor, lengths[2] * 1,
+            ), dim=- 1)
+
+            fixed_angles[i] = torch.stack((
+                pi_tensor.clone() / 2, pi_tensor.clone() / 2, pi_tensor.clone() * 2 / 3,
+            ), dim=- 1)
+
+        # elif lattice.lower()  == 'trigonal':
+
+        elif lattice.lower() == 'rhombohedral':
+            # mean of abc vector lengths
+            # mean of all angles
+
+            mean_tensor = torch.mean(lengths)
+            fixed_lengths[i] = torch.stack((
+                mean_tensor, mean_tensor, mean_tensor,
+            ), dim=- 1)
+
+            mean_angle = torch.mean(angles)
+            fixed_angles[i] = torch.stack((
+                mean_angle, mean_angle, mean_angle,
+            ), dim=- 1)
+
+        elif lattice.lower() == 'cubic':  # all angles 90 all lengths equal
+            mean_tensor = torch.mean(lengths)
+            fixed_lengths[i] = torch.stack((
+                mean_tensor, mean_tensor, mean_tensor,
+            ), dim=- 1)
+
+            fixed_angles[i] = torch.stack((
+                pi_tensor.clone() / 2, pi_tensor.clone() / 2, pi_tensor.clone() / 2,
+            ), dim=- 1)
+        else:
+            print(lattice + ' is not a valid crystal lattice!')
+            sys.exit()
+
+    return fixed_lengths, fixed_angles
+
+
+
 def cell_parameters_to_box_vectors(opt: str,
                                    cell_lengths: torch.tensor,
                                    cell_angles: torch.tensor,
@@ -974,7 +1099,7 @@ def cell_parameters_to_box_vectors(opt: str,
         torch.abs(val))  # technically a signed quanitity
 
     ''' Setting the transformation matrix '''
-    m = torch.zeros((3, 3))
+    m = torch.zeros((3, 3), dtype=torch.float32, device=cell_lengths.device)
     if opt == 'c_to_f':
         ''' Converting from cartesian to fractional '''
         m[0, 0] = 1.0 / cell_lengths[0]
@@ -1029,7 +1154,14 @@ def get_batch_centroids(coords: torch.FloatTensor,
                         ) -> Tensor:
     return scatter(coords, batch, dim=0, dim_size=num_graphs, reduce='mean')
 
-
+def center_mol_batch(coords: torch.FloatTensor,
+                    batch: torch.LongTensor,
+                    num_graphs: int,
+                    nodes_per_graph: torch.LongTensor,
+                        ) -> Tensor:
+    centroids = get_batch_centroids(coords, batch, num_graphs)
+    coords -= centroids.repeat_interleave(nodes_per_graph, 0)
+    return coords
 def batch_compute_mol_mass(z: torch.LongTensor,
                            batch: torch.LongTensor,
                            masses_tensor: torch.FloatTensor,
@@ -1040,3 +1172,69 @@ def batch_compute_mol_mass(z: torch.LongTensor,
 def compute_mol_mass(z: torch.LongTensor,
                      masses_tensor: torch.FloatTensor) -> Tensor:
     return torch.sum(masses_tensor[z])
+
+
+def rotvec2rotmat(mol_rotation: torch.tensor, basis='cartesian'):
+    """
+    get applied rotation matrix
+    mol_rotation here is a list of rotation vectors [n_samples, 3]
+    rotvec -> rotation matrix directly (see https://en.wikipedia.org/wiki/Rodrigues%27_rotation_formula)
+    rotvec -> quat -> rotation matrix (old way)
+    """
+    if basis == 'cartesian':
+        r = torch.linalg.norm(mol_rotation, dim=1)
+        unit_vector = mol_rotation / r[:, None]
+    elif basis == 'spherical':  # psi, phi, (spherical unit vector) theta (rotation vector)
+        r = mol_rotation[:,
+            -1]  # third dimension in spherical basis is the norm #torch.linalg.norm(mol_rotation, dim=1)
+        mol_rotation = sph2rotvec(mol_rotation)
+        unit_vector = mol_rotation / r[:, None]
+    else:
+        print(f'{basis} is not a valid orientation parameterization!')
+        sys.exit()
+
+    K = torch.stack((  # matrix representing rotation axis
+        torch.stack((torch.zeros_like(unit_vector[:, 0]), -unit_vector[:, 2], unit_vector[:, 1]), dim=1),
+        torch.stack((unit_vector[:, 2], torch.zeros_like(unit_vector[:, 0]), -unit_vector[:, 0]), dim=1),
+        torch.stack((-unit_vector[:, 1], unit_vector[:, 0], torch.zeros_like(unit_vector[:, 0])), dim=1)
+    ), dim=1)
+
+    identity_batch = torch.eye(3, device=r.device)[None, :, :].tile(len(r), 1, 1)
+    applied_rotation_list = identity_batch + torch.sin(r[:, None, None]) * K + (1 - torch.cos(r[:, None, None])) * (K @ K)
+
+    return applied_rotation_list
+
+
+def extract_rotmat(target_position: torch.FloatTensor,
+                   original_position: torch.FloatTensor) -> Tensor:
+    if target_position.ndim == 3:
+        return torch.einsum('nji, njk -> nik', target_position, torch.linalg.inv(original_position))
+    elif target_position.ndim == 2:
+        return torch.einsum('ji, jk -> ik', target_position, torch.linalg.inv(original_position))
+    else:
+        assert False, "Target position must have at least 2 dimensions"
+
+
+def apply_rotation_to_batch(elems, rotations, batch):
+    return torch.einsum('nij, nj -> ni', rotations[batch], elems)
+
+
+def rotmat2rotvec(rotation_matrix_list):
+    direction_vector_list = torch.stack([
+        rotation_matrix_list[:, 2, 1] - rotation_matrix_list[:, 1, 2],
+        rotation_matrix_list[:, 0, 2] - rotation_matrix_list[:, 2, 0],
+        rotation_matrix_list[:, 1, 0] - rotation_matrix_list[:, 0, 1]],
+    ).T
+    return direction_vector_list
+
+
+def sample_random_valid_rotvecs(num_samples):
+    # random directions on the sphere, getting naturally the correct distribution of theta, phi
+    random_vectors = torch.randn(size=(num_samples, 3))
+    # set norms uniformly between 0-2pi
+    norms = random_vectors.norm(dim=1)
+    applied_norms = (torch.rand(num_samples) * 2 * torch.pi).clip(min=0.05)  # cannot be exactly zero
+    random_vectors = random_vectors / norms[:, None] * applied_norms[:, None]
+    # restrict theta to upper half-sphere (positive z)
+    random_vectors[:, 2] = torch.abs(random_vectors[:, 2])
+    return random_vectors

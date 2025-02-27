@@ -1,16 +1,18 @@
+import sys
+from typing import Optional
+
 import numpy as np
+import torch
+from scipy.spatial.transform import Rotation
 from torch import Tensor
 from torch.nn.utils import rnn as rnn
 from torch_geometric.typing import OptTensor
 from torch_scatter import scatter
 
 from mxtaltools.common.geometry_utils import single_molecule_principal_axes_torch, \
-    batch_molecule_principal_axes_torch, compute_Ip_handedness, rotvec2sph, sph2rotvec, \
-    compute_fractional_transform_torch, get_batch_centroids
-from scipy.spatial.transform import Rotation
-import torch
-import sys
-
+    list_molecule_principal_axes_torch, compute_Ip_handedness, rotvec2sph, compute_fractional_transform_torch, \
+    get_batch_centroids, \
+    rotvec2rotmat, batch_molecule_principal_axes_torch, extract_rotmat, apply_rotation_to_batch, rotmat2rotvec
 from mxtaltools.models.functions.asymmetric_radius_graph import radius
 
 
@@ -27,6 +29,78 @@ def generate_sorted_fractional_translations(supercell_size):
 
     # sort fractional vectors from closest to furthest from central unit cell
     return fractional_translations[torch.argsort(fractional_translations.abs().sum(1))]
+
+
+def unit_cell_to_supercell_cluster(crystal_batch, cutoff: float = 6, supercell_size: int = 5):
+    cluster_batch = crystal_batch.clone()
+
+    good_translations, good_translations_bool = get_cart_translations(crystal_batch.T_fc,
+                                                                      crystal_batch.radius,
+                                                                      cutoff, supercell_size)
+    ucell_num_atoms = crystal_batch.num_atoms * crystal_batch.sym_mult
+    unit_cell_pos = torch.cat([torch.tensor(poses.reshape(ucell_num_atoms[ind], 3),
+                                            dtype=torch.float32,
+                                            device=crystal_batch.device
+                                            )
+                               for ind, poses in enumerate(crystal_batch.unit_cell_pos)])
+    unit_cell_batch = torch.arange(crystal_batch.num_graphs, device=crystal_batch.device
+                                   ).repeat_interleave(crystal_batch.sym_mult * crystal_batch.num_atoms)
+
+    num_cells = good_translations_bool.sum(1)  # == torch.diff(good_translations_ptr).long()
+
+    translations_per_atom = num_cells.repeat_interleave(ucell_num_atoms, dim=0).long()
+    atoms_per_translation = ucell_num_atoms.repeat_interleave(num_cells, dim=0)
+    atomwise_translation = good_translations.repeat_interleave(atoms_per_translation, dim=0)
+
+    # extract final features
+    # pos, x, z, mol_ind, aux_ind, ptr, batch
+    atoms_per_unit_cell = (crystal_batch.num_atoms * crystal_batch.sym_mult).long()
+    apuc_cum = torch.cat([torch.tensor([0], device=crystal_batch.device), torch.cumsum(atoms_per_unit_cell, dim=0)]).long()
+    unit_cell_to_cluster_index = torch.cat([
+        (torch.arange(atoms_per_unit_cell[ind], device=crystal_batch.device) + apuc_cum[ind]).repeat(num_cells[ind])
+        for ind in range(crystal_batch.num_graphs)
+    ])
+    mol_to_unit_cell_index = torch.cat([
+        (torch.arange(crystal_batch.num_atoms[ind], device=crystal_batch.device) + crystal_batch.ptr[ind]).repeat(crystal_batch.sym_mult[ind])
+        for ind in range(crystal_batch.num_graphs)
+    ])
+
+    cluster_batch.pos = unit_cell_pos[unit_cell_to_cluster_index]
+    cluster_batch.pos += atomwise_translation
+    cluster_batch.z = crystal_batch.z[mol_to_unit_cell_index][unit_cell_to_cluster_index]
+    cluster_batch.x = crystal_batch.x[mol_to_unit_cell_index][unit_cell_to_cluster_index]
+    cluster_batch.ptr = torch.cat([torch.zeros(1, dtype=torch.long, device=crystal_batch.device),
+                                   torch.cumsum(ucell_num_atoms * num_cells, dim=0)]).long()
+    cluster_batch.batch = unit_cell_batch.repeat_interleave(translations_per_atom, dim=0)
+    cluster_batch.aux_ind = torch.ones_like(cluster_batch.z)
+    cluster_batch.mol_ind = torch.ones_like(cluster_batch.z)
+    for ind in range(cluster_batch.num_graphs):
+        cluster_batch.aux_ind[cluster_batch.ptr[ind]:cluster_batch.ptr[ind] + cluster_batch.num_atoms[ind]] = 0
+        cluster_batch.mol_ind[cluster_batch.ptr[ind]:cluster_batch.ptr[ind+1]] = (
+            torch.arange(num_cells[ind]*crystal_batch.sym_mult[ind], device=crystal_batch.device).repeat_interleave(crystal_batch.num_atoms[ind]))
+
+    #'''
+    #cluster_batch.visualize_structure([1,2,3,4,5], exclusion_level='unit cell')
+    #cluster_batch.visualize_structure([1,2,3,4,5], exclusion_level='distance')
+    #'''
+    return cluster_batch
+
+
+def get_cart_translations(T_fc, mol_radii, cutoff, supercell_size: int = 5):
+    sorted_fractional_translations = generate_sorted_fractional_translations(supercell_size).to(T_fc.device)
+    # unit_cell_ptr = torch.cat([
+    #     torch.zeros(1, dtype=torch.float32, device=crystal_batch.device),
+    #     torch.cumsum(ucell_num_atoms, dim=0)
+    # ]).long()
+    # get the set of all possible cartesian translations
+    cell_vectors = T_fc.permute(0, 2, 1)
+    cart_translations = torch.einsum('nij, mi -> nmij', cell_vectors, sorted_fractional_translations).sum(2)
+    good_translations_bool = cart_translations.norm(dim=-1) < (mol_radii * 2 + cutoff + 0.1)[:, None]
+    # build only the unit cells which are relevant to each cluster
+    good_translations = cart_translations[good_translations_bool]
+    # good_translations_ptr = torch.cat([torch.zeros(1, device=cart_translations.device),
+    #                                    torch.cumsum(good_translations_bool.sum(1), dim=0)])
+    return good_translations, good_translations_bool
 
 
 def unit_cell_to_convolution_cluster(unit_cell_pos_list: list,
@@ -297,7 +371,7 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list,
 
     '''Pose Analysis'''
     # compute the inverse of the rotation required to align the molecule with the cartesian axes
-    Ip_axes_list, _, _ = batch_molecule_principal_axes_torch(canonical_conformer_coords_list)
+    Ip_axes_list, _, _ = list_molecule_principal_axes_torch(canonical_conformer_coords_list)
     handedness_list = compute_Ip_handedness(Ip_axes_list)
 
     alignment_list = torch.eye(3, device=mol_position_list.device).tile(num_samples, 1, 1)
@@ -403,8 +477,10 @@ def parameterize_crystal_batch(crystal_batch,
     canonical_conformer_coords_list = []
     mol_position_list = []
     well_defined_asym_unit_list = []
-    for i, (unit_cell_coords, T_cf, sg_ind) in enumerate(zip(crystal_batch.unit_cell_pos, crystal_batch.T_cf, crystal_batch.sg_ind)):
-
+    for i, (unit_cell_coords, T_cf, sg_ind) in enumerate(
+            zip(crystal_batch.unit_cell_pos, crystal_batch.T_cf, crystal_batch.sg_ind)):
+        if not torch.is_tensor(unit_cell_coords):
+            unit_cell_coords = torch.tensor(unit_cell_coords, dtype=torch.float32, device=crystal_batch.device)
         (canonical_conformer_index,
          centroids_fractional,
          well_defined_asym_unit) = (
@@ -419,6 +495,7 @@ def parameterize_crystal_batch(crystal_batch,
         well_defined_asym_unit_list.extend([well_defined_asym_unit])
 
     mol_position_list = torch.stack(mol_position_list)
+    crystal_batch.pos = torch.cat(canonical_conformer_coords_list)
 
     '''
     Pose Analysis
@@ -427,9 +504,8 @@ def parameterize_crystal_batch(crystal_batch,
     
     '''
 
-    rotvec_list, handedness_list = extract_aunit_orientation(canonical_conformer_coords_list,
+    rotvec_list, handedness_list = extract_aunit_orientation(crystal_batch,
                                                              enforce_right_handedness,
-                                                             mol_position_list,
                                                              canonicalize_orientation=True)
 
     if return_aunit:
@@ -438,33 +514,59 @@ def parameterize_crystal_batch(crystal_batch,
         return mol_position_list, rotvec_list, handedness_list, well_defined_asym_unit_list
 
 
-def extract_aunit_orientation(canonical_conformer_coords_list,
+def extract_aunit_orientation(mol_batch,
                               enforce_right_handedness,
-                              mol_position_list,
                               canonicalize_orientation: bool = True):
-    num_samples = len(canonical_conformer_coords_list)
-    Ip_axes_list, _, _ = batch_molecule_principal_axes_torch(canonical_conformer_coords_list)
-    handedness_list = compute_Ip_handedness(Ip_axes_list)
-    alignment_list = torch.eye(3, device=mol_position_list.device).tile(num_samples, 1, 1)
+    Ip, Ipm, I = batch_molecule_principal_axes_torch(
+        mol_batch.pos,
+        mol_batch.batch,
+        mol_batch.num_graphs,
+        mol_batch.num_atoms
+    )
+
+    handedness_list = compute_Ip_handedness(Ip).long()
+    eye = torch.eye(3, device=mol_batch.device).tile(mol_batch.num_graphs, 1, 1)
     if not enforce_right_handedness:
-        alignment_list[:, 0, 0] = handedness_list
-    rotation_matrix_list = torch.einsum('nij, njk -> nik',
-                                        (Ip_axes_list, alignment_list)
-                                        ).permute(0, 2, 1)
-    direction_vector_list = torch.stack([
-        rotation_matrix_list[:, 2, 1] - rotation_matrix_list[:, 1, 2],
-        rotation_matrix_list[:, 0, 2] - rotation_matrix_list[:, 2, 0],
-        rotation_matrix_list[:, 1, 0] - rotation_matrix_list[:, 0, 1]],
-    ).T
+        eye[:, 0, 0] = handedness_list.flatten()
+
+    rotation_matrix_list = extract_rotmat(eye, torch.linalg.inv(Ip)).permute(0, 2,
+                                                                             1)  # det should all be 1, as we should have correct handedness
+
+    rotvec_list = rotmat2rotvec(rotation_matrix_list)
+    rotvec_list = cleanup_invalid_rotvecs(rotation_matrix_list, rotvec_list)
+
+    if canonicalize_orientation:
+        canonicalize_rotvec(rotvec_list)
+
+    return rotvec_list, eye[:, 0, 0]  # the actual handedness
+
+
+def canonicalize_rotvec(rotvec_list):
+    """
+    since the direction of the axis is arbitrary, (x,y,z) is the same rotation as (-x,-y,-z),
+    we can improve specificity of the model by constraining the axis to a half-sphere.
+    Here we will take the +z direction as 'canonical'
+
+    Swap the direction and take 2pi-norm to recapture the identical rotation.
+    """
+    flip_inds = torch.where(rotvec_list[:, -1] < 0)[0]
+    flip_vecs = rotvec_list[flip_inds]
+    flip_norms = torch.linalg.norm(flip_vecs, dim=-1)
+    new_norms = 2 * torch.pi - flip_norms
+    new_vecs = -flip_vecs / flip_norms[:, None] * new_norms[:, None]
+    rotvec_list[flip_inds] = new_vecs
+
+
+def cleanup_invalid_rotvecs(rotation_matrix_list, rotvec_list):
     r_arg_list = (torch.einsum('ijj->i', rotation_matrix_list) - 1) / 2
-    bad_rotations = np.argwhere(r_arg_list >= 1).flatten()
+    bad_rotations = torch.argwhere(r_arg_list >= 1).flatten()
     # if we are close enough to one, the arccos will NaN
     # situation corresponds to a rotation by ~pi, with an unknown direction
     # fortunately, either direction results in the same transformation (C2)
     # some ill conditioned rotations may also throw |args| greater than 1 -
     # for safety must set these as something, may as well be this  # todo look at such ill-conditioned cases
     # set rotation then as pi
-    direction_vector_list[bad_rotations, :] = 1
+    rotvec_list[bad_rotations, :] = 1
     r_list = torch.arccos(r_arg_list)
     r_list[bad_rotations] = torch.pi
     more_bad_rotations = torch.argwhere(~torch.isfinite(r_list)).flatten()
@@ -472,30 +574,14 @@ def extract_aunit_orientation(canonical_conformer_coords_list,
         r_list[more_bad_rotations] = torch.pi
     # more manual edge cases
     bad_directions = torch.argwhere(torch.logical_or(
-        (~torch.isfinite(direction_vector_list.sum(1))),
-        (direction_vector_list.abs().sum(1) == 0))
+        (~torch.isfinite(rotvec_list.sum(1))),
+        (rotvec_list.abs().sum(1) == 0))
     ).flatten()
     if len(bad_directions) > 0:
         r_list[bad_directions] = torch.pi
-        direction_vector_list[bad_directions] = 1
-    rotvec_list = direction_vector_list / torch.linalg.norm(direction_vector_list, dim=-1)[:, None] * r_list[:, None]
-
-    '''
-    since the direction of the axis is arbitrary, (x,y,z) is the same rotation as (-x,-y,-z),
-    we can improve specificity of the model by constraining the axis to a half-sphere.
-    Here we will take the +z direction as 'canonical'
-
-    Swap the direction and take 2pi-norm to recapture the identical rotation.
-    '''
-    if canonicalize_orientation:
-        flip_inds = torch.where(rotvec_list[:, -1] < 0)[0]
-        flip_vecs = rotvec_list[flip_inds]
-        flip_norms = torch.linalg.norm(flip_vecs, dim=-1)
-        new_norms = 2 * torch.pi - flip_norms
-        new_vecs = -flip_vecs / flip_norms[:, None] * new_norms[:, None]
-        rotvec_list[flip_inds] = new_vecs
-
-    return rotvec_list, alignment_list[:, 0, 0] # the actual handedness
+        rotvec_list[bad_directions] = 1
+    rotvec_list = rotvec_list / torch.linalg.norm(rotvec_list, dim=-1)[:, None] * r_list[:, None]
+    return rotvec_list
 
 
 def identify_canonical_asymmetric_unit(T_cf, asym_unit_dict, sg_ind, unit_cell_coords):
@@ -563,35 +649,69 @@ def compute_principal_axes_list(coords_list):
     return Ip_axes_list
 
 
-def align_molecules_to_principal_axes(data, handedness=None):
+def align_mol_batch_to_standard_axes(mol_batch, handedness=None):
     """
     align principal inertial axes of molecules in a crystaldata object to the xyz or xy(-z) axes
     only works for geometric principal axes (all atoms mass = 1)
     """
-    # todo this could be sped up as all batch calculations
-    coords_list = [data.pos[data.ptr[i]:data.ptr[i + 1]] for i in range(data.num_graphs)]
-    coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(data.num_graphs)]
-    # principal_axes_list = compute_principal_axes_list(coords_list_centred, masses_list = None)
+    # todo this could be greatly sped up with batch calculations
+    Ip, Ipm, I = batch_molecule_principal_axes_torch(
+        mol_batch.pos,
+        mol_batch.batch,
+        mol_batch.num_graphs,
+        mol_batch.num_atoms
+    )
+
+    eye = torch.tile(torch.eye(3,
+                               device=mol_batch.x.device,
+                               dtype=torch.float32),
+                     (mol_batch.num_graphs, 1, 1)
+                     )  # set as right-handed by default
+
+    if handedness is not None:  # otherwise, custom
+        # alignment vector is (x,y,z) by default, or (-x,y,z) for left-handed structures
+        eye[:, 0, 0] = handedness.flatten()  # flatten - in case it's higher dimensional [n,1]
+
+    # rotation is p_align = R @ p_orig,
+    # R = p_align \ p_orig
+
+    rotation_matrix_list = extract_rotmat(eye, torch.linalg.inv(Ip))
+    mol_batch.recenter_molecules()  # ensures molecules are centered
+    mol_batch.pos = apply_rotation_to_batch(mol_batch.pos,
+                                            rotation_matrix_list,
+                                            mol_batch.batch)
+    # test
+    # Ip, Ipm, I = batch_molecule_principal_axes_torch(
+    #     mol_batch.pos,
+    #     mol_batch.batch,
+    #     mol_batch.num_graphs,
+    #     mol_batch.num_atoms
+    # )
+    # assert torch.all(torch.isclose(Ip, eye, atol=1e-4))
+    return mol_batch
+
+
+def align_batch_to_principal_axes(mol_batch, handedness=None):
+    """
+    align principal inertial axes of molecules in a crystaldata object to the xyz or (-x)yz axes
+    only works for geometric principal axes (all atoms mass = 1)
+    """
+    coords_list = [mol_batch.pos[mol_batch.ptr[i]:mol_batch.ptr[i + 1]] for i in range(mol_batch.num_graphs)]
+    coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(mol_batch.num_graphs)]
     principal_axes_list, _, _ = batch_molecule_principal_axes_torch(coords_list_centred)  # much faster
 
-    eye = torch.tile(torch.eye(3, device=data.x.device),
-                     (data.num_graphs, 1, 1))  # set as right-handed in general
+    eye = torch.tile(torch.eye(3, device=mol_batch.x.device),
+                     (mol_batch.num_graphs, 1, 1))  # set as right-handed in general
     if handedness is not None:  # otherwise, custom
         eye[:, 0, 0] = handedness.flatten()  # flatten - in case it's higher dimensional [n,1]
 
-    # rotation2 = torch.matmul(eye2.reshape(data.num_graphs, 3, 3), torch.linalg.inv(principal_axes_list.reshape(data.num_graphs, 3, 3))) # one step
-
     rotation_matrix_list = [torch.matmul(torch.linalg.inv(principal_axes_list[i]), eye[i]) for i in
-                            range(data.num_graphs)]
+                            range(mol_batch.num_graphs)]
 
-    data.pos = torch.cat([torch.einsum('ji, mj->mi', (rotation_matrix_list[i], coords_list_centred[i])) for i in
-                          range(data.num_graphs)])
+    mol_batch.pos = torch.cat([torch.einsum('ji, mj->mi', (rotation_matrix_list[i], coords_list_centred[i])) for i in
+                               range(mol_batch.num_graphs)])
 
-    # for debugging
-    # std_coords_list = [torch.einsum('ji, mj->mi', (rotation_matrix_list[i], coords_list_centred[i])) for i in range(data.num_graphs)]
-    # principal_axes_list2, _, _ = batch_molecule_principal_axes(std_coords_list)  # much faster
-    # print(torch.abs(principal_axes_list2 - eye).sum((1,2))) # should be close to zero
-    return data
+    return mol_batch
 
 
 def random_crystaldata_alignment(crystaldata, include_inversion=False):
@@ -630,37 +750,6 @@ def set_sym_ops(supercell_data):
     return sym_ops_list, supercell_data
 
 
-def rotvec2rotmat(mol_rotation: torch.tensor, basis='cartesian'):
-    """
-    get applied rotation matrix
-    mol_rotation here is a list of rotation vectors [n_samples, 3]
-    rotvec -> rotation matrix directly (see https://en.wikipedia.org/wiki/Rodrigues%27_rotation_formula)
-    rotvec -> quat -> rotation matrix (old way)
-    """
-    if basis == 'cartesian':
-        r = torch.linalg.norm(mol_rotation, dim=1)
-        unit_vector = mol_rotation / r[:, None]
-    elif basis == 'spherical':  # psi, phi, (spherical unit vector) theta (rotation vector)
-        r = mol_rotation[:,
-            -1]  # third dimension in spherical basis is the norm #torch.linalg.norm(mol_rotation, dim=1)
-        mol_rotation = sph2rotvec(mol_rotation)
-        unit_vector = mol_rotation / r[:, None]
-    else:
-        print(f'{basis} is not a valid orientation parameterization!')
-        sys.exit()
-
-    K = torch.stack((  # matrix representing rotation axis
-        torch.stack((torch.zeros_like(unit_vector[:, 0]), -unit_vector[:, 2], unit_vector[:, 1]), dim=1),
-        torch.stack((unit_vector[:, 2], torch.zeros_like(unit_vector[:, 0]), -unit_vector[:, 0]), dim=1),
-        torch.stack((-unit_vector[:, 1], unit_vector[:, 0], torch.zeros_like(unit_vector[:, 0])), dim=1)
-    ), dim=1)
-
-    applied_rotation_list = torch.eye(3, device=r.device)[None, :, :].tile(len(r), 1, 1) + torch.sin(
-        r[:, None, None]) * K + (1 - torch.cos(r[:, None, None])) * (K @ K)
-
-    return applied_rotation_list
-
-
 def new_aunit2unit_cell(mol_batch):
     aunit_lens = mol_batch.num_atoms
     symmetry_multiplicity = mol_batch.sym_mult
@@ -682,7 +771,8 @@ def new_aunit2unit_cell(mol_batch):
     flat_cf_transform_list = torch.repeat_interleave(mol_batch.T_cf, symmetry_multiplicity, dim=0)
 
     # add 4th dimension as a dummy for affine transforms, should have shape (num_aunits, 4, 4)
-    sym_ops = torch.FloatTensor(np.concatenate(mol_batch.symmetry_operators, axis=0), device=centroids_f.device)
+    sym_ops = torch.tensor(np.concatenate(mol_batch.symmetry_operators, axis=0),
+                           device=centroids_f.device, dtype=torch.float32)
 
     flat_unit_cell_affine_centroids_f = torch.cat(
         (flat_unit_cell_centroids_f,
@@ -869,7 +959,6 @@ def rescale_asymmetric_unit(asym_unit_dict, mol_position, sg_inds):
     return mol_position / torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_inds])
 
 
-
 def overwrite_symmetry_info(mol_batch, generate_sgs, symmetries_dict, randomize_sgs=False):
     """
     update the symmetry information in molecule-wise crystaldata objects
@@ -914,7 +1003,10 @@ def get_intra_mol_dists(cell_data, ind):
     return torch.stack([torch.cdist(coords[i], coords[i]) for i in range(len(coords))])
 
 
-def set_molecule_alignment(data, mode, right_handed=False, include_inversion=False):
+def set_molecule_alignment(mol_batch,
+                           mode: str,
+                           right_handed: Optional[bool] = False,
+                           include_inversion: Optional[bool] = False):
     """
     set the position and orientation of the molecule with respect to the xyz axis
     'standardized' sets the molecule principal inertial axes equal to the xyz axis
@@ -926,25 +1018,27 @@ def set_molecule_alignment(data, mode, right_handed=False, include_inversion=Fal
     """
 
     if mode == 'standardized':
-        data = align_molecules_to_principal_axes(data, handedness=data.aunit_handedness)
-        # data.aunit_handedness = torch.ones_like(data.aunit_handedness)
+        mol_batch = align_batch_to_principal_axes(mol_batch,
+                                                  handedness=mol_batch.aunit_handedness
+                                                  )
 
     elif mode == 'random':
-        data = random_crystaldata_alignment(data, include_inversion=include_inversion)
+        mol_batch = random_crystaldata_alignment(mol_batch, include_inversion=include_inversion)
         if right_handed:
-            coords_list = [data.pos[data.ptr[i]:data.ptr[i + 1]] for i in range(data.num_graphs)]
-            coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(data.num_graphs)]
-            principal_axes_list, _, _ = batch_molecule_principal_axes_torch(coords_list_centred)
+            coords_list = [mol_batch.pos[mol_batch.ptr[i]:mol_batch.ptr[i + 1]] for i in range(mol_batch.num_graphs)]
+            coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(mol_batch.num_graphs)]
+            principal_axes_list, _, _ = list_molecule_principal_axes_torch(coords_list_centred)
             handedness = compute_Ip_handedness(principal_axes_list)
             for ind, hand in enumerate(handedness):
                 if hand == -1:
-                    data.pos[data.batch == ind] = -data.pos[data.batch == ind]  # invert
+                    mol_batch.pos[mol_batch.batch == ind] = -mol_batch.pos[mol_batch.batch == ind]  # invert
 
-            data.aunit_handedness = torch.ones(data.num_graphs, dtype=torch.long, device=data.x.device)
+            mol_batch.aunit_handedness = torch.ones(mol_batch.num_graphs, dtype=torch.long, device=mol_batch.x.device)
+
     elif mode == 'as is' or mode is None:
         pass  # do nothing
 
-    return data
+    return mol_batch
 
 
 def get_aunit_positions(mol_batch,
@@ -959,19 +1053,41 @@ def get_aunit_positions(mol_batch,
 
     if align_to_standardized_orientation:  # align canonical conformers principal axes to cartesian axes - not usually done here, but allowed
         assert mol_handedness is not None, "Must provide explicit handedness when aligning mol to canonical axes"
-        mol_batch = align_molecules_to_principal_axes(mol_batch, handedness=mol_handedness)
+        mol_batch = align_mol_batch_to_standard_axes(mol_batch, handedness=mol_handedness)
     else:
         mol_batch.recenter_molecules()
 
-    aunit_pos_list = []
-    for i, rotation in enumerate(rotations_list):
-        mol = mol_batch[i]
-        aunit_pos_list.append(  # new, explicit
-            torch.einsum('ij, nj -> ni', rotation, mol.pos) +  # contract over shared axis
-            fractional_transform(mol.aunit_centroid, mol.T_fc)
-        )
+    # apply rotations and fractional translations
+    mol_batch.pos = (apply_rotation_to_batch(mol_batch.pos,
+                                             rotations_list,
+                                             mol_batch.batch)
+                     + fractional_transform(mol_batch.aunit_centroid, mol_batch.T_fc)[mol_batch.batch])
 
-    return torch.cat(aunit_pos_list, dim=0)
+    return mol_batch.pos
+
+    # re-analyze rotations
+    '''
+    mol_batch.recenter_molecules()
+    eye = torch.tile(torch.eye(3,
+                               device=mol_batch.x.device,
+                               dtype=torch.float32),
+                     (mol_batch.num_graphs, 1, 1)
+                     )  # set as right-handed by default
+
+    # alignment vector is (x,y,z) by default, or (-x,y,z) for left-handed structures
+    eye[:, 0, 0] = mol_batch.aunit_handedness.flatten()  # flatten - in case it's higher dimensional [n,1]
+    from mxtaltools.common.geometry_utils import extract_rotmat
+
+    Ip, Ipm, I = batch_molecule_principal_axes_torch(
+        mol_batch.pos,
+        mol_batch.batch,
+        mol_batch.num_graphs,
+        mol_batch.num_atoms
+    )
+
+    rmats = extract_rotmat(eye, torch.linalg.inv(Ip))
+    print((rmats.permute(0,2,1) - rotations_list).abs().sum((1,2)))
+    '''
 
 
 def get_symmetry_functions(cell_angles, cell_lengths, mol_position, mol_rotation, supercell_data):

@@ -6,10 +6,10 @@ from torch_geometric.loader.dataloader import Collater
 from mxtaltools.common.training_utils import init_sym_info
 from mxtaltools.crystal_building.utils import \
     (update_supercell_data, unit_cell_to_convolution_cluster,
-     align_molecules_to_principal_axes,
-     batch_asymmetric_unit_pose_analysis_torch, rotvec2rotmat, aunit2unit_cell, generate_sorted_fractional_translations,
+     align_mol_batch_to_standard_axes,
+     batch_asymmetric_unit_pose_analysis_torch, aunit2unit_cell, generate_sorted_fractional_translations,
      get_symmetry_functions, new_unit_cell_to_convolution_cluster)
-from mxtaltools.common.geometry_utils import sph2rotvec
+from mxtaltools.common.geometry_utils import sph2rotvec, rotvec2rotmat
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.dataset_utils.CrystalData import CrystalData
 
@@ -265,7 +265,7 @@ class CrystalBuilder:
         rotations_list = rotvec2rotmat(mol_rotvec)
 
         if align_to_standardized_orientation:  # align canonical conformers principal axes to cartesian axes - not usually done here, but allowed
-            supercell_batch = align_molecules_to_principal_axes(supercell_batch, handedness=target_handedness)
+            supercell_batch = align_mol_batch_to_standard_axes(supercell_batch, handedness=target_handedness)
 
         # get molecule information
         atomic_number_list, coords_list = [], []

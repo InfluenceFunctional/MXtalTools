@@ -8,16 +8,20 @@ from torch import Tensor
 from torch_geometric.data.data import BaseData
 from torch_geometric.data.storage import (BaseStorage, EdgeStorage,
                                           GlobalStorage, NodeStorage)
-from torch_geometric.nn import radius_graph
 from torch_geometric.typing import OptTensor
 from torch_sparse import SparseTensor
 
+from mxtaltools.analysis.crystals_analysis import get_intermolecular_dists_dict
+from mxtaltools.analysis.vdw_analysis import vdw_analysis, electrostatic_analysis
 from mxtaltools.common.geometry_utils import cell_parameters_to_box_vectors, batch_molecule_vdW_volume, \
-    compute_mol_radius, batch_compute_mol_radius, batch_compute_mol_mass, compute_mol_mass, get_batch_centroids
+    compute_mol_radius, batch_compute_mol_radius, batch_compute_mol_mass, compute_mol_mass, center_mol_batch
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
 from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE
-from mxtaltools.crystal_building.utils import get_aunit_positions, new_aunit2unit_cell, parameterize_crystal_batch
+from mxtaltools.crystal_building.utils import get_aunit_positions, new_aunit2unit_cell, parameterize_crystal_batch, \
+    unit_cell_to_supercell_cluster
+from mxtaltools.dataset_utils.synthesis.otf_dataset_synthesis import smiles2conformer
+from mxtaltools.models.modules.components import construct_radial_graph
 
 
 ###############################################################################
@@ -155,6 +159,8 @@ class MXtalBase(BaseData):
 
 
 # noinspection PyPropertyAccess
+
+
 class MolData(MXtalBase):
     r"""
     A graph representing a single molecule
@@ -162,7 +168,7 @@ class MolData(MXtalBase):
 
     def __init__(self,
                  z: Optional[torch.LongTensor] = None,
-                 pos: Optional[torch.FloatTensor] = None,
+                 pos: Optional[torch.Tensor] = None,
                  x: OptTensor = None,
                  graph_x: OptTensor = None,
 
@@ -221,20 +227,50 @@ class MolData(MXtalBase):
                 self.mol_volume = self.volume_calculation()
 
         if construct_radial_graph:
-            self.edge_index = self.construct_radial_graph()
+            self.edge_index = self.intramolecular_radial_graph()
+
+    @classmethod
+    def from_smiles(cls,
+                    smiles: str,
+                    protonate: bool = True,
+                    minimize: bool = False,
+                    scramble_dihedrals: bool = False,
+                    allow_methyl_rotations: bool = False,
+                    skip_mol_analysis: bool = False,
+                    compute_partial_charges: bool = True,
+                    pare_to_size: Optional[int] = None,
+                    max_pare_iters: int = 10,
+                    ):
+        assert "Batch" not in cls.__name__, "sample generation from smiles only implemented for single samples"
+        conf_out = smiles2conformer(allow_methyl_rotations,
+                                    compute_partial_charges,
+                                    max_pare_iters,
+                                    minimize,
+                                    pare_to_size,
+                                    protonate,
+                                    scramble_dihedrals,
+                                    smiles)
+        if conf_out is not None:
+            charges, pos, z = conf_out
+            return cls(
+                z=torch.LongTensor(z),
+                pos=torch.tensor(pos, dtype=torch.float32),
+                x=torch.tensor(charges, dtype=torch.float32),
+                smiles=smiles,
+                skip_mol_analysis=skip_mol_analysis,
+                y=torch.tensor([1], dtype=torch.float32),
+                graph_x=torch.tensor([1], dtype=torch.float32)
+            )
+        else:
+            return None
 
     def construct_radial_graph(self, cutoff: float = 7):
-        if 'Batch' in self.__class__.__name__:
-            return radius_graph(self.pos,
-                                batch=self.batch,
-                                r=cutoff,
-                                max_num_neighbors=100,
-                                flow='source_to_target')
-        else:  # if we do this before batching, these will be all wrong
-            return radius_graph(self.pos,
-                                r=cutoff,
-                                max_num_neighbors=100,
-                                flow='source_to_target')  # note - requires batch be monotonically increasing
+        self.edges_dict = construct_radial_graph(self.pos,
+                                                 self.batch,
+                                                 self.ptr,
+                                                 cutoff,
+                                                 max_num_neighbors=10000
+                                                 )
 
     def radius_calculation(self):
         if 'Batch' in self.__class__.__name__:
@@ -243,14 +279,16 @@ class MolData(MXtalBase):
             return compute_mol_radius(self.pos)
 
     def mass_calculation(self):
-        masses_tensor = torch.FloatTensor(list(ATOM_WEIGHTS.values()), device=self.z.device)
+        masses_tensor = torch.tensor(list(ATOM_WEIGHTS.values()), device=self.z.device, dtype=torch.float32)
         if 'Batch' in self.__class__.__name__:
             return batch_compute_mol_mass(self.z, self.batch, masses_tensor, self.num_graphs)
         else:
             return compute_mol_mass(self.z, masses_tensor)
 
     def volume_calculation(self):
-        vdw_radii_tensor = torch.FloatTensor(list(VDW_RADII.values()), device=self.z.device)
+        vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()),
+                                        device=self.z.device,
+                                        dtype=torch.float32)
         if 'Batch' in self.__class__.__name__:
             return batch_molecule_vdW_volume(
                 self.z,
@@ -268,10 +306,28 @@ class MolData(MXtalBase):
 
     def recenter_molecules(self):
         if 'Batch' in self.__class__.__name__:
-            centroids = get_batch_centroids(self.pos, self.batch, self.num_graphs)
-            self.pos -= centroids.repeat_interleave(self.num_atoms, 0)
+            self.pos = center_mol_batch(self.pos, self.batch, self.num_graphs, self.num_atoms)
         else:
             self.pos -= self.pos.mean(0)
+
+    def noise_positions(self, magnitude: float):
+        self.pos += torch.randn_like(self.pos) * magnitude
+
+    def scale_positions(self, affine_scale: float):
+        graph_scale_factor = torch.randn(self.num_graphs, device=self.pos.device, dtype=torch.float32)
+        graph_scale_factor = (graph_scale_factor / 10 + affine_scale).clip(min=0.9, max=1.25)
+        atomwise_scaling = graph_scale_factor.repeat_interleave(self.num_atoms)
+        self.pos *= atomwise_scaling[:, None]
+
+    def visualize(self,
+                  sample_inds: Optional[list] = None,
+                  **vis_kwargs):
+        from mxtaltools.common.ase_interface import data_batch_to_ase_mols_list
+        data_batch_to_ase_mols_list(
+            self,
+            specific_inds=sample_inds,
+            show_mols=True,
+            **vis_kwargs)
 
     @property
     def x(self) -> Any:
@@ -319,7 +375,7 @@ class MolData(MXtalBase):
 
 
 # noinspection PyPropertyAccess
-class MolCrystalData(MXtalBase):
+class MolCrystalData(MolData):
     r"""
     A data object representing a molecular crystal with Z prime = 1 (exactly one molecule in asymmetric unit)
     """
@@ -327,21 +383,24 @@ class MolCrystalData(MXtalBase):
     def __init__(self,
                  molecule: Optional[MolData] = None,
                  sg_ind: Optional[int] = None,
-                 cell_lengths: Optional[torch.FloatTensor] = None,
-                 cell_angles: Optional[torch.FloatTensor] = None,
-                 aunit_centroid: Optional[torch.FloatTensor] = None,
-                 aunit_orientation: Optional[torch.FloatTensor] = None,
-                 aunit_handedness: Optional[torch.BoolTensor] = None,
+                 cell_lengths: Optional[torch.Tensor] = None,
+                 cell_angles: Optional[torch.Tensor] = None,
+                 aunit_centroid: Optional[torch.Tensor] = None,
+                 aunit_orientation: Optional[torch.Tensor] = None,
+                 aunit_handedness: Optional[int] = None,
                  identifier: Optional[str] = None,
                  unit_cell_pos: Optional[np.ndarray] = None,
                  nonstandard_symmetry: Optional[bool] = False,
                  symmetry_operators: Optional[list] = None,
                  is_well_defined: Optional[bool] = True,
+                 aux_ind: Optional[torch.LongTensor] = None,
+                 mol_ind: Optional[torch.LongTensor] = None,
                  **kwargs):
         super().__init__()
         self.__dict__['_store'] = GlobalStorage(_parent=self)
         # initialize crystal from an existing molecule
         if molecule is not None:
+            # copy out the data
             mol_dict = molecule.to_dict()
             for key, value in mol_dict.items():
                 setattr(self, key, value)
@@ -370,7 +429,11 @@ class MolCrystalData(MXtalBase):
 
             # record prebuilt unit cell coordinates
             if unit_cell_pos is not None:
-                self.unit_cell_pos = unit_cell_pos.cpu().detach().numpy()  # if it's saved as a tensor, we get problems in collation
+                if torch.is_tensor(unit_cell_pos):
+                    self.unit_cell_pos = unit_cell_pos.cpu().detach().numpy()  # if it's saved as a tensor, we get problems in collation
+                else:
+                    self.unit_cell_pos = unit_cell_pos
+
                 assert unit_cell_pos.shape == (self.sym_mult, self.num_nodes, 3)
             else:  # make a placeholder
                 self.unit_cell_pos = np.zeros((self.sym_mult, self.num_nodes, 3))
@@ -379,27 +442,40 @@ class MolCrystalData(MXtalBase):
         if cell_lengths is not None:
             self.cell_lengths = cell_lengths[None, ...]
             self.cell_angles = cell_angles[None, ...]
+
+            if any([
+                self.T_fc is None,
+                self.T_cf is None,
+                self.cell_volume is None,
+                self.packing_coeff is None,
+                self.density is None
+            ]):  # better to do this in batches and feed it as kwargs # todo add a log/warning for this
+                self.box_analysis(cell_angles, cell_lengths)
+            else:
+                assert (self.T_cf is not None and self.cell_volume is not None), \
+                    "T_fc, T_cf, and cell volume must all be provided all together or not at all"
+
+        if aunit_centroid is not None:
             self.aunit_centroid = aunit_centroid[None, ...]
+        if aunit_orientation is not None:
             self.aunit_orientation = aunit_orientation[None, ...]
+        if self.aunit_handedness:
             self.aunit_handedness = aunit_handedness
 
-            if self.T_fc is None:  # better to do this in batches and feed it as kwargs # todo add a log/warning for this
-                assert (
-                        self.T_cf is None and self.cell_volume is None), "T_fc, T_cf, and cell volume must all be provided all together or not at all"
+        if mol_ind is not None:
+            self.mol_ind = mol_ind
+        if aux_ind is not None:
+            self.aux_ind = aux_ind
 
-                self.T_fc, self.cell_volume = (
-                    cell_parameters_to_box_vectors('f_to_c', cell_lengths, cell_angles, return_vol=True))
-
-                if self.T_fc.ndim == 2:
-                    self.T_fc = self.T_fc[None, ...]
-
-                self.T_fc = self.T_fc
-                self.T_cf = torch.linalg.inv(self.T_fc)
-            else:
-                assert (
-                        self.T_cf is not None and self.cell_volume is not None), "T_fc, T_cf, and cell volume must all be provided all together or not at all"
-
-            self.packing_coeff = self.mol_volume * self.sym_mult / self.cell_volume
+    def box_analysis(self, cell_angles, cell_lengths):
+        self.T_fc, self.cell_volume = (
+            cell_parameters_to_box_vectors('f_to_c', cell_lengths, cell_angles, return_vol=True))
+        if self.T_fc.ndim == 2:
+            self.T_fc = self.T_fc[None, ...]
+        self.T_fc = self.T_fc
+        self.T_cf = torch.linalg.inv(self.T_fc)
+        self.packing_coeff = self.mol_volume * self.sym_mult / self.cell_volume
+        self.density = self.mass * self.sym_mult / self.cell_volume * 1.66054  # conversion from D/A^3 to g/cm^3
 
     def denorm_cell_lengths(self, normed_cell_length):
         """
@@ -535,6 +611,12 @@ class MolCrystalData(MXtalBase):
         else:  # TODO
             assert False, "unit cell construction not yet implemented for single crystals"
 
+    def build_cluster(self):
+        if 'Batch' in self.__class__.__name__:
+            return unit_cell_to_supercell_cluster(self)  # keep in numpy format
+        else:  # TODO
+            assert False, "unit cell construction not yet implemented for single crystals"
+
     def crystal_system(self):
         if 'Batch' in self.__class__.__name__:
             return [LATTICE_TYPE[int(ind)] for ind in self.sg_ind]
@@ -574,13 +656,13 @@ class MolCrystalData(MXtalBase):
                 if lattice.lower() == 'triclinic':
                     pass
                 elif lattice.lower() == 'monoclinic':  # fix alpha and gamma
-                    assert cell_angles[0] == torch.pi/2, "Error in monoclinic alpha angle"
-                    assert cell_angles[2] == torch.pi / 2, "Error in monoclinic gamma angle"
+                    assert torch.all(cell_angles[0] == torch.pi / 2), "Error in monoclinic alpha angle"
+                    assert torch.all(cell_angles[2] == torch.pi / 2), "Error in monoclinic gamma angle"
                 elif lattice.lower() == 'orthorhombic':  # fix all angles
-                    assert cell_angles == torch.ones(3) * torch.pi / 2, "Error in orthorhombic cell angles"
+                    assert torch.all(cell_angles == torch.ones(3) * torch.pi / 2), "Error in orthorhombic cell angles"
                 elif lattice.lower() == 'tetragonal':  # fix all angles and a & b vectors
-                    assert cell_angles == torch.ones(3) * torch.pi / 2, "Error in tetragonal cell angles"
-                    assert cell_lengths[0] == cell_lengths[1], "Error in tetragonal cell lengths"
+                    assert torch.all(cell_angles == torch.ones(3) * torch.pi / 2), "Error in tetragonal cell angles"
+                    assert torch.all(cell_lengths[0] == cell_lengths[1]), "Error in tetragonal cell lengths"
                 elif lattice.lower() == 'hexagonal':  # for rhombohedral, all angles and lengths equal, but not 90.
                     # for truly hexagonal, alpha=90, gamma is 120, a=b!=c
                     # todo implement 3&6 fold lattices
@@ -588,23 +670,58 @@ class MolCrystalData(MXtalBase):
                     pass
                 elif lattice.lower() == 'cubic':  # all angles 90 all lengths equal
                     assert torch.all(cell_lengths == cell_lengths.mean()), "Error in cubic cell lengths"
-                    assert torch.all(cell_angles == torch.pi /2), "Error in cubic cell angles"
+                    assert torch.all(cell_angles == torch.pi / 2), "Error in cubic cell angles"
                 else:
                     assert False, f"{lattice} + ' is not a valid crystal lattice!')"
+        else:
+            assert False, "Lattice checks not impelemented for single crystals"
 
         return True
 
     def reparameterize_unit_cell(self):
-        mol_position_list, rotvec_list, handedness_list, well_defined_asym_unit_list, canonical_conformer_coords_list =(
+        (aunit_centroid, aunit_orientation,
+         handedness_list, is_well_defined, pos) = (
             parameterize_crystal_batch(self,
                                        ASYM_UNITS,
                                        enforce_right_handedness=False,
                                        return_aunit=True))
 
-        d1 = (self.aunit_centroid - mol_position_list).abs().sum(1)
-        d2 = (rotvec_list - self.aunit_orientation).abs().sum(1)
-        print(torch.vstack((d1, d2, torch.Tensor(well_defined_asym_unit_list))).T)
-        aa = 1
+        return aunit_centroid, aunit_orientation, handedness_list.long(), is_well_defined, torch.cat(pos)
+
+    def construct_radial_graph(self, cutoff: float = 7):
+        if "Batch" in self.__class__.__name__:
+            self.edges_dict = get_intermolecular_dists_dict(
+                self,
+                cutoff
+            )
+
+        else:
+            assert False, "Radial graph construction not implemented for single crystals"
+
+    def compute_LJ_energy(self):
+        vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()), device=self.device)
+        if "Batch" in self.__class__.__name__:
+            (molwise_overlap, molwise_normed_overlap,
+             molwise_lj_pot, molwise_scaled_lj_pot, edgewise_lj_pot) \
+                = vdw_analysis(vdw_radii_tensor,
+                               self.edges_dict,
+                               self.num_graphs,
+                               )
+        else:
+            assert False, "LJ energies not implemented for single crystals"
+
+        return molwise_lj_pot, molwise_scaled_lj_pot
+
+    def compute_ES_energy(self):
+        if "Batch" in self.__class__.__name__:
+            molwise_estat_energy = electrostatic_analysis(
+                self.edges_dict,
+                self.num_graphs)
+
+        else:
+            assert False, "ES energies not implemented for single crystals"
+
+        return molwise_estat_energy
 
     def cell_parameters(self):
         """
@@ -685,6 +802,14 @@ class MolCrystalData(MXtalBase):
     @property
     def identifier(self) -> Any:
         return self['identifier'] if 'identifier' in self._store else None
+
+    @property
+    def mol_ind(self) -> Any:
+        return self['mol_ind'] if 'mol_ind' in self._store else None
+
+    @property
+    def aux_ind(self) -> Any:
+        return self['aux_ind'] if 'aux_ind' in self._store else None
 
     @property
     def cell_volume(self) -> Any:
@@ -699,164 +824,8 @@ class MolCrystalData(MXtalBase):
         return self['packing_coeff'] if 'packing_coeff' in self._store else None
 
     @property
-    def unit_cell_pos(self) -> Any:
-        return self['unit_cell_pos'] if 'unit_cell_pos' in self._store else None
-
-    @property
-    def aunit_handedness(self) -> Any:
-        return self['aunit_handedness'] if 'aunit_handedness' in self._store else None
-
-    @property
-    def is_well_defined(self) -> Any:
-        return self['is_well_defined'] if 'is_well_defined' in self._store else None
-
-    @property
-    def nonstandard_symmetry(self) -> Any:
-        return self['nonstandard_symmetry'] if 'nonstandard_symmetry' in self._store else None
-
-
-class MolClusterData(MolCrystalData):
-    r"""
-    A data object representing a molecular cluster, based on a preexisting molecular crystal lattice
-    """
-
-    def __init__(self,
-                 crystal: Optional[MolCrystalData] = None,
-                 aux_ind: Optional[torch.LongTensor] = None,
-                 mol_ind: Optional[torch.LongTensor] = None,
-                 cluster_z: Optional[torch.LongTensor] = None,
-                 cluster_pos: Optional[torch.FloatTensor] = None,
-                 cluster_x: OptTensor = None,
-                 edge_index: OptTensor = None,
-                 edge_attr: OptTensor = None,
-                 **kwargs):
-        super().__init__()
-        self.__dict__['_store'] = GlobalStorage(_parent=self)
-        # initialize cluster from an existing crystal
-        if crystal is not None:
-            crystal_dict = crystal.to_dict()
-            for key, value in crystal_dict.items():
-                setattr(self, key, value)
-
-        # then overwrite any relevant features
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
-        # overwrite molecule features as cluster features
-        if cluster_z is not None:
-            for key in ['pos', 'z', 'edge_index', 'edge_attr', 'x', 'mol_ind', 'aux_ind']:
-                if hasattr(self, key):
-                    delattr(self, key)
-
-            setattr(self, 'pos', cluster_pos)
-            setattr(self, 'z', cluster_z)
-            setattr(self, 'aux_ind', aux_ind)
-            setattr(self, 'mol_ind', mol_ind)
-
-            assert len(self.mol_ind) == len(self.aux_ind) == self.num_nodes
-            assert self.num_nodes % self.num_atoms == 0, "Cluster must comprise N whole molecules"
-
-        if edge_index is not None:
-            setattr(self, 'edge_index', edge_index)
-        if edge_attr is not None:
-            setattr(self, 'edge_attr', edge_attr)
-        if cluster_x is not None:
-            setattr(self, 'x', cluster_x)
-
-    def cell_parameters(self):
-        """
-        return the zp=1 total cell parameter tensor
-        Returns
-        -------
-
-        """
-        return torch.cat([self.cell_lengths,
-                          self.cell_angles,
-                          self.aunit_centroid,
-                          self.aunit_orientation], dim=1)
-
-    @property
-    def x(self) -> Any:
-        return self['x'] if 'x' in self._store else None
-
-    @property
-    def z(self) -> Any:
-        return self['z'] if 'z' in self._store else None
-
-    @property
-    def graph_x(self) -> Any:
-        return self['graph_x'] if 'graph_x' in self._store else None
-
-    @property
-    def edge_index(self) -> Any:
-        return self['edge_index'] if 'edge_index' in self._store else None
-
-    @property
-    def edge_weight(self) -> Any:
-        return self['edge_weight'] if 'edge_weight' in self._store else None
-
-    @property
-    def edge_attr(self) -> Any:
-        return self['edge_attr'] if 'edge_attr' in self._store else None
-
-    @property
-    def y(self) -> Any:
-        return self['y'] if 'y' in self._store else None
-
-    @property
-    def pos(self) -> Any:
-        return self['pos'] if 'pos' in self._store else None
-
-    @property
-    def radius(self) -> Any:
-        return self['radius'] if 'radius' in self._store else None
-
-    @property
-    def batch(self) -> Any:
-        return self['batch'] if 'batch' in self._store else None
-
-    @property
-    def aux_ind(self) -> Any:
-        return self['aux_ind'] if 'aux_ind' in self._store else None
-
-    @property
-    def mol_ind(self) -> Any:
-        return self['mol_ind'] if 'mol_ind' in self._store else None
-
-    @property
-    def sg_ind(self) -> Any:
-        return self['sg_ind'] if 'sg_ind' in self._store else None
-
-    @property
-    def symmetry_operators(self) -> Any:
-        return self['symmetry_operators'] if 'symmetry_operators' in self._store else None
-
-    @property
-    def cell_lengths(self) -> Any:
-        return self['cell_lengths'] if 'cell_lengths' in self._store else None
-
-    @property
-    def cell_angles(self) -> Any:
-        return self['cell_angles'] if 'cell_angles' in self._store else None
-
-    @property
-    def T_fc(self) -> Any:
-        return self['T_fc'] if 'T_fc' in self._store else None
-
-    def T_cf(self) -> Any:
-        return self['T_cf'] if 'T_cf' in self._store else None
-
-    @property
-    def identifier(self) -> Any:
-        return self['identifier'] if 'identifier' in self._store else None
-
-    @property
-    def cell_volume(self) -> Any:
-        return self['cell_volume'] if 'cell_volume' in self._store else None
-
-    @property
-    def smiles(self) -> Any:
-        return self['smiles'] if 'smiles' in self._store else None
+    def density(self) -> Any:
+        return self['density'] if 'density' in self._store else None
 
     @property
     def unit_cell_pos(self) -> Any:

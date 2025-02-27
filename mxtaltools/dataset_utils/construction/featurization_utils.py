@@ -156,10 +156,14 @@ def featurize_molecule(crystal, rd_mol, component_num, protonation_state='deprot
 
     # extract a single asymmetric unit features (not necessarily the canonical unit)
     component = crystal.molecule.components[component_num]  # opt for Z': int>= 1 systems
-    molecule_dict['atom_coordinates'] = np.asarray([atom.coordinates for atom in component.atoms])
-    # molecule_dict['atom_fractional_coordinates'] = np.asarray([heavy_atom.fractional_coordinates for heavy_atom in component.heavy_atoms])
-    molecule_dict['atom_atomic_numbers'] = np.asarray(
-        [atom.atomic_number for atom in component.atoms])
+    if protonation_state == 'protonated':
+        molecule_dict['atom_coordinates'] = np.asarray([atom.coordinates for atom in component.atoms])
+        molecule_dict['atom_atomic_numbers'] = np.asarray(
+            [atom.atomic_number for atom in component.atoms])
+    elif protonation_state == 'deprotonated':
+        molecule_dict['atom_coordinates'] = np.asarray([atom.coordinates for atom in component.heavy_atoms])
+        molecule_dict['atom_atomic_numbers'] = np.asarray(
+            [atom.atomic_number for atom in component.heavy_atoms])
 
     # confirm mol2 file as read by rdkit agrees with CSD output
     atoms = rd_mol.GetAtoms()
@@ -239,7 +243,11 @@ def featurize_molecule(crystal, rd_mol, component_num, protonation_state='deprot
     ])
     molecule_dict['molecule_is_asymmetric_top'] = not Ipm[0] == Ipm[1] == Ipm[2]
 
-    molecule_dict['atom_partial_charge'] = get_partial_charges(rd_mol)
+    charges = get_partial_charges(rd_mol)
+    if np.all(np.isfinite(charges)):
+        molecule_dict['atom_partial_charge'] = charges
+    else:
+        molecule_dict['atom_partial_charge'] = np.zeros_like(charges)
 
     return molecule_dict
 
@@ -283,7 +291,9 @@ def crystal_filter(crystal,
         return False, None, None
     if crystal.z_prime < 1:
         return False, None, None
-    if int(crystal.z_prime) != crystal.z_prime:  # integer z-prime only
+    # if int(crystal.z_prime) != crystal.z_prime:  # integer z-prime only
+    #     return False, None, None
+    if int(crystal.z_prime) != 1:
         return False, None, None
     if len(crystal.molecule.components) == 0:
         return False, None, None
@@ -487,7 +497,7 @@ def rebuild_reparameterize_unit_cell(molecules, crystal_dict):
                                                       [crystal_dict['space_group_number']],
                                                       ASYM_UNITS,
                                                       T_fc[None, ...],
-                                                      rotation_basis='spherical',
+                                                      rotation_basis='cartesian',
                                                       return_asym_unit_coords=True))
 
         pose_params_list.append(np.concatenate([position[0], orientation[0]]))

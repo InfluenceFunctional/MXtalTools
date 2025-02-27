@@ -8,26 +8,30 @@ import numpy as np
 import torch
 from plotly import graph_objects as go
 from plotly.subplots import make_subplots
+from rdkit.Chem import AllChem
 from torch_geometric.data import Batch
 
 from mxtaltools.common.geometry_utils import batch_molecule_vdW_volume
 from mxtaltools.common.utils import chunkify
 from mxtaltools.common.training_utils import init_sym_info
 
-from mxtaltools.conformer_generation.conformer_generator import generate_random_conformers_from_smiles
+from mxtaltools.conformer_generation.conformer_generator import generate_random_conformers_from_smiles, embed_mol, \
+    extract_mol_info, get_rotatable_edges, scramble_dihedral_angles, minimal_minimization
 from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.crystal_search.standalone_crystal_opt import standalone_opt_random_crystals
 from mxtaltools.dataset_utils.CrystalData import CrystalData
+from mxtaltools.dataset_utils.construction.featurization_utils import get_partial_charges
 from mxtaltools.models.task_models.generator_models import CSDPrior
 from mxtaltools.analysis.crystals_analysis import get_intermolecular_dists_dict
 from mxtaltools.analysis.vdw_analysis import electrostatic_analysis, vdw_analysis
-from rdkit import RDLogger
+from rdkit import RDLogger, Chem
 
 RDLogger.DisableLog('rdApp.*')
 
 """
 Functions for generating molecule and molecular crystal datasets on-the-fly given molecule SMILES
 """
+
 
 def otf_synthesize_molecules(dataset_length: int,
                              smiles_source: Union[str, Path],
@@ -40,7 +44,6 @@ def otf_synthesize_molecules(dataset_length: int,
                              pare_to_size: int,
                              max_radius: float,
                              synchronize: bool = True):
-
     chunks_path = Path(workdir)  # where to save outputs
     smiles_path = Path(smiles_source)  # where to get inputs
     os.chdir(smiles_path)
@@ -60,15 +63,15 @@ def otf_synthesize_molecules(dataset_length: int,
                                   False
                                   ),
                             kwds={
-                             'max_num_atoms': max_num_atoms,
-                             'max_num_heavy_atoms': max_num_heavy_atoms,
-                             'pare_to_size': pare_to_size,
-                             'max_radius': max_radius,
-                             'protonate': True,
-                             'rotamers_per_sample': 1,
-                             'allow_simple_hydrogen_rotations': False,
+                                'max_num_atoms': max_num_atoms,
+                                'max_num_heavy_atoms': max_num_heavy_atoms,
+                                'pare_to_size': pare_to_size,
+                                'max_radius': max_radius,
+                                'protonate': True,
+                                'rotamers_per_sample': 1,
+                                'allow_simple_hydrogen_rotations': False,
                                 'do_partial_charges': False,
-                         })
+                            })
     mp_pool.close()
     if synchronize:  # force function to complete before returning
         mp_pool.join()
@@ -88,7 +91,6 @@ def otf_synthesize_crystals(dataset_length: int,
                             pare_to_size: int,
                             max_radius: float,
                             synchronize: bool = True):
-
     chunks_path = Path(workdir)  # where to save outputs
     smiles_path = Path(smiles_source)  # where to get inputs
     os.chdir(smiles_path)
@@ -123,18 +125,18 @@ def otf_synthesize_crystals(dataset_length: int,
         chunk_ind = min_ind + ind
         chunk_path = os.path.join(chunks_path, f'chunk_{chunk_ind}.pkl')
         outputs.append(
-        mp_pool.apply_async(process_smiles_to_crystal_opt,
-                            args=(chunk, chunk_path, allowed_atom_types, 1, False),
-                            kwds={
-                             'max_num_atoms': max_num_atoms,
-                             'max_num_heavy_atoms': max_num_heavy_atoms,
-                             'pare_to_size': pare_to_size,
-                             'max_radius': max_radius,
-                             'protonate': True,
-                             'rotamers_per_sample': 1,
-                             'allow_simple_hydrogen_rotations': False,
-                                'do_partial_charges': True,
-                         }))
+            mp_pool.apply_async(process_smiles_to_crystal_opt,
+                                args=(chunk, chunk_path, allowed_atom_types, 1, False),
+                                kwds={
+                                    'max_num_atoms': max_num_atoms,
+                                    'max_num_heavy_atoms': max_num_heavy_atoms,
+                                    'pare_to_size': pare_to_size,
+                                    'max_radius': max_radius,
+                                    'protonate': True,
+                                    'rotamers_per_sample': 1,
+                                    'allow_simple_hydrogen_rotations': False,
+                                    'do_partial_charges': True,
+                                }))
 
     mp_pool.close()
     if synchronize:
@@ -192,6 +194,7 @@ class Collater:
     """
     simplified version of the PyG collater function
     """
+
     def __init__(
             self,
     ):
@@ -228,7 +231,6 @@ def process_smiles_to_crystal_opt(lines: list,
                                   space_group,
                                   run_tests=False,
                                   **conf_kwargs):
-
     """starting chunk pool"""
     mol_samples = process_smiles_list(lines, allowed_atom_types, return_samples=True, **conf_kwargs)
     if len(mol_samples) == 0:
@@ -319,11 +321,11 @@ def test_crystal_rebuild_from_embedding(mol_batch,
                                         restd=False,
                                         make_figs=True,
                                         ):
-
     """
     todo - we do functions like this in several places, essentially confirming that our parameterizations are correct
     we should instead have a single workflow for this, maybe even built into the data classes
     """
+
     def _score_crystal_batch(mol_batch, supercell_batch, vdw_radii_tensor):
 
         dist_dict = get_intermolecular_dists_dict(supercell_batch,
@@ -524,3 +526,121 @@ def process_smiles(smile: str,
         return sample.to_dict(), None
     else:
         return sample, None
+
+
+def pare_molecule_skeleton(conf, mask_rotate, max_pare_iters, mol, pare_to_size, pos, z,
+                           deprotonate: bool = False):
+    # use rotatable bonds as fragmentation sites to pare the molecule down to an acceptable size
+    mol_num_atoms = len(pos)
+    atoms_kept = np.arange(mol_num_atoms)
+    iter = 0
+    flag = False
+    while np.sum(z > 1) > pare_to_size and len(mask_rotate) > 0 and iter < max_pare_iters:
+        # how many heavy atoms in each fragment
+        fragment_size = np.sum(mask_rotate[:, z > 1], axis=1)
+        # sample which fragment to pare, weighted to smaller sizes
+        fragment_to_pare = \
+            np.random.choice(len(fragment_size), 1,
+                             p=np.exp(-fragment_size) / np.sum(np.exp(-fragment_size))
+                             )[0]
+        # effect the paring
+        atoms_to_pare = mask_rotate[fragment_to_pare, :]
+        pos, z = pos[~atoms_to_pare], z[~atoms_to_pare]
+        mask_rotate = np.delete(mask_rotate, fragment_to_pare, axis=0)
+        mask_rotate = mask_rotate[:, ~atoms_to_pare]
+        atoms_kept = atoms_kept[~atoms_to_pare]
+        iter += 1
+
+    if np.sum(z > 1) > pare_to_size:
+        flag = True
+
+    atoms_pared = [ind for ind in np.arange(mol_num_atoms) if ind not in atoms_kept]
+
+    # update rdkit molecule object
+    m2 = Chem.RWMol(mol)
+    m2.BeginBatchEdit()
+    for ind in atoms_pared:
+        m2.RemoveAtom(int(ind))
+    m2.CommitBatchEdit()
+
+    # re-embed molecule and extract info
+    mol = Chem.AddHs(Chem.RemoveHs(m2))
+    if deprotonate:
+        mol = Chem.RemoveHs(mol)
+    AllChem.EmbedMolecule(mol)
+    if mol is None:
+        flag = True
+    try:
+        conf = mol.GetConformer()
+    except ValueError:
+        flag = True
+
+    return mol, conf, flag
+
+
+def smiles2conformer(allow_methyl_rotations,
+                     compute_partial_charges,
+                     max_pare_iters,
+                     minimize,
+                     pare_to_size,
+                     protonate,
+                     scramble_dihedrals,
+                     smiles):
+    mol = embed_mol(smiles, protonate)
+    if not mol:  # failed embed
+        return None
+    try:
+        conf = mol.GetConformer()
+    except ValueError:
+        return None
+    if pare_to_size is not None:
+        # get rotatable bond information
+        pos, z, edge_index, adjacency_matrix, nx_graph = (
+            extract_mol_info(
+                mol, conf,
+                do_adjacency_analysis=True))
+
+        mask_edges, mask_rotate = (
+            get_rotatable_edges(nx_graph, edge_index))
+
+        mol, conf, flag = pare_molecule_skeleton(conf, mask_rotate,
+                                                 max_pare_iters, mol,
+                                                 pare_to_size, pos, z,
+                                                 deprotonate=not protonate)
+
+        if flag:  # paring or embedding failed
+            return None
+    if scramble_dihedrals:
+        pos, z, edge_index, adjacency_matrix, nx_graph = (
+            extract_mol_info(
+                mol, conf,
+                do_adjacency_analysis=True))
+
+        mask_edges, mask_rotate = (
+            get_rotatable_edges(nx_graph, edge_index))
+
+        pos, mol, = (
+            scramble_dihedral_angles(
+                allow_methyl_rotations, conf,
+                edge_index, mask_rotate, mask_edges,
+                mol, pos, z))
+
+        # eliminate severe clashes
+        pos, converged, num_min_iters = (
+            minimal_minimization(
+                mol, conf, pos, adjacency_matrix))
+
+        if not converged or len(pos) == 0:
+            return None
+    else:
+        pos, z = extract_mol_info(
+            mol, conf,
+            do_adjacency_analysis=False)
+    if minimize:  # full minimization
+        AllChem.MMFFOptimizeMolecule(mol)
+        pos = conf.GetPositions()
+    if compute_partial_charges:
+        charges = get_partial_charges(mol)
+    else:
+        charges = torch.zeros(len(z), dtype=torch.float32)
+    return charges, pos, z
