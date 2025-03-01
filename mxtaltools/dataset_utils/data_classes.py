@@ -620,28 +620,38 @@ class MolCrystalData(MolData):
             dim=-1
         )
 
-    def standardize_box_parameters(self,
-                                   cell_means: OptTensor = None,
-                                   cell_stds: OptTensor = None):
+    def standardize_normed_cell_vectors(self,
+                                        normed_lengths: torch.Tensor,
+                                        cell_angles: torch.Tensor,
+                                        cell_means: OptTensor = None,
+                                        cell_stds: OptTensor = None):
         if cell_means is None:
             means = torch.tensor(  # todo replace by call to constants
                 [1.0411, 1.1640, 1.4564, 1.5619, 1.5691, 1.5509],  # use triclinic
-                dtype=torch.float32)
+                dtype=torch.float32, device=self.device)
 
         else:
             means = cell_means
         if cell_stds is None:
             stds = torch.tensor(
                 [0.3846, 0.4280, 0.4864, 0.2363, 0.2046, 0.2624],
-                dtype=torch.float32)
+                dtype=torch.float32, device=self.device)
         else:
             stds = cell_stds
-        return (torch.cat([self.cell_lengths, self.cell_angles], dim=-1) - means) / stds
 
-    def destandardize_box_parameters(self,
-                                     cell_means: OptTensor = None,
-                                     cell_stds: OptTensor = None):
-        if cell_means is None:
+        if self.is_batch:
+            stds = stds.unsqueeze(0)
+            means = means.unsqueeze(0)
+
+        return (torch.cat([normed_lengths, cell_angles], dim=-1) - means) / stds
+
+
+    def destandardize_normed_cell_vectors(self,
+                                          normed_lengths: torch.Tensor,
+                                          cell_angles: torch.Tensor,
+                                          cell_means: OptTensor = None,
+                                          cell_stds: OptTensor = None):
+        if cell_means is None:  # these norms assume incoming cell lengths are pre-normed
             means = torch.tensor(
                 [1.0411, 1.1640, 1.4564, 1.5619, 1.5691, 1.5509],
                 dtype=torch.float32)
@@ -654,7 +664,7 @@ class MolCrystalData(MolData):
                 dtype=torch.float32)
         else:
             stds = cell_stds
-        return torch.cat([self.cell_lengths, self.cell_angles], dim=-1) * stds + means
+        return torch.cat([normed_lengths, cell_angles], dim=-1) * stds + means
 
     def pose_aunit(self):
         if 'Batch' in self.__class__.__name__:
@@ -861,6 +871,18 @@ class MolCrystalData(MolData):
                           self.aunit_centroid,
                           self.aunit_orientation], dim=1)
 
+    def standardized_cell_parameters(self):
+        # todo more sophisticated standardization here
+        normed_lengths = self.norm_cell_lengths()
+        standardized_box_params = self.standardize_normed_cell_vectors(
+            normed_lengths, self.cell_angles
+        )
+        standardized_aunit_centroid = self.aunit_centroid - 0.5
+        return torch.cat([standardized_box_params,
+                          standardized_aunit_centroid,
+                          self.aunit_orientation], dim=1)
+
+
     def set_cell_parameters(self, cell_parameters):
         (self.cell_lengths, self.cell_angles,
          self.aunit_centroid, self.aunit_orientation) = (
@@ -985,6 +1007,7 @@ class MolCrystalData(MolData):
     @property
     def nonstandard_symmetry(self) -> Any:
         return self['nonstandard_symmetry'] if 'nonstandard_symmetry' in self._store else None
+
 
 def size_repr(key: Any, value: Any, indent: int = 0) -> str:
     pad = ' ' * indent

@@ -40,6 +40,7 @@ class Mo3ENet(BaseGraphModel):
         self.register_buffer('atom_embedding_vector', atom_embedding_vector)
         self.register_buffer('radial_normalization', torch.tensor(radial_normalization, dtype=torch.float32))
         self.register_buffer('protons_in_input', torch.tensor(protons_in_input, dtype=torch.bool))
+        self.register_buffer('inferring_protons', torch.tensor(False, dtype=torch.bool))
         self.register_buffer('convolution_cutoff', config.encoder.graph.cutoff / self.radial_normalization)
 
         self.encoder = Mo3ENetEncoder(seed,

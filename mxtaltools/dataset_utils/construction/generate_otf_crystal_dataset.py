@@ -3,22 +3,17 @@ import os
 from argparse import Namespace
 from pathlib import Path
 
-import numpy as np
-import torch
-
-from mxtaltools.dataset_utils.synthesis.utils import generate_smiles_dataset, process_smiles_to_crystal_opt, \
-    otf_synthesize_crystals
-from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.dataset_utils.dataset_manager import DataManager
+from mxtaltools.dataset_utils.synthesis.utils import otf_synthesize_crystals
 
 if __name__ == '__main__':
     # initialize
-    num_smiles = 10000
+    num_smiles = 50000
     num_processes = 8
     num_chunks = max(num_processes, num_smiles // 500)
     smiles_path = r'D:\crystal_datasets\zinc22'  #'/home/mkilgour/crystal_datasets/zinc22'#
     chunks_path = Path(r'D:\crystal_datasets')  # Path('/home/mkilgour/crystal_datasets') #
-    new_dataset_name = 'pd_dataset_w_h_bonds'
+    new_dataset_name = 'pd_dataset'
     os.chdir(chunks_path)
     mp.set_start_method('spawn', force=True)
     mp_pool = mp.Pool(num_processes)
@@ -30,11 +25,12 @@ if __name__ == '__main__':
         chunks_path,
         allowed_atom_types=[1, 6, 7, 8, 9],
         num_processes=num_processes,
+        num_chunks=num_chunks,
         mp_pool=mp_pool,
         max_num_atoms=30,
         max_num_heavy_atoms=9,
         pare_to_size=9,
-        max_radius=15,
+        max_radius=30,
         post_scramble_each=10,
         synchronize=True
     )

@@ -80,13 +80,16 @@ def otf_synthesize_crystals(dataset_length: int,
                             pare_to_size: int,
                             max_radius: float,
                             post_scramble_each: Optional[int] = None,
-                            synchronize: bool = True):
+                            synchronize: bool = True,
+                            num_chunks: Optional[int] = None):
     chunks_path = Path(workdir)  # where to save outputs
     smiles_path = Path(smiles_source)  # where to get inputs
     os.chdir(smiles_path)
-    chunks = generate_smiles_dataset(dataset_length, num_processes, smiles_path)  # get batch of smiles and chunkify
+    if num_chunks is None:
+        num_chunks = num_processes
+    chunks = generate_smiles_dataset(dataset_length, num_chunks, smiles_path)  # get batch of smiles and chunkify
     os.chdir(chunks_path)
-    #
+    #  # for synchronous debugging
     # min_ind = 0
     # ind = 0
     # chunk_ind = min_ind + ind
@@ -116,7 +119,7 @@ def otf_synthesize_crystals(dataset_length: int,
                                     'pare_to_size': pare_to_size,
                                     'max_radius': max_radius,
                                     'protonate': True,
-                                    'allow_methyl_rotations': False,
+                                    'allow_methyl_rotations': True,
                                     'compute_partial_charges': True,
                                 }))
 

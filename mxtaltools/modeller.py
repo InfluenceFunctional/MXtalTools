@@ -36,7 +36,8 @@ from mxtaltools.dataset_utils.CrystalData import CrystalData
 from mxtaltools.dataset_utils.data_classes import MolData
 from mxtaltools.dataset_utils.dataset_manager import DataManager
 from mxtaltools.dataset_utils.synthesis.utils import otf_synthesize_molecules, otf_synthesize_crystals
-from mxtaltools.dataset_utils.utils import quick_combine_dataloaders, get_dataloaders, update_dataloader_batch_size
+from mxtaltools.dataset_utils.utils import quick_combine_dataloaders, get_dataloaders, update_dataloader_batch_size, \
+    collate_data_list
 from mxtaltools.modelling.utils import get_model_sizes
 from mxtaltools.models.autoencoder_utils import compute_type_evaluation_overlap, compute_coord_evaluation_overlap, \
     compute_full_evaluation_overlap, test_decoder_equivariance, test_encoder_equivariance, decoding2mol_batch, \
@@ -594,7 +595,7 @@ class Modeller:
         mol_batch = self.preprocess_ae_inputs(mol_batch,
                                               noise=1e-2)
 
-        decoding, encoding = self.models_dict['autoencoder'](input_data.clone(), return_encoding=True)
+        decoding, encoding = self.models_dict['autoencoder'](mol_batch.clone(), return_encoding=True)
         scalar_encoding = self.models_dict['autoencoder'].scalarizer(encoding)
 
         self.ae_evaluation_sample_analysis(mol_batch, decoding, encoding, scalar_encoding)
@@ -1429,6 +1430,7 @@ class Modeller:
         if len(os.listdir(chunks_path)) == 0:  # only make a new batch if the previous batch has been integrated
             if self.logger.epoch == 0 or self.integrated_dataset == True:
                 print('sending crystal opt jobs to mp pool')
+                #if self.config.machine == 'cluster': # linux machines
                 mp.set_start_method('spawn', force=True)
                 self.mp_pool = mp.Pool(num_processes)
                 self.mp_pool = otf_synthesize_crystals(
@@ -1446,57 +1448,60 @@ class Modeller:
         #assert False, "stop for debugging"
 
         # if a batch is finished, merge it with our existing dataset
-        if len(os.listdir(chunks_path)) >= num_processes:  # only integrate when the batch is exactly complete
-            self.times['otf_dataset_join_start'] = time()
-            self.mp_pool.join()  # join only when the batch is already finished
-            self.times['otf_dataset_join_end'] = time()
-            # generate temporary training dataset
-            miner = self.process_otf_crystals_dataset(chunks_path)
-            embeddings = []
-            batch_size = data_loader.batch_size
-            num_batches = len(miner.dataset) // batch_size
-            if len(miner.dataset) % batch_size != 0:
-                num_batches += 1
-            with torch.no_grad():
-                for ind in range(num_batches):
-                    mols_to_embed = self.collater(miner.dataset[ind * batch_size:(ind + 1) * batch_size]).to(
-                        self.device)
-                    cell_params = torch.cat([
-                        mols_to_embed.cell_lengths, mols_to_embed.cell_angles, mols_to_embed.pose_params0
-                    ], dim=1)
-                    embeddings.append(self._embed_mol(mols_to_embed, mols_to_embed.pos, cell_params).cpu().detach())
-
-            embeddings = torch.cat(embeddings, dim=0)
-            for ind in range(len(miner.dataset)):
-                miner.dataset[ind].y = embeddings[None, ind]
-            # print("integrating otf dataset into dataloader")
-            data_loader = quick_combine_dataloaders(miner.dataset,
-                                                    data_loader,
-                                                    data_loader.batch_size,
-                                                    self.config.dataset.max_dataset_length)
-            os.remove(temp_dataset_path)  # delete loaded dataset
-            self.integrated_dataset = True
-            num_atoms = np.sum([data.num_atoms for data in data_loader.dataset])
-            stats = {
-                'dataset_length': len(data_loader.dataset),
-                'mean_molecule_size': num_atoms / len(data_loader.dataset),
-                'mean_hydrogen_fraction': np.sum(
-                    np.concatenate([data.x == 1 for data in data_loader.dataset])) / num_atoms,
-                'mean_carbon_fraction': np.sum(
-                    np.concatenate([data.x == 6 for data in data_loader.dataset])) / num_atoms,
-                'mean_nitrogen_fraction': np.sum(
-                    np.concatenate([data.x == 7 for data in data_loader.dataset])) / num_atoms,
-                'mean_oxygen_fraction': np.sum(
-                    np.concatenate([data.x == 8 for data in data_loader.dataset])) / num_atoms,
-            }
-
-            self.logger.update_stats_dict(self.epoch_type,
-                                          stats.keys(),
-                                          stats.values(),
-                                          mode='append')
+        if len(os.listdir(chunks_path)) >= num_processes:
+            # only integrate when the batch is exactly complete
+            data_loader = self.merge_otf_crystals_dataset(chunks_path, data_loader, temp_dataset_path)
 
         os.chdir(self.working_directory)
         self.times['otf_refresh_end'] = time()
+        return data_loader
+
+    def merge_otf_crystals_dataset(self, chunks_path, data_loader, temp_dataset_path):
+        self.times['otf_dataset_join_start'] = time()
+        self.mp_pool.join()  # join only when the batch is already finished
+        self.times['otf_dataset_join_end'] = time()
+        # generate temporary training dataset
+        miner = self.process_otf_crystals_dataset(chunks_path)
+        embeddings = []
+        batch_size = data_loader.batch_size
+        num_batches = len(miner.dataset) // batch_size
+        if len(miner.dataset) % batch_size != 0:
+            num_batches += 1
+        with torch.no_grad():
+            for ind in range(num_batches):
+                crystals_to_embed = collate_data_list(miner.dataset[ind * batch_size:(ind + 1) * batch_size]).to(
+                    self.device)
+                cell_params = crystals_to_embed.standardized_cell_parameters()
+                crystals_to_embed.pose_aunit()
+                embeddings.append(
+                    self._embed_crystal(crystals_to_embed, crystals_to_embed.pos, cell_params).cpu().detach())
+        embeddings = torch.cat(embeddings, dim=0)
+        for ind in range(len(miner.dataset)):
+            miner.dataset[ind].y = embeddings[None, ind]
+        # print("integrating otf dataset into dataloader")
+        data_loader = quick_combine_dataloaders(miner.dataset,
+                                                data_loader,
+                                                data_loader.batch_size,
+                                                self.config.dataset.max_dataset_length)
+        os.remove(temp_dataset_path)  # delete loaded dataset
+        self.integrated_dataset = True
+        num_atoms = int(torch.sum(torch.Tensor([data.num_atoms for data in data_loader.dataset])))
+        stats = {
+            'dataset_length': len(data_loader.dataset),
+            'mean_molecule_size': num_atoms / len(data_loader.dataset),
+            'mean_hydrogen_fraction': np.sum(
+                np.concatenate([data.x == 1 for data in data_loader.dataset])) / num_atoms,
+            'mean_carbon_fraction': np.sum(
+                np.concatenate([data.x == 6 for data in data_loader.dataset])) / num_atoms,
+            'mean_nitrogen_fraction': np.sum(
+                np.concatenate([data.x == 7 for data in data_loader.dataset])) / num_atoms,
+            'mean_oxygen_fraction': np.sum(
+                np.concatenate([data.x == 8 for data in data_loader.dataset])) / num_atoms,
+        }
+        self.logger.update_stats_dict(self.epoch_type,
+                                      stats.keys(),
+                                      stats.values(),
+                                      mode='append')
         return data_loader
 
     def process_otf_molecules_dataset(self, chunks_path):
@@ -1917,8 +1922,6 @@ class Modeller:
             if self.config.proxy_discriminator.embedding_type == 'autoencoder' and self.config.proxy_discriminator.train_encoder:
                 self.models_dict['autoencoder'].eval()
 
-        self.crystal_builder.rotation_basis = 'cartesian'
-
         if self.logger.epoch == 0:  # embed loaded dataset on first epoch
             self.embed_dataloader_dataset(data_loader)
 
@@ -1943,16 +1946,16 @@ class Modeller:
         self.logger.concatenate_stats_dict(self.epoch_type)
 
     def embed_dataloader_dataset(self, data_loader):
+        print("Embedding dataset for PD analysis")
         embeddings = []
         batch_size = data_loader.batch_size
         num_chunks = len(data_loader.dataset) // batch_size + int(len(data_loader.dataset) % batch_size != 0)
         with torch.no_grad():
-            for ind in range(num_chunks):  # do it this way so to avoid shuffling
-                mol_batch = self.collater(data_loader.dataset[ind * batch_size:(ind + 1) * batch_size]).to(self.device)
-                cell_params = torch.cat([
-                    mol_batch.cell_lengths, mol_batch.cell_angles, mol_batch.pose_params0
-                ], dim=1)
-                embeddings.append(self._embed_mol(mol_batch, mol_batch.pos, cell_params).cpu().detach())
+            for ind in tqdm(range(num_chunks)):  # do it this way so to avoid shuffling
+                crystal_batch = self.collater(data_loader.dataset[ind * batch_size:(ind + 1) * batch_size]).to(self.device)
+                cell_params = crystal_batch.standardized_cell_parameters()
+                crystal_batch.pose_aunit()
+                embeddings.append(self._embed_crystal(crystal_batch, crystal_batch.pos, cell_params).cpu().detach())
 
         embeddings = torch.cat(embeddings, dim=0).to('cpu')
         for ind in range(len(data_loader.dataset)):
@@ -2152,7 +2155,7 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
                                           stats.values(),
                                           mode='extend')
 
-    def pd_step(self, mol_batch, i, update_weights, skip_step, skip_stats: bool = False):
+    def pd_step(self, crystal_batch, i, update_weights, skip_step, skip_stats: bool = False):
         """
         execute a complete training step for the discriminator
         compute losses, do reporting, update gradients
@@ -2162,22 +2165,20 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
             self.models_dict['proxy_discriminator'].target_mean = -8.6
 
         if self.config.proxy_discriminator.embedding_type == 'autoencoder' and self.config.proxy_discriminator.train_encoder:
-            cell_params = torch.cat([
-                mol_batch.cell_lengths, mol_batch.cell_angles, mol_batch.pose_params0
-            ], dim=1)
-            mol_batch.y = self._embed_mol(mol_batch, mol_batch.pos, cell_params)
+            cell_params = crystal_batch.standardized_cell_parameters()
+            crystal_batch.y = self._embed_crystal(crystal_batch, crystal_batch.pos, cell_params)
 
-        prediction = self.models_dict['proxy_discriminator'](x=mol_batch.y[:, :-3])[:,0]  # cut trailing 3 dimensions for P1 modelling
+        prediction = self.models_dict['proxy_discriminator'](x=crystal_batch.y)[:, 0]  # cut trailing 3 dimensions for P1 modelling
 
+        inter_energy = crystal_batch.scaled_lj_pot + crystal_batch.es_pot * 10
         discriminator_losses = F.smooth_l1_loss(prediction.flatten(),
-                                                (mol_batch.vdw_loss.flatten() - self.models_dict[
-                                                    'proxy_discriminator'].target_mean) / self.models_dict[
+                                                (inter_energy - self.models_dict['proxy_discriminator'].target_mean) / self.models_dict[
                                                     'proxy_discriminator'].target_std,
                                                 reduction='none')
 
         discriminator_loss = discriminator_losses.mean()
 
-        if update_weights and (not skip_step):
+        if update_weights and (not skip_step):  # to abstract weight updates to class method
             self.optimizers_dict['proxy_discriminator'].zero_grad(
                 set_to_none=True)  # reset gradients from previous passes
             if self.config.proxy_discriminator.embedding_type == 'autoencoder' and self.config.proxy_discriminator.train_encoder:
@@ -2201,7 +2202,7 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
             stats = {
                 'vdw_prediction': (prediction * self.models_dict['proxy_discriminator'].target_std + self.models_dict[
                     'proxy_discriminator'].target_mean).detach(),
-                'vdw_score': mol_batch.vdw_loss.detach(),
+                'vdw_score':inter_energy.detach(),
             }
 
             dict_of_tensors_to_cpu_numpy(stats)
@@ -2695,39 +2696,11 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
     #
     #     return opt_cell_params, opt_aunits, opt_packing_coeff, opt_vdw_loss, opt_vdw_pot
 
-    def _embed_mol(self, mol_batch, aunit_coordinates, cell_params, norm_by_size=True):
+    def _embed_crystal(self, mol_batch, aunit_coordinates, scaled_params, norm_by_size=True):
         mol_batch.pos = aunit_coordinates
         embedding = self.get_mol_embedding_for_proxy(mol_batch.clone())
-        scaled_params = self.rescale_proxy_discrim_cell_params(mol_batch, cell_params, norm_by_size)
-        embedding = torch.cat([embedding, scaled_params[:, :9]], dim=1)
+        embedding = torch.cat([embedding, scaled_params], dim=1)
         return embedding
-
-    def rescale_proxy_discrim_cell_params(self, mol_batch, cell_params, norm_by_size=True):
-        # rescale to nicer normalized basis
-        if norm_by_size:
-            normed_params = renormalize_generated_cell_params(
-                cell_params,
-                mol_batch,
-                self.crystal_builder.asym_unit_dict
-            )
-        else:
-            normed_params = cell_params.clone()
-
-        # subtract means
-        lattice_means = torch.tensor([
-            1, 1, 1,
-            torch.pi / 2, torch.pi / 2, torch.pi / 2,
-            0.5, 0.5, 0.5,
-            torch.pi / 4, 0, torch.pi / 2
-        ], device=self.device, dtype=torch.float32)
-        lattice_stds = torch.tensor([
-            .35, .35, .35,
-            .45, .45, .45,
-            0.25, 0.25, 0.25,
-            0.33, torch.pi / 2, torch.pi / 2
-        ], device=self.device, dtype=torch.float32)
-        scaled_params = (normed_params - lattice_means[None, :]) / lattice_stds[None, :]
-        return scaled_params
 
     ''' test crystal rebuilding with different rescalings
     
@@ -2788,18 +2761,14 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
 
     '''
 
-    def get_mol_embedding_for_proxy(self, mol_batch):
-        centered_aunit_coordinates = torch.cat(
-            [mol_batch.pos[mol_batch.batch == ind] - mol_batch.pos[mol_batch.batch == ind].mean(0) for ind in
-             range(mol_batch.num_graphs)
-             ])
-        mol_batch.pos = centered_aunit_coordinates
+    def get_mol_embedding_for_proxy(self, crystal_batch):
+        crystal_batch.recenter_molecules()
         if self.config.proxy_discriminator.embedding_type == 'autoencoder':
-            v_embedding = self.models_dict['autoencoder'].encode(mol_batch.clone())
+            v_embedding = self.models_dict['autoencoder'].encode(crystal_batch.clone())
             s_embedding = self.models_dict['autoencoder'].scalarizer(v_embedding)
         elif self.config.proxy_discriminator.embedding_type == 'principal_axes':
             v_embedding_i, s_embedding_i, _ = list_molecule_principal_axes_torch(
-                [mol_batch.pos[mol_batch.batch == ind] for ind in range(mol_batch.num_graphs)])
+                [crystal_batch.pos[crystal_batch.batch == ind] for ind in range(crystal_batch.num_graphs)])
 
             if not hasattr(self, 'ipm_means'):
                 self.ipm_means = s_embedding_i.mean(0)
@@ -2809,7 +2778,7 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
 
         elif self.config.proxy_discriminator.embedding_type == 'principal_moments':
             Ip, s_embedding_i, _ = list_molecule_principal_axes_torch(
-                [mol_batch.pos[mol_batch.batch == ind] for ind in range(mol_batch.num_graphs)])
+                [crystal_batch.pos[crystal_batch.batch == ind] for ind in range(crystal_batch.num_graphs)])
             v_embedding = torch.zeros_like(Ip)
 
             if not hasattr(self, 'ipm_means'):
@@ -2819,14 +2788,14 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
 
         elif self.config.proxy_discriminator.embedding_type == 'mol_volume':
             if not hasattr(self, 'mol_volume_mean'):
-                self.mol_volume_mean = mol_batch.mol_volume.mean()
+                self.mol_volume_mean = crystal_batch.mol_volume.mean()
 
-            s_embedding = mol_batch.mol_volume[:, None].repeat(1, 3) / self.mol_volume_mean
-            v_embedding = torch.zeros((mol_batch.num_graphs, 3, 3), dtype=torch.float32, device=self.device)
+            s_embedding = crystal_batch.mol_volume[:, None].repeat(1, 3) / self.mol_volume_mean
+            v_embedding = torch.zeros((crystal_batch.num_graphs, 3, 3), dtype=torch.float32, device=self.device)
         elif self.config.proxy_discriminator.embedding_type is None:
 
-            s_embedding = torch.zeros_like(mol_batch.mol_volume[:, None].repeat(1, 3))
-            v_embedding = torch.zeros((mol_batch.num_graphs, 3, 3), dtype=torch.float32, device=self.device)
+            s_embedding = torch.zeros_like(crystal_batch.mol_volume[:, None].repeat(1, 3))
+            v_embedding = torch.zeros((crystal_batch.num_graphs, 3, 3), dtype=torch.float32, device=self.device)
         else:
             assert False, f"{self.config.proxy_discriminator.embedding_type} is not an implemented proxy discriminator embedding"
 

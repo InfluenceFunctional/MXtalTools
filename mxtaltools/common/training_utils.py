@@ -121,7 +121,7 @@ def instantiate_models(config: Namespace,
         else:
             assert False
 
-        conditions_dim = 6
+        conditions_dim = 12
         models_dict['proxy_discriminator'] = InvariantEmbeddingRegressor(
             config.seeds.model,
             config.proxy_discriminator.model,
