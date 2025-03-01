@@ -12,7 +12,7 @@ sweep_path: null
 
 dataset:
   type: 'molecule'
-  max_dataset_length: 100000
+  max_dataset_length: 500000
   test_fraction: 0.2
   filter_protons: False
   regression_target: null
@@ -27,7 +27,7 @@ early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
 min_batch_size: 50
-max_batch_size: 10000
+max_batch_size: 100000
 batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 100000
