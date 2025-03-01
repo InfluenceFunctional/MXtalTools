@@ -10,7 +10,7 @@ from torch_scatter import scatter_softmax
 
 from mxtaltools.models.functions.asymmetric_radius_graph import radius
 from mxtaltools.models.autoencoder_utils import compute_gaussian_overlap, compute_type_evaluation_overlap, \
-    compute_coord_evaluation_overlap, compute_full_evaluation_overlap, get_node_weights, collate_decoded_data, \
+    compute_coord_evaluation_overlap, compute_full_evaluation_overlap, get_node_weights, decoding2mol_batch, \
     batch_rmsd
 
 
@@ -19,7 +19,6 @@ def autoencoder_evaluation_overlaps(data, decoded_data, config, dataDims):
     #     print("more than one batch of AE samples were saved but only the first is being analyzed")
 
     # compute overlaps with evaluation settings
-    nodewise_weights_tensor = decoded_data.aux_ind
     true_nodes = F.one_hot(data.x.long(), num_classes=dataDims['num_atom_types']).float()
     full_overlap, self_overlap = compute_full_evaluation_overlap(data,
                                                                  decoded_data,
@@ -35,25 +34,11 @@ def autoencoder_evaluation_overlaps(data, decoded_data, config, dataDims):
     return coord_overlap, full_overlap, self_coord_overlap, self_overlap, self_type_overlap, type_overlap
 
 
-def gaussian_3d_overlap_plots(mol_batch, decoded_mol_batch, atom_types, graph_ind):
+def gaussian_3d_overlap_plot(mol_batch, decoded_mol_batch, atom_types, graph_ind):
     # 3D swarm fig
     fig = swarm_vs_tgt_fig(mol_batch, decoded_mol_batch, atom_types, graph_ind=graph_ind)
 
-    # rmsd, nodewise_dist, matched_graph, matched_node, pred_particle_points = batch_rmsd(
-    #     mol_batch,
-    #     decoded_mol_batch,
-    #     F.one_hot(mol_batch.x.long(), decoded_mol_batch.x.shape[1]).float(),
-    # )
-    #
-    # best_ind = int(torch.argmin(rmsd[matched_graph]))
-    #
-    # fig2 = swarm_cluster_fig(mol_batch.x[mol_batch.batch == best_ind],
-    #                          best_ind,
-    #                          pred_particle_points[mol_batch.batch == best_ind],
-    #                          decoded_mol_batch.aux_ind[decoded_mol_batch.batch == best_ind],
-    #                          ref_points[mol_batch.batch==best_ind])
-
-    return fig  #, fig2
+    return fig
 
 
 def decoder_agglomerative_clustering(points_pred, sample_weights, intrapoint_cutoff):
@@ -256,7 +241,7 @@ def swarm_vs_tgt_fig(data, decoded_data, atom_types = [1,6,7,8,9], graph_ind=0):
     points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
     pred_weights = decoded_data.aux_ind[decoded_data.batch == graph_ind]
     for j in range(len(atom_types)):
-        ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == atom_types[j])[:, 0].cpu().detach().numpy()
+        ref_type_inds = torch.argwhere(data.z[data.batch == graph_ind] == atom_types[j])[:, 0].cpu().detach().numpy()
 
         pred_type_weights = (pred_weights * decoded_data.x[decoded_data.batch == graph_ind, j]).cpu().detach().numpy()
 
@@ -283,8 +268,8 @@ def swarm_vs_tgt_fig(data, decoded_data, atom_types = [1,6,7,8,9], graph_ind=0):
     '''add bonds'''
     distmat = cdist(points_true, points_true) + np.eye(len(points_true)) * 100
     from mxtaltools.constants.atom_properties import VDW_RADII
-    atom_radii = np.array([VDW_RADII[elem] for elem in data.x[data.batch == graph_ind].cpu().numpy().tolist()])
-    max_bond_lengths = (atom_radii[:, None] + atom_radii[None, :]) / 1.75
+    atom_radii = np.array([VDW_RADII[elem] for elem in data.z[data.batch == graph_ind].cpu().numpy().tolist()])
+    max_bond_lengths = (atom_radii[:, None] + atom_radii[None, :]) / 1.65
     edges = np.stack(np.where(distmat < max_bond_lengths))
     for e_ind, edge in enumerate(edges.T):
         points = np.vstack([points_true[edge[0]], points_true[edge[1]]])
@@ -299,6 +284,18 @@ def swarm_vs_tgt_fig(data, decoded_data, atom_types = [1,6,7,8,9], graph_ind=0):
             name='True type',
             legendgroup='True type',
         ))
+
+    min_val = np.amin(points_true) - 1
+    max_val = np.amax(points_true) + 1
+    fig.update_layout(
+        scene=dict(
+            xaxis=dict(range=[min_val, max_val]),
+            yaxis=dict(range=[min_val, max_val]),
+            zaxis=dict(range=[min_val, max_val]),
+            aspectmode='manual',  # Necessary for fixed aspect ratios
+            aspectratio=dict(x=1, y=1, z=1)
+        )
+    )
 
     return fig
 

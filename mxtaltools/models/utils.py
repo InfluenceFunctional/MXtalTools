@@ -8,7 +8,6 @@ from torch_scatter import scatter
 from mxtaltools.common.geometry_utils import cell_vol_torch, components2angle, enforce_crystal_system
 from mxtaltools.common.utils import softmax_np
 from mxtaltools.crystal_building.utils import descale_asymmetric_unit, rescale_asymmetric_unit
-from mxtaltools.dataset_utils.CrystalData import CrystalData
 
 
 def softmax_and_score(raw_classwise_output, temperature=1, old_method=False, correct_discontinuity=True) -> Union[
@@ -327,7 +326,7 @@ def clean_cell_params(samples,
 
 def denormalize_generated_cell_params(
         normed_cell_samples: torch.FloatTensor,
-        mol_data: CrystalData,
+        mol_data,
         asym_unit_dict: dict):
     # denormalize the predicted cell lengths
     cell_lengths = torch.pow(mol_data.sym_mult * mol_data.mol_volume, 1 / 3)[:, None] * normed_cell_samples[:, :3]

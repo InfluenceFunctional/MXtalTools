@@ -162,7 +162,7 @@ def raw_vdw_overlap(vdw_radii, dists=None, batch_numbers=None,
 def vdw_analysis(vdw_radii: torch.Tensor,
                  dist_dict: dict,
                  num_graphs: int,
-                 clip_max: float = 50
+                 num_atoms: torch.LongTensor,
                  ):
     """
     new version of the vdw_overlap function for analysis of intermolecular contacts
@@ -174,8 +174,7 @@ def vdw_analysis(vdw_radii: torch.Tensor,
     molwise_normed_overlap = scatter(normed_overlap, batch, reduce='sum', dim_size=num_graphs)
     molwise_lj_pot = scatter(lj_pot, batch, reduce='sum', dim_size=num_graphs)
 
-    scaled_lj_pot = scale_edgewise_vdw_pot(lj_pot, clip_max=clip_max)
-    molwise_loss = scatter(scaled_lj_pot, batch, reduce='sum', dim_size=num_graphs)
+    molwise_loss = scale_molwise_vdw_pot(molwise_lj_pot, num_atoms)
 
     return molwise_overlap, molwise_normed_overlap, molwise_lj_pot, molwise_loss, lj_pot
 
@@ -267,12 +266,16 @@ def old_compute_num_h_bonds(supercell_data, atom_acceptor_ind, atom_donor_ind, i
     return torch.sum(torch.cdist(donors_pos, acceptors_pos, p=2) < 3.3)
 
 
-def electrostatic_analysis(dist_dict, num_graphs: int, cutoff: float =5):
+def electrostatic_analysis(dist_dict, num_graphs: int, cutoff: float = 0.92):
+    """
+    technically this is a yukawa potential
+    https://en.wikipedia.org/wiki/Yukawa_potential
+    """
     batch = dist_dict['intermolecular_dist_batch']
     dists = dist_dict['intermolecular_dist']
     charges = dist_dict['intermolecular_partial_charges']
-
-    estat_energy = ((charges[0] * charges[1]) / dists) * torch.exp(-(dists*cutoff)/cutoff)
+    # default cutoff of 0.77 gets us 99% exponentially squashed by 6 angstroms distance
+    estat_energy = ((charges[0] * charges[1]) / dists) * torch.exp(-(dists*cutoff))
     molwise_estat_energy = scatter(estat_energy, batch, reduce='sum', dim_size=num_graphs)
 
     return molwise_estat_energy

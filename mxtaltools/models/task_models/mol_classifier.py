@@ -36,26 +36,26 @@ class MoleculeClusterClassifier(BaseGraphModel):
         )
 
     def forward(self,
-                data: CrystalData,
+                data_batch: CrystalData,
                 return_dists: bool = False,
                 return_latent: bool = False,
                 return_embedding: bool = False,
                 ) -> Tuple[torch.Tensor, Optional[dict]]:
         # featurize atom properties on the fly
-        data = self.featurize_input_graph(data)
+        data_batch = self.featurize_input_graph(data_batch)
 
         # standardize on the fly from model-attached statistics
-        data = self.standardize(data)
+        data_batch = self.standardize(data_batch)
 
-        return self.model(data.x,
-                          data.pos,
-                          data.ptr,
-                          data.mol_x,
-                          data.num_graphs,
-                          data.mol_ind,
-                          data.T_fc,
-                          data.edge_index,
-                          data.edge_attr,
+        return self.model(data_batch.x,
+                          data_batch.pos,
+                          data_batch.ptr,
+                          data_batch.mol_x,
+                          data_batch.num_graphs,
+                          data_batch.mol_ind,
+                          data_batch.T_fc,
+                          data_batch.edge_index,
+                          data_batch.edge_attr,
                           return_dists=return_dists,
                           return_latent=return_latent,
                           return_embedding=return_embedding)

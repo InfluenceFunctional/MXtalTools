@@ -4,25 +4,25 @@ wandb:
 
 paths:
   # where to look for configs
-  local_config_path: '/home/mkilgour/MXtalTools/configs/' #'C:\Users\mikem\PycharmProjects\Python_Codes/MXtalTools/configs/'
+  local_config_path: 'C:\Users\mikem\PycharmProjects\Python_Codes/MXtalTools/configs/'#'/home/mkilgour/MXtalTools/configs/'
   cluster_config_path: '/scratch/mk8347/mcrygan/configs/'
 
   # where to find datasets
-  local_dataset_dir_path: '/home/mkilgour/crystal_datasets/' #"D:/crystal_datasets/"
+  local_dataset_dir_path: "D:/crystal_datasets/" #'/home/mkilgour/crystal_datasets/' #
   cluster_dataset_dir_path: '/scratch/mk8347/csd_runs/datasets/'
 
   # where to do the run
-  local_workdir_path: '/home/mkilgour/mxtaltools_runs/'#  'C:/Users/mikem/crystals/CSP_runs/'
+  local_workdir_path: 'C:/Users/mikem/crystals/CSP_runs/' #'/home/mkilgour/mxtaltools_runs/'#
   cluster_workdir_path: '/scratch/mk8347/csd_runs/'
 
   # where to save model checkpoints # todo combine these
-  local_checkpoint_dir_path: '/home/mkilgour/mxtaltools_runs/models/' #'C:/Users/mikem/crystals/CSP_runs/models/'
+  local_checkpoint_dir_path: 'C:/Users/mikem/crystals/CSP_runs/models/' # '/home/mkilgour/mxtaltools_runs/models/'
   cluster_checkpoint_dir_path: '/scratch/mk8347/csd_runs/models/'
-  local_checkpoints_path: '/home/mkilgour/mxtaltools_runs/models/' #'C:\Users\mikem\crystals\CSP_runs\models/'
+  local_checkpoints_path: 'C:\Users\mikem\crystals\CSP_runs\models/' # '/home/mkilgour/mxtaltools_runs/models/' #
   cluster_checkpoints_path: '/scratch/mk8347/csd_runs/models/'
 
  # default config if not specified on command line
-  yaml_path: "/home/mkilgour/MXtalTools/configs/experiments/dev.yaml" #'C:\Users\mikem\PycharmProjects\Python_Codes/MXtalTools/configs/experiments/dev.yaml'
+  yaml_path: 'C:\Users\mikem\PycharmProjects\Python_Codes/MXtalTools/configs/experiments/dev.yaml' # "/home/mkilgour/MXtalTools/configs/experiments/dev.yaml" #1
 
   # paths for polymorph classification only
   local_classifier_results_path: 'D:\crystals_extra\classifier_training\results/'

@@ -12,7 +12,7 @@ import torch.nn.functional as F
 import mxtaltools.crystal_search.standalone_crystal_opt
 from mxtaltools.analysis.crystal_rdf import new_crystal_rdf
 from mxtaltools.analysis.vdw_analysis import vdw_analysis, scale_molwise_vdw_pot
-from mxtaltools.common.training_utils import init_sym_info
+from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.crystal_building.builder import CrystalBuilder
 from mxtaltools.crystal_building.utils import set_molecule_alignment, overwrite_symmetry_info
@@ -639,12 +639,7 @@ class Sampler:
             (step_size_tensor * torch.rand_like(step_size_tensor))[:, None],
             scaling_factor),
             dim=1)
-        raw_samples = self.generator.forward(
-            conditioning_vector,
-            vector_mol_embedding,
-            mol_data.sg_ind,
-            prior,
-        )
+        raw_samples = self.generator.forward(conditioning_vector, vector_mol_embedding, mol_data.sg_ind)
         samples_to_build = denormalize_generated_cell_params(
             raw_samples,
             mol_data,

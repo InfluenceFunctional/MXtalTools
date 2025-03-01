@@ -304,5 +304,6 @@ def parse_to_torch(array: Union[torch.Tensor, np.ndarray, list],
             return torch.tensor(array, dtype=dtype, device=device)
 
 
-def softplus_shift(x: torch.Tensor) -> torch.Tensor:
-    return F.softplus(x - 0.01, beta=5) + 0.01
+def softplus_shift(x: torch.Tensor,
+                   beta: Optional[float] = 5) -> torch.Tensor:
+    return F.softplus(x - 0.01, beta=beta) + 0.01

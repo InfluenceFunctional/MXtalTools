@@ -20,8 +20,9 @@ from mxtaltools.common.utils import get_point_density, softmax_np
 
 from mxtaltools.common.geometry_utils import cell_vol_np
 from mxtaltools.constants.mol_classifier_constants import polymorph2form
+from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.autoencoder_utils import batch_rmsd
-from mxtaltools.reporting.ae_reporting import autoencoder_evaluation_overlaps, gaussian_3d_overlap_plots
+from mxtaltools.reporting.ae_reporting import autoencoder_evaluation_overlaps, gaussian_3d_overlap_plot
 from mxtaltools.reporting.crystal_search_visualizations import stacked_property_distribution_lists
 
 blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
@@ -1685,12 +1686,11 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
         type_translation_index[atype] = ind
 
     # get samples
-    collater = Collater(0, 0)
-    mol_batch = collater(epoch_stats_dict['sample'])
-    type_index_tensor = torch.tensor(type_translation_index, dtype=torch.long, device=mol_batch.x.device)
-    decoded_mol_batch = collater(epoch_stats_dict['decoded_sample'])
+    mol_batch = collate_data_list(epoch_stats_dict['sample'])
+    type_index_tensor = torch.tensor(type_translation_index, dtype=torch.long, device=mol_batch.z.device)
+    decoded_mol_batch = collate_data_list(epoch_stats_dict['decoded_sample'])
 
-    mol_batch.x = type_index_tensor[mol_batch.x.flatten().long()]
+    mol_batch.x = type_index_tensor[mol_batch.z]
     # compute various distribution overlaps
     (coord_overlap, full_overlap,
      self_coord_overlap, self_overlap,
@@ -1701,7 +1701,7 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
     rmsd, nodewise_dists, matched_graphs, matched_nodes, _, pred_particle_weights = batch_rmsd(
         mol_batch,
         decoded_mol_batch,
-        F.one_hot(mol_batch.x.long(), decoded_mol_batch.x.shape[1]).float(),
+        F.one_hot(mol_batch.x, decoded_mol_batch.z.shape[1]).float(),
     )
 
     probability_mass_per_graph = scatter(pred_particle_weights, mol_batch.batch,
@@ -1731,26 +1731,26 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
               commit=False)
 
     if config.logger.log_figures:
-        mol_batch = collater(epoch_stats_dict['sample'])
+        mol_batch = collate_data_list(epoch_stats_dict['sample'])
 
         atom_types = dataDims['allowed_atom_types']
 
         worst_graph_ind = overall_overlap.argmin()
         fig = (
-            gaussian_3d_overlap_plots(mol_batch, decoded_mol_batch,
-                                      atom_types,
-                                      graph_ind=worst_graph_ind
-                                      ))
+            gaussian_3d_overlap_plot(mol_batch, decoded_mol_batch,
+                                     atom_types,
+                                     graph_ind=worst_graph_ind
+                                     ))
         wandb.log(data={
             epoch_type + "_worst_pointwise_sample_distribution": fig,
         }, commit=False)
 
         best_graph_ind = overall_overlap.argmax()
         fig = (
-            gaussian_3d_overlap_plots(mol_batch, decoded_mol_batch,
-                                      atom_types,
-                                      graph_ind=best_graph_ind
-                                      ))
+            gaussian_3d_overlap_plot(mol_batch, decoded_mol_batch,
+                                     atom_types,
+                                     graph_ind=best_graph_ind
+                                     ))
         wandb.log(data={
             epoch_type + "_best_pointwise_sample_distribution": fig,
         }, commit=False)

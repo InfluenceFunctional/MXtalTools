@@ -111,7 +111,7 @@ class CSDPrior(nn.Module):
      'triclinic': [tensor([1.5619, 1.5691, 1.5509]), tensor([0.2363, 0.2046, 0.2624])]} <- use this one for now
     """
 
-    def __init__(self, sym_info, device, cell_means, cell_stds, lengths_cov_mat):
+    def __init__(self, sym_info, device, cell_means=None, cell_stds=None, lengths_cov_mat=None):
         super(CSDPrior, self).__init__()
 
         self.device = device
@@ -147,7 +147,7 @@ class CSDPrior(nn.Module):
 
         self.pose_prior = Uniform(0, 1)
 
-    def sample_poses(self, num_samples, z_prime=1):
+    def sample_poses(self, num_samples, sg_ind_list):
         """
         prior samples are xyz (fractional positions defined on 0-1)
 
@@ -166,6 +166,8 @@ class CSDPrior(nn.Module):
 
         """
         positions = self.pose_prior.sample((num_samples, 3))
+        # scale from 0-1 to unit cell fractional position
+        positions *= torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_ind_list])
 
         # random directions on the sphere, getting naturally the correct distribution of theta, phi
         random_vectors = torch.randn(size=(num_samples, 3))
@@ -177,14 +179,6 @@ class CSDPrior(nn.Module):
 
         # restrict theta to upper half-sphere (positive z)
         random_vectors[:, 2] = torch.abs(random_vectors[:, 2])
-
-        # # rescale
-        # samples[:, 4] = samples[:, 4] * 2 * torch.pi - torch.pi
-        # samples[:, 5] *= 2 * torch.pi
-        #
-        # # theta is special - we approximate it by
-        # theta = -torch.abs(torch.randn(num_samples)) / (torch.pi / 2) + torch.pi / 2
-        # #theta = theta.clip(min=0, max=torch.pi/2)
 
         return torch.cat((positions, random_vectors), dim=1)
 
@@ -200,7 +194,7 @@ class CSDPrior(nn.Module):
         """
         cell_samples = self.sample_cell_vectors(num_samples)
         cell_lengths, cell_angles = cell_samples[:, 0:3], cell_samples[:, 3:6]
-        pose_params = self.sample_poses(num_samples)
+        pose_params = self.sample_poses(num_samples, sg_ind_list)
 
         # enforce 'hard' bounds
         # harshly enforces positive nonzero

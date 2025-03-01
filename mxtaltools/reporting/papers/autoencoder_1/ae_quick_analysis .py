@@ -14,7 +14,7 @@ from torch_scatter import scatter
 from mxtaltools.common.config_processing import load_yaml, process_main_config
 from mxtaltools.common.geometry_utils import scatter_compute_Ip
 from mxtaltools.modeller import Modeller
-from mxtaltools.reporting.ae_reporting import gaussian_3d_overlap_plots
+from mxtaltools.reporting.ae_reporting import gaussian_3d_overlap_plot
 
 if __name__ == '__main__':
     max_dataset_length = 10000
@@ -62,18 +62,18 @@ if __name__ == '__main__':
         num_to_show = 5
         for ind in range(num_to_show):
             fig = (
-                gaussian_3d_overlap_plots(mol_batch, decoded_mol_batch,
-                                          [1, 6, 7, 8, 9],
-                                          graph_ind=sample_ranking[ind]
-                                          ))
+                gaussian_3d_overlap_plot(mol_batch, decoded_mol_batch,
+                                         [1, 6, 7, 8, 9],
+                                         graph_ind=sample_ranking[ind]
+                                         ))
             fig.update_layout(title=mol_batch.smiles[sample_ranking[ind]])
             print(mol_batch.smiles[sample_ranking[ind]])
             fig.show(renderer='browser')
             fig = (
-                gaussian_3d_overlap_plots(mol_batch, decoded_mol_batch,
-                                          [1, 6, 7, 8, 9],
-                                          graph_ind=sample_ranking[-ind - 1]
-                                          ))
+                gaussian_3d_overlap_plot(mol_batch, decoded_mol_batch,
+                                         [1, 6, 7, 8, 9],
+                                         graph_ind=sample_ranking[-ind - 1]
+                                         ))
             fig.update_layout(title=mol_batch.smiles[sample_ranking[-ind-1]])
             print(mol_batch.smiles[sample_ranking[-ind-1]])
             fig.show(renderer='browser')

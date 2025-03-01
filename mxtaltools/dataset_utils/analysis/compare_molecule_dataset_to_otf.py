@@ -12,10 +12,10 @@ from rdkit.Chem import Descriptors, rdMolDescriptors, Fragments
 from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter
 
-from mxtaltools.common.geometry_utils import batch_molecule_vdW_volume
 from mxtaltools.analysis.crystal_rdf import earth_movers_distance_torch, get_elementwise_dists, batch_histogram_1d
+from mxtaltools.common.geometry_utils import batch_molecule_vdW_volume
 from mxtaltools.constants.atom_properties import VDW_RADII
-from mxtaltools.dataset_utils.synthesis.otf_dataset_synthesis import otf_synthesize_molecules
+from mxtaltools.dataset_utils.synthesis.utils import otf_synthesize_molecules
 from mxtaltools.models.functions.asymmetric_radius_graph import radius
 
 HDonorSmarts = Chem.MolFromSmarts(
@@ -25,7 +25,7 @@ HAcceptorSmarts = Chem.MolFromSmarts(
 
 
 def get_atom_types_distribution(mol_batch):
-    types, counts = torch.unique(mol_batch.x, return_counts=True)
+    types, counts = torch.unique(mol_batch.z, return_counts=True)
     return types.cpu().detach().numpy(), (counts / counts.sum()).cpu().detach().numpy()
 
 
@@ -37,7 +37,7 @@ def get_mol_prop_distribution(mol_batch, prop: str, min: float = 0, max: float =
 
 def get_heavy_atom_distribution(mol_batch, min: float = 0, max: float = 15, nbins: int = 100):
     bins = torch.linspace(min, max, nbins)
-    atom_is_heavy = mol_batch.x.flatten() > 1
+    atom_is_heavy = mol_batch.z.flatten() > 1
     num_heavy_atoms = scatter(atom_is_heavy.float(), mol_batch.batch, reduce='sum', dim_size=mol_batch.num_graphs)
     hist, bins = torch.histogram(num_heavy_atoms.float(), bins=bins, density=True)
     return hist, bins
@@ -67,7 +67,7 @@ def get_edge_distribution(dataset,
             edge_batch = mol_batch.batch[edges[0]]
             dists = (mol_batch.pos[edges[0]] - mol_batch.pos[edges[1]]).norm(dim=1)
             dists_per_hist, sorted_dists, rdfs_dict = get_elementwise_dists(
-                mol_batch.x.flatten(),
+                mol_batch.z.flatten(),
                 edges,
                 dists,
                 device=device,
@@ -231,7 +231,7 @@ def generate_otf_dataset(generate_samples: int,
     otf_dataset = otf_dataset[:dataset_length]
     otf_dataset = collater(otf_dataset)
     vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()))
-    otf_dataset.mol_volume = batch_molecule_vdW_volume(otf_dataset.x.flatten(),
+    otf_dataset.mol_volume = batch_molecule_vdW_volume(otf_dataset.z.flatten(),
                                                        otf_dataset.pos,
                                                        otf_dataset.batch,
                                                        otf_dataset.num_graphs,

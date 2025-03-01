@@ -396,7 +396,7 @@ def record_step_results(results_dict, output, sample, data, latents, embeddings,
     results_dict['Time_Step'].append(np.ones(len(sample.y)) * data.tracking[0][1])
     results_dict['Sample_Index'].append(np.ones(len(sample.y)) * step + index_offset)
     results_dict['Coordinates'].append(sample.pos.cpu().detach().numpy())
-    results_dict['Atom_Types'].append(sample.x.cpu().detach().numpy())
+    results_dict['Atom_Types'].append(sample.z.cpu().detach().numpy())
     results_dict['Molecule_Index'].append(sample.mol_ind.cpu().detach().numpy())
     results_dict['Molecule_Centroids'].append(sample.centroid_pos[0])
     results_dict['Coordination_Numbers'].append(sample.coord_number[0])

@@ -4,7 +4,7 @@ import os
 from argparse import Namespace
 from pathlib import Path
 from time import time
-from typing import Tuple
+from typing import Tuple, Optional
 
 import numpy as np
 import torch
@@ -22,8 +22,9 @@ from mxtaltools.analysis.crystals_analysis import get_intermolecular_dists_dict
 from mxtaltools.analysis.vdw_analysis import vdw_analysis, vdw_overlap
 from mxtaltools.common.geometry_utils import list_molecule_principal_axes_torch
 from mxtaltools.common.geometry_utils import rotvec2sph
-from mxtaltools.common.training_utils import instantiate_models, init_sym_info, make_sequential_directory, \
-    flatten_wandb_params, set_lr, init_optimizer, init_scheduler, reload_model, save_checkpoint, slash_batch
+from mxtaltools.common.training_utils import instantiate_models, flatten_wandb_params, set_lr, \
+    init_optimizer, init_scheduler, reload_model, save_checkpoint, slash_batch, make_sequential_directory
+from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.common.utils import sample_uniform
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
@@ -32,12 +33,13 @@ from mxtaltools.crystal_building.utils import overwrite_symmetry_info
 from mxtaltools.crystal_building.utils import (set_molecule_alignment)
 from mxtaltools.crystal_search.sampling import Sampler
 from mxtaltools.dataset_utils.CrystalData import CrystalData
+from mxtaltools.dataset_utils.data_classes import MolData
 from mxtaltools.dataset_utils.dataset_manager import DataManager
-from mxtaltools.dataset_utils.synthesis.otf_dataset_synthesis import otf_synthesize_molecules, otf_synthesize_crystals
+from mxtaltools.dataset_utils.synthesis.utils import otf_synthesize_molecules, otf_synthesize_crystals
 from mxtaltools.dataset_utils.utils import quick_combine_dataloaders, get_dataloaders, update_dataloader_batch_size
-from mxtaltools.modelling.utils import get_model_sizes, copy_source_to_workdir
+from mxtaltools.modelling.utils import get_model_sizes
 from mxtaltools.models.autoencoder_utils import compute_type_evaluation_overlap, compute_coord_evaluation_overlap, \
-    compute_full_evaluation_overlap, test_decoder_equivariance, test_encoder_equivariance, collate_decoded_data, \
+    compute_full_evaluation_overlap, test_decoder_equivariance, test_encoder_equivariance, decoding2mol_batch, \
     ae_reconstruction_loss, batch_rmsd
 from mxtaltools.models.task_models.generator_models import CSDPrior
 from mxtaltools.models.utils import (softmax_and_score, get_regression_loss,
@@ -118,10 +120,7 @@ class Modeller:
         """
         self.run_identifier, self.working_directory = make_sequential_directory(self.config.paths.yaml_path,
                                                                                 self.config.workdir)
-        copy_source_to_workdir(
-            self.working_directory,
-            self.config.paths.yaml_path,
-            self.config)
+
 
     def initialize_models_optimizers_schedulers(self):
         """
@@ -193,8 +192,7 @@ class Modeller:
             filter_protons=self.config.autoencoder.filter_protons if self.train_models_dict['autoencoder'] else False,
             conv_cutoff=conv_cutoff,
             do_shuffle=True,
-            precompute_edges=not nonzero_positional_noise and (  # TODO have a better think about this
-                    self.config.mode not in ['gan', 'discriminator', 'generator']),
+            precompute_edges=False, #self.config.mode not in ['gan', 'discriminator', 'generator'],
             single_identifier=self.config.dataset.single_identifier,
         )
         self.dataDims = data_manager.dataDims
@@ -504,7 +502,7 @@ class Modeller:
                 if train_loader is not None:
                     for i, data in enumerate(tqdm(train_loader, miniters=int(len(train_loader) / 25))):
                         data = data.to(self.device)
-                        data.x = data.x.flatten()
+                        data.z = data.z.flatten()
                         data, input_data = self.preprocess_ae_inputs(data,
                                                                      noise=0.01,
                                                                      no_noise=False)
@@ -519,7 +517,7 @@ class Modeller:
 
                 for i, data in enumerate(tqdm(test_loader, miniters=int(len(test_loader) / 25))):
                     data = data.to(self.device)
-                    data.x = data.x.flatten()
+                    data.z = data.z.flatten()
                     data, input_data = self.preprocess_ae_inputs(data,
                                                                  noise=0.01,
                                                                  no_noise=False)
@@ -591,17 +589,15 @@ class Modeller:
                 + self.config.model_paths.proxy_discriminator.split("\\")[-1] + '_results.npy',
                 {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
 
-    def ae_embedding_step(self, data):
-        data = data.to(self.device)
-        data, input_data = self.preprocess_ae_inputs(data, no_noise=True)
-        if (not self.models_dict['autoencoder'].protons_in_input and
-                not self.models_dict['autoencoder'].inferring_protons):
-            data = input_data.clone()  # deprotonate the reference if we are not inferring protons
+    def ae_embedding_step(self, mol_batch):
+        mol_batch = mol_batch.to(self.device)
+        mol_batch = self.preprocess_ae_inputs(mol_batch,
+                                              noise=1e-2)
 
         decoding, encoding = self.models_dict['autoencoder'](input_data.clone(), return_encoding=True)
         scalar_encoding = self.models_dict['autoencoder'].scalarizer(encoding)
 
-        self.ae_evaluation_sample_analysis(data, decoding, encoding, scalar_encoding)
+        self.ae_evaluation_sample_analysis(mol_batch, decoding, encoding, scalar_encoding)
 
     def ae_evaluation_sample_analysis(self, mol_batch, decoding, encoding, scalar_encoding):
         """
@@ -1126,11 +1122,7 @@ class Modeller:
                                       stats_values,
                                       mode='extend')
 
-    def ae_step(self, input_data, mol_batch, update_weights, step, last_step=False):
-        if (not self.models_dict['autoencoder'].protons_in_input and
-                not self.models_dict['autoencoder'].inferring_protons):
-            mol_batch = input_data.detach().clone()
-
+    def ae_step(self, mol_batch, update_weights, step, last_step=False):
         if step % self.config.logger.stats_reporting_frequency == 0:
             skip_stats = False
         elif last_step:
@@ -1138,11 +1130,12 @@ class Modeller:
         else:
             skip_stats = True
 
-        decoding = self.models_dict['autoencoder'](input_data.clone(), return_latent=False)
+        decoding = self.models_dict['autoencoder'](mol_batch.clone(), return_latent=False)
         if torch.sum(torch.isnan(decoding)) > 0:
             raise ValueError("Numerical Error: decoder output is not finite")
 
-        losses, stats, decoded_mol_batch = self.compute_autoencoder_loss(decoding, mol_batch.clone(),
+        losses, stats, decoding_batch = self.compute_autoencoder_loss(decoding,
+                                                                         mol_batch.clone(),
                                                                          skip_stats=skip_stats)
 
         mean_loss = losses.mean()
@@ -1156,11 +1149,6 @@ class Modeller:
             if not torch.stack([torch.isfinite(p.grad).any() if p.grad is not None else torch.isfinite(torch.ones_like(p)).any() for p in self.models_dict['autoencoder'].parameters()]).all():
                 raise ValueError("Numerical Error: model has NaN gradients!")
 
-                '''
-                pp = {name:bool(torch.isfinite(p.grad).any()) if p.grad is not None else None for name, p in self.models_dict['autoencoder'].named_parameters()}
-                for key in pp.keys():
-                    print(key, pp[key])
-                '''
             torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
                                            self.config.gradient_norm_clip)  # gradient clipping by norm
             self.optimizers_dict['autoencoder'].step()  # update parameters
@@ -1170,23 +1158,21 @@ class Modeller:
         if not skip_stats:
             if self.always_do_analysis:
                 with torch.no_grad():
-                    _, vector_embedding = self.models_dict['autoencoder'](input_data.clone(), return_latent=True)
+                    _, vector_embedding = self.models_dict['autoencoder'](mol_batch.clone(), return_latent=True)
                     scalar_embedding = self.models_dict['autoencoder'].scalarizer(vector_embedding)
                 stats['scalar_embedding'] = scalar_embedding.detach()
                 stats['vector_embedding'] = vector_embedding.detach()
-                stats['molecule_smiles'] = input_data.smiles
+                stats['molecule_smiles'] = mol_batch.smiles
 
             self.ae_stats_and_reporting(mol_batch,
-                                        decoded_mol_batch,
+                                        decoding_batch,
                                         last_step,
                                         stats,
                                         step,
                                         override_do_analysis=self.always_do_analysis)
 
     def fix_autoencoder_protonation(self, data, override_deprotonate=False):
-        if (not self.models_dict['autoencoder'].inferring_protons and
-                self.models_dict['autoencoder'].protons_in_input and
-                not override_deprotonate):
+        if (self.models_dict['autoencoder'].protons_in_input and not override_deprotonate):
             input_cloud = data.detach().clone()
         else:
             heavy_atom_inds = torch.argwhere(data.x != 1).flatten()  # protons are atom type 1
@@ -1220,7 +1206,7 @@ class Modeller:
 
     def detailed_autoencoder_step_analysis(self,
                                            mol_batch,
-                                           decoded_mol_batch,
+                                           decoding_batch,
                                            stats):
         # equivariance checks
         encoder_equivariance_loss, decoder_equivariance_loss = self.ae_equivariance_loss(mol_batch.clone())
@@ -1228,11 +1214,10 @@ class Modeller:
         stats['decoder_equivariance_loss'] = decoder_equivariance_loss.mean().detach()
 
         # do evaluation on current sample and save this as our loss for tracking purposes
-        nodewise_weights_tensor = decoded_mol_batch.aux_ind
-        true_nodes = F.one_hot(self.models_dict['autoencoder'].atom_embedding_vector[mol_batch.x.long()],
+        true_nodes = F.one_hot(self.models_dict['autoencoder'].atom_embedding_vector[mol_batch.z.long()],
                                num_classes=self.dataDims['num_atom_types']).float()
         full_overlap, self_overlap = compute_full_evaluation_overlap(
-            mol_batch, decoded_mol_batch,
+            mol_batch, decoding_batch,
             true_nodes,
             sigma=self.config.autoencoder.evaluation_sigma,
             distance_scaling=self.config.autoencoder.type_distance_scaling
@@ -1246,7 +1231,7 @@ class Modeller:
         stats['evaluation_overlap'] = scatter(overlap, mol_batch.batch, reduce='mean').detach()
         rmsd, nodewise_dists, matched_graphs, matched_nodes, _, pred_particle_weights = batch_rmsd(
             mol_batch,
-            decoded_mol_batch,
+            decoding_batch,
             true_nodes,
         )
         stats['RMSD'] = rmsd[matched_graphs].mean().detach()
@@ -1266,26 +1251,29 @@ class Modeller:
         for ind in range(mol_batch.num_graphs):
             b1 = mol_batch.batch == ind
             mol_samples.append(
-                CrystalData(  # CRYTODO
-                    x=mol_batch.x[b1],
+                MolData(
+                    z=mol_batch.z[b1],
                     pos=mol_batch.pos[b1],
                     radius=mol_batch.radius[ind],
                     smiles=mol_batch.smiles[ind],
                     identifier=mol_batch.identifier[ind],
                     mol_volume=mol_batch.mol_volume[ind],
+                    skip_mol_analysis=True,
                 ).cpu().detach()
             )
 
-            b2 = decoded_mol_batch.batch == ind
+            b2 = decoding_batch.batch == ind
             decoded_mol_samples.append(
-                CrystalData(  # CRYTODO
-                    x=decoded_mol_batch.x[b2],
-                    pos=decoded_mol_batch.pos[b2],
-                    radius=decoded_mol_batch.radius[ind],
-                    smiles=decoded_mol_batch.smiles[ind],
-                    identifier=decoded_mol_batch.identifier[ind],
-                    mol_volume=decoded_mol_batch.mol_volume[ind],
-                    aux_ind=decoded_mol_batch.aux_ind[b2]
+                MolData(
+                    z=decoding_batch.x[b2],
+                    x=decoding_batch.x[b2],
+                    pos=decoding_batch.pos[b2],
+                    radius=decoding_batch.radius[ind],
+                    smiles=decoding_batch.smiles[ind],
+                    identifier=decoding_batch.identifier[ind],
+                    mol_volume=decoding_batch.mol_volume[ind],
+                    aux_ind=decoding_batch.aux_ind[b2],
+                    skip_mol_analysis=True
                 ).cpu().detach()
             )
 
@@ -1324,7 +1312,11 @@ class Modeller:
                  update_weights: bool,
                  iteration_override: bool = None):
 
-        if self.config.dataset.otf_build_size > 0 and self.epoch_type == 'train' and os.cpu_count() > 1:
+        if (self.config.dataset.otf_build_size > 0 and
+                self.epoch_type == 'train' and
+                os.cpu_count() > 1 and
+                self.config.dataset.smiles_source is not None):
+
             self.train_loader_to_replace = self.otf_molecule_dataset_generation(data_loader)
             data_loader = self.train_loader_to_replace
 
@@ -1333,16 +1325,18 @@ class Modeller:
         else:
             self.models_dict['autoencoder'].eval()
 
-        for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
-            data = data.to(self.device)
-            data.x = data.x.flatten()
-            data, input_data = self.preprocess_ae_inputs(data,
-                                                         no_noise=False,
-                                                         noise=self.config.positional_noise.autoencoder if self.epoch_type == 'train' else 0.01,
-                                                         affine_scale=self.config.autoencoder.affine_scale_factor if self.epoch_type == 'train' else None
-                                                         )
-            self.ae_step(input_data, data, update_weights, step=i,
-                         last_step=(i == len(data_loader) - 1) or (i == iteration_override))
+        for i, mol_batch in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
+            mol_batch = mol_batch.to(self.device)
+            mol_batch = self.preprocess_ae_inputs(
+                mol_batch,
+                noise=self.config.positional_noise.autoencoder if self.epoch_type == 'train' else 0.01,
+                affine_scale=self.config.autoencoder.affine_scale_factor if self.epoch_type == 'train' else None
+                )
+            self.ae_step(mol_batch,
+                         update_weights,
+                         step=i,
+                         last_step=(i == len(data_loader) - 1) or (i == iteration_override),
+                         )
 
             if iteration_override is not None:
                 if i >= iteration_override:
@@ -1517,7 +1511,6 @@ class Modeller:
         # kill old chunks so we don't re-use
         [os.remove(elem) for elem in os.listdir(chunks_path)]
         conv_cutoff = self.config.autoencoder.model.encoder.graph.cutoff
-        nonzero_positional_noise = sum(list(self.config.positional_noise.__dict__.values()))
         miner.load_dataset_for_modelling(
             'otf_dataset.pt',
             filter_conditions=self.config.dataset.filter_conditions,
@@ -1526,9 +1519,8 @@ class Modeller:
             filter_protons=self.config.autoencoder.filter_protons if self.train_models_dict['autoencoder'] else False,
             conv_cutoff=conv_cutoff,
             do_shuffle=True,
-            precompute_edges=not nonzero_positional_noise and (
-                    self.config.mode not in ['gan', 'discriminator', 'generator']),
-            single_identifier=self.config.dataset.single_identifier,
+            precompute_edges=False,
+            single_identifier=None,
         )
         return miner
 
@@ -1657,46 +1649,35 @@ class Modeller:
                 > self.config.autoencoder.max_overlap_threshold):
             self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
+
     def preprocess_ae_inputs(self,
                              mol_batch,
-                             no_noise=False,
-                             orientation_override=None,
-                             noise=None,
-                             deprotonation_override=False,
-                             affine_scale=None):
-        # atomwise random noise
-        if not no_noise:  # TODO combine these args
-            if noise is not None:
-                mol_batch.pos += torch.randn_like(mol_batch.pos) * noise
+                             orientation_override: Optional[str] =None,
+                             noise: Optional[float]=None,
+                             deprotonate: bool =False,
+                             affine_scale: Optional[float] =None):
+        # atomwise noising
+        if noise is not None:
+            mol_batch.noise_positions(noise)
 
-            if affine_scale is not None:
-                graph_scale_factor = torch.randn(mol_batch.num_graphs, device=mol_batch.pos.device, dtype=torch.float32)
-                graph_scale_factor = (graph_scale_factor / 10 + affine_scale).clip(min=0.9, max=1.25)
-                atomwise_scaling = graph_scale_factor.repeat_interleave(mol_batch.num_atoms)
-                mol_batch.pos *= atomwise_scaling[:, None]
+        if affine_scale is not None:
+            mol_batch.scale_positions(affine_scale)
 
-        # random global roto-inversion
-        if orientation_override is not None:
-            mol_batch = set_molecule_alignment(mol_batch,
-                                               mode=orientation_override,
-                                               right_handed=False,
-                                               include_inversion=True)
+        # random global roto-inversion or standardization
+        mol_batch.orient_molecule(
+            mode=orientation_override,
+            include_inversion=True,
+        )
 
         # optionally, deprotonate
-        input_data = self.fix_autoencoder_protonation(mol_batch,
-                                                      override_deprotonate=deprotonation_override)
+        if deprotonate:
+            mol_batch.deprotonate()
 
-        # subtract mean OF THE INPUT from BOTH reference and input
-        centroids = scatter(input_data.pos, input_data.batch, reduce='mean', dim=0)
-        mol_batch.pos -= torch.repeat_interleave(centroids, mol_batch.num_atoms, dim=0, output_size=mol_batch.num_nodes)
-        input_data.pos -= torch.repeat_interleave(centroids, input_data.num_atoms, dim=0,
-                                                  output_size=input_data.num_nodes)
-
-        return mol_batch, input_data
+        return mol_batch
 
     def compute_autoencoder_loss(self,
                                  decoding: torch.Tensor,
-                                 mol_batch: CrystalData,
+                                 mol_batch,
                                  skip_stats: bool = False,
                                  ) -> Tuple[torch.Tensor, dict, CrystalData]:
         """
@@ -1717,13 +1698,13 @@ class Modeller:
 
         """
         # reduce to relevant atom types
-        mol_batch.x = self.models_dict['autoencoder'].atom_embedding_vector[mol_batch.x].flatten()
-        decoded_mol_batch, nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = (
-            collate_decoded_data(mol_batch,
-                                 decoding,
-                                 self.models_dict['autoencoder'].num_decoder_nodes,
-                                 self.config.autoencoder.node_weight_temperature,
-                                 self.device))
+        mol_batch.x = self.models_dict['autoencoder'].atom_embedding_vector[mol_batch.z]
+        decoding_batch, nodewise_graph_weights, graph_weighted_node_weights, node_weighted_node_weights = (
+            decoding2mol_batch(mol_batch,
+                               decoding,
+                               self.models_dict['autoencoder'].num_decoder_nodes,
+                               self.config.autoencoder.node_weight_temperature,
+                               self.device))
 
         (nodewise_reconstruction_loss,
          nodewise_type_loss,
@@ -1735,9 +1716,9 @@ class Modeller:
          nearest_component_loss,
          ) = ae_reconstruction_loss(
             mol_batch,
-            decoded_mol_batch,
-            nodewise_weights,
-            nodewise_weights_tensor,
+            decoding_batch,
+            graph_weighted_node_weights,
+            node_weighted_node_weights,
             self.dataDims['num_atom_types'],
             self.config.autoencoder.type_distance_scaling,
             self.config.autoencoder_sigma,
@@ -1747,23 +1728,23 @@ class Modeller:
             nodewise_reconstruction_loss < 0.01) / mol_batch.num_nodes  # within 1% matching
 
         # node radius constraining loss
-        decoded_dists = torch.linalg.norm(decoded_mol_batch.pos, dim=1)
+        decoded_dists = torch.linalg.norm(decoding_batch.pos, dim=1)
         constraining_loss = scatter(
             F.relu(
                 decoded_dists -  # self.models_dict['autoencoder'].radial_normalization),
                 torch.repeat_interleave(mol_batch.radius, self.models_dict['autoencoder'].num_decoder_nodes, dim=0)),
-            decoded_mol_batch.batch, reduce='mean')
+            decoding_batch.batch, reduce='mean')
 
         # node weight constraining loss
-        equal_to_actual_difference = (nodewise_graph_weights - nodewise_weights_tensor) / nodewise_graph_weights
+        equal_to_actual_difference = (nodewise_graph_weights - node_weighted_node_weights) / nodewise_graph_weights
         # we don't want nodewise_weights_tensor to be too small, so equal_to_acutal_difference shouldn't be too positive
         nodewise_constraining_loss = F.relu(
             equal_to_actual_difference - self.config.autoencoder.weight_constraint_factor)
         node_weight_constraining_loss = scatter(
             nodewise_constraining_loss,
-            decoded_mol_batch.batch,
+            decoding_batch.batch,
             dim=0,
-            dim_size=decoded_mol_batch.num_graphs,
+            dim_size=decoding_batch.num_graphs,
             reduce='mean',
         )
 
@@ -1795,7 +1776,7 @@ class Modeller:
         else:
             stats = {}
 
-        return losses, stats, decoded_mol_batch
+        return losses, stats, decoding_batch
 
     def regression_epoch(self, data_loader, update_weights=True, iteration_override=None):
         if update_weights:
@@ -1803,14 +1784,15 @@ class Modeller:
         else:
             self.models_dict['regressor'].eval()
 
-        for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
-            if self.config.positional_noise.regressor > 0:
-                data.pos += torch.randn_like(data.pos) * self.config.positional_noise.regressor
+        for i, data_batch in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
+            data_batch = data_batch.to(self.device)
 
-            data = data.to(self.device)
+            if self.config.positional_noise.regressor > 0:
+                data_batch.noise_positions(self.config.positional_noise.regressor)
 
             regression_losses_list, predictions, targets = get_regression_loss(
-                self.models_dict['regressor'], data, data.y, self.dataDims['target_mean'], self.dataDims['target_std'])
+                self.models_dict['regressor'], data_batch, data_batch.y, self.dataDims['target_mean'], self.dataDims['target_std'])
+
             regression_loss = regression_losses_list.mean()
 
             if update_weights:
@@ -2469,12 +2451,8 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
             scaling_factor),
             dim=1)
 
-        generator_raw_samples = self.models_dict['generator'].forward(
-            conditioning_vector,
-            vector_mol_embedding,
-            mol_data.sg_ind,
-            prior,
-        )
+        generator_raw_samples = self.models_dict['generator'].forward(conditioning_vector, vector_mol_embedding,
+                                                                      mol_data.sg_ind)
 
         generated_samples_to_build = denormalize_generated_cell_params(
             generator_raw_samples,

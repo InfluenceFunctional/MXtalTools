@@ -10,7 +10,7 @@ from torch_geometric.typing import OptTensor
 from torch_scatter import scatter
 
 from mxtaltools.common.geometry_utils import single_molecule_principal_axes_torch, \
-    list_molecule_principal_axes_torch, compute_Ip_handedness, rotvec2sph, compute_fractional_transform_torch, \
+    list_molecule_principal_axes_torch, compute_Ip_handedness, rotvec2sph, batch_compute_fractional_transform, \
     get_batch_centroids, \
     rotvec2rotmat, batch_molecule_principal_axes_torch, extract_rotmat, apply_rotation_to_batch, rotmat2rotvec
 from mxtaltools.models.functions.asymmetric_radius_graph import radius
@@ -654,7 +654,6 @@ def align_mol_batch_to_standard_axes(mol_batch, handedness=None):
     align principal inertial axes of molecules in a crystaldata object to the xyz or xy(-z) axes
     only works for geometric principal axes (all atoms mass = 1)
     """
-    # todo this could be greatly sped up with batch calculations
     Ip, Ipm, I = batch_molecule_principal_axes_torch(
         mol_batch.pos,
         mol_batch.batch,
@@ -1092,7 +1091,7 @@ def get_aunit_positions(mol_batch,
 
 def get_symmetry_functions(cell_angles, cell_lengths, mol_position, mol_rotation, supercell_data):
     # get transformation matrices
-    T_fc_list, T_cf_list, generated_cell_volumes = compute_fractional_transform_torch(cell_lengths, cell_angles)
+    T_fc_list, T_cf_list, generated_cell_volumes = batch_compute_fractional_transform(cell_lengths, cell_angles)
     supercell_data.T_fc = T_fc_list
     sym_ops_list, supercell_data = set_sym_ops(supercell_data)  # assign correct symmetry options
     return T_cf_list, T_fc_list, generated_cell_volumes, supercell_data, sym_ops_list

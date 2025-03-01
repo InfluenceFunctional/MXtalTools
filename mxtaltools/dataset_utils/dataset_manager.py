@@ -15,7 +15,7 @@ from mxtaltools.common.geometry_utils import batch_molecule_vdW_volume
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
 from mxtaltools.dataset_utils.md_analysis.md_data_processing import generate_dataset_from_dumps
-from mxtaltools.dataset_utils.utils import basic_stats, filter_graph_nodewise
+from mxtaltools.dataset_utils.utils import basic_stats, filter_graph_nodewise, collate_data_list
 from mxtaltools.models.functions.minimum_image_neighbors import argwhere_minimum_image_convention_edges
 
 qm9_targets_list = ["rotational_constant_a",
@@ -91,7 +91,7 @@ class DataManager:
     def load_chunks(self,
                     chunks_patterns=None,
                     max_chunks=1e8,
-                    samples_per_chunk=1e8):
+                    subsamples_per_chunk=1e8):
         os.chdir(self.chunks_path)
         if chunks_patterns is None:
             chunks = os.listdir()
@@ -111,8 +111,8 @@ class DataManager:
         for ind, chunk in enumerate(tqdm(chunks[:num_chunks])):
             if '.pkl' in chunk or '.pt' in chunk:
                 loaded_chunk = torch.load(chunk)
-                if samples_per_chunk < len(loaded_chunk):
-                    samples_to_keep = np.random.choice(len(loaded_chunk), samples_per_chunk, replace=False)
+                if subsamples_per_chunk < len(loaded_chunk):
+                    samples_to_keep = np.random.choice(len(loaded_chunk), subsamples_per_chunk, replace=False)
                     self.dataset.extend([loaded_chunk[ind] for ind in samples_to_keep])
                 else:
                     self.dataset.extend(loaded_chunk)
@@ -153,10 +153,6 @@ class DataManager:
         else:
             self.load_training_dataset(dataset_name)
 
-        self.quick_compute_mol_volume()  # todo add this to dataset featurization
-        for ind in range(len(self.dataset)):
-            self.dataset[ind].p_charges = torch.zeros(self.dataset[ind].num_nodes)
-
         self.dataset_filtration(filter_conditions, filter_duplicate_molecules, filter_polymorphs)
         self.truncate_and_shuffle_dataset(override_length, do_shuffle=do_shuffle)
         self.misc_dataset = self.extract_misc_stats_and_indices(self.dataset)
@@ -169,24 +165,6 @@ class DataManager:
 
         self.dataDims = self.get_data_dimensions()
 
-        for ind in range(len(self.dataset)):
-            if self.dataset[ind].x.ndim == 1:
-                self.dataset[ind].x = self.dataset[ind].x[:, None]
-
-        # from torch_geometric.data import Data
-        # small_dataset = []
-        # for data in self.dataset:
-        #     small_dataset.append(
-        #         Data(
-        #             x=data.x,
-        #             pos=data.pos,
-        #             y=data.y,
-        #             mol_volume=data.mol_volume,
-        #             packing_coeff=data.packing_coeff,
-        #             radius=data.radius,
-        #         )
-        #     )
-
         if precompute_edges:
             self.compute_edges(conv_cutoff)
 
@@ -195,39 +173,20 @@ class DataManager:
             good_ind = idents.index(single_identifier)
             self.dataset = [self.dataset[good_ind] for _ in range(len(self.dataset))]
 
-    def quick_compute_mol_volume(self):
-        dataset_to_analyze = self.collater(self.dataset)
-
-        molecule_volumes = batch_molecule_vdW_volume(dataset_to_analyze.x.flatten(),
-                                                     dataset_to_analyze.pos,
-                                                     dataset_to_analyze.batch,
-                                                     dataset_to_analyze.num_graphs,
-                                                     self.vdw_radii_tensor)
-
-        assert torch.sum(torch.isnan(molecule_volumes)) == 0, "NaN in molecule volume calculations!"
-        del dataset_to_analyze
-
-        for ind in range(len(self.dataset)):
-            self.dataset[ind].mol_volume = molecule_volumes[ind]
-        if self.dataset_type == 'crystal':
-            for ind in range(len(self.dataset)):
-                self.dataset[ind].packing_coeff = molecule_volumes[ind] / self.dataset[ind].reduced_volume
-                self.dataset[ind].cell_reduced_lengths = self.dataset[ind].cell_lengths / torch.pow(
-                    molecule_volumes[ind] * self.dataset[ind].sym_mult, 1 / 3)[:, None]
-
-    def compute_edges(self, conv_cutoff):
+    def compute_edges(self,
+                      conv_cutoff: float,
+                      buffer: Optional[float] = 0.5):
         if self.dataset_type == 'mol_cluster':
             self.molecule_cluster_edge_indexing(conv_cutoff)
         else:
-            # doesn't work for crystal datasets
+            # doesn't work yet for crystal datasets
             for ind in tqdm(range(len(self.dataset))):
-                sample = self.dataset[ind]
-                self.dataset[ind].edge_index = gnn.radius_graph(sample.pos,
-                                                                r=conv_cutoff,
-                                                                max_num_neighbors=100,
-                                                                flow='source_to_target')  # note - requires batch be monotonically increasing
+                self.dataset[ind].construct_intra_radial_graph(
+                    cutoff=conv_cutoff + buffer)  # add buffer to cutoff to allow for positional noising
+                # todo need a custom collation function for these
 
     def molecule_cluster_dataset_processing(self, dataset_name):
+        # todo this almost certainly no longer works
         if not os.path.exists(self.datasets_path.joinpath(dataset_name)) and 'dumps_dirs' in self.config.__dict__.keys():
             # if it hasn't already been done, convert the relevant LAMMPS trajectories into trainable data objects
             generate_dataset_from_dumps([self.datasets_path.joinpath(dir_name) for dir_name in self.config.dumps_dirs],
@@ -322,16 +281,16 @@ class DataManager:
     def get_data_dimensions(self):
         self.atom_keys = ['atomic_number', 'vdw_radii', 'atom_weight', 'electronegativity', 'group', 'period']
         self.molecule_keys = ['num_atoms', 'radius', 'mol_volume']
-        self.lattice_keys = ['cell_reduced_a', 'cell_reduced_b', 'cell_reduced_c',
+        self.lattice_keys = ['cell_a', 'cell_b', 'cell_c',
                              'cell_alpha', 'cell_beta', 'cell_gamma',
                              'aunit_x', 'aunit_y', 'aunit_z',
-                             'aunit_theta', 'aunit_phi', 'aunit_r']
+                             'aunit_rot_x', 'aunit_rot_y', 'aunit_rot_z']
         if self.dataset_type == 'crystal':
             self.lattice_means = [self.dataset_stats[feat]['tight_mean'] for feat in self.lattice_keys]
             self.lattice_stds = [self.dataset_stats[feat]['tight_std'] for feat in self.lattice_keys]
             self.lattice_stats = {key: self.dataset_stats[key] for key in self.lattice_keys}
             self.length_covariance_matrix = torch.cov(
-                torch.cat([self.dataset[ind].cell_reduced_lengths for ind in range(len(self.dataset))], dim=0).T)
+                torch.cat([self.dataset[ind].cell_lengths for ind in range(len(self.dataset))], dim=0).T)
         else:
             self.lattice_means = [0 for _ in range(12)]
             self.lattice_stds = [0.01 for _ in range(12)]
@@ -370,7 +329,7 @@ class DataManager:
             'num_atom_types': len(self.present_atom_types),
         }
 
-        if self.dataset_type == 'mol_cluster':
+        if self.dataset_type == 'mol_cluster': # todo probably non-functional
             dim['num_polymorphs'] = len(torch.unique(torch.cat([elem.polymorph for elem in self.dataset])))
             dim['num_topologies'] = 0
 
@@ -459,7 +418,7 @@ class DataManager:
         self.times['dataset_loading_start'] = time()
         self.dataset = torch.load(self.datasets_path.joinpath(dataset_name))
 
-        if 'batch' in str(type(self.dataset)):
+        if 'batch' in str(type(self.dataset)).lower():
             # if it's batched, revert to data list - this is slow, so if possible don't store datasets as batches but as data lists
             self.dataset = self.dataset.to_data_list()
             print("Dataset is in pre-collated format, which slows down initial loading!")
@@ -469,7 +428,6 @@ class DataManager:
         if os.path.exists(misc_data_path):
             self.misc_dataset = np.load(misc_data_path, allow_pickle=True).item()
         else:
-            self.quick_compute_mol_volume()  # todo add this back to dataset featurization
             self.misc_dataset = self.extract_misc_stats_and_indices(self.dataset)
 
         self.times['dataset_loading_end'] = time()
@@ -478,7 +436,7 @@ class DataManager:
 
         if 'blind_test' in dataset_name:
             self.mode = 'blind test'
-            print("Switching to blind test indexing mode")
+            print("Switching to blind test indexing mode")  # TODO don't believe this does anything anymore
 
         if 'test' in dataset_name and self.dataset_type == 'crystal':
             self.rebuild_crystal_indices()
@@ -492,9 +450,8 @@ class DataManager:
                             save_dataset=True):
         self.load_chunks(chunks_patterns=chunks_patterns,
                          max_chunks=max_chunks,
-                         samples_per_chunk=samples_per_chunk)
+                         subsamples_per_chunk=samples_per_chunk)
 
-        self.quick_compute_mol_volume()
         self.misc_dataset = self.extract_misc_stats_and_indices(self.dataset)
 
         if save_dataset:
@@ -531,43 +488,40 @@ class DataManager:
 
     def extract_misc_stats_and_indices(self, dataset):
         if isinstance(dataset, list):
-            dataset_to_analyze = self.collater(dataset)
+            data_batch = collate_data_list(dataset)
         else:
-            dataset_to_analyze = dataset
+            data_batch = dataset
 
         misc_data_dict = {
             'dataset_stats': {
-                'atomic_number': basic_stats(dataset_to_analyze.x.long()),
-                'vdw_radii': basic_stats(self.vdw_radii_tensor[dataset_to_analyze.x.long()]),
-                'atom_weight': basic_stats(self.atom_weights_tensor[dataset_to_analyze.x.long()]),
-                'electronegativity': basic_stats(self.electronegativity_tensor[dataset_to_analyze.x.long()]),
-                'group': basic_stats(self.group_tensor[dataset_to_analyze.x.long()].long()),
-                'period': basic_stats(self.period_tensor[dataset_to_analyze.x.long()].long()),
-                'num_atoms': basic_stats(dataset_to_analyze.num_atoms.long()),
-                'radius': basic_stats(dataset_to_analyze.radius.float()),
-                'mol_volume': basic_stats(dataset_to_analyze.mol_volume.float()),
+                'atomic_number': basic_stats(data_batch.z.long()),
+                'vdw_radii': basic_stats(self.vdw_radii_tensor[data_batch.z.long()]),
+                'atom_weight': basic_stats(self.atom_weights_tensor[data_batch.z.long()]),
+                'electronegativity': basic_stats(self.electronegativity_tensor[data_batch.z.long()]),
+                'group': basic_stats(self.group_tensor[data_batch.z.long()].long()),
+                'period': basic_stats(self.period_tensor[data_batch.z.long()].long()),
+                'num_atoms': basic_stats(data_batch.num_atoms.long()),
+                'radius': basic_stats(data_batch.radius.float()),
+                'mol_volume': basic_stats(data_batch.mol_volume.float()),
             }
         }
+
         if self.dataset_type == 'crystal':
             misc_data_dict['dataset_stats'].update({
-                'cell_a': basic_stats(dataset_to_analyze.cell_lengths[:, 0].float()),
-                'cell_b': basic_stats(dataset_to_analyze.cell_lengths[:, 1].float()),
-                'cell_c': basic_stats(dataset_to_analyze.cell_lengths[:, 2].float()),
-                'cell_reduced_a': basic_stats(dataset_to_analyze.cell_reduced_lengths[:, 0].float()),
-                'cell_reduced_b': basic_stats(dataset_to_analyze.cell_reduced_lengths[:, 1].float()),
-                'cell_reduced_c': basic_stats(dataset_to_analyze.cell_reduced_lengths[:, 2].float()),
-                'cell_alpha': basic_stats(dataset_to_analyze.cell_angles[:, 0].float()),
-                'cell_beta': basic_stats(dataset_to_analyze.cell_angles[:, 1].float()),
-                'cell_gamma': basic_stats(dataset_to_analyze.cell_angles[:, 2].float()),
-                'aunit_x': basic_stats(dataset_to_analyze.pose_params0[:, 0].float()),
-                'aunit_y': basic_stats(dataset_to_analyze.pose_params0[:, 1].float()),
-                'aunit_z': basic_stats(dataset_to_analyze.pose_params0[:, 2].float()),
-                'aunit_theta': basic_stats(dataset_to_analyze.pose_params0[:, 3].float()),
-                'aunit_phi': basic_stats(dataset_to_analyze.pose_params0[:, 4].float()),
-                'aunit_r': basic_stats(dataset_to_analyze.pose_params0[:, 5].float()),
-                'z_prime': basic_stats(dataset_to_analyze.z_prime.float()),
-                'cell_volume': basic_stats(dataset_to_analyze.cell_volume.float()),
-                'reduced_volume': basic_stats(dataset_to_analyze.reduced_volume.float()),
+                'cell_a': basic_stats(data_batch.cell_lengths[:, 0].float()),
+                'cell_b': basic_stats(data_batch.cell_lengths[:, 1].float()),
+                'cell_c': basic_stats(data_batch.cell_lengths[:, 2].float()),
+                'cell_alpha': basic_stats(data_batch.cell_angles[:, 0].float()),
+                'cell_beta': basic_stats(data_batch.cell_angles[:, 1].float()),
+                'cell_gamma': basic_stats(data_batch.cell_angles[:, 2].float()),
+                'aunit_x': basic_stats(data_batch.aunit_centroid[:, 0].float()),
+                'aunit_y': basic_stats(data_batch.aunit_centroid[:, 1].float()),
+                'aunit_z': basic_stats(data_batch.aunit_centroid[:, 2].float()),
+                'aunit_rot_x': basic_stats(data_batch.aunit_orientation[:, 0].float()),
+                'aunit_rot_y': basic_stats(data_batch.aunit_orientation[:, 1].float()),
+                'aunit_rot_z': basic_stats(data_batch.aunit_orientation[:, 2].float()),
+                'cell_volume': basic_stats(data_batch.cell_volume.float()),
+                'packing_coefficient': basic_stats(data_batch.packing_coeff.float()),
             })
 
             if self.do_crystal_indexing:
@@ -592,7 +546,7 @@ class DataManager:
         for index in range(len(self.dataset)):
             identifier = str(self.dataset[index].identifier)
             crystal_to_mol_dict[identifier] = []
-            for _ in range(int(self.dataset[index].z_prime)):  # assumes integer Z'
+            for _ in range(1):#int(self.dataset[index].z_prime)):  # assumes integer Z'
                 crystal_to_mol_dict[identifier].append(mol_index)
                 mol_to_crystal_dict[mol_index] = identifier
                 mol_index += 1
@@ -609,7 +563,7 @@ class DataManager:
         # print("getting unique molecule fingerprints")
         fingerprints = []
         for z1 in range(len(self.dataset)):
-            zp = int(self.dataset[z1].z_prime)
+            zp = int(1)#self.dataset[z1].z_prime)
             for ind in range(zp):
                 fingerprints.append(self.dataset[z1].fingerprint[2048 * ind:2048 * (ind + 1)])
         fps = np.stack(fingerprints)
@@ -696,7 +650,7 @@ class DataManager:
             # must search within molecules
             bad_inds = []
             for ind, elem in enumerate(self.dataset):
-                if not set(elem.x.numpy()).issubset(condition_range):
+                if not set(elem.z.numpy()).issubset(condition_range):
                     bad_inds.append(ind)
         else:
             # molecule-wise
@@ -733,13 +687,15 @@ class DataManager:
 
     def get_condition_values(self, condition_key):  # todo convert from batch back to data lists
         if condition_key == 'crystal_z_prime':
-            values = torch.tensor([elem.z_prime for elem in self.dataset])
+            values = torch.ones(len(self.dataset))
+            # we're no longer doing this for now
+            #values = torch.tensor([elem.z_prime for elem in self.dataset])
         elif condition_key == 'asymmetric_unit_is_well_defined':
             values = torch.tensor([elem.is_well_defined for elem in self.dataset])
         elif condition_key == 'crystal_symmetry_operations_are_nonstandard':
             values = torch.tensor([elem.nonstandard_symmetry for elem in self.dataset])
         elif condition_key == 'max_atomic_number':
-            values = torch.tensor([elem.x.amax() for elem in self.dataset])
+            values = torch.tensor([elem.z.amax() for elem in self.dataset])
         elif condition_key == 'molecule_num_atoms':
             values = torch.tensor([elem.num_atoms for elem in self.dataset])
         elif condition_key == 'molecule_radius':

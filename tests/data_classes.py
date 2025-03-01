@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from mxtaltools.common.geometry_utils import compute_fractional_transform_torch, get_batch_centroids
+from mxtaltools.common.geometry_utils import batch_compute_fractional_transform, get_batch_centroids
 from mxtaltools.crystal_building.utils import fractional_transform, extract_aunit_orientation
 from mxtaltools.dataset_utils.data_classes import MolData, MolCrystalData
 from mxtaltools.dataset_utils.utils import collate_data_list
@@ -90,7 +90,7 @@ def t_MolCrystalData(mol_batch):
             assert torch.all(torch.isclose(mol_batch[key], crystal_batch[key])), "mol->crystal inheritance broken"
 
     # check box parameters
-    T_fc_list, T_cf_list, cell_volumes = compute_fractional_transform_torch(cell_lengths, cell_angles)
+    T_fc_list, T_cf_list, cell_volumes = batch_compute_fractional_transform(cell_lengths, cell_angles)
     assert torch.all(
         torch.isclose(T_fc_list, crystal_batch.T_fc, atol=1e-3)), "Error in fractional transform calculation"
     assert torch.all(

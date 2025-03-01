@@ -34,21 +34,21 @@ class MolecularCrystalModel(BaseGraphModel):
             graph_config=config.graph,
         )
 
-    def forward(self, data, return_dists=False, return_latent=False):
+    def forward(self, data_batch, return_dists=False, return_latent=False):
         """overwrites base method"""
         # on the fly atom property embeddings
-        data = self.featurize_input_graph(data)
+        data_batch = self.featurize_input_graph(data_batch)
         # on the fly input standardization
-        data = self.standardize(data)
+        data_batch = self.standardize(data_batch)
 
-        return self.model(data.x,
-                          data.pos,
-                          data.batch,
-                          data.ptr,
-                          data.mol_x,
-                          data.num_graphs,
-                          data.aux_ind,
-                          data.mol_ind,
+        return self.model(data_batch.x,
+                          data_batch.pos,
+                          data_batch.batch,
+                          data_batch.ptr,
+                          data_batch.mol_x,
+                          data_batch.num_graphs,
+                          data_batch.aux_ind,
+                          data_batch.mol_ind,
                           return_dists=return_dists, return_latent=return_latent)
 
 

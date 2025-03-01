@@ -1,10 +1,12 @@
 import sys
+from typing import Optional
 
 import numpy as np
 import torch
 from torch import Tensor
 from torch_scatter import scatter, scatter_max
 
+from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.models.functions.asymmetric_radius_graph import radius
 
@@ -182,13 +184,14 @@ def list_molecule_principal_axes_torch(coords_list: list = None,
     Ipm_fin : list(torch.tensor(3))
     I : list(torch.tensor(3,3))
     """
-    if not skip_centring: # todo accelerate with scatter
+    if not skip_centring:  # todo accelerate with scatter
         coords_list_centred = [coord - coord.mean(0) for coord in coords_list]
         all_coords = torch.cat(coords_list_centred)
     else:
         all_coords = torch.cat(coords_list)
 
-    batch, ptrs = extract_batching_info(coords_list, all_coords.device) # todo pass batch info as an argument instead calculating here
+    batch, ptrs = extract_batching_info(coords_list,
+                                        all_coords.device)  # todo pass batch info as an argument instead calculating here
 
     Ip, Ipm_fin, I = scatter_compute_Ip(all_coords, batch)
 
@@ -232,7 +235,8 @@ def batch_molecule_principal_axes_torch(coords: torch.FloatTensor,
     direction = batch_get_furthest_node_vector(coords, batch, num_graphs)
     normed_direction = direction / torch.linalg.norm(direction, dim=1)[:, None]
     overlaps, signs = get_overlaps(Ip, normed_direction)
-    Ip_fin = correct_Ip_directions(Ip, overlaps, signs)  # somehow, fails for mirror planes, on top of symmetric and spherical tops
+    Ip_fin = correct_Ip_directions(Ip, overlaps,
+                                   signs)  # somehow, fails for mirror planes, on top of symmetric and spherical tops
 
     return Ip_fin, Ipm_fin, I
 
@@ -494,7 +498,7 @@ def rotvec2sph(rotvec):
         return None
 
 
-def compute_fractional_transform_torch(cell_lengths, cell_angles):
+def batch_compute_fractional_transform(cell_lengths, cell_angles):
     """
     compute f->c and c->f transforms as well as cell volume in a vectorized, differentiable way
 
@@ -908,11 +912,18 @@ def angle2components(angle: torch.tensor):
     return torch.cat((torch.sin(angle)[:, None], torch.cos(angle)[:, None]), dim=1)
 
 
-def enforce_crystal_system(lattice_lengths, lattice_angles, sg_inds, symmetries_dict):
+def enforce_crystal_system(lattice_lengths,
+                           lattice_angles,
+                           sg_inds,
+                           symmetries_dict: Optional[dict] = None
+                           ):
     """
     enforce physical bounds on cell parameters
     https://en.wikipedia.org/wiki/Crystal_system
     """  # todo double check these limits
+
+    if symmetries_dict is None:
+        symmetries_dict = init_sym_info()
 
     lattices = [symmetries_dict['lattice_type'][int(sg_inds[n])] for n in range(len(sg_inds))]
 
@@ -1080,7 +1091,6 @@ def enforce_crystal_system2(lattice_lengths, lattice_angles, lattices):
     return fixed_lengths, fixed_angles
 
 
-
 def cell_parameters_to_box_vectors(opt: str,
                                    cell_lengths: torch.tensor,
                                    cell_angles: torch.tensor,
@@ -1154,14 +1164,17 @@ def get_batch_centroids(coords: torch.FloatTensor,
                         ) -> Tensor:
     return scatter(coords, batch, dim=0, dim_size=num_graphs, reduce='mean')
 
+
 def center_mol_batch(coords: torch.FloatTensor,
-                    batch: torch.LongTensor,
-                    num_graphs: int,
-                    nodes_per_graph: torch.LongTensor,
-                        ) -> Tensor:
+                     batch: torch.LongTensor,
+                     num_graphs: int,
+                     nodes_per_graph: torch.LongTensor,
+                     ) -> Tensor:
     centroids = get_batch_centroids(coords, batch, num_graphs)
     coords -= centroids.repeat_interleave(nodes_per_graph, 0)
     return coords
+
+
 def batch_compute_mol_mass(z: torch.LongTensor,
                            batch: torch.LongTensor,
                            masses_tensor: torch.FloatTensor,
@@ -1200,7 +1213,8 @@ def rotvec2rotmat(mol_rotation: torch.tensor, basis='cartesian'):
     ), dim=1)
 
     identity_batch = torch.eye(3, device=r.device)[None, :, :].tile(len(r), 1, 1)
-    applied_rotation_list = identity_batch + torch.sin(r[:, None, None]) * K + (1 - torch.cos(r[:, None, None])) * (K @ K)
+    applied_rotation_list = identity_batch + torch.sin(r[:, None, None]) * K + (1 - torch.cos(r[:, None, None])) * (
+                K @ K)
 
     return applied_rotation_list
 

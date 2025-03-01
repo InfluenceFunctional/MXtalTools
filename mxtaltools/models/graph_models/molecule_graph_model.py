@@ -93,21 +93,7 @@ class ScalarMoleculeGraphModel(nn.Module):
                 return_latent: bool = False,
                 return_dists: bool = False,
                 return_embedding: bool = False,
-                force_edges_rebuild: bool = False,
                 ) -> Tuple[torch.Tensor, Optional[dict]]:
-
-        if edge_index is not None and not force_edges_rebuild:
-            edge_index = edge_index
-        else:
-            # option to rebuild radial graph
-            edges_dict = construct_radial_graph(
-                pos,
-                batch,
-                ptr,
-                self.convolution_cutoff,
-                self.max_num_neighbors,
-            )
-            edge_index = edges_dict['edge_index']
 
         x = self.append_init_node_features(x, pos, ptr, mol_x)
         x = self.graph_net(x,
@@ -135,8 +121,6 @@ class ScalarMoleculeGraphModel(nn.Module):
         output = self.output_fc(x)
 
         extra_outputs = self.collect_extra_outputs(x,
-                                                   pos,
-                                                   batch,
                                                    edges_dict,
                                                    return_dists,
                                                    return_latent,
@@ -150,8 +134,6 @@ class ScalarMoleculeGraphModel(nn.Module):
 
     @staticmethod
     def collect_extra_outputs(x: torch.Tensor,
-                              pos: torch.Tensor,
-                              batch: torch.LongTensor,
                               edges_dict: dict,
                               return_dists: bool,
                               return_latent: bool,
@@ -287,6 +269,7 @@ class VectorMoleculeGraphModel(nn.Module):
                 ) -> Tuple[torch.Tensor, torch.Tensor, Optional[dict]]:
 
         if len(self.graph_net.interaction_blocks) > 0 or return_dists:
+            # todo clean up options around prebuilt radial graphs
             if edges_dict is None:  # option to rebuild radial graph
                 edges_dict = construct_radial_graph(
                     pos,

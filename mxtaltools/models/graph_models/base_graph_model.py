@@ -2,7 +2,6 @@ import torch
 from torch_geometric.typing import OptTensor
 
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
-from mxtaltools.dataset_utils.CrystalData import CrystalData
 
 
 class BaseGraphModel(torch.nn.Module):
@@ -60,12 +59,10 @@ class BaseGraphModel(torch.nn.Module):
             self.register_buffer('graph_standardization_tensor', graph_standardization_tensor)
 
     def featurize_input_graph(self,
-                              data: CrystalData
-                              ) -> CrystalData:
-        if data.x.ndim > 1:
-            data.x = data.x[:, 0]
+                              data
+                              ):
 
-        data.x = self.atom_properties_tensor[data.x.long()]
+        data.x = self.atom_properties_tensor[data.z.long()]
 
         if self.n_mol_feats > 0:
             mol_x_list = []
@@ -80,8 +77,8 @@ class BaseGraphModel(torch.nn.Module):
         return data
 
     def standardize(self,
-                    data: CrystalData
-                    ) -> CrystalData:
+                    data
+                    ):
 
         data.x = (data.x - self.node_standardization_tensor[:, 0]) / self.node_standardization_tensor[:, 1]
 
@@ -92,23 +89,28 @@ class BaseGraphModel(torch.nn.Module):
         return data
 
     def forward(self,
-                data: CrystalData,
+                data_batch,
                 return_dists: bool = False,
-                return_latent: bool = False
+                return_latent: bool = False,
+                force_edges_rebuild: bool = False,
                 ):
         # featurize atom properties on the fly
-        data = self.featurize_input_graph(data)
+        data_batch = self.featurize_input_graph(data_batch)
 
         # standardize on the fly from model-attached statistics
-        data = self.standardize(data)
+        data_batch = self.standardize(data_batch)
 
-        return self.model(data.x,
-                          data.pos,
-                          data.batch,
-                          data.ptr,
-                          data.mol_x,
-                          data.num_graphs,
-                          edge_index=data.edge_index,
+        # get radial graph
+        if data_batch.edge_index is None or force_edges_rebuild:
+            data_batch.construct_intra_radial_graph(float(self.model.convolution_cutoff))
+
+        return self.model(data_batch.x,
+                          data_batch.pos,
+                          data_batch.batch,
+                          data_batch.ptr,
+                          data_batch.mol_x,
+                          data_batch.num_graphs,
+                          edge_index=data_batch.edge_index,
                           return_dists=return_dists,
                           return_latent=return_latent)
 

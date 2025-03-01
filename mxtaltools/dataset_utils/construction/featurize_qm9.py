@@ -10,6 +10,7 @@ from rdkit import Chem as Chem
 from mxtaltools.dataset_utils.CrystalData import CrystalData
 from mxtaltools.dataset_utils.construction.featurization_utils import chunkify_path_list, get_qm9_properties, \
     featurize_xyz_molecule
+from mxtaltools.dataset_utils.data_classes import MolData
 
 HDonorSmarts = Chem.MolFromSmarts(
     '[$([N;!H0;v3]),$([N;!H0;+1;v4]),$([O,S;H1;+0]),$([n;H1;+0])]')  # from rdkit lipinski https://github.com/rdkit/rdkit/blob/7c6d9cf4e9d95b4daa954f4f094e026093dbc13f/rdkit/Chem/Lipinski.py#L26
@@ -31,18 +32,13 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)  # ignore numpy e
 Convert xyz files to chunks of crystaldata objects
 """
 
-# todo update featurization
-# todo make sure we're skipping crystal stuff
-
-
 def process_dataset_chunks(xyzs_path, chunks_path, n_chunks):
     os.chdir(xyzs_path)
     xyzs_list = os.listdir()
     if not os.path.exists(chunks_path):
         os.mkdir(chunks_path)
     chunk_inds, chunks_list, start_ind, stop_ind = chunkify_path_list(xyzs_list, n_chunks)
-    for chunk_ind, chunk in zip(chunk_inds, chunks_list[
-                                            start_ind:stop_ind]):  # todo consider adding indexing over multiple or nested directories
+    for chunk_ind, chunk in zip(chunk_inds, chunks_list[start_ind:stop_ind]):  # todo consider adding indexing over multiple or nested directories
         data_list = []
         if not os.path.exists(chunks_path + chunk_prefix + f"_chunk_{chunk_ind}.pkl"):
             print(f"Starting chunk {chunk_ind} with {len(chunk)} xyzs")
@@ -57,17 +53,18 @@ def process_dataset_chunks(xyzs_path, chunks_path, n_chunks):
 
                     molecule_dict = featurize_xyz_molecule(molecule_dict, text)
 
-                    crystaldata = CrystalData(  #CRYTODO
-                        x=torch.tensor(molecule_dict['atom_atomic_numbers'], dtype=torch.long),
+                    data = MolData(
+                        z=torch.tensor(molecule_dict['atom_atomic_numbers'], dtype=torch.long),
                         pos=torch.tensor(molecule_dict['atom_coordinates'], dtype=torch.float32),
                         smiles=molecule_dict['molecule_smiles'],
-                        identifier=molecule_dict['molecule_smiles'], #molecule_dict['identifier'],
-                        # QM9 molecule properties
-                        y=torch.tensor([float(prop) for prop in props[1:-1]], dtype=torch.float32)[None,:] if 'qm9' in chunks_path.lower() else None,
-                        require_crystal_features=False,
+                        identifier=molecule_dict['molecule_smiles'],  #molecule_dict['identifier'],
+                        x=torch.tensor(molecule_dict['partial_charges'],dtype=torch.float32),
+                        y=torch.tensor([float(prop) for prop in props[1:-1]], dtype=torch.float32)[None,
+                          :] if 'qm9' in chunks_path.lower() else None,
+                        skip_mol_analysis=False,
                     )
 
-                    data_list.append(crystaldata)
+                    data_list.append(data)
 
                 except ValueError:
                     pass

@@ -1,22 +1,22 @@
 import torch
 from torch import nn as nn
 
-from mxtaltools.dataset_utils.CrystalData import CrystalData
+from mxtaltools.models.autoencoder_utils import decoding2mol_batch, ae_reconstruction_loss
 from mxtaltools.models.graph_models.base_graph_model import BaseGraphModel
 from mxtaltools.models.graph_models.graph_neural_network import VectorGNN
 from mxtaltools.models.graph_models.molecule_graph_model import VectorMoleculeGraphModel
 from mxtaltools.models.modules.components import Scalarizer, vectorMLP
-from mxtaltools.models.autoencoder_utils import collate_decoded_data, ae_reconstruction_loss
 from mxtaltools.reporting.ae_reporting import swarm_vs_tgt_fig
 
 
 # noinspection PyAttributeOutsideInit
 class Mo3ENet(BaseGraphModel):
-    def __init__(self, seed, config,
+    def __init__(self,
+                 seed,
+                 config,
                  num_atom_types: int,
-                 atom_embedding_vector: torch.tensor,
+                 atom_embedding_vector: torch.Tensor,
                  radial_normalization: float,
-                 infer_protons: bool,
                  protons_in_input: bool,
                  ):
         super(Mo3ENet, self).__init__()
@@ -40,7 +40,6 @@ class Mo3ENet(BaseGraphModel):
         self.register_buffer('atom_embedding_vector', atom_embedding_vector)
         self.register_buffer('radial_normalization', torch.tensor(radial_normalization, dtype=torch.float32))
         self.register_buffer('protons_in_input', torch.tensor(protons_in_input, dtype=torch.bool))
-        self.register_buffer('inferring_protons', torch.tensor(infer_protons, dtype=torch.bool))
         self.register_buffer('convolution_cutoff', config.encoder.graph.cutoff / self.radial_normalization)
 
         self.encoder = Mo3ENetEncoder(seed,
@@ -64,12 +63,11 @@ class Mo3ENet(BaseGraphModel):
                                      self.cartesian_dimension,
                                      None, None, 0)
 
-    def forward(self,
-                data: CrystalData,
+    def forward(self, mol_batch,
                 return_latent: bool = False,
                 return_dists: bool = False,
-                ):
-        encoding = self.encode(data)
+                **kwargs):
+        encoding = self.encode(mol_batch)
         if torch.sum(torch.isnan(encoding)) != 0:
             print("NaN values in encoding")
         decoding = self.decode(encoding)
@@ -81,13 +79,13 @@ class Mo3ENet(BaseGraphModel):
             return decoding
 
     def encode(self,
-               data,
+               mol_batch,
                override_centering: bool = False):
         # normalize radii
         if not override_centering:
-            assert torch.linalg.norm(data.pos.mean(0)) < 1e-3, "Encoder trained only for centered molecules!"
-        data.pos /= self.radial_normalization
-        _, encoding = self.encoder(data)
+            assert torch.linalg.norm(mol_batch.pos.mean(0)) < 1e-3, "Encoder trained only for centered molecules!"
+        mol_batch.pos /= self.radial_normalization
+        _, encoding = self.encoder(mol_batch)
 
         return encoding
 
@@ -165,11 +163,11 @@ class Mo3ENet(BaseGraphModel):
 
         data.x = self.atom_embedding_vector[data.x].flatten()
         decoded_data, nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = (
-            collate_decoded_data(data,
-                                 decoding,
-                                 self.num_decoder_nodes,
-                                 node_weight_temperature,
-                                 data.x.device))
+            decoding2mol_batch(data,
+                               decoding,
+                               self.num_decoder_nodes,
+                               node_weight_temperature,
+                               data.x.device))
 
         (nodewise_reconstruction_loss,  # todo adjust with new losses
          nodewise_type_loss,
@@ -417,10 +415,10 @@ class Mo3ENetEncoder(nn.Module):
             override_cutoff=override_cutoff,
         )
 
-    def forward(self, data):
-        return self.model(data.x,
-                          data.pos,
-                          data.batch,
-                          data.ptr,
-                          num_graphs=data.num_graphs,
+    def forward(self, mol_batch):
+        return self.model(mol_batch.z,
+                          mol_batch.pos,
+                          mol_batch.batch,
+                          mol_batch.ptr,
+                          num_graphs=mol_batch.num_graphs,
                           )

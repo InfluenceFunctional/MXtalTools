@@ -3,7 +3,7 @@ from typing import Optional
 import torch
 from torch_geometric.loader.dataloader import Collater
 
-from mxtaltools.common.training_utils import init_sym_info
+from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.crystal_building.utils import \
     (update_supercell_data, unit_cell_to_convolution_cluster,
      align_mol_batch_to_standard_axes,

@@ -436,8 +436,27 @@ def featurize_xyz_molecule(molecule_dict, text):
     molecule_dict['atom_coordinates'] = atom_coords
     molecule_dict['atom_atomic_numbers'] = atom_types
     molecule_dict['molecule_smiles'] = text[-3].split('\t')[0]
-
+    molecule_dict['partial_charges'] = custom_molecule_partial_charges(atom_types, atom_coords)
     return molecule_dict
+
+
+def custom_molecule_partial_charges(types, coords):
+    """
+    to ensure proper indexing, we have to set up a custom rdkit mol object
+    then rdkit will compute the charges for us
+    """
+    mol = Chem.RWMol()
+    for ind, atom in enumerate(types):
+        idx = mol.AddAtom(Chem.Atom(int(atom)))
+
+    conf = Chem.Conformer(len(types))
+    for i, (x, y, z) in enumerate(coords):
+        conf.SetAtomPosition(i, (x, y, z))
+
+    mol.AddConformer(conf)
+    Chem.SanitizeMol(mol) # we don't have to add implicit Hs as this whole workflow is protonated
+
+    return get_partial_charges(mol)
 
 
 def get_qm9_properties(text):

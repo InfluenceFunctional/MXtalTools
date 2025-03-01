@@ -65,7 +65,6 @@ supercell_size: 5
 autoencoder:
   weight_constraint_factor: 0.9
   affine_scale_factor: 1  # null or float
-  infer_protons: False
   filter_protons: False
   nearest_node_loss_coefficient: 0.01
   clumping_loss_coefficient: 0.01
@@ -127,7 +126,7 @@ autoencoder:
         vector_norm: null
 
     decoder:
-      model_type: 'mlp'
+      model_type: 'gnn'
       activation: 'gelu'
       fc:
         hidden_dim: 128

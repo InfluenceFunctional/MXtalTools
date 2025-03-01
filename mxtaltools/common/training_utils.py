@@ -10,7 +10,6 @@ from torch import nn as nn, optim
 from torch.optim import lr_scheduler as lr_scheduler
 
 from mxtaltools.common.utils import flatten_dict, namespace2dict
-from mxtaltools.constants.space_group_info import SYM_OPS, POINT_GROUPS, LATTICE_TYPE, SPACE_GROUPS
 from mxtaltools.dataset_utils.utils import update_dataloader_batch_size
 from mxtaltools.models.graph_models.embedding_regression_models import EquivariantEmbeddingRegressor, \
     InvariantEmbeddingRegressor
@@ -72,7 +71,6 @@ def instantiate_models(config: Namespace,
             int(torch.sum(autoencoder_type_index != -1)),
             autoencoder_type_index,
             config.autoencoder.molecule_radius_normalization,
-            infer_protons=config.autoencoder.infer_protons,
             protons_in_input=not config.autoencoder.filter_protons
         )
     if config.mode == 'embedding_regression' or config.model_paths.embedding_regressor is not None:
@@ -82,7 +80,6 @@ def instantiate_models(config: Namespace,
             int(torch.sum(autoencoder_type_index != -1)),
             autoencoder_type_index,
             config.autoencoder.molecule_radius_normalization,
-            infer_protons=config.autoencoder.infer_protons,
             protons_in_input=not config.autoencoder.filter_protons
         )
         for param in models_dict['autoencoder'].parameters():  # freeze encoder
@@ -188,27 +185,6 @@ def update_stats_dict(dictionary: dict, keys, values, mode='append'):
             dictionary[key].extend(value)
 
     return dictionary
-
-
-def init_sym_info():
-    """
-    Initialize dict containing symmetry info for crystals with standard settings and general positions.
-
-    Returns
-    -------
-    sym_info : dict
-    """
-    sym_ops = SYM_OPS
-    point_groups = POINT_GROUPS
-    lattice_type = LATTICE_TYPE
-    space_groups = SPACE_GROUPS
-    sym_info = {  # collect space group info into single dict
-        'sym_ops': sym_ops,
-        'point_groups': point_groups,
-        'lattice_type': lattice_type,
-        'space_groups': space_groups}
-
-    return sym_info
 
 
 def make_sequential_directory(yaml_path, workdir):  # make working directory

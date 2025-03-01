@@ -79,7 +79,7 @@ def ase_mol_from_crystaldata(crystal_batch,
     if crystal_batch.batch is not None:  # more than one crystal in the datafile
         atom_inds = torch.where(crystal_batch.batch == index)[0]
     else:
-        atom_inds = torch.arange(len(crystal_batch.x))
+        atom_inds = torch.arange(len(crystal_batch.z))
 
     if mode == 'conformer':  # only the canonical conformer itself
         inside_inds = torch.where(crystal_batch.aux_ind == 0)[0]
@@ -144,10 +144,7 @@ def ase_mol_from_crystaldata(crystal_batch,
     if highlight_canonical_conformer:  # highlight the atom aux index
         numbers = crystal_batch.aux_ind[atom_inds].cpu().detach().numpy() + 6
     else:
-        if crystal_batch.x.ndim > 1:
-            numbers = crystal_batch.z[atom_inds, 0].cpu().detach().numpy()
-        else:
-            numbers = crystal_batch.z[atom_inds].cpu().detach().numpy()
+        numbers = crystal_batch.z[atom_inds].cpu().detach().numpy()
 
     if hasattr(crystal_batch, "T_fc"):
         if index is not None:

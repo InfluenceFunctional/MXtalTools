@@ -5,7 +5,6 @@ from torch import nn as nn
 from torch.nn import functional as F
 from torch_scatter import scatter, scatter_softmax
 
-from mxtaltools.dataset_utils.CrystalData import CrystalData
 from mxtaltools.models.functions.asymmetric_radius_graph import radius
 
 
@@ -78,7 +77,7 @@ def compute_type_evaluation_overlap(config,
         data,
         data,
         config.autoencoder.evaluation_sigma,
-        nodewise_weights=torch.ones(len(data.x), device=data.x.device, dtype=data.x.dtype),
+        nodewise_weights=torch.ones(len(data.z), device=data.z.device, dtype=torch.float32),
         dist_to_self=True,
         isolate_dimensions=[3, 3 + num_atom_types],
         type_distance_scaling=config.autoencoder.type_distance_scaling
@@ -109,7 +108,7 @@ def compute_coord_evaluation_overlap(
         data,
         data,
         config.autoencoder.evaluation_sigma,
-        nodewise_weights=torch.ones(len(data.x), device=data.x.device, dtype=data.x.dtype),
+        nodewise_weights=torch.ones(len(data.z), device=data.z.device, dtype=torch.float32),
         dist_to_self=True,
         isolate_dimensions=[0, 3],
         type_distance_scaling=config.autoencoder.type_distance_scaling
@@ -131,7 +130,7 @@ def compute_full_evaluation_overlap(mol_batch,
     )
     self_overlap = compute_gaussian_overlap(
         true_nodes, mol_batch, mol_batch, sigma,
-        nodewise_weights=torch.ones(len(mol_batch.x), device=mol_batch.x.device, dtype=mol_batch.x.dtype),
+        nodewise_weights=torch.ones(len(mol_batch.z), device=mol_batch.z.device, dtype=torch.float32),
         dist_to_self=True,
         type_distance_scaling=distance_scaling)
     return full_overlap, self_overlap
@@ -160,14 +159,14 @@ def get_node_weights(mol_batch, decoded_mol_batch, decoding, num_decoder_nodes, 
     return weight_per_swarm_point, nodewise_weights, nodewise_weights_tensor
 
 
-def init_decoded_data(data, decoding, device, num_nodes):
-    decoded_data = data.detach().clone()
-    decoded_data.pos = decoding[:, :3]
-    decoded_data.batch = torch.arange(data.num_graphs).repeat_interleave(num_nodes).to(device)
+def init_decoded_data(mol_batch, decoded_batch, device, num_nodes):
+    decoded_data = mol_batch.detach().clone()
+    decoded_data.pos = decoded_batch[:, :3]
+    decoded_data.batch = torch.arange(mol_batch.num_graphs).repeat_interleave(num_nodes).to(device)
     return decoded_data
 
 
-def test_decoder_equivariance(data: CrystalData,
+def test_decoder_equivariance(data,
                               encoding: torch.Tensor,
                               rotated_encoding: torch.Tensor,
                               rotations: torch.Tensor,
@@ -196,7 +195,7 @@ def test_decoder_equivariance(data: CrystalData,
     return decoder_equivariance_loss.mean(-1)
 
 
-def test_encoder_equivariance(data: CrystalData,
+def test_encoder_equivariance(data,
                               rotations: torch.Tensor,
                               autoencoder) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
@@ -220,30 +219,30 @@ def test_encoder_equivariance(data: CrystalData,
     return encoder_equivariance_loss, encoding, rotated_encoding
 
 
-def collate_decoded_data(data, decoding, num_decoder_nodes, node_weight_temperature, device):
+def decoding2mol_batch(mol_batch, decoding, num_decoder_nodes, node_weight_temperature, device):
     # generate input reconstructed as a data type
-    decoded_mol_batch = init_decoded_data(data,
+    decoded_mol_batch = init_decoded_data(mol_batch,
                                           decoding,
                                           device,
                                           num_decoder_nodes
                                           )
     # compute the distributional weight of each node
-    nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = \
-        get_node_weights(data, decoded_mol_batch, decoding,
+    nodewise_graph_weights, graph_weighted_node_weights, node_weighted_node_weights = \
+        get_node_weights(mol_batch, decoded_mol_batch, decoding,
                          num_decoder_nodes,
                          node_weight_temperature)
-    decoded_mol_batch.aux_ind = nodewise_weights_tensor
+    decoded_mol_batch.aux_ind = node_weighted_node_weights
     # input node weights are always 1 - corresponding each to an atom
-    data.aux_ind = torch.ones(data.num_nodes, dtype=torch.float32, device=device)
+    mol_batch.aux_ind = torch.ones(mol_batch.num_nodes, dtype=torch.float32, device=device)
     # get probability distribution over type dimensions
     decoded_mol_batch.x = F.softmax(decoding[:, 3:-1], dim=1)
-    return decoded_mol_batch, nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor
+    return decoded_mol_batch, nodewise_graph_weights, graph_weighted_node_weights, node_weighted_node_weights
 
 
 def ae_reconstruction_loss(mol_batch,
-                           decoded_mol_batch,
-                           graph_normed_nodewise_weights,
-                           nodewise_weights_tensor,
+                           decoding_batch,
+                           graph_weighted_node_weights,
+                           node_weighted_node_weights,
                            num_atom_types,
                            type_distance_scaling,
                            autoencoder_sigma,
@@ -251,22 +250,28 @@ def ae_reconstruction_loss(mol_batch,
     true_node_one_hot = F.one_hot(mol_batch.x.flatten().long(), num_classes=num_atom_types).float()
 
     decoder_likelihoods, input2output_edges, input2output_dists = (
-        compute_gaussian_overlap(true_node_one_hot, mol_batch, decoded_mol_batch, autoencoder_sigma,
-                                 nodewise_weights=decoded_mol_batch.aux_ind,
+        compute_gaussian_overlap(true_node_one_hot,
+                                 mol_batch,
+                                 decoding_batch,
+                                 autoencoder_sigma,
+                                 nodewise_weights=decoding_batch.aux_ind,
                                  type_distance_scaling=type_distance_scaling,
                                  return_dists=True
                                  ))
 
     # if sigma is too large, these can be > 1, so we map to the overlap of the true density with itself
-    self_likelihoods = compute_gaussian_overlap(true_node_one_hot, mol_batch, mol_batch, autoencoder_sigma,
-                                                nodewise_weights=mol_batch.aux_ind, dist_to_self=True,
-                                                type_distance_scaling=type_distance_scaling)
+    self_likelihoods = compute_gaussian_overlap(
+        true_node_one_hot,
+        mol_batch, mol_batch,
+        autoencoder_sigma,
+        nodewise_weights=mol_batch.aux_ind, dist_to_self=True,
+        type_distance_scaling=type_distance_scaling)
 
     # typewise agreement for whole graph
     per_graph_true_types = scatter(
         true_node_one_hot, mol_batch.batch[:, None], dim=0, reduce='mean')
     per_graph_pred_types = scatter(
-        decoded_mol_batch.x * graph_normed_nodewise_weights[:, None], decoded_mol_batch.batch[:, None], dim=0,
+        decoding_batch.x * graph_weighted_node_weights[:, None], decoding_batch.batch[:, None], dim=0,
         reduce='sum')
 
     nodewise_type_loss = (
@@ -281,9 +286,9 @@ def ae_reconstruction_loss(mol_batch,
     nearest_node_dist = scatter(input2output_dists,
                                 input2output_edges[0],
                                 reduce='min',
-                                dim_size=decoded_mol_batch.num_nodes
+                                dim_size=decoding_batch.num_nodes
                                 )
-    nearest_node_loss = scatter(nearest_node_dist, decoded_mol_batch.batch, reduce='mean',
+    nearest_node_loss = scatter(nearest_node_dist, decoding_batch.batch, reduce='mean',
                                 dim_size=mol_batch.num_graphs)
     # 1a also identify reciprocal distance from each atom to nearest component
     nearest_component_dist = scatter(input2output_dists,
@@ -299,7 +304,7 @@ def ae_reconstruction_loss(mol_batch,
     collect_bools = input2output_dists < 0.5
     inds_within_cutoff = input2output_edges[0][collect_bools]
     inside_edge_nodes = input2output_edges[1][collect_bools]
-    collected_particle_weights = nodewise_weights_tensor[inds_within_cutoff]
+    collected_particle_weights = node_weighted_node_weights[inds_within_cutoff]
     pred_particle_weights = scatter(collected_particle_weights,
                                     inside_edge_nodes,
                                     reduce='sum',

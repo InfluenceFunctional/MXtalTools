@@ -6,6 +6,7 @@ from torch_geometric.loader.dataloader import Collater
 from mxtaltools.common.training_utils import update_stats_dict, check_convergence
 from mxtaltools.dataset_utils.analysis.compare_molecule_dataset_to_otf import analyze_mol_dataset, \
     property_comparison_fig, distribution_comparison
+from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.utils import softmax_and_score
 from mxtaltools.reporting.online import detailed_reporting, polymorph_classification_trajectory_analysis
 
@@ -130,7 +131,7 @@ class Logger:
                             stat_dict[key] = np.concatenate(value)
                     else:
                         stat_dict[key] = np.asarray(value)
-                elif 'crystaldata' in str(type(value[0])).lower():
+                elif 'data' in str(type(value[0])).lower():
                     pass  # do not concatenate lists of crystaldata objects
                 else:  # just a list
                     try:
@@ -258,13 +259,12 @@ class Logger:
                            extra_test_dict=self.extra_stats)
 
     def log_dataset_analysis(self, train_loader, test_loader):
-        collater = Collater(0, 0)
         rands1 = np.random.choice(len(test_loader.dataset), min(100, len(test_loader.dataset)), replace=False)
-        test_feats_dict = analyze_mol_dataset(collater([test_loader.dataset[ind] for ind in rands1]), 'cpu')
+        test_feats_dict = analyze_mol_dataset(collate_data_list([test_loader.dataset[ind] for ind in rands1]), 'cpu')
         test_bins = {key: bins for (key, bins) in test_feats_dict.items() if '_bin' in key}
 
         rands1 = np.random.choice(len(train_loader.dataset), min(100, len(train_loader.dataset)), replace=False)
-        train_feats_dict = analyze_mol_dataset(collater([train_loader.dataset[ind] for ind in rands1]), 'cpu',
+        train_feats_dict = analyze_mol_dataset(collate_data_list([train_loader.dataset[ind] for ind in rands1]), 'cpu',
                                                bins_set=test_bins)
 
         dataset_names = ['train', 'test']
