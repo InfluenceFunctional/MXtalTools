@@ -61,7 +61,7 @@ proxy_discriminator:
   model:
     dropout: 0.25
     hidden_dim: 512
-    norm: batch
+    norm: layer
     num_layers: 40
     vector_norm: null
   optimizer:

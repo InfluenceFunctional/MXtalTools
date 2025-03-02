@@ -31,7 +31,7 @@ default_config = {
         'num_layers': 2,
         'hidden_dim': 256,
         'dropout': 0.25,
-        'norm': 'batch',
+        'norm': 'layer',
         'max_batch_size': 1000,
         'embedding_type': 'principal_axes',
         'max_lr': 1e-3,
