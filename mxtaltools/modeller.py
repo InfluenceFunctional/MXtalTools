@@ -1475,7 +1475,7 @@ class Modeller:
                 crystals_to_embed.pose_aunit()
                 embeddings.append(
                     self._embed_crystal(crystals_to_embed, crystals_to_embed.pos, cell_params).detach())
-        embeddings = torch.cat(embeddings, dim=0).to(self.device)
+        embeddings = torch.cat(embeddings, dim=0).cpu()
         for ind in range(len(miner.dataset)):
             miner.dataset[ind].y = embeddings[None, ind]
         # print("integrating otf dataset into dataloader")
