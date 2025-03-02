@@ -1,4 +1,5 @@
 import os
+from random import shuffle
 
 import torch
 from torch import Tensor
@@ -14,12 +15,13 @@ def collate_data_list(data_list):
 
 
 def quick_combine_dataloaders(dataset, data_loader, batch_size, max_size):
+    shuffle(dataset)  # randomize order
     dataset.extend(data_loader.dataset)
-    dataset = dataset[:max_size]  # truncate at expense of old data
-
-    if 'batch' in str(type(dataset)):  # todo switch this to an explicit check for a Data Batch
-        # if it's batched, revert to data list - this is slow, so if possible don't store datasets as batches but as data lists
-        dataset = dataset.to_data_list()
+    dataset = dataset[:max_size]
+    #
+    # if 'batch' in str(type(dataset)):  # todo switch this to an explicit check for a Data Batch
+    #     # if it's batched, revert to data list - this is slow, so if possible don't store datasets as batches but as data lists
+    #     dataset = dataset.to_data_list()
 
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True,
                             drop_last=False)

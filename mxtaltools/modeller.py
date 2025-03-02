@@ -1474,8 +1474,8 @@ class Modeller:
                 cell_params = crystals_to_embed.standardized_cell_parameters()
                 crystals_to_embed.pose_aunit()
                 embeddings.append(
-                    self._embed_crystal(crystals_to_embed, crystals_to_embed.pos, cell_params).cpu().detach())
-        embeddings = torch.cat(embeddings, dim=0)
+                    self._embed_crystal(crystals_to_embed, crystals_to_embed.pos, cell_params).detach())
+        embeddings = torch.cat(embeddings, dim=0).to(self.device)
         for ind in range(len(miner.dataset)):
             miner.dataset[ind].y = embeddings[None, ind]
         # print("integrating otf dataset into dataloader")
@@ -1905,7 +1905,7 @@ class Modeller:
                  iteration_override=None):
 
         if not hasattr(self, 'generator_prior'):  # first GAN epoch
-            self.init_gan_constants()
+            self.init_gan_constants()  # todo deprecate this? not useful
 
         if self.config.dataset.otf_build_size > 0 and self.epoch_type == 'train' and os.cpu_count() > 1:
             self.train_loader_to_replace = self.otf_crystal_dataset_generation(data_loader)
@@ -2168,7 +2168,7 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
             cell_params = crystal_batch.standardized_cell_parameters()
             crystal_batch.y = self._embed_crystal(crystal_batch, crystal_batch.pos, cell_params)
 
-        prediction = self.models_dict['proxy_discriminator'](x=crystal_batch.y)[:, 0]  # cut trailing 3 dimensions for P1 modelling
+        prediction = self.models_dict['proxy_discriminator'](x=crystal_batch.y)[:, 0]
 
         inter_energy = crystal_batch.scaled_lj_pot + crystal_batch.es_pot * 10
         discriminator_losses = F.smooth_l1_loss(prediction.flatten(),
@@ -2696,7 +2696,7 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
     #
     #     return opt_cell_params, opt_aunits, opt_packing_coeff, opt_vdw_loss, opt_vdw_pot
 
-    def _embed_crystal(self, mol_batch, aunit_coordinates, scaled_params, norm_by_size=True):
+    def _embed_crystal(self, mol_batch, aunit_coordinates, scaled_params):
         mol_batch.pos = aunit_coordinates
         embedding = self.get_mol_embedding_for_proxy(mol_batch.clone())
         embedding = torch.cat([embedding, scaled_params], dim=1)
