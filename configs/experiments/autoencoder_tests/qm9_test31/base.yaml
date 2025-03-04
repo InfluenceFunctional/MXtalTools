@@ -1,4 +1,4 @@
-machine: "cluster"  # or "cluster"
+tmachine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 base_config_path: /experiments/base/autoencoder.yaml
 dataset_name: qm9_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'

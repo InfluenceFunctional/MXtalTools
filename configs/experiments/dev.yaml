@@ -10,7 +10,7 @@ save_checkpoints: True
 anomaly_detection: False
 
 dataset:
-  max_dataset_length: 100000  # non-functional for on-disk datasets.
+  max_dataset_length: 50000  # non-functional for on-disk datasets.
   test_fraction: 0.2
 
   smiles_source: 'D:\crystal_datasets\zinc22'#'/home/mkilgour/crystal_datasets/zinc22/'  # /scratch/mk8347/zinc22
@@ -24,7 +24,7 @@ seeds:
   dataset: 1
 
 # batching & convergence
-num_samples: 10000
+num_samples: 100000
 max_epoch_steps: 100
 early_epochs_step_override: 5
 num_early_epochs: 0

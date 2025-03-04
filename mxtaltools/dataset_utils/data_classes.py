@@ -26,7 +26,7 @@ from mxtaltools.crystal_building.utils import get_aunit_positions, new_aunit2uni
 from mxtaltools.dataset_utils.synthesis.mol_building import smiles2conformer
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.modules.components import construct_radial_graph
-from mxtaltools.models.utils import enforce_1d_bound
+from mxtaltools.models.utils import enforce_1d_bound, get_mol_embedding_for_proxy
 
 
 ###############################################################################
@@ -899,6 +899,20 @@ class MolCrystalData(MolData):
         self.lj_pot, self.scaled_lj_pot = cluster_batch.compute_LJ_energy()
         self.es_pot = cluster_batch.compute_ES_energy()
         return self.lj_pot, self.es_pot, self.scaled_lj_pot
+
+    def do_embedding(self,
+              embedding_type: str,
+              encoder: Optional = None):
+        if self.is_batch:
+            embedding = get_mol_embedding_for_proxy(self.clone(),
+                                                    embedding_type,
+                                                    encoder
+                                                    )
+            scaled_params = self.standardized_cell_parameters()
+            return torch.cat([embedding, scaled_params], dim=1)
+
+        else:
+            assert False, "Crystal embedding not implemented for single samples"
 
     @property
     def x(self) -> Any:

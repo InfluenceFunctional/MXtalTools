@@ -27,7 +27,7 @@ logger:
   experiment_tag: zinc_test4
   log_figures: true
   mini_csp_frequency: 5
-  run_name: zinc_test4_0
+  run_name: zinc_test4_0_1_2
   sample_reporting_frequency: 25
   stats_reporting_frequency: 25
 machine: cluster
@@ -57,7 +57,7 @@ positional_noise:
   regressor: 0
 proxy_discriminator:
   cutoff: 6
-  embedding_type: autoencoder
+  embedding_type: principal_axes
   model:
     dropout: 0.25
     hidden_dim: 512

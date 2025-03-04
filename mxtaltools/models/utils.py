@@ -1,13 +1,18 @@
-from typing import Union
+from argparse import Namespace
+from typing import Union, Optional
 
 import numpy as np
 import torch
 from torch.nn import functional as F
 from torch_scatter import scatter
 
-from mxtaltools.common.geometry_utils import cell_vol_torch, components2angle, enforce_crystal_system
+from mxtaltools.common.config_processing import load_yaml, dict2namespace
+from mxtaltools.common.geometry_utils import cell_vol_torch, components2angle, enforce_crystal_system, \
+    batch_molecule_principal_axes_torch
 from mxtaltools.common.utils import softmax_np
 from mxtaltools.crystal_building.utils import descale_asymmetric_unit, rescale_asymmetric_unit
+from mxtaltools.dataset_utils.utils import collate_data_list
+from mxtaltools.models.task_models.autoencoder_models import Mo3ENet
 
 
 def softmax_and_score(raw_classwise_output, temperature=1, old_method=False, correct_discontinuity=True) -> Union[
@@ -155,7 +160,8 @@ def clean_generator_output(samples=None,
     '''destandardize & decode angles'''
     if destandardize:
         real_lattice_lengths = lattice_lengths * lattice_stds[:3] + lattice_means[:3]
-        real_lattice_angles = lattice_angles * lattice_stds[3:6] + lattice_means[3:6]  # not bothering to encode as an angle
+        real_lattice_angles = lattice_angles * lattice_stds[3:6] + lattice_means[
+                                                                   3:6]  # not bothering to encode as an angle
         real_mol_positions = mol_positions * lattice_stds[6:9] + lattice_means[6:9]
         if mol_orientations.shape[-1] == 3:
             real_mol_orientations = mol_orientations * lattice_stds[9:] + lattice_means[9:]
@@ -379,4 +385,108 @@ def compute_prior_loss(norm_factors: torch.Tensor,
     return prior_loss, scaled_deviation
 
 
+def get_mol_embedding_for_proxy(crystal_batch,
+                                embedding_type,
+                                encoder: Optional = None):
+    crystal_batch.pose_aunit()  # get correct orientation
+    crystal_batch.recenter_molecules()
+    ipm_means = torch.tensor([35, 91, 105], dtype=torch.float32, device=crystal_batch.device)
+    mol_volume_mean = 70
+    if embedding_type == 'autoencoder':
+        v_embedding = encoder.encode(crystal_batch.clone())
+        s_embedding = encoder.scalarizer(v_embedding)
+    elif embedding_type == 'principal_axes':
+        v_embedding_i, s_embedding_i, _ = batch_molecule_principal_axes_torch(
+            crystal_batch.pos,
+            crystal_batch.batch,
+            crystal_batch.num_graphs,
+            crystal_batch.num_atoms,
+        )
 
+        s_embedding = s_embedding_i / ipm_means[None, :]
+        v_embedding = v_embedding_i.permute(0, 2, 1)
+
+    elif embedding_type == 'principal_moments':
+        Ip, s_embedding_i, _ = batch_molecule_principal_axes_torch(
+            crystal_batch.pos,
+            crystal_batch.batch,
+            crystal_batch.num_graphs,
+            crystal_batch.num_atoms,
+        )
+        v_embedding = torch.zeros_like(Ip)
+
+        s_embedding = s_embedding_i / ipm_means[None, :]
+
+    elif embedding_type == 'mol_volume':
+        s_embedding = crystal_batch.mol_volume[:, None].repeat(1, 3) / mol_volume_mean
+        v_embedding = torch.zeros((crystal_batch.num_graphs, 3, 3), dtype=torch.float32, device=crystal_batch.device)
+    elif embedding_type is None:
+
+        s_embedding = torch.zeros_like(crystal_batch.mol_volume[:, None].repeat(1, 3))
+        v_embedding = torch.zeros((crystal_batch.num_graphs, 3, 3), dtype=torch.float32, device=crystal_batch.device)
+    else:
+        assert False, f"{embedding_type} is not an implemented proxy discriminator embedding"
+
+    return torch.cat([s_embedding, v_embedding.flatten(-2)], dim=-1)
+
+
+def embed_crystal_list(
+        batch_size: int,
+        crystal_list: list,
+        embedding_type: str,
+        encoder_checkpoint_path: Optional = None,
+        device: Optional[str] = 'cpu',
+) -> list:
+    if encoder_checkpoint_path is not None:
+        encoder = load_encoder(encoder_checkpoint_path).to(device)
+    embeddings = []
+    num_chunks = len(crystal_list) // batch_size + int(len(crystal_list) % batch_size != 0)
+    with torch.no_grad():
+        for ind in range(num_chunks):  # do it this way so to avoid shuffling
+            crystal_batch = collate_data_list(crystal_list[ind * batch_size:(ind + 1) * batch_size]
+                                              ).to(device)
+            embedding = crystal_batch.do_embedding(embedding_type,
+                                                   encoder
+                                                   ).cpu().detach()
+            if ind == 0:
+                embeddings = torch.zeros(
+                    (len(crystal_list), embedding.shape[-1]),
+                    dtype=torch.float32,
+                    device=device
+                )
+            embeddings[ind * batch_size:(ind + 1) * batch_size] = embedding
+
+    for ind in range(len(crystal_list)):
+        crystal_list[ind].embedding = embeddings[None, ind]
+
+    return crystal_list
+
+
+def load_encoder(checkpoint_path):
+    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
+
+    allowed_types = np.array([1, 6, 7, 8, 9])
+    type_translation_index = np.zeros(allowed_types.max() + 1) - 1
+    for ind, atype in enumerate(allowed_types):
+        type_translation_index[atype] = ind
+    autoencoder_type_index = torch.tensor(type_translation_index, dtype=torch.long, device='cpu')
+
+    model = Mo3ENet(
+        0,
+        model_config.model,
+        5,
+        autoencoder_type_index,
+        1, # will get overwritten
+        protons_in_input=True
+    )
+
+    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    if list(checkpoint['model_state_dict'])[0][
+       0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
+        for i in list(checkpoint['model_state_dict']):
+            checkpoint['model_state_dict'][i[7:]] = checkpoint['model_state_dict'].pop(i)
+
+    model.load_state_dict(checkpoint['model_state_dict'])
+
+    return model

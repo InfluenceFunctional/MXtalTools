@@ -25,7 +25,8 @@ to-test:
 
 layers = [40]
 filters = [512]
-batch_sizes = [10000]
+batch_sizes = [50000]
+norms = ['layer', None]
 
 default_config = {
         'num_layers': 2,
@@ -47,12 +48,14 @@ for l in layers:
     for f in filters:
         for b in batch_sizes:
             for embed in embedding_types:
-                config = copy(default_config)
-                config['embedding_type'] = embed
-                config['num_layers'] = l
-                config['hidden_dim'] = f
-                config['max_batch_size'] = b
-                configs.append(config)
+                for norm in norms:
+                    config = copy(default_config)
+                    config['embedding_type'] = embed
+                    config['num_layers'] = l
+                    config['hidden_dim'] = f
+                    config['max_batch_size'] = b
+                    config['norm'] = norm
+                    configs.append(config)
 
 
 ind = 0

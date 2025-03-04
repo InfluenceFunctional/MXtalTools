@@ -5,8 +5,8 @@ dataset:
   buffer_size: 100000
   filter_protons: false
   max_dataset_length: 500000
-  num_processes: 4
-  otf_build_size: 10000
+  num_processes: 1
+  otf_build_size: 2000
   regression_target: null
   single_identifier: null
   smiles_source: /scratch/mk8347/zinc22
@@ -31,7 +31,7 @@ logger:
   sample_reporting_frequency: 25
   stats_reporting_frequency: 25
 machine: cluster
-max_batch_size: 10000
+max_batch_size: 50000
 max_epochs: 10000
 min_batch_size: 50
 minimum_epochs: 100000
@@ -57,11 +57,11 @@ positional_noise:
   regressor: 0
 proxy_discriminator:
   cutoff: 6
-  embedding_type: principal_axes
+  embedding_type: autoencoder
   model:
     dropout: 0.25
     hidden_dim: 512
-    norm: layer
+    norm: null
     num_layers: 40
     vector_norm: null
   optimizer:

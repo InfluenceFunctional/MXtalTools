@@ -1,3 +1,4 @@
+from itertools import compress
 from typing import Optional
 
 import torch
@@ -57,7 +58,8 @@ def standalone_add_scrambled_molecule_samples(aunit_poses, dist_dict, handedness
     return aunit_poses, loss, loss_record, packing_coeff, packing_record, s_ind, sample, sample_to_compare, samples_record, supercell_batch, vdw_record
 
 
-def standalone_score_crystal_batch(mol_batch, score_func, supercell_data, vdw_radii_tensor, cutoff: float = 6, discriminator: Optional = None):
+def standalone_score_crystal_batch(mol_batch, score_func, supercell_data, vdw_radii_tensor, cutoff: float = 6,
+                                   discriminator: Optional = None):
     if score_func == 'discriminator':
         output, extra_outputs = discriminator(
             supercell_data.clone(), return_dists=True, return_latent=False)
@@ -145,7 +147,7 @@ def standalone_gradient_descent_optimization(
                 if s_ind % 100 == 0:
                     pbar.update(100)
 
-                if s_ind > 10:
+                if s_ind > 150:
                     flag1 = torch.quantile(
                         loss_record[s_ind - 10:s_ind, :].std(0), quantile_to_optim
                     ) < convergence_eps  # loss is converged
@@ -155,18 +157,24 @@ def standalone_gradient_descent_optimization(
 
     return samples_record
 
-    # import plotly.graph_objects as go
-    # fig = go.Figure()
-    # lj_pots = torch.stack(
-    #     [torch.tensor([sample.scaled_lj_pot for sample in sample_list]) for sample_list in samples_record])
-    # es_pots = torch.stack([torch.tensor([sample.es_pot for sample in sample_list]) for sample_list in samples_record])
-    # for ind in range(lj_pot.shape[-1]):
-    #     fig.add_scatter(y=lj_pots[..., ind], marker_color='blue', name='lj', legendgroup='lg',
-    #                     showlegend=True if ind == 0 else False)
-    #     fig.add_scatter(y=es_pots[..., ind], marker_color='red', name='es', legendgroup='es',
-    #                     showlegend=True if ind == 0 else False)
-    #
-    # fig.show()
+
+"""
+import plotly.graph_objects as go
+fig = go.Figure()
+lj_pots = torch.stack(
+    [torch.tensor([sample.scaled_lj_pot for sample in sample_list]) for sample_list in samples_record])
+es_pots = torch.stack([torch.tensor([sample.es_pot for sample in sample_list]) for sample_list in samples_record])
+for ind in range(lj_pot.shape[-1]):
+    fig.add_scatter(y=lj_pots[..., ind], marker_color='blue', name='lj', legendgroup='lg',
+                    showlegend=True if ind == 0 else False)
+    fig.add_scatter(y=es_pots[..., ind] * 10, marker_color='red', name='es', legendgroup='es',
+                    showlegend=True if ind == 0 else False)
+    fig.add_scatter(y=es_pots[..., ind] * 10 + lj_pots[..., ind], marker_color='green', name='combo', legendgroup='combo',
+                    showlegend=True if ind == 0 else False)
+
+
+fig.show()
+"""
 
 
 def standalone_gd_opt_step(hit_max_lr, lr_record, max_lr, mol_batch, optimizer, s_ind, sample, scheduler1,
@@ -195,7 +203,7 @@ def standalone_opt_random_crystals(
         init_state,
         opt_eps,
         post_scramble_each: int = None,
-        ):
+):
     # recenter and align to xyz axes
     crystal_batch.orient_molecule(mode='standardized')
 
@@ -208,12 +216,47 @@ def standalone_opt_random_crystals(
         lr=1e-6,
         optimizer_func=torch.optim.Rprop,
     )
+
     # do resampling
     if post_scramble_each is not None:
         samples_record = scramble_resample(post_scramble_each, samples_record)
 
-    # return flattened list
-    return [sample for samples_list in samples_record for sample in samples_list]
+    # subsample semi-independent crystal samples
+    return subsample_crystal_opt_traj(samples_record)
+
+
+def subsample_crystal_opt_traj(samples_record):
+    lj_pots = torch.stack(
+        [torch.tensor([sample.scaled_lj_pot for sample in sample_list]) for sample_list in samples_record])
+    es_pots = torch.stack([torch.tensor([sample.es_pot for sample in sample_list]) for sample_list in samples_record])
+    cell_params = torch.stack(
+        [collate_data_list(samples_list).standardized_cell_parameters() for samples_list in samples_record])
+    en_traj = es_pots * 10 + lj_pots
+    en_diffs = torch.diff(en_traj, dim=0, prepend=torch.zeros_like(en_traj[None, 0])).abs() / en_traj
+    cell_diffs = torch.diff(cell_params, dim=0, prepend=torch.zeros_like(cell_params[None, 0])).norm(
+        dim=2) / cell_params.norm(dim=2)
+    keep_bools = torch.zeros(es_pots.shape, dtype=bool)
+    for ind in range(0, len(es_pots), 10):  # always keep every 10 steps
+        keep_bools[ind] = True
+    # keep also samples with sufficiently large stepwise deviations
+    keep_bools[en_diffs >= 0.01] = True
+    keep_bools[cell_diffs >= 0.01] = True
+    flat_keep_bools = keep_bools.flatten()
+    # return flattened & filtered list
+    flat_list = [sample for samples_list in samples_record for sample in samples_list]
+    flat_list = list(compress(flat_list, flat_keep_bools))
+    return flat_list
+
+
+""" # test - confirm correct indexing
+ljs = torch.tensor([elem.scaled_lj_pot for elem in ll])
+ljs2 = torch.stack(
+        [torch.tensor([sample.scaled_lj_pot for sample in sample_list]) for sample_list in samples_record])
+fig = go.Figure()
+fig.add_histogram(x=ljs, nbinsx=100)
+fig.add_histogram(x=ljs2[keep_bools], nbinsx=100)
+fig.show()
+"""
 
 
 def scramble_resample(post_scramble_each, samples_record):

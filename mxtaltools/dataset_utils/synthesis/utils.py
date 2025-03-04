@@ -15,6 +15,7 @@ from mxtaltools.crystal_search.standalone_crystal_opt import standalone_opt_rand
 from mxtaltools.dataset_utils.data_classes import MolData, MolCrystalData
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.task_models.generator_models import CSDPrior
+from mxtaltools.models.utils import embed_crystal_list
 
 RDLogger.DisableLog('rdApp.*')
 
@@ -79,6 +80,10 @@ def otf_synthesize_crystals(dataset_length: int,
                             max_num_heavy_atoms: int,
                             pare_to_size: int,
                             max_radius: float,
+                            space_group: int,
+                            do_embedding: bool = False,
+                            embedding_type: Optional[str] = None,
+                            encoder_checkpoint_path=None,
                             post_scramble_each: Optional[int] = None,
                             synchronize: bool = True,
                             num_chunks: Optional[int] = None):
@@ -89,19 +94,33 @@ def otf_synthesize_crystals(dataset_length: int,
         num_chunks = num_processes
     chunks = generate_smiles_dataset(dataset_length, num_chunks, smiles_path)  # get batch of smiles and chunkify
     os.chdir(chunks_path)
-    #  # for synchronous debugging
-    # min_ind = 0
-    # ind = 0
-    # chunk_ind = min_ind + ind
-    # chunk_path = os.path.join(chunks_path, f'chunk_{chunk_ind}.pkl')
-    # kwargs = {'max_num_atoms': max_num_atoms,'max_num_heavy_atoms': max_num_heavy_atoms,
-    #     'pare_to_size': pare_to_size,
-    #     'max_radius': max_radius,
-    #     'protonate': True,
-    #     'allow_methyl_rotations': False,
-    #     'compute_partial_charges': True,}
-    # process_smiles_to_crystal_opt(chunks[ind], chunk_path, allowed_atom_types, 1, post_scramble_each,
-    #                               **kwargs)
+
+    conf_kwargs = {
+        'max_num_atoms': max_num_atoms,
+        'max_num_heavy_atoms': max_num_heavy_atoms,
+        'pare_to_size': pare_to_size,
+        'max_radius': max_radius,
+        'protonate': True,
+        'allow_methyl_rotations': True,
+        'compute_partial_charges': True,
+    }
+    # for synchronous debugging
+    # debug = True
+    # if debug:
+    #     min_ind = 0
+    #     ind = 0
+    #     chunk_ind = min_ind + ind
+    #     chunk_path = os.path.join(chunks_path, f'chunk_{chunk_ind}.pkl')
+    #
+    #     process_smiles_to_crystal_opt(chunks[0],
+    #                                   chunk_path,
+    #                                   allowed_atom_types,
+    #                                   space_group,
+    #                                   post_scramble_each,
+    #                                   do_embedding,
+    #                                   embedding_type,
+    #                                   encoder_checkpoint_path,
+    #                                   **conf_kwargs)
 
     # generate samples
     outputs = []
@@ -112,16 +131,15 @@ def otf_synthesize_crystals(dataset_length: int,
         chunk_path = os.path.join(chunks_path, f'chunk_{chunk_ind}.pkl')
         outputs.append(
             mp_pool.apply_async(process_smiles_to_crystal_opt,
-                                args=(chunk, chunk_path, allowed_atom_types, 1, post_scramble_each),
-                                kwds={
-                                    'max_num_atoms': max_num_atoms,
-                                    'max_num_heavy_atoms': max_num_heavy_atoms,
-                                    'pare_to_size': pare_to_size,
-                                    'max_radius': max_radius,
-                                    'protonate': True,
-                                    'allow_methyl_rotations': True,
-                                    'compute_partial_charges': True,
-                                }))
+                                args=(chunk,
+                                      chunk_path,
+                                      allowed_atom_types,
+                                      space_group,
+                                      post_scramble_each,
+                                      do_embedding,
+                                      embedding_type,
+                                      encoder_checkpoint_path),
+                                kwds=conf_kwargs))
 
     mp_pool.close()
     if synchronize:
@@ -217,12 +235,14 @@ def process_smiles_list(lines: list,
             return valid_samples
 
 
-
 def process_smiles_to_crystal_opt(lines: list,
                                   file_path,
                                   allowed_atom_types,
                                   space_group,
                                   post_scramble_each: int = None,
+                                  do_embedding: bool = False,
+                                  embedding_type: Optional[str] = None,
+                                  encoder_checkpoint_path=None,
                                   **conf_kwargs):
     """starting chunk pool"""
     mol_samples = process_smiles_list(lines,
@@ -271,6 +291,15 @@ def process_smiles_to_crystal_opt(lines: list,
         opt_eps=1e-1,
         post_scramble_each=post_scramble_each
     )
+
+    # do embedding
+    if do_embedding:
+        samples = embed_crystal_list(
+            mol_batch.num_graphs,
+            samples,
+            embedding_type,
+            encoder_checkpoint_path
+        )
 
     print(f"finished processing smiles list with {mol_batch.num_graphs} "
           f"molecules and optimizing crystals with {len(samples)} samples")
