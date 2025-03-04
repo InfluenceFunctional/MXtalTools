@@ -25,13 +25,13 @@ to-test:
 
 layers = [40]
 filters = [512]
-batch_sizes = [50000]
+batch_sizes = [500]
 norms = ['layer', None]
 
 default_config = {
         'num_layers': 2,
         'hidden_dim': 256,
-        'dropout': 0.25,
+        'dropout': 0,
         'norm': 'layer',
         'max_batch_size': 1000,
         'embedding_type': 'principal_axes',
