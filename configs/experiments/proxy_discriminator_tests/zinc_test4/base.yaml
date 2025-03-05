@@ -18,9 +18,10 @@ dataset:
   regression_target: null
   single_identifier: null
   buffer_size: 100000
-  otf_build_size: 2000
+  otf_build_size: 1000
   smiles_source: /scratch/mk8347/zinc22
-  num_processes: 4
+  otf_processes: 4
+  loader_processes: 4
 
 # batching & convergence
 early_epochs_step_override: 5

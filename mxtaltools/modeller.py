@@ -298,7 +298,9 @@ class Modeller:
                                                     machine=self.config.machine,
                                                     batch_size=loader_batch_size,
                                                     test_fraction=test_fraction,
-                                                    shuffle=shuffle)
+                                                    shuffle=shuffle,
+                                                    num_workers=self.config.dataset.loader_processes)
+
         self.config.current_batch_size = loader_batch_size
         print("Initial training batch size set to {}".format(self.config.current_batch_size))
         del dataset_builder
@@ -1368,7 +1370,7 @@ class Modeller:
             [os.remove(chunks_path.joinpath(elem)) for elem in os.listdir(chunks_path)]
             self.integrated_dataset = False
 
-        num_processes = self.config.dataset.num_processes
+        num_processes = self.config.dataset.otf_processes
         if len(os.listdir(chunks_path)) == 0:  # only make a new batch if the previous batch has been integrated
             if self.logger.epoch == 0 or self.integrated_dataset == True:
                 self.mp_pool = mp.Pool(num_processes)
@@ -1434,7 +1436,7 @@ class Modeller:
             [os.remove(chunks_path.joinpath(elem)) for elem in os.listdir(chunks_path)]
             self.integrated_dataset = False
 
-        num_processes = self.config.dataset.num_processes
+        num_processes = self.config.dataset.otf_processes
         if len(os.listdir(chunks_path)) == 0:  # only make a new batch if the previous batch has been integrated
             if self.logger.epoch == 0 or self.integrated_dataset == True:
                 print('sending crystal opt jobs to mp pool')

@@ -43,6 +43,8 @@ def sp_calculation(pos: np.ndarray,
                    cell_lengths: np.ndarray,
                    cell_angles: np.ndarray,
                    device: str):
+    if np.any(cell_angles < 10):  # automatically detect and convert to degrees
+        cell_angles *= 90/(np.pi/2)
     cell_params = np.concatenate([cell_lengths, cell_angles])
     atoms = Atoms(
         numbers=z,

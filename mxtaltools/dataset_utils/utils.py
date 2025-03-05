@@ -68,7 +68,9 @@ def basic_stats(values: torch.tensor) -> dict[str, Tensor]:
             }
 
 
-def get_dataloaders(dataset_builder, machine, batch_size, test_fraction=0.2, shuffle=True):
+def get_dataloaders(dataset_builder, machine, batch_size, test_fraction=0.2,
+                    shuffle=True,
+                    num_workers: int = 0):
     batch_size = batch_size
     train_size = int((1 - test_fraction) * len(dataset_builder))  # split data into training and test sets
     test_size = len(dataset_builder) - train_size
@@ -83,10 +85,10 @@ def get_dataloaders(dataset_builder, machine, batch_size, test_fraction=0.2, shu
 
     if machine == 'cluster':  # faster dataloading on cluster with more workers
         if len(train_dataset) > 0:
-            tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=min(os.cpu_count(), 8), pin_memory=True, drop_last=False)
+            tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True, drop_last=False)
         else:
             tr = None
-        te = DataLoader(test_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=min(os.cpu_count(), 8), pin_memory=True, drop_last=False)
+        te = DataLoader(test_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True, drop_last=False)
     else:
         if len(train_dataset) > 0:
             tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=0, pin_memory=True, drop_last=False)
