@@ -4,7 +4,7 @@ checkpointing_loss_type: test
 dataset:
   buffer_size: 100000
   filter_protons: false
-  loader_processes: 2
+  loader_processes: 4
   max_dataset_length: 1000000
   otf_build_size: 1000
   otf_processes: 4

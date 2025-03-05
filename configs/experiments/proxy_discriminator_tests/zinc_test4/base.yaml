@@ -21,7 +21,7 @@ dataset:
   otf_build_size: 1000
   smiles_source: /scratch/mk8347/zinc22
   otf_processes: 4
-  loader_processes: 2
+  loader_processes: 4
 
 # batching & convergence
 early_epochs_step_override: 5
