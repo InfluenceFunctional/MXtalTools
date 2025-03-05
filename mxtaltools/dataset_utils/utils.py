@@ -20,7 +20,7 @@ def quick_combine_dataloaders(dataset, data_loader, batch_size, max_size):
     dataset = dataset[:max_size]  # truncate from the end of the old dataset
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
-                            shuffle=data_loader.shuffle,
+                            shuffle=True,
                             num_workers=data_loader.num_workers,
                             pin_memory=data_loader.pin_memory,
                             drop_last=data_loader.drop_last)
@@ -83,7 +83,7 @@ def get_dataloaders(dataset_builder, machine, batch_size, test_fraction=0.2,
     for i in range(test_size):
         test_dataset.append(dataset_builder[i])
 
-    if machine == 'cluster':  # faster dataloading on cluster with more workers
+    if True:#machine == 'cluster':  # faster dataloading on cluster with more workers
         if len(train_dataset) > 0:
             tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True, drop_last=False)
         else:
