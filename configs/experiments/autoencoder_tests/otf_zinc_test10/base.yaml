@@ -16,7 +16,8 @@ dataset:
   test_fraction: 0.5
   otf_build_size: 10000
   smiles_source: /scratch/mk8347/zinc22
-  num_processes: 4
+  otf_processes: 4
+  loader_processes: 0
 
 seeds:
   dataset: 1
