@@ -11,7 +11,7 @@ import torch.nn.functional as F
 
 import mxtaltools.crystal_search.standalone_crystal_opt
 from mxtaltools.analysis.crystal_rdf import new_crystal_rdf
-from mxtaltools.analysis.vdw_analysis import vdw_analysis, scale_molwise_vdw_pot
+from mxtaltools.analysis.vdw_analysis import vdw_analysis, scale_molwise_lj_pot
 from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.crystal_building.builder import CrystalBuilder
@@ -367,7 +367,7 @@ class Sampler:
         )
 
         # rescale after summing and norming
-        rescaled_vdw_loss = scale_molwise_vdw_pot(optimization_record['vdw_potential'], mol_batch.num_atoms)
+        rescaled_vdw_loss = scale_molwise_lj_pot(optimization_record['vdw_potential'], mol_batch.num_atoms)
 
         return (
             optimization_record['vdw_potential'][inds_to_sample],

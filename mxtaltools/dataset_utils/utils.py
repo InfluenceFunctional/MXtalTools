@@ -15,15 +15,12 @@ def collate_data_list(data_list):
 
 
 def quick_combine_dataloaders(dataset, data_loader, batch_size, max_size):
-    shuffle(dataset)  # randomize order
-    dataset.extend(data_loader.dataset)
-    dataset = dataset[:max_size]
-    #
-    # if 'batch' in str(type(dataset)):  # todo switch this to an explicit check for a Data Batch
-    #     # if it's batched, revert to data list - this is slow, so if possible don't store datasets as batches but as data lists
-    #     dataset = dataset.to_data_list()
-
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True,
+    shuffle(data_loader.dataset)  # randomize order of old dataset
+    dataset.extend(data_loader.dataset) # append old dataset to new one
+    dataset = dataset[:max_size]  # truncate from the end of the old dataset
+    dataloader = DataLoader(dataset, batch_size=batch_size,
+                            shuffle=True, num_workers=0,
+                            pin_memory=True,
                             drop_last=False)
 
     return dataloader

@@ -174,20 +174,24 @@ def vdw_analysis(vdw_radii: torch.Tensor,
     molwise_normed_overlap = scatter(normed_overlap, batch, reduce='sum', dim_size=num_graphs)
     molwise_lj_pot = scatter(lj_pot, batch, reduce='sum', dim_size=num_graphs)
 
-    molwise_loss = scale_molwise_vdw_pot(molwise_lj_pot, num_atoms)
+    molwise_loss = scale_molwise_lj_pot(molwise_lj_pot, num_atoms)
 
     return molwise_overlap, molwise_normed_overlap, molwise_lj_pot, molwise_loss, lj_pot
 
 
-def scale_molwise_vdw_pot(vdw_potential, num_atoms):
-    if vdw_potential.ndim > 1:
-        rescaled_vdw_loss = vdw_potential / num_atoms[None, :]
-    else:
-        rescaled_vdw_loss = vdw_potential / num_atoms
+def scale_molwise_lj_pot(vdw_potential: torch.Tensor,
+                         num_atoms: torch.LongTensor,
+                         clip_max: float=50):
 
+    rescaled_vdw_loss = vdw_potential.clone()
     rescaled_vdw_loss[rescaled_vdw_loss > 0] = torch.log(rescaled_vdw_loss[rescaled_vdw_loss > 0])
 
-    return rescaled_vdw_loss
+    if vdw_potential.ndim > 1:
+        rescaled_vdw_loss = rescaled_vdw_loss / num_atoms[None, :]
+    else:
+        rescaled_vdw_loss = rescaled_vdw_loss / num_atoms
+
+    return rescaled_vdw_loss.clip(max=clip_max)
 
 '''
 import torch

@@ -1,4 +1,5 @@
 import gc
+import glob
 import multiprocessing as mp
 import os
 from argparse import Namespace
@@ -772,6 +773,11 @@ class Modeller:
                                                                                            test_loader, train_loader)
                         elif "numerical error" in str(e).lower():
                             self.handle_nan(e, epoch)
+                        elif isinstance(e, MemoryError) or "out of memory" in str(e).lower():
+                            print("Hit OOM, slashing train dataset size")
+                            gc.collect()
+                            self.config.max_dataset_length *= 0.9
+                            train_loader.dataset = train_loader.dataset[:self.config.max_dataset_length]
                         else:
                             raise e  # will simply raise error if other or if training on CPU
 
@@ -1464,36 +1470,45 @@ class Modeller:
         self.times['otf_refresh_end'] = time()
         return data_loader
 
-    def merge_otf_crystals_dataset(self, chunks_path, data_loader, temp_dataset_path):
+    def merge_otf_crystals_dataset(self, chunks_path,
+                                   data_loader,
+                                   temp_dataset_path,
+                                   analyze_new_dataset: bool = False):
         self.times['otf_dataset_join_start'] = time()
         self.mp_pool.join()  # join only when the batch is already finished
         self.times['otf_dataset_join_end'] = time()
         # generate temporary training dataset
-        miner = self.process_otf_crystals_dataset(chunks_path)
+        self.times['otf_dataset_collate_start'] = time()
+        otf_dataset = self.process_otf_crystals_dataset(chunks_path)
+        self.times['otf_dataset_collate_end'] = time()
         # print("integrating otf dataset into dataloader")
-        data_loader = quick_combine_dataloaders(miner.dataset,
+        self.times['otf_dataset_combine_start'] = time()
+        data_loader = quick_combine_dataloaders(otf_dataset,
                                                 data_loader,
                                                 data_loader.batch_size,
                                                 self.config.dataset.max_dataset_length)
         os.remove(temp_dataset_path)  # delete loaded dataset
+        self.times['otf_dataset_combine_enc'] = time()
+
         self.integrated_dataset = True
-        num_atoms = int(torch.sum(torch.Tensor([data.num_atoms for data in data_loader.dataset])))
-        stats = {
-            'dataset_length': len(data_loader.dataset),
-            'mean_molecule_size': num_atoms / len(data_loader.dataset),
-            'mean_hydrogen_fraction': np.sum(
-                np.concatenate([data.x == 1 for data in data_loader.dataset])) / num_atoms,
-            'mean_carbon_fraction': np.sum(
-                np.concatenate([data.x == 6 for data in data_loader.dataset])) / num_atoms,
-            'mean_nitrogen_fraction': np.sum(
-                np.concatenate([data.x == 7 for data in data_loader.dataset])) / num_atoms,
-            'mean_oxygen_fraction': np.sum(
-                np.concatenate([data.x == 8 for data in data_loader.dataset])) / num_atoms,
-        }
-        self.logger.update_stats_dict(self.epoch_type,
-                                      stats.keys(),
-                                      stats.values(),
-                                      mode='append')
+        if analyze_new_dataset:
+            num_atoms = int(torch.sum(torch.Tensor([data.num_atoms for data in data_loader.dataset])))
+            stats = {
+                'dataset_length': len(data_loader.dataset),
+                'mean_molecule_size': num_atoms / len(data_loader.dataset),
+                'mean_hydrogen_fraction': np.sum(
+                    np.concatenate([data.x == 1 for data in data_loader.dataset])) / num_atoms,
+                'mean_carbon_fraction': np.sum(
+                    np.concatenate([data.x == 6 for data in data_loader.dataset])) / num_atoms,
+                'mean_nitrogen_fraction': np.sum(
+                    np.concatenate([data.x == 7 for data in data_loader.dataset])) / num_atoms,
+                'mean_oxygen_fraction': np.sum(
+                    np.concatenate([data.x == 8 for data in data_loader.dataset])) / num_atoms,
+            }
+            self.logger.update_stats_dict(self.epoch_type,
+                                          stats.keys(),
+                                          stats.values(),
+                                          mode='append')
         return data_loader
 
     def process_otf_molecules_dataset(self, chunks_path):
@@ -1522,32 +1537,43 @@ class Modeller:
         return miner
 
     def process_otf_crystals_dataset(self, chunks_path):
-        miner = DataManager(device='cpu',
-                            config=self.config.dataset,
-                            datasets_path=self.working_directory,
-                            chunks_path=chunks_path,
-                            dataset_type='crystal',
-                            do_crystal_indexing=False)
-        miner.process_new_dataset(new_dataset_name='otf_dataset',
-                                  chunks_patterns=['chunk'])
-        del miner.dataset
+        cwd = os.getcwd()
+        os.chdir(chunks_path)
+        chunks_patterns = ['chunk']
+        chunks = []
+        for pattern in chunks_patterns:
+            pattern = pattern.replace('\\', '/').replace('/', '_')
+            chunks.extend(glob.glob(f'{pattern}*.pt'))
+            chunks.extend(glob.glob(f'{pattern}*.pkl'))
+
+        print(f'Loading {len(chunks)}:{chunks} chunks from {chunks_patterns}')
+
+        otf_dataset = []
+        for ind, chunk in enumerate(tqdm(chunks)):
+            if '.pkl' in chunk or '.pt' in chunk:
+                loaded_chunk = torch.load(chunk)
+                otf_dataset.extend(loaded_chunk)
+
+        os.chdir(cwd)
+
         # kill old chunks so we don't re-use
-        [os.remove(elem) for elem in os.listdir(chunks_path)]
-        conv_cutoff = self.config.autoencoder.model.encoder.graph.cutoff
-        #nonzero_positional_noise = sum(list(self.config.positional_noise.__dict__.values()))
-        miner.regression_target = None
-        miner.load_dataset_for_modelling(
-            'otf_dataset.pt',
-            filter_conditions=None,
-            filter_polymorphs=False,
-            filter_duplicate_molecules=False,
-            filter_protons=self.config.autoencoder.filter_protons if self.train_models_dict['autoencoder'] else False,
-            conv_cutoff=conv_cutoff,
-            do_shuffle=True,
-            precompute_edges=False,
-            single_identifier=None,
-        )
-        return miner
+        [os.remove(elem) for elem in os.listdir(chunks_path) if 'chunk' in elem]
+
+        # conv_cutoff = self.config.autoencoder.model.encoder.graph.cutoff
+        # #nonzero_positional_noise = sum(list(self.config.positional_noise.__dict__.values()))
+        # miner.regression_target = None
+        # miner.load_dataset_for_modelling(
+        #     'otf_dataset.pt',
+        #     filter_conditions=None,
+        #     filter_polymorphs=False,
+        #     filter_duplicate_molecules=False,
+        #     filter_protons=self.config.autoencoder.filter_protons if self.train_models_dict['autoencoder'] else False,
+        #     conv_cutoff=conv_cutoff,
+        #     do_shuffle=True,
+        #     precompute_edges=False,
+        #     single_identifier=None,
+        # )
+        return otf_dataset
 
     def crystal_structure_prediction(self):
         with (wandb.init(config=self.config,

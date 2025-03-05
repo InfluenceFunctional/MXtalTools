@@ -10,11 +10,11 @@ save_checkpoints: True
 anomaly_detection: False
 
 dataset:
-  max_dataset_length: 50000  # non-functional for on-disk datasets.
+  max_dataset_length: 1000000000  # non-functional for on-disk datasets.
   test_fraction: 0.2
 
   smiles_source: 'D:\crystal_datasets\zinc22'#'/home/mkilgour/crystal_datasets/zinc22/'  # /scratch/mk8347/zinc22
-  otf_build_size: 200
+  otf_build_size: 1000
   num_processes: 4
 
   #on_disk_data_dir: '/zinc22_3d/zinc3d.lmdb/'
