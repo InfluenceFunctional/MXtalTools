@@ -1436,7 +1436,7 @@ class Modeller:
             [os.remove(chunks_path.joinpath(elem)) for elem in os.listdir(chunks_path)]
             self.integrated_dataset = False
 
-        num_processes = self.config.dataset.otf_processes
+        num_processes = self.config.dataset.num_processes
         if len(os.listdir(chunks_path)) == 0:  # only make a new batch if the previous batch has been integrated
             if self.logger.epoch == 0 or self.integrated_dataset == True:
                 print('sending crystal opt jobs to mp pool')
