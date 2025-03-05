@@ -14,9 +14,9 @@ dataset:
   test_fraction: 0.2
 
   smiles_source: 'D:\crystal_datasets\zinc22'#'/home/mkilgour/crystal_datasets/zinc22/'  # /scratch/mk8347/zinc22
-  otf_build_size: 1000
-  otf_processes: 4
-  loader_processes: 4
+  otf_build_size: 100
+  otf_processes: 1
+  loader_processes: 1
 
   #on_disk_data_dir: '/zinc22_3d/zinc3d.lmdb/'
   #dumps_dirs: ['acridine_melt_interface18/5']
@@ -25,7 +25,7 @@ seeds:
   dataset: 1
 
 # batching & convergence
-num_samples: 100000
+num_samples: 1000
 max_epoch_steps: 100
 early_epochs_step_override: 5
 num_early_epochs: 0

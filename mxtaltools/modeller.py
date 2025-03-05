@@ -101,6 +101,8 @@ class Modeller:
             'proxy_discriminator': False,
         }
 
+        mp.set_start_method('spawn', force=True)  # parallel work requires this on linux
+
     def load_physical_constants(self):
         """get some physical constants"""
         self.atom_weights = ATOM_WEIGHTS
@@ -124,7 +126,6 @@ class Modeller:
         """
         self.run_identifier, self.working_directory = make_sequential_directory(self.config.paths.yaml_path,
                                                                                 self.config.workdir)
-
 
     def initialize_models_optimizers_schedulers(self):
         """
@@ -196,7 +197,7 @@ class Modeller:
             filter_protons=self.config.autoencoder.filter_protons if self.train_models_dict['autoencoder'] else False,
             conv_cutoff=conv_cutoff,
             do_shuffle=True,
-            precompute_edges=False, #self.config.mode not in ['gan', 'discriminator', 'generator'],
+            precompute_edges=False,  #self.config.mode not in ['gan', 'discriminator', 'generator'],
             single_identifier=self.config.dataset.single_identifier,
         )
         self.dataDims = data_manager.dataDims
@@ -363,7 +364,6 @@ class Modeller:
             # save results
             np.save(self.config.checkpoint_dir_path + self.config.model_paths.autoencoder.split('autoencoder')[-1],
                     {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
-
 
             ''' >>> noisy embeddings
             data = data.to(self.device)
@@ -1146,8 +1146,8 @@ class Modeller:
             raise ValueError("Numerical Error: decoder output is not finite")
 
         losses, stats, decoding_batch = self.compute_autoencoder_loss(decoding,
-                                                                         mol_batch.clone(),
-                                                                         skip_stats=skip_stats)
+                                                                      mol_batch.clone(),
+                                                                      skip_stats=skip_stats)
 
         mean_loss = losses.mean()
         if torch.sum(torch.logical_not(torch.isfinite(mean_loss))) > 0:
@@ -1157,7 +1157,9 @@ class Modeller:
         if update_weights:
             self.optimizers_dict['autoencoder'].zero_grad(set_to_none=True)
             mean_loss.backward()  # back-propagation
-            if not torch.stack([torch.isfinite(p.grad).any() if p.grad is not None else torch.isfinite(torch.ones_like(p)).any() for p in self.models_dict['autoencoder'].parameters()]).all():
+            if not torch.stack(
+                    [torch.isfinite(p.grad).any() if p.grad is not None else torch.isfinite(torch.ones_like(p)).any()
+                     for p in self.models_dict['autoencoder'].parameters()]).all():
                 raise ValueError("Numerical Error: model has NaN gradients!")
 
             torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
@@ -1327,7 +1329,6 @@ class Modeller:
                 self.epoch_type == 'train' and
                 os.cpu_count() > 1 and
                 self.config.dataset.smiles_source is not None):
-
             self.train_loader_to_replace = self.otf_molecule_dataset_generation(data_loader)
             data_loader = self.train_loader_to_replace
 
@@ -1342,7 +1343,7 @@ class Modeller:
                 mol_batch,
                 noise=self.config.positional_noise.autoencoder if self.epoch_type == 'train' else 0.01,
                 affine_scale=self.config.autoencoder.affine_scale_factor if self.epoch_type == 'train' else None
-                )
+            )
             self.ae_step(mol_batch,
                          update_weights,
                          step=i,
@@ -1673,13 +1674,12 @@ class Modeller:
                 > self.config.autoencoder.max_overlap_threshold):
             self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
-
     def preprocess_ae_inputs(self,
                              mol_batch,
-                             orientation_override: Optional[str] =None,
-                             noise: Optional[float]=None,
-                             deprotonate: bool =False,
-                             affine_scale: Optional[float] =None):
+                             orientation_override: Optional[str] = None,
+                             noise: Optional[float] = None,
+                             deprotonate: bool = False,
+                             affine_scale: Optional[float] = None):
         # atomwise noising
         if noise is not None:
             mol_batch.noise_positions(noise)
@@ -1815,7 +1815,8 @@ class Modeller:
                 data_batch.noise_positions(self.config.positional_noise.regressor)
 
             regression_losses_list, predictions, targets = get_regression_loss(
-                self.models_dict['regressor'], data_batch, data_batch.y, self.dataDims['target_mean'], self.dataDims['target_std'])
+                self.models_dict['regressor'], data_batch, data_batch.y, self.dataDims['target_mean'],
+                self.dataDims['target_std'])
 
             regression_loss = regression_losses_list.mean()
 
@@ -1974,7 +1975,13 @@ class Modeller:
             self.device
         )
         for ind in range(len(data_loader.dataset)):
+            for key, value in data_loader.dataset[ind]:  # detach everything before we model further
+                if isinstance(value, torch.Tensor):
+                    if value.requires_grad:
+                        setattr(data_loader.dataset[ind], key, value.detach())
+
             data_loader.dataset[ind].embedding = data_list[ind].embedding.cpu().detach()
+
         return data_loader
 
         '''
@@ -2177,8 +2184,8 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
         compute losses, do reporting, update gradients
         """
         if not hasattr(self.models_dict['proxy_discriminator'], 'target_std'):
-            self.models_dict['proxy_discriminator'].target_std = 12.5#8.23
-            self.models_dict['proxy_discriminator'].target_mean = 14.1#-8.6
+            self.models_dict['proxy_discriminator'].target_std = 12.5  #8.23
+            self.models_dict['proxy_discriminator'].target_mean = 14.1  #-8.6
 
         # if self.config.proxy_discriminator.embedding_type == 'autoencoder' and self.config.proxy_discriminator.train_encoder:
         #     crystal_batch.embedding = crystal_batch.do_embedding(
@@ -2190,7 +2197,8 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
 
         inter_energy = crystal_batch.scaled_lj_pot + crystal_batch.es_pot * 10
         discriminator_losses = F.smooth_l1_loss(prediction.flatten(),
-                                                (inter_energy - self.models_dict['proxy_discriminator'].target_mean) / self.models_dict[
+                                                (inter_energy - self.models_dict['proxy_discriminator'].target_mean) /
+                                                self.models_dict[
                                                     'proxy_discriminator'].target_std,
                                                 reduction='none')
 
@@ -2220,7 +2228,7 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
             stats = {
                 'vdw_prediction': (prediction * self.models_dict['proxy_discriminator'].target_std + self.models_dict[
                     'proxy_discriminator'].target_mean).detach(),
-                'vdw_score':inter_energy.detach(),
+                'vdw_score': inter_energy.detach(),
             }
 
             dict_of_tensors_to_cpu_numpy(stats)

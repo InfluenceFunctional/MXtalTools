@@ -123,9 +123,9 @@ def standalone_gradient_descent_optimization(
                 samples_list = crystal_batch.detach().cpu().to_data_list()
 
                 for si, sample in enumerate(samples_list):
-                    sample.lj_pot = lj_pot[si]
-                    sample.scaled_lj_pot = scaled_lj_pot[si]
-                    sample.es_pot = es_pot[si]
+                    sample.lj_pot = lj_pot[si].detach()
+                    sample.scaled_lj_pot = scaled_lj_pot[si].detach()
+                    sample.es_pot = es_pot[si].detach()
 
                 samples_record.append(samples_list)
 
