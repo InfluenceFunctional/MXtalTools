@@ -28,11 +28,11 @@ logger:
   experiment_tag: zinc_test4
   log_figures: true
   mini_csp_frequency: 5
-  run_name: zinc_test4_0
+  run_name: zinc_test4_0_1_2_3_4_5_6_7_8_9_10_11_12_13_14_15_16_17_18_19_20_21_22
   sample_reporting_frequency: 25
   stats_reporting_frequency: 25
 machine: cluster
-max_batch_size: 500
+max_batch_size: 50000
 max_epochs: 10000
 min_batch_size: 50
 minimum_epochs: 100000
@@ -58,12 +58,12 @@ positional_noise:
   regressor: 0
 proxy_discriminator:
   cutoff: 6
-  embedding_type: autoencoder
+  embedding_type: principal_axes
   model:
     dropout: 0
     hidden_dim: 128
     norm: layer
-    num_layers: 10
+    num_layers: 40
     vector_norm: null
   optimizer:
     beta1: 0.9

@@ -1,8 +1,10 @@
 import os
 from random import shuffle
 
+import numpy as np
 import torch
 from torch import Tensor
+from torch.utils.data import Dataset
 from torch_geometric.data import DataLoader, Batch
 from torch_geometric.loader.dataloader import DataLoader
 
@@ -19,6 +21,30 @@ def quick_combine_dataloaders(dataset, data_loader, batch_size, max_size):
     dataset.extend(data_loader.dataset)  # append old dataset to new one
     dataset = dataset[:max_size]  # truncate from the end of the old dataset
     dataloader = DataLoader(dataset,
+                            batch_size=batch_size,
+                            shuffle=True,
+                            num_workers=data_loader.num_workers,
+                            pin_memory=data_loader.pin_memory,
+                            drop_last=data_loader.drop_last)
+
+    return dataloader
+
+
+def quick_combine_crystal_embedding_dataloaders(dataset, data_loader, batch_size, max_size):
+    x, y1, y2 = data_loader.dataset.x, data_loader.dataset.y1, data_loader.dataset.y2  # randomize order of old dataset
+    rands = torch.tensor(np.random.choice(len(x), len(x), replace=False), dtype=torch.long)
+    x = x[rands]
+    y1 = y1[rands]
+    y2 = y2[rands]
+
+    new_x, new_y1, new_y2 = dataset.x, dataset.y1, dataset.y2  # randomize order of old dataset
+    new_x = torch.cat((new_x, x), dim=0)[:max_size]
+    new_y1 = torch.cat((new_y1, y1), dim=0)[:max_size]
+    new_y2 = torch.cat((new_y2, y2), dim=0)[:max_size]
+
+    new_dataset = SimpleDataset(x=new_x, y1=new_y1, y2=new_y2)
+
+    dataloader = DataLoader(new_dataset,
                             batch_size=batch_size,
                             shuffle=True,
                             num_workers=data_loader.num_workers,
@@ -85,16 +111,20 @@ def get_dataloaders(dataset_builder, machine, batch_size, test_fraction=0.2,
 
     if machine == 'cluster':  # faster dataloading on cluster with more workers
         if len(train_dataset) > 0:
-            tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True, drop_last=False)
+            tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers,
+                            pin_memory=True, drop_last=False)
         else:
             tr = None
-        te = DataLoader(test_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True, drop_last=False)
+        te = DataLoader(test_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True,
+                        drop_last=False)
     else:
         if len(train_dataset) > 0:
-            tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=0, pin_memory=True, drop_last=False)
+            tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=0, pin_memory=True,
+                            drop_last=False)
         else:
             tr = None
-        te = DataLoader(test_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=0, pin_memory=True, drop_last=False)
+        te = DataLoader(test_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=0, pin_memory=True,
+                        drop_last=False)
 
     return tr, te
 
@@ -106,3 +136,16 @@ def update_dataloader_batch_size(loader, new_batch_size):
                       num_workers=loader.num_workers,
                       pin_memory=loader.pin_memory,
                       drop_last=loader.drop_last)
+
+
+class SimpleDataset(Dataset):
+    def __init__(self, x, y1, y2):
+        self.x = torch.tensor(x, dtype=torch.float32)
+        self.y1 = torch.tensor(y1, dtype=torch.float32)
+        self.y2 = torch.tensor(y2, dtype=torch.float32)
+
+    def __len__(self):
+        return len(self.x)
+
+    def __getitem__(self, idx):
+        return self.x[idx], self.y1[idx], self.y2[idx]

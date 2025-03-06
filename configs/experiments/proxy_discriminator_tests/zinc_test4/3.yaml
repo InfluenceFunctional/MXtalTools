@@ -4,7 +4,7 @@ checkpointing_loss_type: test
 dataset:
   buffer_size: 100000
   filter_protons: false
-  loader_processes: 4
+  loader_processes: 0
   max_dataset_length: 1000000
   otf_build_size: 1000
   otf_processes: 4
@@ -61,9 +61,9 @@ proxy_discriminator:
   embedding_type: principal_axes
   model:
     dropout: 0
-    hidden_dim: 512
+    hidden_dim: 128
     norm: null
-    num_layers: 40
+    num_layers: 10
     vector_norm: null
   optimizer:
     beta1: 0.9

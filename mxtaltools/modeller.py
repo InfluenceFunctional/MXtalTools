@@ -14,6 +14,7 @@ import wandb
 from scipy.spatial.transform import Rotation as R
 from torch import backends
 from torch.nn import functional as F
+from torch.utils.data import Dataset, DataLoader
 from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter
 from tqdm import tqdm
@@ -38,7 +39,7 @@ from mxtaltools.dataset_utils.data_classes import MolData
 from mxtaltools.dataset_utils.dataset_manager import DataManager
 from mxtaltools.dataset_utils.synthesis.utils import otf_synthesize_molecules, otf_synthesize_crystals
 from mxtaltools.dataset_utils.utils import quick_combine_dataloaders, get_dataloaders, update_dataloader_batch_size, \
-    collate_data_list
+    collate_data_list, SimpleDataset, quick_combine_crystal_embedding_dataloaders
 from mxtaltools.modelling.utils import get_model_sizes
 from mxtaltools.models.autoencoder_utils import compute_type_evaluation_overlap, compute_coord_evaluation_overlap, \
     compute_full_evaluation_overlap, test_decoder_equivariance, test_encoder_equivariance, decoding2mol_batch, \
@@ -738,6 +739,10 @@ class Modeller:
             self.initialize_models_optimizers_schedulers()
             converged, epoch, prev_epoch_failed = self.init_logging()
 
+            if self.config.mode == 'proxy_discriminator':  # embed dataset for PD modelling
+                train_loader = self.embed_dataloader_dataset(train_loader)
+                test_loader = self.embed_dataloader_dataset(test_loader)
+
             with torch.autograd.set_detect_anomaly(self.config.anomaly_detection,
                                                    check_nan=self.config.anomaly_detection):
                 while (epoch < self.config.max_epochs) and not converged:
@@ -919,7 +924,7 @@ class Modeller:
         if (self.logger.epoch % self.logger.sample_reporting_frequency) == 0:
             self.logger.log_detailed_analysis()
         if (time() - self.logger.last_logged_dataset_stats) > self.config.logger.dataset_reporting_time:
-            if self.config.mode == 'autoencoder' or self.config.mode == 'proxy_discriminator':
+            if self.config.mode == 'autoencoder':  # or self.config.mode == 'proxy_discriminator':  # no longer works with pd dataset
                 self.logger.log_dataset_analysis(train_loader, test_loader)
 
         self.logger.check_model_convergence()
@@ -1482,36 +1487,19 @@ class Modeller:
         self.times['otf_dataset_join_end'] = time()
         # generate temporary training dataset
         self.times['otf_dataset_collate_start'] = time()
-        otf_dataset = self.process_otf_crystals_dataset(chunks_path)
+        otf_dataset = self.process_otf_crystals_dataset(chunks_path,
+                                                        analyze_new_dataset)
         self.times['otf_dataset_collate_end'] = time()
         # print("integrating otf dataset into dataloader")
         self.times['otf_dataset_combine_start'] = time()
-        data_loader = quick_combine_dataloaders(otf_dataset,
-                                                data_loader,
-                                                data_loader.batch_size,
-                                                self.config.dataset.max_dataset_length)
-        os.remove(temp_dataset_path)  # delete loaded dataset
+        data_loader = quick_combine_crystal_embedding_dataloaders(otf_dataset,
+                                                                  data_loader,
+                                                                  data_loader.batch_size,
+                                                                  self.config.dataset.max_dataset_length,
+                                                                  )
         self.times['otf_dataset_combine_enc'] = time()
-
         self.integrated_dataset = True
-        if analyze_new_dataset:
-            num_atoms = int(torch.sum(torch.Tensor([data.num_atoms for data in data_loader.dataset])))
-            stats = {
-                'dataset_length': len(data_loader.dataset),
-                'mean_molecule_size': num_atoms / len(data_loader.dataset),
-                'mean_hydrogen_fraction': np.sum(
-                    np.concatenate([data.x == 1 for data in data_loader.dataset])) / num_atoms,
-                'mean_carbon_fraction': np.sum(
-                    np.concatenate([data.x == 6 for data in data_loader.dataset])) / num_atoms,
-                'mean_nitrogen_fraction': np.sum(
-                    np.concatenate([data.x == 7 for data in data_loader.dataset])) / num_atoms,
-                'mean_oxygen_fraction': np.sum(
-                    np.concatenate([data.x == 8 for data in data_loader.dataset])) / num_atoms,
-            }
-            self.logger.update_stats_dict(self.epoch_type,
-                                          stats.keys(),
-                                          stats.values(),
-                                          mode='append')
+
         return data_loader
 
     def process_otf_molecules_dataset(self, chunks_path):
@@ -1539,7 +1527,7 @@ class Modeller:
         )
         return miner
 
-    def process_otf_crystals_dataset(self, chunks_path):
+    def process_otf_crystals_dataset(self, chunks_path, analyze_new_dataset: bool = False):
         cwd = os.getcwd()
         os.chdir(chunks_path)
         chunks_patterns = ['chunk']
@@ -1557,26 +1545,50 @@ class Modeller:
                 loaded_chunk = torch.load(chunk)
                 otf_dataset.extend(loaded_chunk)
 
-        os.chdir(cwd)
-
         # kill old chunks so we don't re-use
         [os.remove(elem) for elem in os.listdir(chunks_path) if 'chunk' in elem]
 
-        # conv_cutoff = self.config.autoencoder.model.encoder.graph.cutoff
-        # #nonzero_positional_noise = sum(list(self.config.positional_noise.__dict__.values()))
-        # miner.regression_target = None
-        # miner.load_dataset_for_modelling(
-        #     'otf_dataset.pt',
-        #     filter_conditions=None,
-        #     filter_polymorphs=False,
-        #     filter_duplicate_molecules=False,
-        #     filter_protons=self.config.autoencoder.filter_protons if self.train_models_dict['autoencoder'] else False,
-        #     conv_cutoff=conv_cutoff,
-        #     do_shuffle=True,
-        #     precompute_edges=False,
-        #     single_identifier=None,
-        # )
-        return otf_dataset
+        stats = {}
+        if analyze_new_dataset:
+            num_atoms = int(torch.sum(torch.Tensor([data.num_atoms for data in otf_dataset])))
+            stats.update({
+                'mean_molecule_size': num_atoms / len(otf_dataset),
+                'mean_hydrogen_fraction': np.sum(
+                    np.concatenate([data.x == 1 for data in otf_dataset])) / num_atoms,
+                'mean_carbon_fraction': np.sum(
+                    np.concatenate([data.x == 6 for data in otf_dataset])) / num_atoms,
+                'mean_nitrogen_fraction': np.sum(
+                    np.concatenate([data.x == 7 for data in otf_dataset])) / num_atoms,
+                'mean_oxygen_fraction': np.sum(
+                    np.concatenate([data.x == 8 for data in otf_dataset])) / num_atoms,
+            })
+
+        os.chdir(cwd)
+        embedding = torch.zeros((
+            len(otf_dataset),
+            otf_dataset[0].embedding.shape[1]
+        ))
+        lj_pot = torch.zeros((
+            len(otf_dataset),
+        ))
+        es_pot = torch.zeros((
+            len(otf_dataset),
+        ))
+        ind = 0
+        for elem in otf_dataset:
+            embedding[ind] = elem.embedding.cpu().detach()
+            lj_pot[ind] = elem.scaled_lj_pot.cpu().detach()
+            es_pot[ind] = elem.es_pot.cpu().detach()
+            ind += 1
+        dataset = SimpleDataset(embedding, lj_pot, es_pot)
+
+        stats['dataset_length']=len(dataset.x)
+        self.logger.update_stats_dict(self.epoch_type,
+                                      stats.keys(),
+                                      stats.values(),
+                                      mode='append')
+
+        return dataset
 
     def crystal_structure_prediction(self):
         with (wandb.init(config=self.config,
@@ -1942,10 +1954,8 @@ class Modeller:
             if self.config.proxy_discriminator.embedding_type == 'autoencoder' and self.config.proxy_discriminator.train_encoder:
                 self.models_dict['autoencoder'].eval()
 
-        if self.logger.epoch == 0:  # embed loaded dataset on first epoch
-            data_loader = self.embed_dataloader_dataset(data_loader)
-
-        for step, mol_batch in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
+        for step, (embedding, lj_pot, es_pot) in enumerate(
+                tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
             if step % self.config.logger.stats_reporting_frequency == 0:
                 skip_stats = False
             elif step == len(data_loader) - 1:
@@ -1953,11 +1963,14 @@ class Modeller:
             else:
                 skip_stats = True
 
-            mol_batch = mol_batch.to(self.config.device)
+            #mol_batch = mol_batch.to(self.config.device)
+            embedding = embedding.to(self.config.device)
+            lj_pot = lj_pot.to(self.config.device)
+            es_pot = es_pot.to(self.config.device)
             '''
             train proxy discriminator
             '''
-            self.pd_step(mol_batch, step, update_weights, skip_step=False, skip_stats=skip_stats)
+            self.pd_step(embedding, lj_pot, es_pot, step, update_weights, skip_step=False, skip_stats=skip_stats)
 
             if iteration_override is not None:
                 if step >= iteration_override:
@@ -1974,13 +1987,32 @@ class Modeller:
             self.config.model_paths.autoencoder,
             self.device
         )
-        for ind in range(len(data_loader.dataset)):
-            for key, value in data_loader.dataset[ind]:  # detach everything before we model further
-                if isinstance(value, torch.Tensor):
-                    if value.requires_grad:
-                        setattr(data_loader.dataset[ind], key, value.detach())
+        # reset new dataset as simple tensors
+        embedding = torch.zeros((
+            len(data_list) + len(data_loader.dataset),
+            data_list[0].embedding.shape[1]
+        ))
+        lj_pot = torch.zeros((
+            len(data_list) + len(data_loader.dataset),
+        ))
+        es_pot = torch.zeros((
+            len(data_list) + len(data_loader.dataset),
+        ))
+        ind = 0
+        for elem in data_list:
+            embedding[ind] = elem.embedding.cpu().detach()
+            lj_pot[ind] = elem.scaled_lj_pot.cpu().detach()
+            es_pot[ind] = elem.es_pot.cpu().detach()
+            ind += 1
+        for elem in data_loader.dataset:
+            embedding[ind] = elem.embedding.cpu().detach()
+            lj_pot[ind] = elem.scaled_lj_pot.cpu().detach()
+            es_pot[ind] = elem.es_pot.cpu().detach()
+            ind += 1
 
-            data_loader.dataset[ind].embedding = data_list[ind].embedding.cpu().detach()
+        dataset = SimpleDataset(embedding, lj_pot, es_pot)
+        data_loader = DataLoader(dataset, batch_size=data_loader.batch_size, shuffle=True,
+                                 pin_memory=data_loader.pin_memory, num_workers=data_loader.num_workers)
 
         return data_loader
 
@@ -2178,7 +2210,7 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
                                           stats.values(),
                                           mode='extend')
 
-    def pd_step(self, crystal_batch, i, update_weights, skip_step, skip_stats: bool = False):
+    def pd_step(self, embedding, lj_pot, es_pot, i, update_weights, skip_step, skip_stats: bool = False):
         """
         execute a complete training step for the discriminator
         compute losses, do reporting, update gradients
@@ -2193,9 +2225,9 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
         #         self.models_dict['autoencoder']
         #         )
 
-        prediction = self.models_dict['proxy_discriminator'](x=crystal_batch.embedding)[:, 0]
+        prediction = self.models_dict['proxy_discriminator'](x=embedding)[:, 0]
 
-        inter_energy = crystal_batch.scaled_lj_pot + crystal_batch.es_pot * 10
+        inter_energy = lj_pot + es_pot * 10
         discriminator_losses = F.smooth_l1_loss(prediction.flatten(),
                                                 (inter_energy - self.models_dict['proxy_discriminator'].target_mean) /
                                                 self.models_dict[

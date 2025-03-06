@@ -1,5 +1,5 @@
 machine: "cluster"  # or "cluster"
-device: "cpu"  # or "cpu"
+device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: proxy_discriminator
 dataset_name: 'pd_dataset.pt' #'test_dataset.pt'
@@ -21,7 +21,7 @@ dataset:
   otf_build_size: 1000
   smiles_source: /scratch/mk8347/zinc22
   otf_processes: 4
-  loader_processes: 4
+  loader_processes: 0
 
 # batching & convergence
 early_epochs_step_override: 5
