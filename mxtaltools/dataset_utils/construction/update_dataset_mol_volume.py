@@ -46,5 +46,5 @@ if __name__ == "__main__":
         for ind in tqdm(range(len(dataset))):
             dataset[ind].volume = volumes[ind]
 
-        #torch.save(dataset, dataset_path)
+        torch.save(dataset, dataset_path)
         print('Saved dataset at {}'.format(dataset_path))

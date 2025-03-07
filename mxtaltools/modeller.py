@@ -1498,6 +1498,11 @@ class Modeller:
                                                                   self.config.dataset.max_dataset_length,
                                                                   )
         self.times['otf_dataset_combine_enc'] = time()
+        stats = {'dataset_length': len(data_loader.datset)}
+        self.logger.update_stats_dict(self.epoch_type,
+                                      stats.keys(),
+                                      stats.values(),
+                                      mode='append')
         self.integrated_dataset = True
 
         return data_loader
@@ -1582,11 +1587,6 @@ class Modeller:
             ind += 1
         dataset = SimpleDataset(embedding, lj_pot, es_pot)
 
-        stats['dataset_length']=len(dataset.x)
-        self.logger.update_stats_dict(self.epoch_type,
-                                      stats.keys(),
-                                      stats.values(),
-                                      mode='append')
 
         return dataset
 
