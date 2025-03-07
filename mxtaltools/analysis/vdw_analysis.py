@@ -181,17 +181,16 @@ def vdw_analysis(vdw_radii: torch.Tensor,
 
 def scale_molwise_lj_pot(vdw_potential: torch.Tensor,
                          num_atoms: torch.LongTensor,
-                         clip_max: float=50):
-
-    rescaled_vdw_loss = vdw_potential.clone()
-    rescaled_vdw_loss[rescaled_vdw_loss > 0] = torch.log(rescaled_vdw_loss[rescaled_vdw_loss > 0])
+                         ):
 
     if vdw_potential.ndim > 1:
-        rescaled_vdw_loss = rescaled_vdw_loss / num_atoms[None, :]
+        rescaled_vdw_loss = vdw_potential / num_atoms[None, :]
     else:
-        rescaled_vdw_loss = rescaled_vdw_loss / num_atoms
+        rescaled_vdw_loss = vdw_potential / num_atoms
 
-    return rescaled_vdw_loss.clip(max=clip_max)
+    rescaled_vdw_loss[rescaled_vdw_loss > 0] = torch.log(rescaled_vdw_loss[rescaled_vdw_loss > 0])
+
+    return rescaled_vdw_loss
 
 '''
 import torch
