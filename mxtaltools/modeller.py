@@ -1498,7 +1498,7 @@ class Modeller:
                                                                   self.config.dataset.max_dataset_length,
                                                                   )
         self.times['otf_dataset_combine_enc'] = time()
-        stats = {'dataset_length': len(data_loader.datset)}
+        stats = {'dataset_length': len(data_loader.dataset)}
         self.logger.update_stats_dict(self.epoch_type,
                                       stats.keys(),
                                       stats.values(),
