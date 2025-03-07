@@ -702,17 +702,12 @@ def mol_batch_vdW_volume(mol_batch):
 
 
 def batch_molecule_vdW_volume(
-        atom_types_in: torch.LongTensor,
+        atom_types: torch.LongTensor,
         pos: torch.FloatTensor,
         batch: torch.LongTensor,
         num_graphs: int,
         vdw_radii_tensor: torch.Tensor
 ):
-    if atom_types_in.ndim > 1:
-        atom_types = atom_types_in[:, 0]
-    else:
-        atom_types = atom_types_in.clone()
-
     atom_volumes = 4 / 3 * torch.pi * vdw_radii_tensor[atom_types] ** 3
     raw_vdw_volumes = scatter(atom_volumes, batch, dim=0, dim_size=num_graphs, reduce='sum')
     bonds_i, bonds_j = radius(pos, pos,
@@ -725,14 +720,77 @@ def batch_molecule_vdW_volume(
     bond_lengths = torch.linalg.norm(pos[bonds_i] - pos[bonds_j], dim=1)
     radii_i, radii_j = vdw_radii_tensor[atom_types[bonds_i]], vdw_radii_tensor[atom_types[bonds_j]]
     # https://mathworld.wolfram.com/Sphere-SphereIntersection.html
-    sphere_overlaps = (torch.pi * (radii_i + radii_j - bond_lengths) ** 2 *
-                       (bond_lengths ** 2 + 2 * bond_lengths * radii_j - 3 * radii_j ** 2
-                        + 2 * bond_lengths * radii_i + 6 * radii_j * radii_i - 3 * radii_i ** 2) / (12 * bond_lengths))
+    # c1 = pi*(r1+r2-d)^2
+    # c2 = d^2 + 2dr1 + 2dr2 + 6r1r2 - 3r1^2 - 3r2^2
+    # c3 = 12d
+    c1 = torch.pi * (radii_i + radii_j - bond_lengths) ** 2
+    c2 = bond_lengths ** 2 + 2 * bond_lengths * (
+                radii_i + radii_j) - 3 * radii_i ** 2 - 3 * radii_j ** 2 + 6 * radii_i * radii_j
+    c3 = 12 * bond_lengths
+    # sphere_overlaps = (torch.pi * (radii_i + radii_j - bond_lengths) ** 2 *
+    #                    (bond_lengths ** 2 + 2 * bond_lengths * radii_j - 3 * radii_j ** 2
+    #                     + 2 * bond_lengths * radii_i + 6 * radii_j * radii_i - 3 * radii_i ** 2) / (12 * bond_lengths))
+    sphere_overlaps = c1 * c2 / c3
     sphere_overlaps[bond_lengths > (radii_i + radii_j)] = 0
     molwise_sphere_overlaps = scatter(sphere_overlaps, batch[bonds_i], dim=0, dim_size=num_graphs,
                                       reduce='sum')
     corrected_mol_volume = raw_vdw_volumes - molwise_sphere_overlaps
     return corrected_mol_volume
+
+
+def probe_compute_molecule_volume(
+        atom_types: torch.LongTensor,
+        pos: torch.FloatTensor,
+        batch: torch.LongTensor,
+        num_graphs: int,
+        vdw_radii_tensor: torch.Tensor,
+        probes_per_mol: int = 100,
+        eps: float = 1e-3,
+        max_iters: int = 1000,
+        min_iters: int = 5
+):
+    volume_record = []
+    converged = False
+    iter = 0
+    while not converged and iter < max_iters:
+        iter += 1
+        mol_min_corner = scatter(pos, batch, dim=0, reduce='min') - vdw_radii_tensor.max()
+        mol_max_corner = scatter(pos, batch, dim=0, reduce='max') + vdw_radii_tensor.max()
+        bounding_volumes = torch.prod(mol_max_corner - mol_min_corner, dim=1)
+        probe_batch = torch.arange(num_graphs, device=batch.device).repeat_interleave(probes_per_mol)
+        random_probes = mol_min_corner[probe_batch] + (
+                    mol_max_corner[probe_batch] - mol_min_corner[probe_batch]) * torch.rand(
+            (probes_per_mol * num_graphs, 3), device=pos.device)
+        # Compute squared distances between each probe and each atom
+        edge_i, edge_j = radius(x=pos,
+                                y=random_probes,
+                                r=2 * vdw_radii_tensor.max(),
+                                batch_x=batch,
+                                batch_y=probe_batch,
+                                max_num_neighbors=100000)
+        dists = torch.linalg.norm(random_probes[edge_i] - pos[edge_j], dim=1)
+
+        # Check if each probe is inside any sphere
+        inside_any_sphere = (dists < vdw_radii_tensor[atom_types[edge_j]]).float()
+
+        # we want a maximum of one contact per probe
+        probe_has_a_contact = scatter(inside_any_sphere, edge_i, reduce='max', dim_size=probes_per_mol * num_graphs, dim=0)
+        inside_sphere_frac = scatter(probe_has_a_contact, probe_batch, reduce='sum', dim=0, dim_size=num_graphs) / probes_per_mol
+
+        # Estimate molecular volume
+        mol_volume = bounding_volumes * inside_sphere_frac
+        volume_record.append(mol_volume)
+        if iter > min_iters:
+            volumes = torch.stack(volume_record)
+            cum_vols = torch.cumsum(volumes, dim=0)
+            cum_iters = torch.arange(1, len(volumes) + 1, device=volumes.device)[:, None]
+            cum_means = cum_vols / cum_iters
+            rel_diffs = torch.diff(cum_means/cum_means.mean(0)[None, :], dim=0)
+            criteria = rel_diffs[-min_iters:].abs().mean(0)
+            if torch.all(criteria < eps):  # relative change in running average less than eps
+                converged = True
+
+    return cum_means[-1, :]
 
 
 def grid_compute_molecule_volume(atom_types, pos, vdw_radii_tensor, eps):
@@ -1214,7 +1272,7 @@ def rotvec2rotmat(mol_rotation: torch.tensor, basis='cartesian'):
 
     identity_batch = torch.eye(3, device=r.device)[None, :, :].tile(len(r), 1, 1)
     applied_rotation_list = identity_batch + torch.sin(r[:, None, None]) * K + (1 - torch.cos(r[:, None, None])) * (
-                K @ K)
+            K @ K)
 
     return applied_rotation_list
 

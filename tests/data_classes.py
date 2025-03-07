@@ -30,7 +30,7 @@ def test_MolData(device):
 
     # check volume calculation
     assert torch.all(
-        torch.isclose(mol_batch.volume_calculation(), mol_batch.mol_volume)), "Error in mol volume calculation"
+        torch.isclose(mol_batch.volume_calculation(), mol_batch.mol_volume, atol=1)), "Error in mol volume calculation"
     # check radius calculation
     assert torch.all(torch.isclose(mol_batch.radius_calculation(), mol_batch.radius)), "Error in mol volume calculation"
     # check mass calculation

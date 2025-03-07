@@ -16,7 +16,7 @@ from mxtaltools.analysis.crystals_analysis import get_intermolecular_dists_dict
 from mxtaltools.analysis.vdw_analysis import vdw_analysis, electrostatic_analysis
 from mxtaltools.common.geometry_utils import cell_parameters_to_box_vectors, batch_molecule_vdW_volume, \
     compute_mol_radius, batch_compute_mol_radius, batch_compute_mol_mass, compute_mol_mass, center_mol_batch, \
-    apply_rotation_to_batch, enforce_crystal_system, batch_compute_fractional_transform
+    apply_rotation_to_batch, enforce_crystal_system, batch_compute_fractional_transform, probe_compute_molecule_volume
 from mxtaltools.common.utils import softplus_shift
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
@@ -305,14 +305,14 @@ class MolData(MXtalBase):
                                         device=self.z.device,
                                         dtype=torch.float32)
         if 'Batch' in self.__class__.__name__:
-            return batch_molecule_vdW_volume(
+            return probe_compute_molecule_volume(
                 self.z,
                 self.pos,
                 self.batch,
                 self.num_graphs,
                 vdw_radii_tensor)
         else:
-            return batch_molecule_vdW_volume(
+            return probe_compute_molecule_volume(
                 self.z,
                 self.pos,
                 torch.zeros_like(self.z),
