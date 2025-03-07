@@ -13,7 +13,7 @@ from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter
 
 from mxtaltools.analysis.crystal_rdf import earth_movers_distance_torch, get_elementwise_dists, batch_histogram_1d
-from mxtaltools.common.geometry_utils import batch_molecule_vdW_volume
+from mxtaltools.common.geometry_utils import batch_compute_molecule_volume
 from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.dataset_utils.synthesis.utils import otf_synthesize_molecules
 from mxtaltools.models.functions.asymmetric_radius_graph import radius
@@ -231,11 +231,11 @@ def generate_otf_dataset(generate_samples: int,
     otf_dataset = otf_dataset[:dataset_length]
     otf_dataset = collater(otf_dataset)
     vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()))
-    otf_dataset.mol_volume = batch_molecule_vdW_volume(otf_dataset.z.flatten(),
-                                                       otf_dataset.pos,
-                                                       otf_dataset.batch,
-                                                       otf_dataset.num_graphs,
-                                                       vdw_radii_tensor)
+    otf_dataset.mol_volume = batch_compute_molecule_volume(otf_dataset.z.flatten(),
+                                                           otf_dataset.pos,
+                                                           otf_dataset.batch,
+                                                           otf_dataset.num_graphs,
+                                                           vdw_radii_tensor)
     return otf_dataset
 
 

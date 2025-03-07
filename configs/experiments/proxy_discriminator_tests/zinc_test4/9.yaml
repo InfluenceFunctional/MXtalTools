@@ -6,7 +6,7 @@ dataset:
   filter_protons: false
   loader_processes: 0
   max_dataset_length: 1000000
-  otf_build_size: 1000
+  otf_build_size: 200
   otf_processes: 4
   regression_target: null
   single_identifier: null
@@ -32,7 +32,7 @@ logger:
   sample_reporting_frequency: 25
   stats_reporting_frequency: 25
 machine: cluster
-max_batch_size: 500
+max_batch_size: 1000000
 max_epochs: 10000
 min_batch_size: 50
 minimum_epochs: 100000
@@ -41,7 +41,7 @@ model_names:
 - autoencoder
 - proxy_discriminator
 model_paths:
-  autoencoder: best_autoencoder_experiments_autoencoder_tests_otf_zinc_test4_cont_2_20-12-12-04-34
+  autoencoder: best_autoencoder_experiments_autoencoder_tests_otf_zinc_test9_2_24-01-09-15-05
   discriminator: null
   embedding_regressor: null
   generator: null
@@ -63,7 +63,7 @@ proxy_discriminator:
     dropout: 0
     hidden_dim: 512
     norm: null
-    num_layers: 10
+    num_layers: 40
     vector_norm: null
   optimizer:
     beta1: 0.9

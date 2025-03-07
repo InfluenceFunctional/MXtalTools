@@ -734,7 +734,9 @@ def batch_compute_molecule_volume(
     sphere_overlaps[bond_lengths > (radii_i + radii_j)] = 0
     molwise_sphere_overlaps = scatter(sphere_overlaps, batch[bonds_i], dim=0, dim_size=num_graphs,
                                       reduce='sum')
-    corrected_mol_volume = raw_vdw_volumes - molwise_sphere_overlaps * 0.5  # a very coarse correction factor
+
+    # estimate correction factor (omits triple overlaps) by comparison of representative molecule batch with well-converged probe method
+    corrected_mol_volume = raw_vdw_volumes - molwise_sphere_overlaps * 0.7272  # a very coarse correction factor
     return corrected_mol_volume
 
 

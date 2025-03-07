@@ -9,7 +9,7 @@ from mxtaltools.dataset_utils.synthesis.utils import otf_synthesize_crystals
 if __name__ == '__main__':
     # initialize
     num_smiles = 200
-    num_processes = 6
+    num_processes = 1
     num_chunks = max(num_processes, num_smiles // 500)
     smiles_path = r'D:\crystal_datasets\zinc22'  #'/home/mkilgour/crystal_datasets/zinc22'#
     chunks_path = Path(r'D:\crystal_datasets')  # Path('/home/mkilgour/crystal_datasets') #

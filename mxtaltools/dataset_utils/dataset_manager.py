@@ -11,7 +11,7 @@ from torch_geometric import nn as gnn
 from torch_geometric.loader.dataloader import Collater
 from tqdm import tqdm
 
-from mxtaltools.common.geometry_utils import batch_molecule_vdW_volume
+from mxtaltools.common.geometry_utils import batch_compute_molecule_volume
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
 from mxtaltools.dataset_utils.md_analysis.md_data_processing import generate_dataset_from_dumps

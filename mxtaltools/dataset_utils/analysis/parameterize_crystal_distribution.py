@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 from torch_geometric.loader.dataloader import Collater
 
-from mxtaltools.common.geometry_utils import rotvec2sph, batch_molecule_vdW_volume, \
+from mxtaltools.common.geometry_utils import rotvec2sph, batch_compute_molecule_volume, \
     batch_compute_normed_cell_vectors
 from mxtaltools.constants.asymmetric_units import RAW_ASYM_UNITS
 from mxtaltools.constants.atom_properties import VDW_RADII
@@ -32,11 +32,11 @@ def prep_good_dataset(dataset):
 
     col_dataset = collater(dataset)
 
-    molecule_volumes = batch_molecule_vdW_volume(col_dataset.x.flatten(),
-                                                 col_dataset.pos,
-                                                 col_dataset.batch,
-                                                 col_dataset.num_graphs,
-                                                 vdw_radii_tensor)
+    molecule_volumes = batch_compute_molecule_volume(col_dataset.x.flatten(),
+                                                     col_dataset.pos,
+                                                     col_dataset.batch,
+                                                     col_dataset.num_graphs,
+                                                     vdw_radii_tensor)
 
     packing_coeff = molecule_volumes / red_vol
     good_dataset = [elem for i, elem in enumerate(dataset) if 0.5 < packing_coeff[i] < 0.9]
@@ -44,11 +44,11 @@ def prep_good_dataset(dataset):
     dataset = good_dataset
     dataset = collater(dataset)
 
-    molecule_volumes = batch_molecule_vdW_volume(dataset.x.flatten(),
-                                                 dataset.pos,
-                                                 dataset.batch,
-                                                 dataset.num_graphs,
-                                                 vdw_radii_tensor)
+    molecule_volumes = batch_compute_molecule_volume(dataset.x.flatten(),
+                                                     dataset.pos,
+                                                     dataset.batch,
+                                                     dataset.num_graphs,
+                                                     vdw_radii_tensor)
 
     packing_coeff = molecule_volumes / dataset.reduced_volume
 

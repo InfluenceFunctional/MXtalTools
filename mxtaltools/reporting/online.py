@@ -1825,7 +1825,7 @@ def proxy_discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_
                       )
         # fig.add_trace(go.Histogram2d(x=df['true_distance'], y=df['predicted_distance'], nbinsx=100, nbinsy=100, colorbar_dtick="log", showlegend=False))
 
-        fig.update_layout(xaxis_title='Target Distance', yaxis_title='Predicted Distance')
+        fig.update_layout(xaxis_title='Target Energy', yaxis_title='Predicted Energy')
 
         fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
         fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))

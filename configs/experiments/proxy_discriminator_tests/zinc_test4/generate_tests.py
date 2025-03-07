@@ -23,9 +23,9 @@ to-test:
 -: embedding type
 """
 
-layers = [10, 40]
-filters = [128, 512]
-batch_sizes = [500, 50000]
+layers = [40]
+filters = [512]
+batch_sizes = [5000, 50000, 1000000]
 norms = ['layer', None]
 
 default_config = {
