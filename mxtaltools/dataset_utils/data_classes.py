@@ -14,7 +14,7 @@ from torch_sparse import SparseTensor
 
 from mxtaltools.analysis.crystals_analysis import get_intermolecular_dists_dict
 from mxtaltools.analysis.vdw_analysis import vdw_analysis, electrostatic_analysis
-from mxtaltools.common.geometry_utils import cell_parameters_to_box_vectors, batch_molecule_vdW_volume, \
+from mxtaltools.common.geometry_utils import cell_parameters_to_box_vectors, batch_compute_molecule_volume, \
     compute_mol_radius, batch_compute_mol_radius, batch_compute_mol_mass, compute_mol_mass, center_mol_batch, \
     apply_rotation_to_batch, enforce_crystal_system, batch_compute_fractional_transform, probe_compute_molecule_volume
 from mxtaltools.common.utils import softplus_shift
@@ -305,14 +305,14 @@ class MolData(MXtalBase):
                                         device=self.z.device,
                                         dtype=torch.float32)
         if 'Batch' in self.__class__.__name__:
-            return probe_compute_molecule_volume(
+            return batch_compute_molecule_volume(
                 self.z,
                 self.pos,
                 self.batch,
                 self.num_graphs,
                 vdw_radii_tensor)
         else:
-            return probe_compute_molecule_volume(
+            return batch_compute_molecule_volume(
                 self.z,
                 self.pos,
                 torch.zeros_like(self.z),

@@ -691,7 +691,7 @@ def mol_batch_vdW_volume(mol_batch):
     """
     wrapper for batch_compute_vdW_volume
     """
-    return batch_molecule_vdW_volume(
+    return batch_compute_molecule_volume(
         mol_batch.z,
         mol_batch.pos,
         mol_batch.batch,
@@ -701,7 +701,7 @@ def mol_batch_vdW_volume(mol_batch):
                      dtype=torch.float32))
 
 
-def batch_molecule_vdW_volume(
+def batch_compute_molecule_volume(
         atom_types: torch.LongTensor,
         pos: torch.FloatTensor,
         batch: torch.LongTensor,
@@ -734,7 +734,7 @@ def batch_molecule_vdW_volume(
     sphere_overlaps[bond_lengths > (radii_i + radii_j)] = 0
     molwise_sphere_overlaps = scatter(sphere_overlaps, batch[bonds_i], dim=0, dim_size=num_graphs,
                                       reduce='sum')
-    corrected_mol_volume = raw_vdw_volumes - molwise_sphere_overlaps
+    corrected_mol_volume = raw_vdw_volumes - molwise_sphere_overlaps * 0.5  # a very coarse correction factor
     return corrected_mol_volume
 
 
@@ -745,7 +745,7 @@ def probe_compute_molecule_volume(
         num_graphs: int,
         vdw_radii_tensor: torch.Tensor,
         probes_per_mol: int = 100,
-        eps: float = 1e-3,
+        eps: float = 1e-2,
         max_iters: int = 1000,
         min_iters: int = 5
 ):
@@ -764,7 +764,7 @@ def probe_compute_molecule_volume(
         # Compute squared distances between each probe and each atom
         edge_i, edge_j = radius(x=pos,
                                 y=random_probes,
-                                r=2 * vdw_radii_tensor.max(),
+                                r=vdw_radii_tensor.max(),
                                 batch_x=batch,
                                 batch_y=probe_batch,
                                 max_num_neighbors=100000)
