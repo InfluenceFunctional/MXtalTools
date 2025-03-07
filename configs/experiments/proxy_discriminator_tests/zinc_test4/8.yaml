@@ -6,7 +6,7 @@ dataset:
   filter_protons: false
   loader_processes: 0
   max_dataset_length: 1000000
-  otf_build_size: 200
+  otf_build_size: 400
   otf_processes: 4
   regression_target: null
   single_identifier: null
