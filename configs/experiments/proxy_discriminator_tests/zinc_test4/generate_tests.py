@@ -24,8 +24,8 @@ to-test:
 """
 
 layers = [40]
-filters = [512, 1024]
-batch_sizes = [500, 1000]
+filters = [1024]
+batch_sizes = [1000, 10000]
 norms = ['layer', None]
 
 default_config = {
@@ -35,10 +35,10 @@ default_config = {
         'norm': 'layer',
         'max_batch_size': 1000,
         'embedding_type': 'principal_axes',
-        'max_lr': 1e-3,
+        'max_lr': 2e-4,
         'init_lr': 1e-4,
         'lr_growth_lambda': 1.01,
-        'lr_shrink_lambda': 0.99975,
+        'lr_shrink_lambda': 0.9975,
         'weight_decay': 0.0001,
         'device': 'cuda',
     }  # 0 - baseline

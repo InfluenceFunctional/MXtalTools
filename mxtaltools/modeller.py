@@ -1497,7 +1497,7 @@ class Modeller:
                                                                   data_loader.batch_size,
                                                                   self.config.dataset.max_dataset_length,
                                                                   )
-        self.times['otf_dataset_combine_enc'] = time()
+        self.times['otf_dataset_combine_end'] = time()
         stats = {'dataset_length': len(data_loader.dataset)}
         self.logger.update_stats_dict(self.epoch_type,
                                       stats.keys(),
@@ -1586,7 +1586,6 @@ class Modeller:
             es_pot[ind] = elem.es_pot.cpu().detach()
             ind += 1
         dataset = SimpleDataset(embedding, lj_pot, es_pot)
-
 
         return dataset
 

@@ -5,8 +5,8 @@ dataset:
   buffer_size: 100000
   filter_protons: false
   loader_processes: 0
-  max_dataset_length: 1000000
-  otf_build_size: 1000
+  max_dataset_length: 5000000
+  otf_build_size: 2000
   otf_processes: 4
   regression_target: null
   single_identifier: null
@@ -29,10 +29,10 @@ logger:
   log_figures: true
   mini_csp_frequency: 5
   run_name: zinc_test4_0_1_2
-  sample_reporting_frequency: 100
-  stats_reporting_frequency: 100
+  sample_reporting_frequency: 10
+  stats_reporting_frequency: 10
 machine: cluster
-max_batch_size: 500
+max_batch_size: 1000
 max_epochs: 10000
 min_batch_size: 50
 minimum_epochs: 100000
@@ -61,7 +61,7 @@ proxy_discriminator:
   embedding_type: principal_axes
   model:
     dropout: 0
-    hidden_dim: 512
+    hidden_dim: 1024
     norm: layer
     num_layers: 40
     vector_norm: null
@@ -72,8 +72,8 @@ proxy_discriminator:
     init_lr: 0.0001
     lr_growth_lambda: 1.01
     lr_schedule: true
-    lr_shrink_lambda: 0.99975
-    max_lr: 0.001
+    lr_shrink_lambda: 0.9975
+    max_lr: 0.0002
     min_lr: 5.0e-06
     optimizer: adamw
     overwrite_on_reload: false
