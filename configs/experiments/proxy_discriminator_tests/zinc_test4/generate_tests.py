@@ -24,8 +24,8 @@ to-test:
 """
 
 layers = [40]
-filters = [512]
-batch_sizes = [5000, 50000, 1000000]
+filters = [512, 1024]
+batch_sizes = [500, 1000]
 norms = ['layer', None]
 
 default_config = {

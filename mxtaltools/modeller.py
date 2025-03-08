@@ -2227,7 +2227,7 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
 
         prediction = self.models_dict['proxy_discriminator'](x=embedding)[:, 0]
 
-        inter_energy = (lj_pot + es_pot * 10).clip(max=50)
+        inter_energy = (lj_pot + es_pot * 10).clip(min=-50, max=50)
         discriminator_losses = F.smooth_l1_loss(prediction.flatten(),
                                                 (inter_energy - self.models_dict['proxy_discriminator'].target_mean) /
                                                 self.models_dict[

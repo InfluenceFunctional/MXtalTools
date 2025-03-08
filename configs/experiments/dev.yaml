@@ -1,7 +1,7 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 base_config_path: /experiments/base/proxy_discriminator.yaml #/experiments/base/generator.yaml #/experiments/base/discriminator.yaml
-dataset_name: test_pd_dataset.pt #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
+dataset_name: pd_dataset.pt #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
 #misc_dataset_name: 'misc_data_for_qm9_dataset.npy' #
 extra_test_set_name: null
 save_checkpoints: True
@@ -14,7 +14,7 @@ dataset:
   test_fraction: 0.2
 
   smiles_source: 'D:\crystal_datasets\zinc22'#'/home/mkilgour/crystal_datasets/zinc22/'  # /scratch/mk8347/zinc22
-  otf_build_size: 40
+  otf_build_size: 100
   otf_processes: 4
   loader_processes: 0
 
@@ -25,13 +25,13 @@ seeds:
   dataset: 1
 
 # batching & convergence
-num_samples: 1000
+num_samples: 10000
 max_epoch_steps: 100
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
 min_batch_size: 10
-max_batch_size: 1000000
+max_batch_size: 500
 batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 10000

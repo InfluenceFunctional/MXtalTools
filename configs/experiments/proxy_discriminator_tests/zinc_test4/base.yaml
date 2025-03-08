@@ -18,7 +18,7 @@ dataset:
   regression_target: null
   single_identifier: null
   buffer_size: 100000
-  otf_build_size: 400
+  otf_build_size: 1000
   smiles_source: /scratch/mk8347/zinc22
   otf_processes: 4
   loader_processes: 0
@@ -41,8 +41,8 @@ logger:
   run_name: zinc_test4
   experiment_tag: zinc_test4
   mini_csp_frequency: 5  # how often to run CSP-style search WIP
-  sample_reporting_frequency: 25  # how often to do detailed reporting with figures
-  stats_reporting_frequency: 25
+  sample_reporting_frequency: 100  # how often to do detailed reporting with figures
+  stats_reporting_frequency: 100
   log_figures: True
   dataset_reporting_time: 1200
 
