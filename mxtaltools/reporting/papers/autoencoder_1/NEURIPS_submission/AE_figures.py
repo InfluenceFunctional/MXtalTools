@@ -155,12 +155,12 @@ def RMSD_fig():
     fig.update_layout(legend_traceorder='reversed')  # , yaxis_showgrid=True)
 
     fig.update_layout(xaxis1_range=[0, .75])
-    fig.update_layout(xaxis1_title='Molwise RSMD (Angstrom)')
+    fig.update_layout(xaxis1_title='Molwise RMSD (Angstrom)')
     fig.update_layout(xaxis1_tick0=0,
                       xaxis1_dtick=0.1)
 
     fig.update_layout(xaxis2_range=[0, .75])
-    fig.update_layout(xaxis2_title='Atomwise RSMD (Angstrom)')
+    fig.update_layout(xaxis2_title='Atomwise RMSD (Angstrom)')
     fig.update_layout(xaxis2_tick0=0,
                       xaxis2_dtick=0.1)
 

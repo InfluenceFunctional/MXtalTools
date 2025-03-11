@@ -148,14 +148,14 @@ def RMSD_fig():
     fig.update_layout(
         xaxis1={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
     fig.update_layout(xaxis1_range=[0, .75])
-    fig.update_layout(xaxis1_title='RSMD (Angstrom)')
+    fig.update_layout(xaxis1_title='RMSD (Angstrom)')
     fig.update_layout(xaxis1_tick0=0, xaxis1_dtick=0.1)
     fig.update_layout(yaxis1={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
 
     fig.update_layout(
         xaxis2={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
     fig.update_layout(xaxis2_range=[0, .75])
-    fig.update_layout(xaxis2_title='RSMD (Angstrom)')
+    fig.update_layout(xaxis2_title='RMSD (Angstrom)')
     fig.update_layout(xaxis2_tick0=0, xaxis1_dtick=0.1)
     fig.update_layout(yaxis2={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
 

@@ -1445,6 +1445,7 @@ class Modeller:
         num_processes = self.config.dataset.otf_processes
         if len(os.listdir(chunks_path)) == 0:  # only make a new batch if the previous batch has been integrated
             if self.logger.epoch == 0 or self.integrated_dataset == True:
+                self.otf_start_time = time()
                 print('sending crystal opt jobs to mp pool')
                 #if self.config.machine == 'cluster': # linux machines
                 mp.set_start_method('spawn', force=True)
@@ -1470,7 +1471,7 @@ class Modeller:
         #assert False, "stop for debugging"
 
         # if a batch is finished, merge it with our existing dataset
-        if len(os.listdir(chunks_path)) >= num_processes:
+        if len(os.listdir(chunks_path)) >= num_processes or (time() - self.otf_start_time) > (60*30):  # if it's been 30 minutes, assume it's hanging and restart
             # only integrate when the batch is exactly complete
             data_loader = self.merge_otf_crystals_dataset(chunks_path, data_loader, temp_dataset_path)
 
