@@ -1,0 +1,89 @@
+machine: "cluster"  # or "cluster"
+device: "cuda"  # or "cpu"
+anomaly_detection: False  # slows down the code
+mode: proxy_discriminator
+dataset_name: 'qm9_molecules_dataset.pt' #'test_dataset.pt'
+dataset_yaml_path: '/qm9_autoencoder.yaml'
+save_checkpoints: True # will do it always on cluster, only locally if True
+checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
+model_names: ['autoencoder', 'proxy_discriminator']
+sweep_id: null
+sweep_path: null
+
+dataset:
+  type: 'molecule'
+  max_dataset_length: 10000000
+  test_fraction: 0.2
+  filter_protons: False
+  regression_target: gap_energy
+
+# batching & convergence
+early_epochs_step_override: 5
+num_early_epochs: 0
+grow_batch_size: True
+min_batch_size: 50
+max_batch_size: 2000
+batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
+overfit_tolerance: 10  # maximum allowed ratio of test_loss/train_loss
+minimum_epochs: 50
+max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+history: 250  # for convergence checks
+gradient_norm_clip: 1
+extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
+
+logger:
+  run_name: qm9_test3
+  experiment_tag: qm9_test3
+  sample_reporting_frequency: 5  # how often to do detailed reporting with figures
+  stats_reporting_frequency: 10  # how many steps between which to move training stats to cpu
+  log_figures: True
+
+sample_steps: 100
+
+seeds:
+  model: 12345
+  dataset: 0
+
+# for reloading prior checkpoints
+model_paths:
+  discriminator: null
+  generator: null
+  regressor: null
+  autoencoder: best_autoencoder_experiments_autoencoder_tests_qm9_test28_14_09-10-10-23-13
+  embedding_regressor: null
+  proxy_discriminator: null
+
+positional_noise:
+  discriminator: 0
+  generator: 0
+  regressor: 0
+  autoencoder: 0
+  embedding_regressor: 0
+  proxy_discriminator: 0
+
+generate_sgs: ['P21/c']
+supercell_size: 5
+
+proxy_discriminator:
+  train_on_randn: True
+  cutoff: 6
+  optimizer:
+    beta1: 0.9
+    beta2: 0.999
+    convergence_eps: 1.0e-06
+    init_lr: 1.0e-4
+    lr_growth_lambda: 1.05
+    lr_schedule: true
+    lr_shrink_lambda: 0.99775
+    max_lr: 1.0e-03
+    min_lr: 5.0e-06
+    optimizer: adamw
+    use_plateau_scheduler: false
+    weight_decay: 0.1
+
+  model:
+    hidden_dim: 256
+    dropout: 0.1
+    norm: layer
+    num_layers: 8
+    vector_norm: 'vector layer'

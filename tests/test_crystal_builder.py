@@ -1,12 +1,14 @@
 from torch_geometric.loader.dataloader import Collater
 
-from common.utils import compute_rdf_distance, init_sym_info
-from crystal_building.utils import batch_asymmetric_unit_pose_analysis_torch, get_intra_mol_dists, clean_cell_params
-from models.crystal_rdf import crystal_rdf
-from crystal_modeller import Modeller
+from mxtaltools.common.sym_utils import init_sym_info
+from mxtaltools.analysis.crystal_rdf import compute_rdf_distance
+from mxtaltools.crystal_building.utils import batch_asymmetric_unit_pose_analysis_torch, get_intra_mol_dists
+from mxtaltools.models.utils import clean_cell_params
+from mxtaltools.models.functions.crystal_rdf import crystal_rdf
+from mxtaltools.modeller import Modeller
 import numpy as np
 import torch
-from common.config_processing import get_config
+from mxtaltools.common.config_processing import process_main_config
 from tqdm import tqdm
 
 '''
@@ -18,13 +20,13 @@ test module for crystal builder
 '''
 
 '''load test dataset'''
-config_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/test_configs/crystal_building.yaml'
-user_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/users/mkilgour.yaml'
-config = get_config(user_yaml_path=user_path, main_yaml_path=config_path)
+config_path = r'/configs/test_configs/crystal_building.yaml'
+user_path = r'/configs/users/mkilgour.yaml'
+config = process_main_config(user_yaml_path=user_path, main_yaml_path=config_path)
 modeller = Modeller(config)
 _, data_loader, _ = modeller.load_dataset_and_dataloaders(override_test_fraction=1)
 modeller.init_gaussian_generator()
-supercell_builder = modeller.supercell_builder
+supercell_builder = modeller.crystal_builder
 test_crystals = next(iter(data_loader))
 
 supercell_size = 5
@@ -32,7 +34,6 @@ rotation_basis = 'spherical'
 
 
 class TestClass:
-
     @staticmethod
     def test_cell_parameterization_and_reconstruction():
         """
@@ -52,9 +53,9 @@ class TestClass:
         '''
         position, rotation, handedness, well_defined_asym_unit, canonical_coords_list = \
             batch_asymmetric_unit_pose_analysis_torch(
-                [torch.Tensor(test_crystals.ref_cell_pos[ii]) for ii in range(test_crystals.num_graphs)],
+                [torch.Tensor(test_crystals.unit_cell_pos[ii]) for ii in range(test_crystals.num_graphs)],
                 torch.Tensor(test_crystals.sg_ind),
-                supercell_builder.asym_unit_dict,
+                supercell_builder.ASYM_UNITS,
                 torch.Tensor(test_crystals.T_fc),
                 enforce_right_handedness=False,
                 return_asym_unit_coords=True,
@@ -62,13 +63,13 @@ class TestClass:
 
         updated_params = test_crystals.cell_params.clone()
         updated_params[:, 9:12] = rotation  # overwrite to canonical parameters
-        # supercell_data.asym_unit_handedness = mol_handedness
+        # supercell_data.aunit_handedness = mol_handedness
 
-        rebuilt_supercells, _ = supercell_builder.build_supercells(
-            molecule_data=test_crystals,
+        rebuilt_supercells, _ = supercell_builder.build_zp1_supercells(
+            mol_batch=test_crystals,
             cell_parameters=updated_params,
             align_to_standardized_orientation=True,
-            target_handedness=reference_supercells.asym_unit_handedness,
+            target_handedness=reference_supercells.aunit_handedness,
             graph_convolution_cutoff=6,
             supercell_size=supercell_size,
             pare_to_convolution_cluster=True)
@@ -108,7 +109,7 @@ class TestClass:
         mol_batch.sg_ind = torch.arange(1, 231)
         for i in range(230):
             mol_batch.symmetry_operators[i] = supercell_builder.sym_ops[i + 1]
-            mol_batch.mult[i] = len(mol_batch.symmetry_operators[i])
+            mol_batch.sym_mult[i] = len(mol_batch.symmetry_operators[i])
 
         all_params = torch.ones((230, 12), dtype=torch.float32, device=supercell_builder.device) / 2
         all_params[:, 3:6] = torch.pi / 2  # valid in most SGs
@@ -116,11 +117,11 @@ class TestClass:
 
         symmetries_dict = init_sym_info()
         final_samples = clean_cell_params(all_params, mol_batch.sg_ind, modeller.lattice_means, modeller.lattice_stds,
-                                          symmetries_dict, supercell_builder.asym_unit_dict,
+                                          symmetries_dict, supercell_builder.ASYM_UNITS,
                                           rescale_asymmetric_unit=False, destandardize=False, mode='hard')
 
-        all_sg_supercells, _ = supercell_builder.build_supercells(
-            molecule_data=mol_batch,
+        all_sg_supercells, _ = supercell_builder.build_zp1_supercells(
+            mol_batch=mol_batch,
             cell_parameters=final_samples,
             align_to_standardized_orientation=False,
             graph_convolution_cutoff=6,
@@ -158,7 +159,7 @@ class TestClass:
         assert all(rdf_dists < 1e-1)  # RDFs should be nearly identical
 
         '''  # optionally look at some cells
-        from models.utils import ase_mol_from_crystaldata
+        from mxtaltools.models.utils import ase_mol_from_crystaldata
         from ase.visualize import view
         crystal_number = 0
         mol1 = ase_mol_from_crystaldata(reference_supercells, crystal_number)
@@ -178,9 +179,9 @@ class TestClass:
             supercell_size=supercell_size, pare_to_convolution_cluster=True)
 
         distorted_params = test_crystals.cell_params / 2
-        rebuilt_supercells, _ = supercell_builder.build_supercells(
+        rebuilt_supercells, _ = supercell_builder.build_zp1_supercells(
             test_crystals, distorted_params,
-            align_to_standardized_orientation=True, target_handedness=reference_supercells.asym_unit_handedness,
+            align_to_standardized_orientation=True, target_handedness=reference_supercells.aunit_handedness,
             graph_convolution_cutoff=6,
             supercell_size=supercell_size, pare_to_convolution_cluster=True)
 

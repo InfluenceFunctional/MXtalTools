@@ -1,0 +1,120 @@
+program: main.py
+name: geom_sweep1
+method: bayes
+metric:
+  goal: minimize
+  name: test_evaluation_overlap_loss
+parameters:
+  max_batch_size:
+    distribution: int_uniform
+    min: 100
+    max: 2500
+  positional_noise:
+    parameters:
+      autoencoder:
+        distribution: uniform
+        min: 0
+        max: 0.25
+  autoencoder:
+    parameters:
+      optimizer:
+        parameters:
+          encoder_init_lr:
+            distribution: log_uniform_values
+            min: 1.0E-5
+            max: 5.0E-4
+          decoder_init_lr:
+            distribution: log_uniform_values
+            min: 1.0E-5
+            max: 5.0E-4
+          beta1:
+            distribution: log_uniform_values
+            min: 0.9
+            max: 0.99
+          beta2:
+            distribution: log_uniform_values
+            min: 0.99
+            max: 0.9999
+          weight_decay:
+            distribution: log_uniform_values
+            min: 1.0E-4
+            max: 1
+          lr_growth_lambda:
+            values: [1, 1.01, 1.1]
+          lr_shrink_lambda:
+            values: [0.999, 0.99, 0.95]
+          max_lr:
+            distribution: log_uniform_values
+            min: 1.0E-4
+            max: 5.0E-3
+      model:
+        parameters:
+          bottleneck_dim:
+            distribution: int_uniform
+            min: 64
+            max: 1024
+          encoder:
+            parameters:
+              graph:
+                parameters:
+                  num_graph_convolutions:
+                    distribution: int_uniform
+                    min: 0
+                    max: 4
+                  fcs_per_gc:
+                    distribution: int_uniform
+                    min: 1
+                    max: 8
+                  dropout:
+                    distribution: uniform
+                    min: 0
+                    max: 0.5
+                  norm:
+                    values: [null, 'graph layer']
+                  cutoff:
+                    distribution: uniform
+                    min: 3
+                    max: 6
+                  radial_embedding:
+                    values: ['bessel', 'gaussian']
+                  node_dim:
+                    distribution: int_uniform
+                    min: 64
+                    max: 1024
+                  embedding_dim:
+                    distribution: int_uniform
+                    min: 64
+                    max: 1024
+                  message_dim:
+                    distribution: int_uniform
+                    min: 64
+                    max: 1024
+                  vector_norm:
+                    values: [null, 'graph vector layer']
+          decoder:
+            parameters:
+              num_nodes:
+                distribution: int_uniform
+                min: 128
+                max: 1024
+              ramp_depth:
+                values: [ True, False ]
+              fc:
+                parameters:
+                  hidden_dim:
+                    distribution: int_uniform
+                    min: 128
+                    max: 1024
+                  num_layers:
+                    distribution: int_uniform
+                    min: 1
+                    max: 12
+                  norm:
+                    values: [ null, 'layer' ]
+                  dropout:
+                    distribution: uniform
+                    min: 0
+                    max: 0.5
+                  vector_norm:
+                    values: [null, 'vector layer']
+

@@ -1,0 +1,26 @@
+#First, define the dataset by a series of conditions in format [key, type, [elements]]
+#where type is in not_in or range and elements are [min, max], or a list of discrete values
+#
+#Then, specify the features which will be fed to models in training
+
+seed: 1
+max_dataset_length: 1000000000
+save_dataset: False
+type: 'molecule'
+regression_target: 'crystal_packing_coefficient' # 'crystal_reduced_cell_volume' 'crystal_density' 'crystal_packing_coefficient'
+single_molecule_dataset_identifier: null
+test_fraction: 0.2
+
+filter_polymorphs: False
+filter_duplicate_molecules: False
+filter_protons: False
+filter_conditions: [['molecule_num_atoms','range',[6,100]],
+                    ['atomic_number', 'in', [1, 6, 7, 8, 9]],
+                    ['crystal_z_prime','in', [1]],
+                    ['crystal_symmetry_operations_are_nonstandard','in',[False]],
+                    ['asymmetric_unit_is_well_defined','in',[True]],
+                    ['crystal_packing_coefficient', 'range',[0.5, 0.9]]
+                    ]
+
+# at least 6 atoms so we miss e.g., methane
+

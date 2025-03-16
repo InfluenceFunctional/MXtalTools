@@ -1,0 +1,26 @@
+#First, define the dataset by a series of conditions in format [key, type, [elements]]
+#where type is in not_in or range and elements are [min, max], or a list of discrete values
+#
+#Then, specify the features which will be fed to models in training
+
+seed: 1
+max_dataset_length: 1000000
+save_dataset: False
+
+regression_target: null # 'crystal_cell_volume' 'crystal_density' 'crystal_packing_coefficient'
+single_molecule_dataset_identifier: null
+test_fraction: 0.2
+
+sample_from_trajectory: True # true for random selection from dataset, false for contiguous analysis e.g., of a single trajectory
+trajs_to_analyze_list: null
+
+dataset_type: 'mol_cluster'
+dumps_dirs: ['acridine_test']
+
+filter_polymorphs: False
+filter_duplicate_molecules: False
+filter_conditions: [#['temperature','range',[200, 400]],
+                    ['time_step', 'range', [10000, 1000000000000]],
+                    #['cluster_type','in',['supercell']],
+                    #['structure_identifier','in',['acridine/Form2', 'melt']],
+                    ]

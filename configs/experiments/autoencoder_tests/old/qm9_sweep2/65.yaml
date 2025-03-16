@@ -1,0 +1,158 @@
+anomaly_detection: false
+autoencoder:
+  KLD_weight: 0.05
+  evaluation_sigma: 0.05
+  independent_node_weights: true
+  init_sigma: 0.15
+  max_overlap_threshold: 0.25
+  model:
+    activation: gelu
+    atom_type_embedding_dims: 5
+    bottleneck_dim: 64
+    convolution_cutoff: 2
+    decoder_dropout_probability: 0
+    decoder_norm_mode: layer
+    decoder_ramp_depth: true
+    decoder_type: equivariant
+    decoder_vector_norm: vector layer
+    embedding_depth: 256
+    encoder_type: equivariant
+    encoder_vector_norm: graph vector layer
+    graph_aggregator: equivariant softmax
+    graph_message_depth: 64
+    graph_message_dropout: 0
+    graph_node_dropout: 0
+    graph_node_norm: graph layer
+    max_num_neighbors: 100
+    nodewise_fc_layers: 8
+    num_attention_heads: 4
+    num_decoder_layers: 4
+    num_decoder_points: 256
+    num_graph_convolutions: 0
+    num_radial: 32
+    radial_function: gaussian
+    variational_encoder: true
+  node_weight_temperature: 1
+  optimizer:
+    beta1: 0.9
+    beta2: 0.999
+    convergence_eps: 1.0e-05
+    decoder_init_lr: 0.001
+    encoder_init_lr: 0.0005
+    init_lr: 0.0001
+    lr_growth_lambda: 1.0
+    lr_schedule: true
+    lr_shrink_lambda: 0.999
+    max_lr: 1.0e-05
+    min_lr: 5.0e-05
+    optimizer: adamw
+    use_plateau_scheduler: false
+    weight_decay: 0.075
+  overlap_eps:
+    test: 0.001
+  random_fraction: 0
+  sigma_lambda: 0.99
+  sigma_threshold: 0.01
+  type_distance_scaling: 0.5
+autoencoder_positional_noise: 0
+base_config_path: /experiments/base.yaml
+batch_growth_increment: 0.5
+checkpointing_loss_type: test
+dataset:
+  filter_protons: false
+  max_dataset_length: 1000000
+  regression_target: molecule_rotational_constant_a
+  test_fraction: 0.2
+dataset_name: qm9_molecules_dataset.pkl
+dataset_yaml_path: /dataset/qm9_autoencoder.yaml
+device: cuda
+discriminator:
+  distortion_magnitude: -1
+  model: null
+  optimizer: null
+  train_adversarially: true
+  train_on_distorted: true
+  train_on_randn: true
+  use_cell_distance_loss: false
+  use_classification_loss: true
+  use_rdf_distance_loss: true
+discriminator_positional_noise: 0
+early_epochs_step_override: 5
+embedding_regressor:
+  model:
+    depth: 128
+    dropout: 0.1
+    equivariant: true
+    norm_mode: layer
+    num_layers: 8
+    vector_norm: true
+  num_targets: 1
+  optimizer:
+    beta1: 0.9
+    beta2: 0.999
+    convergence_eps: 0.0001
+    init_lr: 0.001
+    lr_growth_lambda: 1.0
+    lr_schedule: true
+    lr_shrink_lambda: 0.995
+    max_lr: 1.0e-05
+    min_lr: 1.0e-05
+    optimizer: adamw
+    use_plateau_scheduler: false
+    weight_decay: 0.05
+  prediction_type: scalar
+extra_test_period: 1
+extra_test_set_name: null
+generate_sgs:
+- P-1
+generator:
+  adversarial_loss_func: score
+  canonical_conformer_orientation: random
+  density_loss_func: l1
+  model: null
+  optimizer: null
+  packing_target_noise: 0.05
+  similarity_penalty: 0.5
+  train_adversarially: true
+  train_h_bond: false
+  train_vdw: true
+  vdw_loss_func: inv
+generator_positional_noise: 0
+gradient_norm_clip: 1
+grow_batch_size: true
+history: 100000
+logger:
+  experiment_tag: qm9_sweep2
+  log_figures: true
+  mini_csp_frequency: 5
+  run_name: qm9_sweep2_0_1_2_3_4_5_6_7_8_9_10_11_12_13_14_15_16_17_18_19_20_21_22_23_24_25_26_27_28_29_30_31_32_33_34_35_36_37_38_39_40_41_42_43_44_45_46_47_48_49_50_51_52_53_54_55_56_57_58_59_60_61_62_63_64_65
+  sample_reporting_frequency: 2
+machine: cluster
+max_batch_size: 10000
+max_epochs: 100000
+min_batch_size: 25
+minimum_epochs: 100000
+misc_dataset_name: misc_data_for_qm9_molecules_dataset.npy
+mode: autoencoder
+model_names:
+- autoencoder
+model_paths:
+  autoencoder: null
+  discriminator: null
+  embedding_regressor: null
+  generator: null
+  regressor: null
+num_early_epochs: 0
+overfit_tolerance: 4
+regressor:
+  model: null
+  optimizer: null
+regressor_positional_noise: 0
+sample_steps: 100
+save_checkpoints: true
+seeds:
+  dataset: 0
+  model: 12345
+supercell_size: 5
+sweep_id: h38n3wfs
+sweep_path: /scratch/mk8347/mcrygan/configs/autoencoder_tests/qm9_sweep2/qm9_sweep2.yaml

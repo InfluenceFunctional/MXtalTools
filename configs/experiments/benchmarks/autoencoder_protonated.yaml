@@ -1,0 +1,12 @@
+machine: "cluster"  # or "cluster"
+device: "cuda"  # or "cpu"
+base_config_path: /experiments/base/autoencoder.yaml
+
+dataset:
+  filter_protons: False
+
+logger:
+  run_name: autoencoder
+  experiment_tag: benchmarks
+  sample_reporting_frequency: 10  # how often to do detailed reporting with figures
+  log_figures: True

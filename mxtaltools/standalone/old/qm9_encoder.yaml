@@ -1,0 +1,46 @@
+autoencoder:
+  evaluation_sigma: 0.05
+  independent_node_weights: true
+  infer_protons: false
+  init_sigma: 0.15
+  max_overlap_threshold: 0.25
+  model:
+    bottleneck_dim: 256
+    encoder:
+      activation: 'gelu'
+      graph:
+        node_dim: 256
+        message_dim: 128
+        num_attention_heads: 16
+        embedding_dim: 256
+        num_convs: 2
+        fcs_per_gc: 2
+        num_radial: 32
+        norm: 'graph layer'
+        dropout: 0.2
+
+        atom_type_embedding_dim: 32
+        radial_embedding: 'bessel'
+        cutoff: 2
+        max_num_neighbors: 100
+        envelope_exponent: 5
+      fc: # dummy
+        hidden_dim: 256
+        num_layers: 0
+        dropout: 0
+        norm: null
+      vector_norm: 'graph vector layer'
+      graph_aggregator: 'equivariant softmax'
+
+    decoder:
+      activation: 'gelu'
+      fc:
+        hidden_dim: 256
+        num_layers: 4
+        dropout: .2
+        norm: 'layer'
+      num_nodes: 256
+      ramp_depth: True
+      vector_norm: 'vector layer'
+
+

@@ -9,7 +9,7 @@ from models.vdw_overlap import vdw_overlap
 from crystal_building.utils import \
     (random_crystaldata_alignment, align_crystaldata_to_principal_axes,
      batch_asymmetric_unit_pose_analysis_torch, DEPRECATED_write_sg_to_all_crystals)
-from common.geometry_calculations import batch_molecule_principal_axes_torch, compute_Ip_handedness
+from common.geometry_utils import batch_molecule_principal_axes_torch, compute_Ip_handedness
 
 '''
 This script uses Markov Chain Monte Carlo, including the STUN algorithm, to optimize a given function
@@ -342,11 +342,11 @@ class mcmcSampler:
         :param config:
         :return:
         """
-        proposed_supercells, _ = self.supercell_builder.build_supercells(crystaldata, torch.Tensor(self.proposed_states),
-                                                                            supercell_size=self.supercell_size,
-                                                                            graph_convolution_cutoff=self.graph_convolution_cutoff,
-                                                                            override_sg=self.sg_to_search,
-                                                                            align_to_standardized_orientation=False, )
+        proposed_supercells, _ = self.supercell_builder.build_zp1_supercells(crystaldata, torch.Tensor(self.proposed_states),
+                                                                             supercell_size=self.supercell_size,
+                                                                             graph_convolution_cutoff=self.graph_convolution_cutoff,
+                                                                             override_sg=self.sg_to_search,
+                                                                             align_to_standardized_orientation=False, )
 
         output, dist_dict = score_model(proposed_supercells.clone().cuda(), return_dists=True)
 
@@ -363,7 +363,7 @@ class mcmcSampler:
             correct_position[jj], correct_rotation[jj], handedness \
                 = asymmetric_unit_pose_analysis_np(proposed_supercells.ref_cell_pos[jj],
                                                    proposed_supercells.sg_ind[jj],
-                                                   constants.asymmetric_units.asym_unit_dict,
+                                                   constants.asymmetric_units.ASYM_UNITS,
                                                    torch.linalg.inv(proposed_supercells.T_fc[jj]),
                                                    enforce_right_handedness = False) # todo replace this with the raw cell params
         # renormalize

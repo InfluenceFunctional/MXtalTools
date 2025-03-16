@@ -1,0 +1,116 @@
+anomaly_detection: false
+autoencoder:
+  evaluation_sigma: 0.35
+  infer_protons: false
+  init_sigma: 1.05
+  max_overlap_threshold: 0.25
+  model:
+    bottleneck_dim: 512
+    decoder:
+      activation: gelu
+      fc:
+        dropout: 0.05
+        hidden_dim: 512
+        norm: layer
+        num_layers: 1
+      num_nodes: 256
+      ramp_depth: true
+      vector_norm: vector layer
+    encoder:
+      activation: gelu
+      fc:
+        dropout: 0
+        hidden_dim: 256
+        norm: null
+        num_layers: 0
+      graph:
+        atom_type_embedding_dim: 32
+        cutoff: 14
+        dropout: 0.05
+        embedding_dim: 512
+        envelope_exponent: 5
+        fcs_per_gc: 2
+        max_num_neighbors: 100
+        message_dim: 128
+        node_dim: 512
+        norm: graph layer
+        num_attention_heads: 16
+        num_convs: 2
+        num_radial: 32
+        radial_embedding: bessel
+      graph_aggregator: equivariant softmax
+      vector_norm: graph vector layer
+  node_weight_temperature: 1
+  optimizer:
+    beta1: 0.9
+    beta2: 0.999
+    convergence_eps: 1.0e-05
+    decoder_init_lr: 5.0e-05
+    encoder_init_lr: 5.0e-05
+    init_lr: 5.0e-05
+    lr_growth_lambda: 1.05
+    lr_schedule: true
+    lr_shrink_lambda: 0.995
+    max_lr: 0.0002
+    min_lr: 1.0e-06
+    optimizer: adamw
+    use_plateau_scheduler: false
+    weight_decay: 0.05
+  overlap_eps:
+    test: 0.001
+  sigma_lambda: 0.99
+  sigma_threshold: 0.01
+  type_distance_scaling: 2
+batch_growth_increment: 0.05
+checkpointing_loss_type: test
+dataset:
+  filter_protons: true
+  max_dataset_length: 10000000
+  regression_target: null
+  test_fraction: 0.2
+  type: molecule
+dataset_name: qm9_molecules_dataset.pt
+dataset_yaml_path: /qm9_autoencoder.yaml
+device: cuda
+early_epochs_step_override: 5
+extra_test_period: 1
+extra_test_set_name: null
+generate_sgs: null
+gradient_norm_clip: 1
+grow_batch_size: true
+history: 100
+logger:
+  experiment_tag: dev
+  log_figures: true
+  mini_csp_frequency: 1
+  run_name: dev_0_1_2_3_4_5
+  sample_reporting_frequency: 10
+machine: cluster
+max_batch_size: 500
+max_epochs: 10000
+min_batch_size: 10
+minimum_epochs: 2000
+misc_dataset_name: misc_data_for_qm9_molecules_dataset.npy
+mode: autoencoder
+model_names:
+- autoencoder
+model_paths:
+  autoencoder: null
+  discriminator: null
+  embedding_regressor: null
+  generator: null
+  regressor: null
+num_early_epochs: 0
+overfit_tolerance: 4
+positional_noise:
+  autoencoder: 0
+  discriminator: 0
+  generator: 0
+  regressor: 0
+save_checkpoints: true
+seeds:
+  dataset: 0
+  model: 2
+supercell_size: 5
+sweep_id: null
+sweep_path: null

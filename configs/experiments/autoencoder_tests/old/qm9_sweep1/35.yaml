@@ -1,0 +1,39 @@
+anomaly_detection: false
+autoencoder:
+  KLD_weight: 0.05
+  evaluation_sigma: 0.05
+  independent_node_weights: true
+  init_sigma: 0.15
+  max_overlap_threshold: 0.25
+  model:
+    activation: gelu
+    atom_type_embedding_dims: 5
+    bottleneck_dim: 64
+    convolution_cutoff: 2
+    decoder_dropout_probability: 0
+    decoder_norm_mode: layer
+    decoder_ramp_depth: true
+    decoder_type: equivariant
+    decoder_vector_norm: vector layer
+    embedding_depth: 256
+    encoder_type: equivariant
+    encoder_vector_norm: graph vector layer
+    graph_aggregator: equivariant softmax
+    graph_message_depth: 64
+    graph_message_dropout: 0
+    graph_node_dropout: 0
+    graph_node_norm: graph layer
+    max_num_neighbors: 100
+    nodewise_fc_layers: 8
+    num_attention_heads: 4
+    num_decoder_layers: 4
+    num_decoder_points: 256
+    num_graph_convolutions: 0
+    num_radial: 32
+    radial_function: gaussian
+    variational_encoder: true
+  node_weight_temperature: 1
+  optimizer:
+    beta1: 0.9
+    beta2: 0.999
+    convergence_eps:

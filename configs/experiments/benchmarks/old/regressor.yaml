@@ -1,0 +1,228 @@
+machine: "cluster"  # or "cluster"
+device: "cuda"  # or "cpu"
+anomaly_detection: False  # slows down the code
+mode: regression  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
+dataset_name: 'dataset.pkl'
+misc_dataset_name: 'misc_data_for_dataset.npy'
+dataset_yaml_path: '/skinny_regression.yaml'
+extra_test_set_name: null #'blind_test_dataset.pkl'
+save_checkpoints: True # will do it always on cluster, only locally if True
+checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
+model_names: ['regressor']
+sweep_id: null
+sweep_path: null
+
+dataset:
+  max_dataset_length: 10000000
+  test_fraction: 0.2
+  filter_protons: False
+  regression_target: crystal_packing_coefficient
+
+# batching & convergence
+early_epochs_step_override: 5
+num_early_epochs: 0
+grow_batch_size: True
+min_batch_size: 25
+max_batch_size: 10000
+batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
+overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
+minimum_epochs: 1000
+max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+history: 100  # for convergence checks
+gradient_norm_clip: 1
+extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
+
+logger:
+  run_name: regressor
+  experiment_tag: benchmarks
+  mini_csp_frequency: 5  # how often to run CSP-style search WIP
+  sample_reporting_frequency: 10  # how often to do detailed reporting with figures
+  log_figures: True
+
+sample_steps: 100
+
+seeds:
+  model: 12345
+  dataset: 0
+
+# for reloading prior checkpoints
+model_paths:
+  discriminator: null
+  generator: null
+  regressor: null
+  autoencoder: null
+  embedding_regressor: null
+
+discriminator_positional_noise: 0
+generator_positional_noise: 0
+regressor_positional_noise: 0
+autoencoder_positional_noise: 0
+
+generate_sgs: ['P-1']  #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
+supercell_size: 5
+
+autoencoder:
+  KLD_weight: 0.001
+  random_fraction: 0
+  type_distance_scaling: 0.5
+  init_sigma: 0.15 #0.15
+  evaluation_sigma: 0.05
+  sigma_lambda: 0.99
+  sigma_threshold: 0.01
+  overlap_eps:
+    test: 1.0E-3
+  max_overlap_threshold: 0.25  # guessed
+  independent_node_weights: True
+  node_weight_temperature: 1
+
+  # discriminator optimizer and model
+  optimizer:
+    optimizer: adamw
+    init_lr: 1.0E-4
+    encoder_init_lr: 5.0E-4
+    decoder_init_lr: 1.0E-3
+    max_lr: 1.0E-5
+    min_lr: 5.0E-5
+    lr_schedule: True
+    beta1: 0.9
+    beta2: 0.999
+    weight_decay: 0.075
+    convergence_eps: 1.0E-5
+    lr_growth_lambda: 1.00
+    lr_shrink_lambda: 0.999
+    use_plateau_scheduler: False
+
+  model:
+    variational_encoder: False
+    encoder_type: 'equivariant' # or variant
+    decoder_type: 'equivariant' # or variant
+
+    num_graph_convolutions: 1
+    embedding_depth: 512
+    bottleneck_dim: 512
+    graph_message_depth: 256  # must cleanly divide num_heads
+    num_attention_heads: 16
+    graph_aggregator: 'equivariant softmax'
+    nodewise_fc_layers: 2
+    activation: 'gelu'
+    num_decoder_layers: 4
+    decoder_ramp_depth: True
+
+    decoder_norm_mode: 'layer'
+    graph_node_norm: 'graph layer'
+    encoder_vector_norm: 'graph vector layer' #'graph vector layer'
+    decoder_vector_norm: 'vector layer'
+
+    graph_node_dropout: 0.1
+    graph_message_dropout: 0
+    decoder_dropout_probability: 0.1
+
+    num_radial: 32
+    radial_function: gaussian
+    max_num_neighbors: 100
+    convolution_cutoff: 2
+    atom_type_embedding_dims: 5
+    num_decoder_points: 256
+
+regressor:
+  optimizer:
+    optimizer: adamw
+    init_lr: 1.0E-4
+    encoder_init_lr: 5.0E-4
+    decoder_init_lr: 1.0E-3
+    max_lr: 1.0E-3
+    min_lr: 1.0E-5
+    lr_schedule: True
+    beta1: 0.9
+    beta2: 0.999
+    weight_decay: 0.01
+    convergence_eps: 1.0E-5
+    lr_growth_lambda: 1.01
+    lr_shrink_lambda: 0.999
+    use_plateau_scheduler: False
+
+  model:
+    graph_convolution_type: TransformerConv
+    graph_aggregator: 'softmax'
+    concat_mol_to_atom_features: True
+    activation: gelu
+    num_fc_layers: 4
+    fc_depth: 256
+    fc_norm_mode: 'layer'
+    fc_dropout_probability: 0.1
+    graph_node_norm: 'graph layer'
+    graph_node_dropout: 0.1
+    graph_message_norm: null
+    graph_message_dropout: 0
+    num_attention_heads: 32
+    graph_message_depth: 128
+    graph_node_dims: 256
+    num_graph_convolutions: 4
+    graph_embedding_depth: 256
+    nodewise_fc_layers: 1
+    num_radial: 32
+    radial_function: bessel
+    max_num_neighbors: 100
+    convolution_cutoff: 6
+    atom_type_embedding_dims: 5
+
+
+embedding_regressor:
+  prediction_type: scalar
+  num_targets: 1
+
+  optimizer:
+    optimizer: adamw
+    init_lr: 1.0E-3
+    max_lr: 1.0E-5
+    min_lr: 1.0E-5
+    lr_schedule: True
+    beta1: 0.9
+    beta2: 0.999
+    weight_decay: 1
+    convergence_eps: 0.0001
+    lr_growth_lambda: 1.00
+    lr_shrink_lambda: 0.995
+    use_plateau_scheduler: False
+
+  model:
+    num_layers: 8
+    depth: 128
+    norm_mode: 'layer'
+    dropout: 0.1
+    equivariant: True
+    vector_norm: 'vector layer'
+
+
+# for GAN training
+generator:
+  # settings
+  canonical_conformer_orientation: 'random' # 'standardized' 'random'
+  packing_target_noise: 0.05 # randn noise magnitude in the standardized basis
+  train_vdw: True
+  train_adversarially: True
+  vdw_loss_func: inv  # null 'mse' or 'log' or 'inv'
+  density_loss_func: l1  # 'l1' or 'mse'
+  adversarial_loss_func: 'score'  #
+  train_h_bond: False # (non-directional)
+  similarity_penalty: 0.5
+
+  #generator optimizer and model
+  optimizer: null
+
+  model: null
+
+discriminator:
+  # settings
+  train_adversarially: True
+  train_on_randn: True
+  train_on_distorted: True
+  use_classification_loss: True
+  use_rdf_distance_loss: True
+  use_cell_distance_loss: False  # DO NOT USE only meaningful when generating within the same space group
+  distortion_magnitude: -1 # -1 for wide range test # noise for distorted generation
+
+  # discriminator optimizer and model
+  optimizer: null
+
+  model: null

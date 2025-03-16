@@ -1,0 +1,112 @@
+machine: "cluster"  # or "cluster"
+device: "cuda"  # or "cpu"
+anomaly_detection: False  # slows down the code
+mode: regression  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' 'mol_generation' WIP
+dataset_name: 'dataset.pt' #
+misc_dataset_name: 'misc_data_for_CSD_dataset.npy' #
+dataset_yaml_path: '/skinny_regression.yaml' #
+extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
+save_checkpoints: True # will do it always on cluster, only locally if True
+checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
+model_names: ['regressor']
+sweep_id: null
+sweep_path: null
+
+dataset:
+  type: 'crystal'
+  max_dataset_length: 10000000
+  test_fraction: 0.2
+  filter_protons: False
+  regression_target: crystal_packing_coefficient #
+
+# batching & convergence
+early_epochs_step_override: 5
+num_early_epochs: 0
+grow_batch_size: True
+min_batch_size: 10
+max_batch_size: 2000
+batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
+overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
+minimum_epochs: 50
+max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+history: 50  # for convergence checks
+gradient_norm_clip: 1
+extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
+
+logger:
+  run_name: csd_density_test1
+  experiment_tag: csd_density_test1
+  mini_csp_frequency: 5  # how often to run CSP-style search WIP
+  sample_reporting_frequency: 20  # how often to do detailed reporting with figures
+  log_figures: True
+  stats_reporting_frequency: 5
+
+sample_steps: 100
+
+seeds:
+  model: 12345
+  dataset: 0
+
+# for reloading prior checkpoints
+model_paths:
+  discriminator: null
+  generator: null
+  regressor: null
+  autoencoder: null
+  embedding_regressor: null
+
+positional_noise:
+  discriminator: 0
+  generator: 0
+  regressor: 0
+  autoencoder: 0
+
+generate_sgs: null
+supercell_size: 5
+
+
+regressor:
+  optimizer:
+    optimizer: adamw
+    init_lr: 1.0E-4
+    max_lr: 1.0E-3
+    min_lr: 1.0E-6
+    lr_schedule: True
+    beta1: 0.9
+    beta2: 0.999
+    weight_decay: 0.01
+    convergence_eps: 1.0E-5
+    lr_growth_lambda: 1.05
+    lr_shrink_lambda: 0.9987
+    use_plateau_scheduler: False
+
+  model:
+    graph_aggregator: 'softmax'
+
+    graph:
+      node_dim: 256
+      message_dim: 128
+      #num_attention_heads: 16
+      embedding_dim: 256
+      num_convs: 2
+      fcs_per_gc: 1
+      num_radial: 32
+      num_input_classes: 101
+      norm: 'graph layer'
+      dropout: 0.5
+
+      atom_type_embedding_dim: 32
+      radial_embedding: 'bessel'
+      cutoff: 3
+      max_num_neighbors: 100
+      envelope_exponent: 5
+
+    fc:
+      hidden_dim: 256
+      num_layers: 2
+      dropout: 0.5
+      norm: 'layer'
+
+    activation: gelu
+
+

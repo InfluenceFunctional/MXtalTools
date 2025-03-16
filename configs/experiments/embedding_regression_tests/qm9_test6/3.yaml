@@ -1,0 +1,98 @@
+anomaly_detection: false
+autoencoder:
+  init_sigma: 0.15
+  model: null
+  optimizer: null
+batch_growth_increment: 0.1
+checkpointing_loss_type: test
+dataset:
+  filter_protons: false
+  max_dataset_length: 10000000
+  regression_target: molecule_gap_energy
+  test_fraction: 0.2
+dataset_name: qm9_molecules_dataset.pkl
+dataset_yaml_path: /dataset/qm9_autoencoder.yaml
+device: cuda
+discriminator:
+  model: null
+  optimizer: null
+  train_adversarially: false
+  train_on_distorted: false
+  train_on_randn: false
+early_epochs_step_override: 5
+embedding_regressor:
+  model:
+    depth: 512
+    dropout: 0.1
+    equivariant: true
+    norm_mode: layer
+    num_layers: 12
+    vector_norm: vector layer
+  num_targets: 1
+  optimizer:
+    beta1: 0.9
+    beta2: 0.999
+    convergence_eps: 0.0001
+    init_lr: 0.0001
+    lr_growth_lambda: 1.1
+    lr_schedule: true
+    lr_shrink_lambda: 0.95
+    max_lr: 0.0005
+    min_lr: 5.0e-06
+    optimizer: adamw
+    use_plateau_scheduler: false
+    weight_decay: 0.1
+  prediction_type: scalar
+extra_test_period: 1
+extra_test_set_name: null
+generate_sgs: null
+generator:
+  canonical_conformer_orientation: random
+  model: null
+  optimizer: null
+  train_adversarially: false
+  train_h_bond: false
+  train_vdw: false
+gradient_norm_clip: 1
+grow_batch_size: true
+history: 50
+logger:
+  experiment_tag: dev
+  log_figures: true
+  mini_csp_frequency: 5
+  run_name: dev_0_1_2_3
+  sample_reporting_frequency: 5
+machine: cluster
+max_batch_size: 2000
+max_epochs: 10000
+min_batch_size: 50
+minimum_epochs: 50
+misc_dataset_name: misc_data_for_qm9_molecules_dataset.npy
+mode: embedding_regression
+model_names:
+- autoencoder
+- embedding_regressor
+model_paths:
+  autoencoder: /best_autoencoder_autoencoder_tests_qm9_test23_7_27-02-14-34-41
+  discriminator: null
+  embedding_regressor: null
+  generator: null
+  regressor: null
+num_early_epochs: 0
+overfit_tolerance: 4
+positional_noise:
+  autoencoder: 0
+  discriminator: 0
+  generator: 0
+  regressor: 0
+regressor:
+  model: null
+  optimizer: null
+sample_steps: 100
+save_checkpoints: true
+seeds:
+  dataset: 0
+  model: 12345
+supercell_size: 5
+sweep_id: null
+sweep_path: null

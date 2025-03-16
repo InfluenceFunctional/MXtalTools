@@ -1,0 +1,88 @@
+machine: "cluster"  # or "cluster"
+device: "cuda"  # or "cpu"
+base_config_path: /experiments/base/generator.yaml
+dataset_name: qm9_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
+extra_test_set_name: null
+save_checkpoints: True
+
+
+dataset:
+  max_dataset_length: 1000000000  # non-functional for on-disk datasets.
+  test_fraction: 0.2
+
+seeds:
+  dataset: 1
+
+# batching & convergence
+max_epoch_steps: 500
+early_epochs_step_override: 5
+num_early_epochs: 0
+grow_batch_size: True
+min_batch_size: 25
+max_batch_size: 2000
+batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
+overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
+minimum_epochs: 10000
+max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (WIP)
+history: 50 # for convergence checks
+gradient_norm_clip: 1
+extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
+
+logger:
+  sample_reporting_frequency: 5  # how often to do detailed reporting with figures
+  stats_reporting_frequency: 5  # how many steps between which to move training stats to cpu
+  experiment_tag: gen_dev1
+  run_name: gen_dev1
+
+model_paths:
+  discriminator: null
+  generator: null
+  regressor: null #'volume_model.pt'
+  autoencoder: best_autoencoder_experiments_autoencoder_tests_new_qm9_13-08-13-38-49
+  embedding_regressor: null
+  polymorph_classifier: null # 'best_polymorph_classifier_experiments_dev_25-06-17-41-37'
+
+generate_sgs: ['P21/c']#,'C2/c','P21/c','P212121']
+
+autoencoder:
+  infer_protons: False
+  filter_protons: False
+
+# for GAN training
+generator:
+  packing_loss_coefficient: 1  # DEPRECATED, but do not delete
+  prior_loss_coefficient: 1
+  prior_coefficient_threshold: 1
+  vdw_loss_coefficient: 1
+  variation_scale: 2  # maximum of the uniform distribution of search scales
+  canonical_conformer_orientation: 'random' # 'standardized' 'random'
+  packing_target_noise: 0.1 # randn noise magnitude  # DEPRECATED, but do not delete
+  train_vdw: True  # DEPRECATED
+  train_adversarially: False  # DEPRECATED
+  vdw_loss_func: inv  # not used / only 'inv'  # DEPRECATED
+  density_loss_func: l1  # 'l1' or 'mse'  # DEPRECATED
+  adversarial_loss_func: 'score'  #  # DEPRECATED
+  train_h_bond: False # (non-directional)  # DEPRECATED
+  similarity_penalty: 0  # DEPRECATED
+
+  #generator optimizer and model
+  optimizer:
+    beta1: 0.9
+    beta2: 0.999
+    convergence_eps: 1.0e-04
+    init_lr: 1.0e-4
+    lr_growth_lambda: 1.05
+    lr_schedule: true
+    lr_shrink_lambda: 0.99
+    max_lr: 1.0e-3
+    min_lr: 1.0e-06
+    optimizer: adamw
+    use_plateau_scheduler: false
+    weight_decay: 0
+
+  model:
+    hidden_dim: 256
+    dropout: 0
+    norm: null
+    num_layers: 1
+    vector_norm: null

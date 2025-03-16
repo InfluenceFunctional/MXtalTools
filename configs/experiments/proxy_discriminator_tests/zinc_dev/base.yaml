@@ -1,0 +1,97 @@
+machine: "cluster"  # or "cluster"
+device: "cpu"  # or "cpu"
+anomaly_detection: False  # slows down the code
+mode: proxy_discriminator
+dataset_name: 'test_pd_dataset.pt' #'test_dataset.pt'
+dataset_yaml_path: '/proxy_discriminator.yaml'
+save_checkpoints: True # will do it always on cluster, only locally if True
+checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
+model_names: ['autoencoder', 'proxy_discriminator']
+sweep_id: null
+sweep_path: null
+
+dataset:
+  type: 'molecule'
+  max_dataset_length: 10000000
+  test_fraction: 0.2
+  filter_protons: False
+  regression_target: null
+  single_identifier: null
+  buffer_size: 100000
+  otf_build_size: 100
+  smiles_source: /scratch/mk8347/zinc22
+  num_processes: 1
+
+# batching & convergence
+early_epochs_step_override: 5
+num_early_epochs: 0
+grow_batch_size: True
+min_batch_size: 50
+max_batch_size: 10000
+batch_growth_increment: 0.01 # fraction of batch size to grow by each epoch
+overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
+minimum_epochs: 100000
+max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+history: 200  # for convergence checks
+gradient_norm_clip: 1
+extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
+
+logger:
+  run_name: otf_zinc_crystals_dev
+  experiment_tag: otf_zinc_crystals_dev
+  mini_csp_frequency: 5  # how often to run CSP-style search WIP
+  sample_reporting_frequency: 25  # how often to do detailed reporting with figures
+  stats_reporting_frequency: 25
+  log_figures: True
+  dataset_reporting_time: 300
+
+sample_steps: 100
+
+seeds:
+  model: 12345
+  dataset: 0
+
+# for reloading prior checkpoints
+model_paths:
+  discriminator: null
+  generator: null
+  regressor: null
+  autoencoder: best_autoencoder_experiments_autoencoder_tests_otf_zinc_test4_cont_2_20-12-12-04-34
+  embedding_regressor: null
+  proxy_discriminator: null
+
+positional_noise:
+  discriminator: 0
+  generator: 0
+  regressor: 0
+  autoencoder: 0.001
+  embedding_regressor: 0
+  proxy_discriminator: 0
+
+generate_sgs: [1]
+supercell_size: 5
+
+proxy_discriminator:
+  embedding_type: 'mol_volume' # autoencoder, principal_axes, principal_moments, mol_volume
+  cutoff: 6
+  optimizer:
+    beta1: 0.9
+    beta2: 0.999
+    convergence_eps: 1.0e-04
+    init_lr: 1.0e-4
+    lr_growth_lambda: 1.1
+    lr_schedule: true
+    lr_shrink_lambda: 0.975
+    max_lr: 1.0e-03
+    min_lr: 5.0e-06
+    optimizer: adamw
+    use_plateau_scheduler: false
+    weight_decay: 0.01
+    overwrite_on_reload: False
+
+  model:
+    hidden_dim: 256
+    dropout: 0
+    norm: null
+    num_layers: 2
+    vector_norm: null

@@ -6,10 +6,12 @@
 seed: 1
 max_dataset_length: 1000000
 save_dataset: False
+dataset_type: 'crystal'
 
 regression_target: 'crystal_packing_coefficient' # 'crystal_reduced_cell_volume' 'crystal_density' 'crystal_packing_coefficient'
 single_molecule_dataset_identifier: 'GAJXIC'
 test_fraction: 0.2
+filter_protons: False
 
 filter_polymorphs: False
 filter_duplicate_molecules: False

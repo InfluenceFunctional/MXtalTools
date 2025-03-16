@@ -1,0 +1,19 @@
+#First, define the dataset by a series of conditions in format [key, type, [elements]]
+#where type is in not_in or range and elements are [min, max], or a list of discrete values
+#
+#Then, specify the features which will be fed to models in training
+
+seed: 1
+max_dataset_length: 1.0E6
+save_dataset: False
+dataset_type: 'molecule'
+regression_target: null
+single_molecule_dataset_identifier: null
+test_fraction: 0.2
+
+filter_polymorphs: False
+filter_duplicate_molecules: False
+filter_protons: False
+filter_conditions: [
+  ['molecule_num_atoms','range',[6,100]],
+  ['molecule_radius','range',[1,15]]]
