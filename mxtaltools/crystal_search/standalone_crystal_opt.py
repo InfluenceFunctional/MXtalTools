@@ -214,7 +214,7 @@ def standalone_opt_random_crystals(
         crystal_batch.clone(),
         max_num_steps=1000,
         convergence_eps=opt_eps,
-        lr=1e-5, # initial LR
+        lr=1e-5,  # initial LR
         optimizer_func=torch.optim.Rprop,
     )
 

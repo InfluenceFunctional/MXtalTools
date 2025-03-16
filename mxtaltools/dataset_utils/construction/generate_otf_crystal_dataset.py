@@ -35,7 +35,7 @@ if __name__ == '__main__':
         post_scramble_each=10,
         space_group=1,
         synchronize=True,
-        do_embedding=True,
+        do_embedding=False,
         debug=debug,
         embedding_type='principal_axes',
         encoder_checkpoint_path= r'C:\Users\mikem\crystals\CSP_runs\models\cluster/best_autoencoder_experiments_autoencoder_tests_otf_zinc_test3_7_05-12-14-03-45'
