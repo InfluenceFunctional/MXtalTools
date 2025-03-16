@@ -4,6 +4,7 @@
 ## Documentation
 See our detailed documentation including installation and deployment instructions at our [readthedocs](https://mxtaltools.readthedocs.io/en/latest/index.html) page.
 
+<!-- <<<<<<< feb_reorg
 ## Usage
 This package contains models and tools to assist in the training of models for a variety of tasks on molecular crystals, including most importantly:
 1. Fast, parallel, differentiable, reproducible building of unit cells / supercells given molecule structure & crystal parameters.
@@ -11,7 +12,58 @@ This package contains models and tools to assist in the training of models for a
 3. Utilities for the collation and analysis of crystal & molecule datasets.
 4. Flexible support for training & evaluating various types of models. 
 5. Custom graph neural network models for molecular crystal learning tasks. 
+ -->
+<!-- ======= -->
+## 1. Installation
+1. Download the code from this repository via
 
+```bash
+git clone git@github.com:InfluenceFunctional/MXtalTools.git MXtalTools
+```
+
+2. Locate `mxtaltools-env.yaml` in the downloaded MXtalTools codebase directory. Edit to correspond to your CUDA version. Then at the codebase directory, run
+```bash
+conda env create -f mxtaltools-env.yaml
+```
+   on command line to create a conda virutal environment with the required packages.
+   Alternatively, do 
+```bash
+conda env create -f mxtaltools-env-simple-cpu.yaml
+```
+   for a more bare-bones environment e.g., for small local inference. 
+   Activate the environment with 
+```bash
+conda activate mxtaltools-env
+```
+3. Login to your weights and biases ("wandb") account, which is necessary for run monitoring and reporting with 
+```bash
+wandb login
+```
+
+   on the terminal command line.
+4. In configs/users create a .yaml file for yourself and edit the paths and wandb details to correspond to your preferences.
+When running the code, append the following to your command line prompt. 
+    > --user YOUR_USERNAME
+
+
+## 2. Datasets
+1. This software generates training datasets of molecular crystal structures from collections of .cif files.
+    .cifs are collated and processed primarily with the CSD Python API and RDKit.
+    Collation includes filtering of structures which are somehow invalid. 
+    Invalid conditions include: symmetry features disagree, no atoms in the crystal, RDKit rejects the structure outright. 
+    The Cambridge Structural Database (CSD) can be processed by first dumping it to .cif files, or directly with minor modifications.
+    Customized functions are available for processing CSD Blind Test submissions TODO clean & test.
+    
+2. In the most common case, processing the CSD, to generate a dataset, run the following scripts,
+    `dump_csd.py` --> `cif_processor.py` --> `manager.py`,
+    with the appropriate paths set in each script.
+    `cif_processor.py` takes on the order of dozens of hours to process the full CSD (>1M crystals).
+    `manager.py` also may take a few minutes to process a large dataset, as this is where we do pose analysis, 
+    duplicates search, and some indexing tasks.
+    We recommend running several instances in parallel to reduce this time.
+    As they process datasets chunkwise in random order, this parallelism is fairly efficient.
+    Note that the speed here depends strongly on disk read-write speed. 
+<!-- >>>>>>> master -->
 
 ### Key components
 1. `crystal_modeller` - class which contains everything else and does all the work
