@@ -92,7 +92,8 @@ def standalone_gradient_descent_optimization(
         lr: float,
         optimizer_func,
         show_tqdm: bool = False,
-        quantile_to_optim: float = 0.75
+        quantile_to_optim: float = 0.75,
+        es_scaling_factor: float = 1000,
 ):
     """
     do a local optimization via gradient descent on some score function
@@ -130,7 +131,7 @@ def standalone_gradient_descent_optimization(
 
                 samples_record.append(samples_list)
 
-                loss = scaled_lj_pot + es_pot.clip(min=-5) * 10
+                loss = scaled_lj_pot + es_pot.clip(min=-5) * es_scaling_factor
                 loss.mean().backward()  # compute gradients
                 optimizer.step()  # apply grad
                 lr = optimizer.param_groups[0]['lr']
@@ -168,9 +169,9 @@ es_pots = torch.stack([torch.tensor([sample.es_pot for sample in sample_list]) f
 for ind in range(lj_pot.shape[-1]):
     fig.add_scatter(y=lj_pots[..., ind], marker_color='blue', name='lj', legendgroup='lg',
                     showlegend=True if ind == 0 else False)
-    fig.add_scatter(y=es_pots[..., ind] * 10, marker_color='red', name='es', legendgroup='es',
+    fig.add_scatter(y=es_pots[..., ind] * es_scaling_factor, marker_color='red', name='es', legendgroup='es',
                     showlegend=True if ind == 0 else False)
-    fig.add_scatter(y=es_pots[..., ind] * 10 + lj_pots[..., ind], marker_color='green', name='combo', legendgroup='combo',
+    fig.add_scatter(y=es_pots[..., ind] * es_scaling_factor + lj_pots[..., ind], marker_color='green', name='combo', legendgroup='combo',
                     showlegend=True if ind == 0 else False)
 
 fig.show()
