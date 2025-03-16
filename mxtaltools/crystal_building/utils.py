@@ -529,8 +529,8 @@ def extract_aunit_orientation(mol_batch,
     if not enforce_right_handedness:
         eye[:, 0, 0] = handedness_list.flatten()
 
-    rotation_matrix_list = extract_rotmat(eye, torch.linalg.inv(Ip)).permute(0, 2,
-                                                                             1)  # det should all be 1, as we should have correct handedness
+    # det should all be 1, as we should have correct handedness
+    rotation_matrix_list = extract_rotmat(eye, torch.linalg.inv(Ip)).permute(0, 2, 1)
 
     rotvec_list = rotmat2rotvec(rotation_matrix_list)
     rotvec_list = cleanup_invalid_rotvecs(rotation_matrix_list, rotvec_list)
@@ -555,6 +555,7 @@ def canonicalize_rotvec(rotvec_list):
     new_norms = 2 * torch.pi - flip_norms
     new_vecs = -flip_vecs / flip_norms[:, None] * new_norms[:, None]
     rotvec_list[flip_inds] = new_vecs
+    return rotvec_list
 
 
 def cleanup_invalid_rotvecs(rotation_matrix_list, rotvec_list):

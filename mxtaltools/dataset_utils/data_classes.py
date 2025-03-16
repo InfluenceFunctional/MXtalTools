@@ -509,7 +509,7 @@ class MolCrystalData(MolData):
                 self.packing_coeff is None,
                 self.density is None
             ]):  # better to do this in batches and feed it as kwargs # todo add a log/warning for this
-                self.box_analysis(cell_lengths, cell_angles)
+                self.box_analysis()
             else:
                 assert (self.T_cf is not None and self.cell_volume is not None), \
                     "T_fc, T_cf, and cell volume must all be provided all together or not at all"
@@ -526,14 +526,10 @@ class MolCrystalData(MolData):
         if aux_ind is not None:
             self.aux_ind = aux_ind
 
-    def box_analysis(self, cell_lengths, cell_angles):
-        if cell_angles.ndim > 1:
-            self.T_fc, self.T_cf, self.cell_volume = batch_compute_fractional_transform(cell_lengths, cell_angles)
-        else:
-            self.T_fc, self.cell_volume = (
-                cell_parameters_to_box_vectors('f_to_c', cell_lengths, cell_angles, return_vol=True))
-            if self.T_fc.ndim == 2:
-                self.T_fc = self.T_fc[None, ...]
+    def box_analysis(self):
+        self.T_fc, self.T_cf, self.cell_volume = (
+            batch_compute_fractional_transform(self.cell_lengths,
+                                               self.cell_angles))
         self.T_cf = torch.linalg.inv(self.T_fc)
         self.packing_coeff = self.mol_volume * self.sym_mult / self.cell_volume
         self.density = self.mass * self.sym_mult / self.cell_volume * 1.66054  # conversion from D/A^3 to g/cm^3
@@ -626,12 +622,13 @@ class MolCrystalData(MolData):
                                         cell_means: OptTensor = None,
                                         cell_stds: OptTensor = None):
         if cell_means is None:
-            means = torch.tensor(  # todo replace by call to constants
-                [1.0411, 1.1640, 1.4564, 1.5619, 1.5691, 1.5509],  # use triclinic
+            means = torch.tensor(  # todo replace by call to constants file
+                [1.0411, 1.1640, 1.4564, 1.5619, 1.5691, 1.5509],  # use triclinic statistics
                 dtype=torch.float32, device=self.device)
 
         else:
             means = cell_means
+
         if cell_stds is None:
             stds = torch.tensor(
                 [0.3846, 0.4280, 0.4864, 0.2363, 0.2046, 0.2624],
@@ -644,7 +641,6 @@ class MolCrystalData(MolData):
             means = means.unsqueeze(0)
 
         return (torch.cat([normed_lengths, cell_angles], dim=-1) - means) / stds
-
 
     def destandardize_normed_cell_vectors(self,
                                           normed_lengths: torch.Tensor,
@@ -665,6 +661,38 @@ class MolCrystalData(MolData):
         else:
             stds = cell_stds
         return torch.cat([normed_lengths, cell_angles], dim=-1) * stds + means
+
+    def noise_cell_parameters(self, noise_level: float):
+        # standardize
+        std_cell_params = self.standardized_cell_parameters()
+        # noise
+        new_std_cell_params = std_cell_params + torch.randn_like(std_cell_params) * noise_level
+        # destandardize
+        destandardized_cell_params = self.destandardize_cell_parameters(new_std_cell_params)
+        # assign
+        self.set_cell_parameters(destandardized_cell_params)
+        # clean
+        self.clean_cell_parameters(mode='hard')
+        # refresh box
+        self.box_analysis()
+
+    def destandardize_cell_parameters(self, std_cell_params):
+        (std_cell_lengths,
+         std_cell_angles,
+         std_aunit_positions,
+         std_aunit_orientations) = std_cell_params.split(3, dim=1)
+
+        normed_cell_lengths, cell_angles = self.destandardize_normed_cell_vectors(
+            std_cell_lengths,
+            std_cell_angles
+        ).split(3, dim=1)
+        aunit_positions = self.destandardize_aunit_position(std_aunit_positions)
+        aunit_orientations = self.destandardize_aunit_orientation(std_aunit_orientations)
+
+        cell_lengths = self.denorm_cell_lengths(normed_cell_lengths)
+        return torch.cat([
+            cell_lengths, cell_angles, aunit_positions, aunit_orientations
+        ], dim=1)
 
     def pose_aunit(self):
         if 'Batch' in self.__class__.__name__:
@@ -845,7 +873,7 @@ class MolCrystalData(MolData):
         cleaned_aunit_scaled_pos = enforce_1d_bound(aunit_scaled_pos, x_span=0.5, x_center=0.5, mode=mode)
         self.aunit_centroid = self.scale_centroid_to_unit_cell(cleaned_aunit_scaled_pos)
 
-        # for now, just enforce vector norm
+        # enforce range on vector norm  # todo decide how/where to enforce canonical z direction
         norm = torch.linalg.norm(self.aunit_orientation, dim=1)
         new_norm = enforce_1d_bound(norm, x_span=0.999 * torch.pi, x_center=torch.pi, mode=mode)  # MUST be nonzero
         self.aunit_orientation = self.aunit_orientation / norm[:, None] * new_norm[:, None]
@@ -857,7 +885,7 @@ class MolCrystalData(MolData):
                                                                      )
 
         # update cell vectors
-        self.box_analysis(self.cell_lengths, self.cell_angles)
+        self.box_analysis()
 
     def cell_parameters(self):
         """
@@ -873,15 +901,76 @@ class MolCrystalData(MolData):
 
     def standardized_cell_parameters(self):
         # todo more sophisticated standardization here
+        # norm cell lengths by aunit volume
         normed_lengths = self.norm_cell_lengths()
+        standardized_aunit_centroid = self.standardize_aunit_position()
+        standardized_orientation = self.standardize_aunit_orientation()
         standardized_box_params = self.standardize_normed_cell_vectors(
             normed_lengths, self.cell_angles
         )
-        standardized_aunit_centroid = self.aunit_centroid - 0.5
         return torch.cat([standardized_box_params,
                           standardized_aunit_centroid,
-                          self.aunit_orientation], dim=1)
+                          standardized_orientation], dim=1)
 
+    def standardize_aunit_position(self):
+        """
+        uniform distribution on 0-1
+        mean = 0.5
+        std = 0.289
+        """
+        aunit_mean = 0.5
+        aunit_std = 0.289
+        return (self.scale_centroid_to_aunit() - aunit_mean) / aunit_std
+
+    def destandardize_aunit_position(self, std_aunit_position):
+        """
+        uniform distribution on 0-1
+        mean = 0.5
+        std = 0.289
+        """
+        aunit_mean = 0.5
+        aunit_std = 0.289
+        return self.scale_centroid_to_unit_cell(std_aunit_position * aunit_std + aunit_mean)
+
+    def standardize_aunit_orientation(self):
+        # standardize aunit orientation
+        """
+        num_graphs = 100000
+        random_vectors = torch.randn(size=(num_graphs, 3))
+
+        # set norms uniformly between 0-2pi
+        norms = random_vectors.norm(dim=1)
+        applied_norms = (torch.rand(num_graphs) * 2 * torch.pi).clip(min=0.05)  # cannot be exactly zero
+        random_vectors = random_vectors / norms[:, None] * applied_norms[:, None]
+
+        random_vectors = canonicalize_rotvec(random_vectors)
+        std = random_vectors.std(0)
+        mean = random_vectors.mean(0)
+
+        """
+        orientation_stds = torch.tensor([[2.08, 2.08, 1.38]], dtype=torch.float32, device=self.device)
+        orientation_means = torch.tensor([[0, 0, torch.pi / 2]], dtype=torch.float32, device=self.device)
+        return (self.aunit_orientation - orientation_means) / orientation_stds
+
+    def destandardize_aunit_orientation(self, std_aunit_orientation):
+        # destandardize aunit orientation
+        """
+        num_graphs = 100000
+        random_vectors = torch.randn(size=(num_graphs, 3))
+
+        # set norms uniformly between 0-2pi
+        norms = random_vectors.norm(dim=1)
+        applied_norms = (torch.rand(num_graphs) * 2 * torch.pi).clip(min=0.05)  # cannot be exactly zero
+        random_vectors = random_vectors / norms[:, None] * applied_norms[:, None]
+
+        random_vectors = canonicalize_rotvec(random_vectors)
+        std = random_vectors.std(0)
+        mean = random_vectors.mean(0)
+
+        """
+        orientation_stds = torch.tensor([[2.08, 2.08, 1.38]], dtype=torch.float32, device=self.device)
+        orientation_means = torch.tensor([[0, 0, torch.pi / 2]], dtype=torch.float32, device=self.device)
+        return std_aunit_orientation * orientation_stds + orientation_means
 
     def set_cell_parameters(self, cell_parameters):
         (self.cell_lengths, self.cell_angles,
@@ -901,8 +990,8 @@ class MolCrystalData(MolData):
         return self.lj_pot, self.es_pot, self.scaled_lj_pot
 
     def do_embedding(self,
-              embedding_type: str,
-              encoder: Optional = None):
+                     embedding_type: str,
+                     encoder: Optional = None):
         if self.is_batch:
             embedding = get_mol_embedding_for_proxy(self.clone(),
                                                     embedding_type,

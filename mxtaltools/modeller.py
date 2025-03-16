@@ -1330,10 +1330,10 @@ class Modeller:
                  update_weights: bool,
                  iteration_override: bool = None):
 
-        if (self.config.dataset.otf_build_size > 0 and
+        if (self.config.dataset.otf.build_size > 0 and
                 self.epoch_type == 'train' and
                 os.cpu_count() > 1 and
-                self.config.dataset.smiles_source is not None):
+                self.config.dataset.otf.smiles_source is not None):
             self.train_loader_to_replace = self.otf_molecule_dataset_generation(data_loader)
             data_loader = self.train_loader_to_replace
 
@@ -1376,20 +1376,22 @@ class Modeller:
             [os.remove(chunks_path.joinpath(elem)) for elem in os.listdir(chunks_path)]
             self.integrated_dataset = False
 
-        num_processes = self.config.dataset.otf_processes
+        num_processes = self.config.dataset.otf.processes
         if len(os.listdir(chunks_path)) == 0:  # only make a new batch if the previous batch has been integrated
             if self.logger.epoch == 0 or self.integrated_dataset == True:
                 self.mp_pool = mp.Pool(num_processes)
                 self.mp_pool = otf_synthesize_molecules(
-                    self.config.dataset.otf_build_size,
-                    self.config.dataset.smiles_source,
+                    self.config.dataset.otf.build_size,
+                    self.config.dataset.otf.smiles_source,
                     workdir=chunks_path,
-                    allowed_atom_types=[1, 6, 7, 8, 9],
-                    #list(self.dataDims['allowed_atom_types'].cpu().detach().numpy()),
+                    allowed_atom_types=self.config.dataset.otf.allowed_atom_types,
                     num_processes=num_processes,
-                    mp_pool=self.mp_pool, max_num_atoms=30,
-                    max_num_heavy_atoms=9, pare_to_size=9,
-                    max_radius=15, synchronize=False)
+                    mp_pool=self.mp_pool,
+                    max_num_atoms=self.config.dataset.otf.max_num_atoms,
+                    max_num_heavy_atoms=self.config.dataset.otf.max_num_heavy_atoms,
+                    pare_to_size=self.config.dataset.otf.pare_to_size,
+                    max_radius=self.config.dataset.otf.max_radius,
+                    synchronize=False)
                 self.integrated_dataset = False
 
         # if a batch is finished, merge it with our existing dataset
@@ -1442,7 +1444,7 @@ class Modeller:
             [os.remove(chunks_path.joinpath(elem)) for elem in os.listdir(chunks_path)]
             self.integrated_dataset = False
 
-        num_processes = self.config.dataset.otf_processes
+        num_processes = self.config.dataset.otf.processes
         if len(os.listdir(chunks_path)) == 0:  # only make a new batch if the previous batch has been integrated
             if self.logger.epoch == 0 or self.integrated_dataset == True:
                 self.otf_start_time = time()
@@ -1451,16 +1453,18 @@ class Modeller:
                 mp.set_start_method('spawn', force=True)
                 self.mp_pool = mp.Pool(num_processes)
                 self.mp_pool = otf_synthesize_crystals(
-                    self.config.dataset.otf_build_size,
-                    self.config.dataset.smiles_source,
+                    self.config.dataset.otf.build_size,
+                    self.config.dataset.otf.smiles_source,
                     workdir=chunks_path,
-                    allowed_atom_types=[1, 6, 7, 8, 9],
-                    #list(self.dataDims['allowed_atom_types'].cpu().detach().numpy()),
+                    allowed_atom_types=self.config.dataset.otf.allowed_atom_types,
                     num_processes=num_processes,
-                    mp_pool=self.mp_pool, max_num_atoms=30,
-                    max_num_heavy_atoms=9, pare_to_size=9,
-                    space_group=1,
-                    max_radius=15,
+                    mp_pool=self.mp_pool,
+                    max_num_atoms=self.config.dataset.otf.max_num_atoms,
+                    max_num_heavy_atoms=self.config.dataset.otf.max_num_heavy_atoms,
+                    pare_to_size=self.config.dataset.otf.pare_to_size,
+                    max_radius=self.config.dataset.otf.max_radius,
+                    post_scramble_each=self.config.dataset.otf.post_scramble_each,
+                    space_group=self.config.dataset.otf.space_group,
                     synchronize=False,
                     do_embedding=True,
                     embedding_type=self.config.proxy_discriminator.embedding_type,
@@ -1939,7 +1943,7 @@ class Modeller:
         if not hasattr(self, 'generator_prior'):  # first GAN epoch
             self.init_gan_constants()  # todo deprecate this? not useful
 
-        if self.config.dataset.otf_build_size > 0 and self.epoch_type == 'train' and os.cpu_count() > 1:
+        if self.config.dataset.otf.build_size > 0 and self.epoch_type == 'train' and os.cpu_count() > 1:
             self.train_loader_to_replace = self.otf_crystal_dataset_generation(data_loader)
             data_loader = self.train_loader_to_replace
 
@@ -2812,7 +2816,7 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
         return generated_samples.float().detach(), negative_type, generator_data, stats
 
     def make_distorted_samples(self, real_data, distortion_override=None):
-        """
+        """  # todo deprecate and replace
         given some cell params
         standardize them
         add noise in the standarized basis

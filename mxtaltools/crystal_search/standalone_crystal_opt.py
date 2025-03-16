@@ -1,6 +1,7 @@
 from itertools import compress
 from typing import Optional
 
+import numpy as np
 import torch
 from torch import optim
 from torch.nn import functional as F
@@ -129,7 +130,7 @@ def standalone_gradient_descent_optimization(
 
                 samples_record.append(samples_list)
 
-                loss = scaled_lj_pot + es_pot * 10
+                loss = scaled_lj_pot + es_pot.clip(min=-5) * 10
                 loss.mean().backward()  # compute gradients
                 optimizer.step()  # apply grad
                 lr = optimizer.param_groups[0]['lr']
@@ -147,7 +148,7 @@ def standalone_gradient_descent_optimization(
                 if s_ind % 100 == 0:
                     pbar.update(100)
 
-                if s_ind > 150:
+                if s_ind > 250:
                     flag1 = torch.quantile(
                         loss_record[s_ind - 10:s_ind, :].std(0), quantile_to_optim
                     ) < convergence_eps  # loss is converged
@@ -171,7 +172,6 @@ for ind in range(lj_pot.shape[-1]):
                     showlegend=True if ind == 0 else False)
     fig.add_scatter(y=es_pots[..., ind] * 10 + lj_pots[..., ind], marker_color='green', name='combo', legendgroup='combo',
                     showlegend=True if ind == 0 else False)
-
 
 fig.show()
 """
@@ -213,19 +213,23 @@ def standalone_opt_random_crystals(
         crystal_batch.clone(),
         max_num_steps=1000,
         convergence_eps=opt_eps,
-        lr=1e-6,
+        lr=1e-5, # initial LR
         optimizer_func=torch.optim.Rprop,
     )
 
-    # do resampling
-    if post_scramble_each is not None:
-        samples_record = scramble_resample(post_scramble_each, samples_record)
+    # extract optimized samples
+    opt_samples = samples_record[-1]
+    nearby_samples = sample_about_crystal(opt_samples,
+                                          noise_level=0.05,  # empirically gets us an LJ std about 3
+                                          num_samples=post_scramble_each)
 
-    # subsample semi-independent crystal samples
-    return subsample_crystal_opt_traj(samples_record)
+    for ind in range(post_scramble_each):
+        opt_samples.extend(nearby_samples[ind])
+
+    return opt_samples
 
 
-def subsample_crystal_opt_traj(samples_record):
+def subsample_crystal_opt_traj(samples_record):  # todo deprecate
     lj_pots = torch.stack(
         [torch.tensor([sample.scaled_lj_pot for sample in sample_list]) for sample_list in samples_record])
     es_pots = torch.stack([torch.tensor([sample.es_pot for sample in sample_list]) for sample_list in samples_record])
@@ -236,11 +240,23 @@ def subsample_crystal_opt_traj(samples_record):
     cell_diffs = torch.diff(cell_params, dim=0, prepend=torch.zeros_like(cell_params[None, 0])).norm(
         dim=2) / cell_params.norm(dim=2)
     keep_bools = torch.zeros(es_pots.shape, dtype=bool)
+
     for ind in range(0, len(es_pots), 10):  # always keep every 10 steps
         keep_bools[ind] = True
     # keep also samples with sufficiently large stepwise deviations
     keep_bools[en_diffs >= 0.01] = True
     keep_bools[cell_diffs >= 0.01] = True
+    #
+    # keep_bools = torch.zeros(es_pots.shape, dtype=bool)
+    # normed_en_traj = en_traj - en_traj.amin(0)
+    # std = normed_en_traj.std(0)
+    # probs = torch.exp(-normed_en_traj / std) + 0.1
+    # probs /= probs.sum(0)[None, :]
+    #
+    # for ind in range(keep_bools.shape[1]):
+    #     inds = np.random.choice(len(keep_bools), p=probs[:, ind].cpu().detach().numpy(), replace=False, size=10)
+    #     keep_bools[inds, ind] = True
+
     flat_keep_bools = keep_bools.flatten()
     # return flattened & filtered list
     flat_list = [sample for samples_list in samples_record for sample in samples_list]
@@ -259,7 +275,57 @@ fig.show()
 """
 
 
-def scramble_resample(post_scramble_each, samples_record):
+def sample_about_crystal(opt_samples: list,
+                         noise_level: float,
+                         num_samples: int,
+                         ):
+    samples_record = []
+    for ind in range(num_samples):
+        crystal_batch = collate_data_list(opt_samples)
+        crystal_batch.noise_cell_parameters(noise_level)
+
+        lj_pot, es_pot, scaled_lj_pot = crystal_batch.build_and_analyze()
+        samples_list = crystal_batch.detach().cpu().to_data_list()
+
+        for si, sample in enumerate(samples_list):
+            sample.lj_pot = lj_pot[si]
+            sample.scaled_lj_pot = scaled_lj_pot[si]
+            sample.es_pot = es_pot[si]
+
+        samples_record.append(samples_list)
+
+    return samples_record
+
+
+"""
+import plotly.graph_objects as go
+fig = go.Figure()
+lj_pots = torch.stack(
+    [torch.tensor([sample.scaled_lj_pot for sample in sample_list]) for sample_list in samples_record])
+es_pots = torch.stack([torch.tensor([sample.es_pot for sample in sample_list]) for sample_list in samples_record])
+orig_batch = collate_data_list(opt_samples)
+lj_pots = torch.cat([orig_batch.scaled_lj_pot[None, :], lj_pots], dim=0)
+es_pots = torch.cat([orig_batch.es_pot[None, :], es_pots], dim=0)
+for ind in range(lj_pot.shape[-1]):
+    fig.add_scatter(y=lj_pots[..., ind], marker_color='blue', name='lj', legendgroup='lg',
+                    showlegend=True if ind == 0 else False)
+    fig.add_scatter(y=es_pots[..., ind] * 10, marker_color='red', name='es', legendgroup='es',
+                    showlegend=True if ind == 0 else False)
+    fig.add_scatter(y=es_pots[..., ind] * 10 + lj_pots[..., ind], marker_color='green', name='combo', legendgroup='combo',
+                    showlegend=True if ind == 0 else False)
+
+fig.add_scatter(y=(lj_pots).mean(1), marker_color='black', name='lj', legendgroup='lg',
+                showlegend=True if ind == 0 else False)
+fig.add_scatter(y=(es_pots * 10).mean(1), marker_color='black', name='es', legendgroup='es',
+                showlegend=True if ind == 0 else False)
+fig.add_scatter(y=(es_pots * 10 + lj_pots).mean(1), marker_color='black', name='combo', legendgroup='combo',
+                showlegend=True if ind == 0 else False)
+
+fig.show()
+"""
+
+
+def scramble_resample(post_scramble_each, samples_record):  # deprecated
     resampled_record = []
     for sample_list in samples_record[::post_scramble_each]:
         crystal_batch = collate_data_list(sample_list)

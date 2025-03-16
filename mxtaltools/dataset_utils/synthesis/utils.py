@@ -86,7 +86,8 @@ def otf_synthesize_crystals(dataset_length: int,
                             encoder_checkpoint_path=None,
                             post_scramble_each: Optional[int] = None,
                             synchronize: bool = True,
-                            num_chunks: Optional[int] = None):
+                            num_chunks: Optional[int] = None,
+                            debug: bool = False):
     chunks_path = Path(workdir)  # where to save outputs
     smiles_path = Path(smiles_source)  # where to get inputs
     os.chdir(smiles_path)
@@ -105,22 +106,21 @@ def otf_synthesize_crystals(dataset_length: int,
         'compute_partial_charges': True,
     }
     # for synchronous debugging
-    # debug = True
-    # if debug:
-    #     min_ind = 0
-    #     ind = 0
-    #     chunk_ind = min_ind + ind
-    #     chunk_path = os.path.join(chunks_path, f'chunk_{chunk_ind}.pkl')
-    #
-    #     process_smiles_to_crystal_opt(chunks[0],
-    #                                   chunk_path,
-    #                                   allowed_atom_types,
-    #                                   space_group,
-    #                                   post_scramble_each,
-    #                                   do_embedding,
-    #                                   embedding_type,
-    #                                   encoder_checkpoint_path,
-    #                                   **conf_kwargs)
+    if debug:
+        min_ind = 0
+        ind = 0
+        chunk_ind = min_ind + ind
+        chunk_path = os.path.join(chunks_path, f'chunk_{chunk_ind}.pkl')
+
+        process_smiles_to_crystal_opt(chunks[0],
+                                      chunk_path,
+                                      allowed_atom_types,
+                                      space_group,
+                                      post_scramble_each,
+                                      do_embedding,
+                                      embedding_type,
+                                      encoder_checkpoint_path,
+                                      **conf_kwargs)
 
     # generate samples
     outputs = []
@@ -269,18 +269,20 @@ def process_smiles_to_crystal_opt(lines: list,
     cell_lengths = torch.pow(sym_mult * mol_batch.mol_volume, 1 / 3)[:, None] * normed_cell_lengths
     crystals = []
     for ind, sample in enumerate(mol_samples):
-        crystals.append(
-            MolCrystalData(
-                molecule=sample,
-                sg_ind=space_group,
-                cell_lengths=cell_lengths[ind],
-                cell_angles=cell_angles[ind],
-                aunit_centroid=aunit_centroid[ind],
-                aunit_orientation=aunit_orientation[ind],
-                aunit_handedness=int(aunit_handedness[ind]),
-                identifier=sample.smiles,
-            )
+        crystal = MolCrystalData(
+            molecule=sample,
+            sg_ind=space_group,
+            cell_lengths=cell_lengths[ind],
+            cell_angles=cell_angles[ind],
+            aunit_centroid=aunit_centroid[ind],
+            aunit_orientation=aunit_orientation[ind],
+            aunit_handedness=int(aunit_handedness[ind]),
+            identifier=sample.smiles,
         )
+        while crystal.packing_coeff > 0.25:  # force quite diffuse crystals
+            crystal.cell_lengths *= 1.1
+            crystal.box_analysis()
+        crystals.append(crystal)
     crystal_batch = collate_data_list(crystals)
     crystal_batch.clean_cell_parameters()
 

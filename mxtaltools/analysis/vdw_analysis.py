@@ -188,7 +188,7 @@ def scale_molwise_lj_pot(vdw_potential: torch.Tensor,
     else:
         rescaled_vdw_loss = vdw_potential / num_atoms
 
-    rescaled_vdw_loss[rescaled_vdw_loss > 0] = torch.log(rescaled_vdw_loss[rescaled_vdw_loss > 0])
+    rescaled_vdw_loss[rescaled_vdw_loss > 0] = torch.log(rescaled_vdw_loss[rescaled_vdw_loss > 0] + 1)
 
     return rescaled_vdw_loss
 

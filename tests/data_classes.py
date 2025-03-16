@@ -15,18 +15,7 @@ Molecules
 
 
 def test_MolData(device):
-    base_molData = MolData()
-    num_mols = len(test_smiles)
-    mols = [base_molData.from_smiles(test_smiles[ind],
-                                     pare_to_size=9,
-                                     skip_mol_analysis=False,
-                                     allow_methyl_rotations=True,
-                                     compute_partial_charges=True,
-                                     minimize=False,
-                                     protonate=True,
-                                     ) for ind in range(num_mols)]
-    mols = [mol for mol in mols if mol is not None]
-    mol_batch = collate_data_list(mols).to(device)
+    mol_batch = generate_test_mol_batch(device)
 
     # check volume calculation
     assert torch.all(
@@ -45,16 +34,32 @@ def test_MolData(device):
     # test radial calculation
     mol_batch.construct_radial_graph()
 
+
+def generate_test_mol_batch(device):
+    base_molData = MolData()
+    num_mols = len(test_smiles)
+    mols = [base_molData.from_smiles(test_smiles[ind],
+                                     pare_to_size=9,
+                                     skip_mol_analysis=False,
+                                     allow_methyl_rotations=True,
+                                     compute_partial_charges=True,
+                                     minimize=False,
+                                     protonate=True,
+                                     ) for ind in range(num_mols)]
+    mols = [mol for mol in mols if mol is not None]
+    mol_batch = collate_data_list(mols).to(device)
     return mol_batch
 
 
-mol_batch = test_MolData(device)
+test_MolData(device)
 """
 Molecular Crystals
 """
 
 
-def t_MolCrystalData(mol_batch):
+def t_MolCrystalData(device):
+    mol_batch = generate_test_mol_batch(device)
+
     device = mol_batch.device
     num_mols = mol_batch.num_graphs
     cell_lengths = torch.rand((num_mols, 3), device=device) * 4 * mol_batch.radius[:, None] + 4
@@ -148,4 +153,4 @@ def t_MolCrystalData(mol_batch):
     return crystal_batch
 
 
-crystal_batch = t_MolCrystalData(mol_batch)
+crystal_batch = t_MolCrystalData(device)

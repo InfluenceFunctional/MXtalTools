@@ -8,7 +8,8 @@ from mxtaltools.dataset_utils.synthesis.utils import otf_synthesize_crystals
 
 if __name__ == '__main__':
     # initialize
-    num_smiles = 200
+    debug=True
+    num_smiles = 50
     num_processes = 1
     num_chunks = max(num_processes, num_smiles // 500)
     smiles_path = r'D:\crystal_datasets\zinc22'  #'/home/mkilgour/crystal_datasets/zinc22'#
@@ -30,12 +31,13 @@ if __name__ == '__main__':
         max_num_atoms=30,
         max_num_heavy_atoms=9,
         pare_to_size=9,
-        max_radius=30,
+        max_radius=15,
         post_scramble_each=10,
         space_group=1,
         synchronize=True,
         do_embedding=True,
-        embedding_type='autoencoder',
+        debug=debug,
+        embedding_type='principal_axes',
         encoder_checkpoint_path= r'C:\Users\mikem\crystals\CSP_runs\models\cluster/best_autoencoder_experiments_autoencoder_tests_otf_zinc_test3_7_05-12-14-03-45'
     )
     mp_pool.close()
