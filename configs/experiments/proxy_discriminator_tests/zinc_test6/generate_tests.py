@@ -9,8 +9,8 @@ Proxy discriminator params
 """
 
 embedding_types = ['autoencoder',
-                   'principal_axes'
-                   'principal_moments',
+                   'principal_axes',
+                   'principal_moments'
                    # 'mol_volume',
                    # None
                    ]
@@ -69,6 +69,7 @@ for ii, config_i in enumerate(configs):
     config['proxy_discriminator']['optimizer']['lr_growth_lambda'] = config_i['lr_growth_lambda']
     config['proxy_discriminator']['optimizer']['lr_shrink_lambda'] = config_i['lr_shrink_lambda']
     config['proxy_discriminator']['optimizer']['weight_decay'] = config_i['weight_decay']
+    config['proxy_discriminator']['electrostatic_scaling_factor'] = config_i['electrostatic_scaling_factor']
     config['device'] = config_i['device']
     with open(str(ind) + '.yaml', 'w') as outfile:
         yaml.dump(config, outfile, default_flow_style=False)

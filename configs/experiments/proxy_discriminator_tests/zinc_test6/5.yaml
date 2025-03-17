@@ -71,8 +71,8 @@ positional_noise:
   regressor: 0
 proxy_discriminator:
   cutoff: 6
-  electrostatic_scaling_factor: 100
-  embedding_type: principal_axesprincipal_moments
+  electrostatic_scaling_factor: 1000
+  embedding_type: principal_moments
   model:
     dropout: 0
     hidden_dim: 1024
