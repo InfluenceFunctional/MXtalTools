@@ -301,6 +301,7 @@ def process_smiles_to_crystal_opt(lines: list,
 
     # do embedding
     if do_embedding:
+        # embedding crystals
         samples = embed_crystal_list(
             mol_batch.num_graphs,
             samples,
@@ -309,7 +310,21 @@ def process_smiles_to_crystal_opt(lines: list,
         )
 
     if do_mace_energy:
-        aa = 1
+        # calculating crystal mace energies
+        from mxtaltools.mace_sp.utils import SPMaceCalculator
+        calculator = SPMaceCalculator('cpu')
+        for s_ind, sample in enumerate(samples):
+            try:
+                sample.mace_pot = calculator.sp_calculation(
+                    sample.pos.cpu().detach().numpy(),
+                    sample.z.cpu().detach().numpy(),
+                    sample.cell_lengths.flatten().cpu().detach().numpy(),
+                    sample.cell_angles.flatten().cpu().detach().numpy() * 90 / (np.pi / 2)
+                )
+            except AssertionError as e:  # Ase will not allow inside-out cells
+                sample.mace_pot = None
+
+        samples = [sample for sample in samples if sample.mace_pot is not None]
 
     print(f"finished processing smiles list with {mol_batch.num_graphs} "
           f"molecules and optimizing crystals with {len(samples)} samples")

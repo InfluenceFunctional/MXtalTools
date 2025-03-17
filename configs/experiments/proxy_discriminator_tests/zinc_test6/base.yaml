@@ -21,7 +21,7 @@ dataset:
 
   otf:
     smiles_source: '/scratch/mk8347/zinc22'#'/home/mkilgour/crystal_datasets/zinc22/'  # /scratch/mk8347/zinc22
-    build_size: 5000
+    build_size: 400
     max_num_atoms: 30
     pare_to_size: 9
     max_num_heavy_atoms: 9
@@ -90,11 +90,11 @@ proxy_discriminator:
     beta1: 0.9
     beta2: 0.999
     convergence_eps: 1.0e-04
-    init_lr: 1.0e-4
+    init_lr: 5.0e-5
     lr_growth_lambda: 1.1
     lr_schedule: true
     lr_shrink_lambda: 0.975
-    max_lr: 1.0e-03
+    max_lr: 2.0e-04
     min_lr: 5.0e-06
     optimizer: adamw
     use_plateau_scheduler: false

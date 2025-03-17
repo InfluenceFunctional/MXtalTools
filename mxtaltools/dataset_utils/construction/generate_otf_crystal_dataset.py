@@ -8,7 +8,7 @@ from mxtaltools.dataset_utils.synthesis.utils import otf_synthesize_crystals
 
 if __name__ == '__main__':
     # initialize
-    debug = False
+    debug = True
     space_group = 1
     num_smiles = 100
     num_processes = 1

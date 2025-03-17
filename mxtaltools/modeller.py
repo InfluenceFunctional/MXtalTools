@@ -1484,7 +1484,7 @@ class Modeller:
                                    data_loader,
                                    analyze_new_dataset: bool = False):
         self.times['otf_dataset_join_start'] = time()
-        self.mp_pool.join()  # join only when the batch is already finished
+        self.mp_pool.join()  # join only when the batch is already finished  -- if there are jobs still running, this will hang the whole code
         self.times['otf_dataset_join_end'] = time()
         # generate temporary training dataset
         self.times['otf_dataset_collate_start'] = time()

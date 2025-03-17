@@ -13,7 +13,7 @@ dataset:
     - 7
     - 8
     - 9
-    build_size: 5000
+    build_size: 400
     max_num_atoms: 30
     max_num_heavy_atoms: 9
     max_radius: 15

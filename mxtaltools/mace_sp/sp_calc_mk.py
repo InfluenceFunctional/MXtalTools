@@ -11,61 +11,20 @@ Usage:
   python single_point.py <input_file.xyz> config_file="config.yaml"
 """
 
-import os, sys, re, yaml
+import os
+
 import numpy as np
-from ase.io import read, write
-from ase import Atoms
-from ase.geometry.cell import Cell
-import torch
-from mace.calculators import MACECalculator
 
 from mxtaltools.conformer_generation.conformer_generator import embed_mol, extract_mol_info
+from mxtaltools.mace_sp.utils import sp_calculation
 
 # Set PyTorch CUDA options if needed
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 
 # ----------------------------------------------------------------------
-# Helper Functions
-# ----------------------------------------------------------------------
-
-def load_config(config_filename):
-    with open(config_filename, "r") as f:
-        return yaml.safe_load(f)
-
-
-# ----------------------------------------------------------------------
 # Main Single-Point Calculation Routine
 # ----------------------------------------------------------------------
-
-def sp_calculation(pos: np.ndarray,
-                   z: np.ndarray,
-                   cell_lengths: np.ndarray,
-                   cell_angles: np.ndarray,
-                   device: str):
-    if np.any(cell_angles < 10):  # automatically detect and convert to degrees
-        cell_angles *= 90/(np.pi/2)
-    cell_params = np.concatenate([cell_lengths, cell_angles])
-    atoms = Atoms(
-        numbers=z,
-        positions=pos,
-    )
-    atoms.set_cell(Cell.fromcellpar(cell_params))
-    pbc_flag = True
-    atoms.set_pbc(pbc_flag)
-
-    if device == "cpu":
-        device_str = "cpu"
-    else:
-        gpu_devices = ["cuda:0"]
-        device_str = ",".join(gpu_devices)
-
-    model_paths = "mace-mpa-0-medium.model"  #config.get("model_paths", ["/path/to/your/model"])
-    mace_calc = MACECalculator(model_paths=model_paths, device=device_str)
-    atoms.calc = mace_calc
-
-    # Perform the single-point calculation
-    return atoms.get_potential_energy()
 
 
 if __name__ == "__main__":
