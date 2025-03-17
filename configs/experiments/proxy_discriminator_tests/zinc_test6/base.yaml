@@ -1,8 +1,8 @@
-machine: "local"  # or "cluster"
+machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: proxy_discriminator
-dataset_name: test_pd_dataset.pt #'test_dataset.pt'
+dataset_name: 'pd_dataset_sg1.pt' #'test_dataset.pt'
 dataset_yaml_path: '/proxy_discriminator.yaml'
 save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
@@ -12,15 +12,16 @@ sweep_path: null
 
 dataset:
   type: 'molecule'
-  max_dataset_length: 10000000
+  max_dataset_length: 5000000
   test_fraction: 0.2
   filter_protons: False
   regression_target: null
-  single_identifier: null #100558
+  single_identifier: null
   buffer_size: 100000
+
   otf:
-    smiles_source: 'D:\crystal_datasets\zinc22'#'/home/mkilgour/crystal_datasets/zinc22/'  # /scratch/mk8347/zinc22
-    build_size: 200
+    smiles_source: '/scratch/mk8347/zinc22'#'/home/mkilgour/crystal_datasets/zinc22/'  # /scratch/mk8347/zinc22
+    build_size: 5000
     max_num_atoms: 30
     pare_to_size: 9
     max_num_heavy_atoms: 9
@@ -36,21 +37,23 @@ early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
 min_batch_size: 50
-max_batch_size: 2000
+max_batch_size: 10000
 batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
-minimum_epochs: 50
+minimum_epochs: 100000
 max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
-history: 50  # for convergence checks
+history: 200  # for convergence checks
 gradient_norm_clip: 1
 extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
-  run_name: dev
-  experiment_tag: dev
+  run_name: zinc_test6
+  experiment_tag: zinc_test6
   mini_csp_frequency: 5  # how often to run CSP-style search WIP
-  sample_reporting_frequency: 5  # how often to do detailed reporting with figures
+  sample_reporting_frequency: 10  # how often to do detailed reporting with figures
+  stats_reporting_frequency: 20
   log_figures: True
+  dataset_reporting_time: 1200
 
 sample_steps: 100
 
@@ -63,7 +66,7 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: null
+  autoencoder: best_autoencoder_experiments_autoencoder_tests_otf_zinc_test9_2_24-01-09-15-05
   embedding_regressor: null
   proxy_discriminator: null
 
@@ -71,7 +74,7 @@ positional_noise:
   discriminator: 0
   generator: 0
   regressor: 0
-  autoencoder: 0
+  autoencoder: 0.001
   embedding_regressor: 0
   proxy_discriminator: 0
 
@@ -79,8 +82,8 @@ generate_sgs: [1]
 supercell_size: 5
 
 proxy_discriminator:
-  embedding_type: principal_axes # autoencoder, principal_axes, principal_moments, mol_volume
-  train_encoder: False  # deprecated right now # option to train the encoder, if doing autoencoder training
+  embedding_type: 'mol_volume' # autoencoder, principal_axes, principal_moments, mol_volume
+  train_encoder: False
   electrostatic_scaling_factor: 100  # training energy is scaled_lj + factor * es_energy
   cutoff: 6
   optimizer:
@@ -99,8 +102,8 @@ proxy_discriminator:
     overwrite_on_reload: False
 
   model:
-    hidden_dim: 1024
+    hidden_dim: 256
     dropout: 0
     norm: null
-    num_layers: 4
+    num_layers: 2
     vector_norm: null

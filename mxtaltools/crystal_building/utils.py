@@ -541,7 +541,7 @@ def extract_aunit_orientation(mol_batch,
     return rotvec_list, eye[:, 0, 0]  # the actual handedness
 
 
-def canonicalize_rotvec(rotvec_list):
+def canonicalize_rotvec(rotvecs: torch.Tensor):
     """
     since the direction of the axis is arbitrary, (x,y,z) is the same rotation as (-x,-y,-z),
     we can improve specificity of the model by constraining the axis to a half-sphere.
@@ -549,13 +549,13 @@ def canonicalize_rotvec(rotvec_list):
 
     Swap the direction and take 2pi-norm to recapture the identical rotation.
     """
-    flip_inds = torch.where(rotvec_list[:, -1] < 0)[0]
-    flip_vecs = rotvec_list[flip_inds]
+    flip_inds = torch.where(rotvecs[:, -1] < 0)[0]
+    flip_vecs = rotvecs[flip_inds]
     flip_norms = torch.linalg.norm(flip_vecs, dim=-1)
     new_norms = 2 * torch.pi - flip_norms
     new_vecs = -flip_vecs / flip_norms[:, None] * new_norms[:, None]
-    rotvec_list[flip_inds] = new_vecs
-    return rotvec_list
+    rotvecs[flip_inds] = new_vecs
+    return rotvecs
 
 
 def cleanup_invalid_rotvecs(rotation_matrix_list, rotvec_list):

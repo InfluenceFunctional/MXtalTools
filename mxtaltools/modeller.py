@@ -1433,7 +1433,6 @@ class Modeller:
 
     def otf_crystal_dataset_generation(self, data_loader):
         self.times['otf_refresh_start'] = time()
-        temp_dataset_path = Path(self.working_directory).joinpath('otf_dataset.pt')
         # if previous batch is finished, or we are in first epoch,
         # initiate parallel otf conformer generation
         chunks_path = Path(self.working_directory).joinpath('chunks')
@@ -1472,12 +1471,10 @@ class Modeller:
                 )
                 self.integrated_dataset = False
 
-        #assert False, "stop for debugging"
-
         # if a batch is finished, merge it with our existing dataset
         if len(os.listdir(chunks_path)) >= num_processes or (time() - self.otf_start_time) > (60*30):  # if it's been 30 minutes, assume it's hanging and restart
             # only integrate when the batch is exactly complete
-            data_loader = self.merge_otf_crystals_dataset(chunks_path, data_loader, temp_dataset_path)
+            data_loader = self.merge_otf_crystals_dataset(chunks_path, data_loader)
 
         os.chdir(self.working_directory)
         self.times['otf_refresh_end'] = time()
@@ -1485,7 +1482,6 @@ class Modeller:
 
     def merge_otf_crystals_dataset(self, chunks_path,
                                    data_loader,
-                                   temp_dataset_path,
                                    analyze_new_dataset: bool = False):
         self.times['otf_dataset_join_start'] = time()
         self.mp_pool.join()  # join only when the batch is already finished
@@ -1967,7 +1963,6 @@ class Modeller:
             else:
                 skip_stats = True
 
-            #mol_batch = mol_batch.to(self.config.device)
             embedding = embedding.to(self.config.device)
             lj_pot = lj_pot.to(self.config.device)
             es_pot = es_pot.to(self.config.device)
@@ -2220,8 +2215,8 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
         compute losses, do reporting, update gradients
         """
         if not hasattr(self.models_dict['proxy_discriminator'], 'target_std'):
-            self.models_dict['proxy_discriminator'].target_std = 12.5  #8.23
-            self.models_dict['proxy_discriminator'].target_mean = 14.1  #-8.6
+            self.models_dict['proxy_discriminator'].target_std = 4.715
+            self.models_dict['proxy_discriminator'].target_mean = -7.978
 
         # if self.config.proxy_discriminator.embedding_type == 'autoencoder' and self.config.proxy_discriminator.train_encoder:
         #     crystal_batch.embedding = crystal_batch.do_embedding(
@@ -2231,7 +2226,7 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
 
         prediction = self.models_dict['proxy_discriminator'](x=embedding)[:, 0]
 
-        inter_energy = (lj_pot + es_pot * 10).clip(min=-50, max=50)
+        inter_energy = (lj_pot + es_pot * self.config.proxy_discriminator.electrostatic_scaling_factor).clip(min=-50, max=50)
         discriminator_losses = F.smooth_l1_loss(prediction.flatten(),
                                                 (inter_energy - self.models_dict['proxy_discriminator'].target_mean) /
                                                 self.models_dict[

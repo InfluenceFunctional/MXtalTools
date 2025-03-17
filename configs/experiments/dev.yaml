@@ -1,12 +1,9 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 base_config_path: /experiments/base/proxy_discriminator.yaml #/experiments/base/generator.yaml #/experiments/base/discriminator.yaml
-dataset_name: pd_dataset.pt #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
-#misc_dataset_name: 'misc_data_for_qm9_dataset.npy' #
+dataset_name: test_pd_dataset_sg1.pt #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
 extra_test_set_name: null
 save_checkpoints: True
-#sweep_path: configs/experiments/autoencoder_tests/geom_sweep1/geom_sweep1.yaml
-#sweep_id: jao9tqo9
 anomaly_detection: False
 
 dataset:
@@ -15,7 +12,7 @@ dataset:
 
   otf:
     smiles_source: 'D:\crystal_datasets\zinc22'#'/home/mkilgour/crystal_datasets/zinc22/'  # /scratch/mk8347/zinc22
-    build_size: 100
+    build_size: 200
     max_num_atoms: 30
     pare_to_size: 9
     max_num_heavy_atoms: 9

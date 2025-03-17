@@ -22,7 +22,7 @@ from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
 from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE
 from mxtaltools.crystal_building.utils import get_aunit_positions, new_aunit2unit_cell, parameterize_crystal_batch, \
-    unit_cell_to_supercell_cluster, align_mol_batch_to_standard_axes
+    unit_cell_to_supercell_cluster, align_mol_batch_to_standard_axes, canonicalize_rotvec
 from mxtaltools.dataset_utils.synthesis.mol_building import smiles2conformer
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.modules.components import construct_radial_graph
@@ -853,7 +853,7 @@ class MolCrystalData(MolData):
 
         return molwise_estat_energy
 
-    def clean_cell_parameters(self, mode: str = 'hard'):
+    def clean_cell_parameters(self, mode: str = 'hard', canonicalize_orientations: bool = True):
         # force outputs into physical ranges
 
         # cell lengths have to be positive nonzero
@@ -883,6 +883,9 @@ class MolCrystalData(MolData):
                                                                      self.cell_angles,
                                                                      self.sg_ind,
                                                                      )
+
+        # enforce z component in the upper half-plane
+        self.aunit_orientation = canonicalize_rotvec(self.aunit_orientation)
 
         # update cell vectors
         self.box_analysis()

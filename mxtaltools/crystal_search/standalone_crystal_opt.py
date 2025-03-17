@@ -92,8 +92,8 @@ def standalone_gradient_descent_optimization(
         lr: float,
         optimizer_func,
         show_tqdm: bool = False,
-        quantile_to_optim: float = 0.75,
-        es_scaling_factor: float = 1000,
+        quantile_to_optim: float = 0.9,
+        es_scaling_factor: float = 100,
 ):
     """
     do a local optimization via gradient descent on some score function
@@ -220,6 +220,9 @@ def standalone_opt_random_crystals(
 
     # extract optimized samples
     opt_samples = samples_record[-1]
+
+    opt_samples = [sample for sample in opt_samples if sample.lj_pot < 0]  # filter bound states
+    # sample noisily about optimized minima
     nearby_samples = sample_about_crystal(opt_samples,
                                           noise_level=0.05,  # empirically gets us an LJ std about 3
                                           num_samples=post_scramble_each)
@@ -227,7 +230,21 @@ def standalone_opt_random_crystals(
     for ind in range(post_scramble_each):
         opt_samples.extend(nearby_samples[ind])
 
+    opt_samples = [sample for sample in opt_samples if sample.lj_pot < 0]  # filter bound states
+
     return opt_samples
+
+""" # viz sample distribution
+
+import plotly.graph_objects as go
+ljs = torch.tensor([elem.scaled_lj_pot for elem in opt_samples[:len(samples_record[0])]])
+ljs2 = torch.tensor([elem.scaled_lj_pot for elem in opt_samples])
+fig = go.Figure()
+fig.add_histogram(x=ljs, nbinsx=100, histnorm='probability density')
+fig.add_histogram(x=ljs2, nbinsx=100, histnorm='probability density')
+fig.show()
+
+"""
 
 
 def subsample_crystal_opt_traj(samples_record):  # todo deprecate

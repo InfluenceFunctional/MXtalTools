@@ -32,7 +32,7 @@ def test_MolData(device):
         "Error in recentering calculation"
 
     # test radial calculation
-    mol_batch.construct_radial_graph()
+    mol_batch.construct_radial_graph()  # todo add a test/assertion
 
 
 def generate_test_mol_batch(device):
@@ -51,13 +51,12 @@ def generate_test_mol_batch(device):
     return mol_batch
 
 
-test_MolData(device)
 """
 Molecular Crystals
 """
 
 
-def t_MolCrystalData(device):
+def test_MolCrystalData(device):
     mol_batch = generate_test_mol_batch(device)
 
     device = mol_batch.device
@@ -150,7 +149,6 @@ def t_MolCrystalData(device):
     assert torch.all(torch.isfinite(lj_en)), "NaN LJ potentials"
     assert torch.all(torch.isfinite(es_en)), "NaN electrostatic potentials"
 
-    return crystal_batch
 
-
-crystal_batch = t_MolCrystalData(device)
+test_MolData(device)
+test_MolCrystalData(device)
