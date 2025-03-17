@@ -87,7 +87,8 @@ def otf_synthesize_crystals(dataset_length: int,
                             post_scramble_each: Optional[int] = None,
                             synchronize: bool = True,
                             num_chunks: Optional[int] = None,
-                            debug: bool = False):
+                            debug: bool = False,
+                            do_mace_energy: bool = False,):
     chunks_path = Path(workdir)  # where to save outputs
     smiles_path = Path(smiles_source)  # where to get inputs
     os.chdir(smiles_path)
@@ -120,6 +121,7 @@ def otf_synthesize_crystals(dataset_length: int,
                                       do_embedding,
                                       embedding_type,
                                       encoder_checkpoint_path,
+                                      do_mace_energy,
                                       **conf_kwargs)
 
     # generate samples
@@ -138,7 +140,9 @@ def otf_synthesize_crystals(dataset_length: int,
                                       post_scramble_each,
                                       do_embedding,
                                       embedding_type,
-                                      encoder_checkpoint_path),
+                                      encoder_checkpoint_path,
+                                      do_mace_energy
+                                      ),
                                 kwds=conf_kwargs))
 
     mp_pool.close()
@@ -242,7 +246,8 @@ def process_smiles_to_crystal_opt(lines: list,
                                   post_scramble_each: int = None,
                                   do_embedding: bool = False,
                                   embedding_type: Optional[str] = None,
-                                  encoder_checkpoint_path=None,
+                                  encoder_checkpoint_path: Optional[str]=None,
+                                  do_mace_energy: bool = False,
                                   **conf_kwargs):
     """starting chunk pool"""
     mol_samples = process_smiles_list(lines,
@@ -302,6 +307,9 @@ def process_smiles_to_crystal_opt(lines: list,
             embedding_type,
             encoder_checkpoint_path
         )
+
+    if do_mace_energy:
+        aa = 1
 
     print(f"finished processing smiles list with {mol_batch.num_graphs} "
           f"molecules and optimizing crystals with {len(samples)} samples")
