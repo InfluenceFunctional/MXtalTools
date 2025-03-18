@@ -13,13 +13,13 @@ dataset:
     - 7
     - 8
     - 9
-    build_size: 400
+    build_size: 850
     max_num_atoms: 30
     max_num_heavy_atoms: 9
     max_radius: 15
     pare_to_size: 9
     post_scramble_each: 10
-    processes: 4
+    processes: 19
     smiles_source: /scratch/mk8347/zinc22
     space_group: 1
   regression_target: null
@@ -41,11 +41,11 @@ logger:
   experiment_tag: zinc_test6
   log_figures: true
   mini_csp_frequency: 5
-  run_name: zinc_test6_0
+  run_name: zinc_test6
   sample_reporting_frequency: 10
   stats_reporting_frequency: 20
 machine: cluster
-max_batch_size: 1000
+max_batch_size: 10000
 max_epochs: 10000
 min_batch_size: 50
 minimum_epochs: 100000
@@ -71,14 +71,13 @@ positional_noise:
   regressor: 0
 proxy_discriminator:
   cutoff: 6
-  electrostatic_scaling_factor: 0
+  electrostatic_scaling_factor: 100
   embedding_type: autoencoder
   model:
     dropout: 0
     hidden_dim: 1024
     norm: null
     num_layers: 40
-    vector_norm: null
   optimizer:
     beta1: 0.9
     beta2: 0.999
@@ -86,14 +85,15 @@ proxy_discriminator:
     init_lr: 0.0001
     lr_growth_lambda: 1.01
     lr_schedule: true
-    lr_shrink_lambda: 0.9975
+    lr_shrink_lambda: 0.995
     max_lr: 0.0002
     min_lr: 5.0e-06
     optimizer: adamw
     overwrite_on_reload: false
     use_plateau_scheduler: false
-    weight_decay: 0.0001
+    weight_decay: 0.005
   train_encoder: false
+  train_on_mace: false
 sample_steps: 100
 save_checkpoints: true
 seeds:

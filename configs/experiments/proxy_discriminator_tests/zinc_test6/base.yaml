@@ -85,6 +85,7 @@ proxy_discriminator:
   embedding_type: 'mol_volume' # autoencoder, principal_axes, principal_moments, mol_volume
   train_encoder: False
   electrostatic_scaling_factor: 100  # training energy is scaled_lj + factor * es_energy
+  train_on_mace: False
   cutoff: 6
   optimizer:
     beta1: 0.9
@@ -106,4 +107,3 @@ proxy_discriminator:
     dropout: 0
     norm: null
     num_layers: 2
-    vector_norm: null

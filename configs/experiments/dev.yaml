@@ -11,8 +11,8 @@ dataset:
   test_fraction: 0.2
 
   otf:
-    smiles_source: 'D:\crystal_datasets\zinc22'#'/home/mkilgour/crystal_datasets/zinc22/'  # /scratch/mk8347/zinc22
-    build_size: 200
+    smiles_source: 'D:\crystal_datasets\zinc22' #'/home/mkilgour/crystal_datasets/zinc22/'  # /scratch/mk8347/zinc22
+    build_size: 40
     max_num_atoms: 30
     pare_to_size: 9
     max_num_heavy_atoms: 9

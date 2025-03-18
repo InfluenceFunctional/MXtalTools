@@ -41,7 +41,7 @@ if __name__ == '__main__':
         do_mace_energy=True,
         debug=debug,
         embedding_type='principal_axes',
-        encoder_checkpoint_path= r'C:\Users\mikem\crystals\CSP_runs\models\cluster/best_autoencoder_experiments_autoencoder_tests_otf_zinc_test3_7_05-12-14-03-45'
+        encoder_checkpoint_path=r'C:\Users\mikem\crystals\CSP_runs\models\cluster/best_autoencoder_experiments_autoencoder_tests_otf_zinc_test3_7_05-12-14-03-45'
     )
     mp_pool.close()
     mp_pool.join()

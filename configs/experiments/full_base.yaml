@@ -123,6 +123,8 @@ proxy_discriminator:
   train_on_randn: True
   embedding_type: 'autoencoder' # autoencoder, principal_axes, principal_moments, mol_volume
   train_encoder: False
+  electrostatic_scaling_factor: 100  # training energy is scaled_lj + factor * es_energy
+  train_on_mace: False
   vdw_turnover_potential: 10
   cutoff: 6
 

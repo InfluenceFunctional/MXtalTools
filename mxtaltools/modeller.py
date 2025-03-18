@@ -537,64 +537,64 @@ class Modeller:
             if save_results:
                 np.save(self.config.model_paths.autoencoder[:-3] + path_prepend + '_results.npy',
                         {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
-
-    def pd_analysis(self, samples_per_molecule: int = 1):
-        """prep workdir"""
-        self.source_directory = os.getcwd()
-        self.prep_new_working_directory()
-
-        self.train_models_dict = {
-            'discriminator': False,
-            'generator': False,
-            'regressor': False,
-            'autoencoder': True,
-            'embedding_regressor': False,
-            'proxy_discriminator': True
-        }
-
-        '''initialize datasets and useful classes'''
-        train_loader, test_loader, _ = self.load_dataset_and_dataloaders(override_test_fraction=0.2)
-        self.initialize_models_optimizers_schedulers()
-
-        self.config.autoencoder_sigma = self.config.autoencoder.evaluation_sigma
-        self.config.autoencoder.molecule_radius_normalization = self.models_dict[
-            'autoencoder'].radial_normalization  #self.dataDims['standardization_dict']['radius']['max']
-
-        self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
-
-        with (wandb.init(config=self.config,
-                         project=self.config.wandb.project_name,
-                         entity=self.config.wandb.username,
-                         tags=[self.config.logger.experiment_tag],
-                         # online=False,
-                         settings=wandb.Settings(code_dir="."))):
-            wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
-            wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
-            wandb.log(self.num_params_dict)
-            wandb.log({"All Models Parameters": np.sum(np.asarray(list(self.num_params_dict.values()))),
-                       "Initial Batch Size": self.config.current_batch_size})
-
-            self.always_do_analysis = True
-            self.models_dict['autoencoder'].eval()
-            self.models_dict['proxy_discriminator'].eval()
-            update_weights = False
-            with torch.no_grad():
-                self.init_gan_constants()
-
-                self.epoch_type = 'test'
-                for ind in range(samples_per_molecule):
-                    for i, data in enumerate(tqdm(test_loader, miniters=int(len(test_loader) / 25))):
-                        data = data.to(self.config.device)
-                        self.pd_step(data, i, update_weights, skip_step=False)
-
-                # post epoch processing
-                self.logger.concatenate_stats_dict(self.epoch_type)
-
-            # save results
-            np.save(
-                r'C:\Users\mikem\crystals\CSP_runs\models\ae_draft2_models_and_artifacts\proxy_discriminator\results/'
-                + self.config.model_paths.proxy_discriminator.split("\\")[-1] + '_results.npy',
-                {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
+    #
+    # def pd_analysis(self, samples_per_molecule: int = 1):
+    #     """prep workdir"""
+    #     self.source_directory = os.getcwd()
+    #     self.prep_new_working_directory()
+    #
+    #     self.train_models_dict = {
+    #         'discriminator': False,
+    #         'generator': False,
+    #         'regressor': False,
+    #         'autoencoder': True,
+    #         'embedding_regressor': False,
+    #         'proxy_discriminator': True
+    #     }
+    #
+    #     '''initialize datasets and useful classes'''
+    #     train_loader, test_loader, _ = self.load_dataset_and_dataloaders(override_test_fraction=0.2)
+    #     self.initialize_models_optimizers_schedulers()
+    #
+    #     self.config.autoencoder_sigma = self.config.autoencoder.evaluation_sigma
+    #     self.config.autoencoder.molecule_radius_normalization = self.models_dict[
+    #         'autoencoder'].radial_normalization  #self.dataDims['standardization_dict']['radius']['max']
+    #
+    #     self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
+    #
+    #     with (wandb.init(config=self.config,
+    #                      project=self.config.wandb.project_name,
+    #                      entity=self.config.wandb.username,
+    #                      tags=[self.config.logger.experiment_tag],
+    #                      # online=False,
+    #                      settings=wandb.Settings(code_dir="."))):
+    #         wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
+    #         wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
+    #         wandb.log(self.num_params_dict)
+    #         wandb.log({"All Models Parameters": np.sum(np.asarray(list(self.num_params_dict.values()))),
+    #                    "Initial Batch Size": self.config.current_batch_size})
+    #
+    #         self.always_do_analysis = True
+    #         self.models_dict['autoencoder'].eval()
+    #         self.models_dict['proxy_discriminator'].eval()
+    #         update_weights = False
+    #         with torch.no_grad():
+    #             self.init_gan_constants()
+    #
+    #             self.epoch_type = 'test'
+    #             for ind in range(samples_per_molecule):
+    #                 for i, data in enumerate(tqdm(test_loader, miniters=int(len(test_loader) / 25))):
+    #                     data = data.to(self.config.device)
+    #                     self.pd_step(data, i, update_weights, skip_step=False)
+    #
+    #             # post epoch processing
+    #             self.logger.concatenate_stats_dict(self.epoch_type)
+    #
+    #         # save results
+    #         np.save(
+    #             r'C:\Users\mikem\crystals\CSP_runs\models\ae_draft2_models_and_artifacts\proxy_discriminator\results/'
+    #             + self.config.model_paths.proxy_discriminator.split("\\")[-1] + '_results.npy',
+    #             {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
 
     def ae_embedding_step(self, mol_batch):
         mol_batch = mol_batch.to(self.device)
@@ -1466,6 +1466,7 @@ class Modeller:
                     space_group=self.config.dataset.otf.space_group,
                     synchronize=False,
                     do_embedding=True,
+                    do_mace_energy=self.config.proxy_discriminator.train_on_mace,
                     embedding_type=self.config.proxy_discriminator.embedding_type,
                     encoder_checkpoint_path=self.config.model_paths.autoencoder,
                 )
@@ -1533,7 +1534,8 @@ class Modeller:
         )
         return miner
 
-    def process_otf_crystals_dataset(self, chunks_path, analyze_new_dataset: bool = False):
+    def process_otf_crystals_dataset(self, chunks_path,
+                                     analyze_new_dataset: bool = False):
         cwd = os.getcwd()
         os.chdir(chunks_path)
         chunks_patterns = ['chunk']
@@ -1570,25 +1572,42 @@ class Modeller:
             })
 
         os.chdir(cwd)
+        embedding, ens = self.extract_pd_data(otf_dataset)
+        dataset = SimpleDataset(embedding, ens)
+
+        return dataset
+
+    def extract_pd_data(self, otf_dataset):
         embedding = torch.zeros((
             len(otf_dataset),
             otf_dataset[0].embedding.shape[1]
         ))
-        lj_pot = torch.zeros((
-            len(otf_dataset),
-        ))
-        es_pot = torch.zeros((
-            len(otf_dataset),
-        ))
-        ind = 0
-        for elem in otf_dataset:
-            embedding[ind] = elem.embedding.cpu().detach()
-            lj_pot[ind] = elem.scaled_lj_pot.cpu().detach()
-            es_pot[ind] = elem.es_pot.cpu().detach()
-            ind += 1
-        dataset = SimpleDataset(embedding, lj_pot, es_pot)
+        if self.config.proxy_discriminator.train_on_mace:
+            mace_pot = torch.zeros((
+                len(otf_dataset),
+            ))
 
-        return dataset
+            ind = 0
+            for elem in otf_dataset:
+                embedding[ind] = elem.embedding.cpu().detach()
+                mace_pot[ind] = elem.mace_lattice_pot
+                ind += 1
+            ens = mace_pot
+        else:
+            lj_pot = torch.zeros((
+                len(otf_dataset),
+            ))
+            es_pot = torch.zeros((
+                len(otf_dataset),
+            ))
+            ind = 0
+            for elem in otf_dataset:
+                embedding[ind] = elem.embedding.cpu().detach()
+                lj_pot[ind] = elem.scaled_lj_pot.cpu().detach()
+                es_pot[ind] = elem.es_pot.cpu().detach()
+                ind += 1
+            ens = lj_pot + self.config.proxy_discriminator.electrostatic_scaling_factor * es_pot
+        return embedding, ens
 
     def crystal_structure_prediction(self):
         with (wandb.init(config=self.config,
@@ -1936,9 +1955,6 @@ class Modeller:
                  update_weights=True,
                  iteration_override=None):
 
-        if not hasattr(self, 'generator_prior'):  # first GAN epoch
-            self.init_gan_constants()  # todo deprecate this? not useful
-
         if self.config.dataset.otf.build_size > 0 and self.epoch_type == 'train' and os.cpu_count() > 1:
             self.train_loader_to_replace = self.otf_crystal_dataset_generation(data_loader)
             data_loader = self.train_loader_to_replace
@@ -1954,7 +1970,7 @@ class Modeller:
             if self.config.proxy_discriminator.embedding_type == 'autoencoder' and self.config.proxy_discriminator.train_encoder:
                 self.models_dict['autoencoder'].eval()
 
-        for step, (embedding, lj_pot, es_pot) in enumerate(
+        for step, (embedding, lattice_pot) in enumerate(
                 tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
             if step % self.config.logger.stats_reporting_frequency == 0:
                 skip_stats = False
@@ -1964,12 +1980,11 @@ class Modeller:
                 skip_stats = True
 
             embedding = embedding.to(self.config.device)
-            lj_pot = lj_pot.to(self.config.device)
-            es_pot = es_pot.to(self.config.device)
+            lattice_pot = lattice_pot.to(self.config.device)
             '''
             train proxy discriminator
             '''
-            self.pd_step(embedding, lj_pot, es_pot, step, update_weights, skip_step=False, skip_stats=skip_stats)
+            self.pd_step(embedding, lattice_pot, step, update_weights, skip_step=False, skip_stats=skip_stats)
 
             if iteration_override is not None:
                 if step >= iteration_override:
@@ -1987,31 +2002,13 @@ class Modeller:
             self.device
         )
         # reset new dataset as simple tensors
-        embedding = torch.zeros((
-            len(data_list) + len(data_loader.dataset),
-            data_list[0].embedding.shape[1]
-        ))
-        lj_pot = torch.zeros((
-            len(data_list) + len(data_loader.dataset),
-        ))
-        es_pot = torch.zeros((
-            len(data_list) + len(data_loader.dataset),
-        ))
-        ind = 0
-        for elem in data_list:
-            embedding[ind] = elem.embedding.cpu().detach()
-            lj_pot[ind] = elem.scaled_lj_pot.cpu().detach()
-            es_pot[ind] = elem.es_pot.cpu().detach()
-            ind += 1
-        for elem in data_loader.dataset:
-            embedding[ind] = elem.embedding.cpu().detach()
-            lj_pot[ind] = elem.scaled_lj_pot.cpu().detach()
-            es_pot[ind] = elem.es_pot.cpu().detach()
-            ind += 1
-
-        dataset = SimpleDataset(embedding, lj_pot, es_pot)
-        data_loader = DataLoader(dataset, batch_size=data_loader.batch_size, shuffle=True,
-                                 pin_memory=data_loader.pin_memory, num_workers=data_loader.num_workers)
+        embedding, ens = self.extract_pd_data(data_list)
+        dataset = SimpleDataset(embedding, ens)
+        data_loader = DataLoader(dataset,
+                                 batch_size=data_loader.batch_size,
+                                 shuffle=True,
+                                 pin_memory=data_loader.pin_memory,
+                                 num_workers=data_loader.num_workers)
 
         return data_loader
 
@@ -2209,14 +2206,18 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
                                           stats.values(),
                                           mode='extend')
 
-    def pd_step(self, embedding, lj_pot, es_pot, i, update_weights, skip_step, skip_stats: bool = False):
+    def pd_step(self, embedding, lattice_pot, i, update_weights, skip_step, skip_stats: bool = False):
         """
         execute a complete training step for the discriminator
         compute losses, do reporting, update gradients
         """
         if not hasattr(self.models_dict['proxy_discriminator'], 'target_std'):
-            self.models_dict['proxy_discriminator'].target_std = 4.715
-            self.models_dict['proxy_discriminator'].target_mean = -7.978
+            if self.config.proxy_discriminator.train_on_mace:
+                self.models_dict['proxy_discriminator'].target_std = .54
+                self.models_dict['proxy_discriminator'].target_mean = -0.94
+            else: # LJ statistics
+                self.models_dict['proxy_discriminator'].target_std = 4.715
+                self.models_dict['proxy_discriminator'].target_mean = -7.978
 
         # if self.config.proxy_discriminator.embedding_type == 'autoencoder' and self.config.proxy_discriminator.train_encoder:
         #     crystal_batch.embedding = crystal_batch.do_embedding(
@@ -2226,9 +2227,8 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
 
         prediction = self.models_dict['proxy_discriminator'](x=embedding)[:, 0]
 
-        inter_energy = (lj_pot + es_pot * self.config.proxy_discriminator.electrostatic_scaling_factor).clip(min=-50, max=50)
         discriminator_losses = F.smooth_l1_loss(prediction.flatten(),
-                                                (inter_energy - self.models_dict['proxy_discriminator'].target_mean) /
+                                                (lattice_pot - self.models_dict['proxy_discriminator'].target_mean) /
                                                 self.models_dict[
                                                     'proxy_discriminator'].target_std,
                                                 reduction='none')
@@ -2260,7 +2260,7 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
                 'vdw_prediction': (prediction * self.models_dict['proxy_discriminator'].target_std +
                                    self.models_dict['proxy_discriminator'].target_mean
                                    ).detach(),
-                'vdw_score': inter_energy.detach(),
+                'vdw_score': lattice_pot.detach(),
             }
 
             dict_of_tensors_to_cpu_numpy(stats)
