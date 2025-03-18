@@ -8,13 +8,13 @@ from mxtaltools.dataset_utils.synthesis.utils import otf_synthesize_crystals
 
 if __name__ == '__main__':
     # initialize
-    debug = True
+    debug = False
     space_group = 1
-    num_smiles = 100
-    num_processes = 1
-    new_dataset_name = f'toy_pd_dataset_sg{space_group}'
+    num_smiles = 100000
+    num_processes = 8
+    new_dataset_name = f'pd_dataset_sg{space_group}'
 
-    num_chunks = max(num_processes, num_smiles // 500)
+    num_chunks = max(num_processes, num_smiles // 100)
     smiles_path = r'D:\crystal_datasets\zinc22'  #'/home/mkilgour/crystal_datasets/zinc22'#
     chunks_path = Path(r'D:\crystal_datasets')  # Path('/home/mkilgour/crystal_datasets') #
     os.chdir(chunks_path)

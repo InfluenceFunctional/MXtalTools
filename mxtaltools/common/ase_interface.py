@@ -3,7 +3,11 @@ import torch
 from ase import Atoms
 from ase.spacegroup import crystal as ase_crystal
 from ase.visualize import view
+from torch_scatter import scatter
 
+from mxtaltools.constants.asymmetric_units import ASYM_UNITS
+from mxtaltools.crystal_building.utils import find_coord_in_box_torch
+from mxtaltools.crystal_building.utils import fractional_transform
 
 def data_batch_to_ase_mols_list(crystaldata_batch,
                                 max_ind: int = np.inf,
@@ -92,22 +96,18 @@ def ase_mol_from_crystaldata(crystal_batch,
         mol_size = crystal_batch.num_atoms[index]
         num_molecules = int((crystal_batch.ptr[index + 1] - crystal_batch.ptr[index]) / mol_size)
 
-        molecule_centroids = torch.stack(
-            [torch.mean(
-                crystal_batch.pos[crystal_batch.ptr[index] + int(mol_size * multiplier):crystal_batch.ptr[index] + int(mol_size * multiplier + 1)],
-                dim=0)
-                for multiplier in range(num_molecules)])
+        molecule_centroids = scatter(crystal_batch.pos[atom_inds],
+                                     torch.arange(num_molecules).repeat_interleave(mol_size), dim=0,
+                                     dim_size=num_molecules, reduce='mean')
 
-        fractional_centroids = torch.inner(torch.linalg.inv(crystal_batch.T_fc[index]), molecule_centroids).T
-
-        inside_centroids = torch.prod((fractional_centroids < 1) * (fractional_centroids > 0), dim=-1)
-        # assert inside_centroids.sum() == data.Z[index]  # must be exactly Z molecules in the unit cell
-        inside_centroids_inds = torch.where(inside_centroids)[0]
+        centroids_fractional = fractional_transform(molecule_centroids, crystal_batch.T_cf[index])
+        inside_centroids_inds = find_coord_in_box_torch(centroids_fractional, [1.0, 1.0, 1.0])
 
         inside_inds = torch.cat(
             [torch.arange(mol_size) + mol_size * inside_centroids_inds[ind]
              for ind in range(len(inside_centroids_inds))]
         ).long()
+
         inside_inds += crystal_batch.ptr[index]
         atom_inds = inside_inds
         coords = crystal_batch.pos[inside_inds].cpu().detach().numpy()

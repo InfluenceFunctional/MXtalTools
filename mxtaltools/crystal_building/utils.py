@@ -31,12 +31,15 @@ def generate_sorted_fractional_translations(supercell_size):
     return fractional_translations[torch.argsort(fractional_translations.abs().sum(1))]
 
 
-def unit_cell_to_supercell_cluster(crystal_batch, cutoff: float = 6, supercell_size: int = 5):
+def unit_cell_to_supercell_cluster(crystal_batch, cutoff: float = 6, supercell_size: int = 10):
     cluster_batch = crystal_batch.clone()
 
-    good_translations, good_translations_bool = get_cart_translations(crystal_batch.T_fc,
+    cc_centroids = fractional_transform(crystal_batch.aunit_centroid, crystal_batch.T_fc)
+    good_translations, good_translations_bool = get_cart_translations(cc_centroids,
+                                                                      crystal_batch.T_fc,
                                                                       crystal_batch.radius,
                                                                       cutoff, supercell_size)
+
     ucell_num_atoms = crystal_batch.num_atoms * crystal_batch.sym_mult
     unit_cell_pos = torch.cat([torch.tensor(poses.reshape(ucell_num_atoms[ind], 3),
                                             dtype=torch.float32,
@@ -52,7 +55,7 @@ def unit_cell_to_supercell_cluster(crystal_batch, cutoff: float = 6, supercell_s
     atoms_per_translation = ucell_num_atoms.repeat_interleave(num_cells, dim=0)
     atomwise_translation = good_translations.repeat_interleave(atoms_per_translation, dim=0)
 
-    # extract final features
+    # index final features
     # pos, x, z, mol_ind, aux_ind, ptr, batch
     atoms_per_unit_cell = (crystal_batch.num_atoms * crystal_batch.sym_mult).long()
     apuc_cum = torch.cat([torch.tensor([0], device=crystal_batch.device), torch.cumsum(atoms_per_unit_cell, dim=0)]).long()
@@ -86,20 +89,39 @@ def unit_cell_to_supercell_cluster(crystal_batch, cutoff: float = 6, supercell_s
     return cluster_batch
 
 
-def get_cart_translations(T_fc, mol_radii, cutoff, supercell_size: int = 5):
+def get_cart_translations(cc_centroids,
+                          T_fc,
+                          mol_radii,
+                          cutoff,
+                          supercell_size: int = 9):
     sorted_fractional_translations = generate_sorted_fractional_translations(supercell_size).to(T_fc.device)
+
+    # get the set of all possible cartesian translations
+    cell_vectors = T_fc.permute(0, 2, 1)
+    # for the n samples, for the 3 (i) cell vectors, get the inner product with all the fractional translation vectors
+    parallelpiped_centroids = torch.einsum('nij, mi -> nmj', cell_vectors, sorted_fractional_translations)
+
+    # we need to include any parallelpiped which overlaps with a sphere of
+    # radius cutoff_distance around the canonical conformer for each cell - a bounding box calculation
+    # we compute this in a brute force way, adding the diagonal length of each parallelpiped to the cutoff
+    # this will take extra boxes, but is fast and simple
+    cell_diag = cell_vectors.sum(1).norm(dim=-1)
+    cutoff_distance = mol_radii * 2 + cutoff + 0.1 + cell_diag/2  # convolutional radius plus cell diagonal
+
+    centroid_dists = torch.linalg.norm(cc_centroids[:, None, :] - parallelpiped_centroids, dim=-1)
+    good_translations_bool = centroid_dists < cutoff_distance[:, None]
+
+    # build only the unit cells which are relevant to each cluster
+    good_translations_bool[:, 0] = True  # always take the 0,0,0 element
+    good_translations = parallelpiped_centroids[good_translations_bool]
+
     # unit_cell_ptr = torch.cat([
     #     torch.zeros(1, dtype=torch.float32, device=crystal_batch.device),
     #     torch.cumsum(ucell_num_atoms, dim=0)
     # ]).long()
-    # get the set of all possible cartesian translations
-    cell_vectors = T_fc.permute(0, 2, 1)
-    cart_translations = torch.einsum('nij, mi -> nmij', cell_vectors, sorted_fractional_translations).sum(2)
-    good_translations_bool = cart_translations.norm(dim=-1) < (mol_radii * 2 + cutoff + 0.1)[:, None]
-    # build only the unit cells which are relevant to each cluster
-    good_translations = cart_translations[good_translations_bool]
     # good_translations_ptr = torch.cat([torch.zeros(1, device=cart_translations.device),
     #                                    torch.cumsum(good_translations_bool.sum(1), dim=0)])
+
     return good_translations, good_translations_bool
 
 
@@ -304,7 +326,11 @@ def find_coord_in_box_torch(coords, box, epsilon=0):
     # which of the given coords is inside the specified box, with option for a little leeway
     return torch.where((coords[:, 0] <= (box[0] + epsilon)) *
                        (coords[:, 1] <= (box[1] + epsilon)) *
-                       (coords[:, 2] <= (box[2] + epsilon)))[0]
+                       (coords[:, 2] <= (box[2] + epsilon)) *
+                       (coords[:, 0] >= 0) *
+                       (coords[:, 1] >= 0) *
+                       (coords[:, 2] >= 0)
+                       )[0]
 
 
 def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list,
@@ -776,7 +802,8 @@ def new_aunit2unit_cell(mol_batch):
 
     flat_unit_cell_affine_centroids_f = torch.cat(
         (flat_unit_cell_centroids_f,
-         torch.ones(flat_unit_cell_centroids_f.shape[:-1] + (1,)).to(aunit_padded_coords_c.device)), dim=-1)
+         torch.ones(flat_unit_cell_centroids_f.shape[:-1] + (1,), dtype=torch.float32
+                    ).to(aunit_padded_coords_c.device)), dim=-1)
 
     # get all molecule centroids via symmetry ops
     flat_unit_cell_centroids_f = torch.einsum('nij,nj->ni', (sym_ops, flat_unit_cell_affine_centroids_f))[..., :-1]

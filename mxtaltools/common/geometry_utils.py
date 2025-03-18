@@ -1272,7 +1272,7 @@ def rotvec2rotmat(mol_rotation: torch.tensor, basis='cartesian'):
         torch.stack((-unit_vector[:, 1], unit_vector[:, 0], torch.zeros_like(unit_vector[:, 0])), dim=1)
     ), dim=1)
 
-    identity_batch = torch.eye(3, device=r.device)[None, :, :].tile(len(r), 1, 1)
+    identity_batch = torch.eye(3, device=r.device, dtype=torch.float32)[None, :, :].tile(len(r), 1, 1)
     applied_rotation_list = identity_batch + torch.sin(r[:, None, None]) * K + (1 - torch.cos(r[:, None, None])) * (
             K @ K)
 

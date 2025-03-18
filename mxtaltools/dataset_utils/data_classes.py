@@ -14,9 +14,9 @@ from torch_sparse import SparseTensor
 
 from mxtaltools.analysis.crystals_analysis import get_intermolecular_dists_dict
 from mxtaltools.analysis.vdw_analysis import vdw_analysis, electrostatic_analysis
-from mxtaltools.common.geometry_utils import cell_parameters_to_box_vectors, batch_compute_molecule_volume, \
+from mxtaltools.common.geometry_utils import batch_compute_molecule_volume, \
     compute_mol_radius, batch_compute_mol_radius, batch_compute_mol_mass, compute_mol_mass, center_mol_batch, \
-    apply_rotation_to_batch, enforce_crystal_system, batch_compute_fractional_transform, probe_compute_molecule_volume
+    apply_rotation_to_batch, enforce_crystal_system, batch_compute_fractional_transform
 from mxtaltools.common.utils import softplus_shift
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
@@ -701,20 +701,29 @@ class MolCrystalData(MolData):
                 align_to_standardized_orientation=True,
                 mol_handedness=self.aunit_handedness,
             )
-        else:  # TODO
-            assert False, "aunit posing not yet implemented for single crystals"
+        else:
+            self.pos = get_aunit_positions(
+                collate_data_list([self]),
+                align_to_standardized_orientation=True,
+                mol_handedness=self.aunit_handedness,
+            )
+            #assert False, "aunit posing not yet implemented for single crystals"
 
     def build_unit_cell(self):
         if 'Batch' in self.__class__.__name__:
             self.unit_cell_pos = new_aunit2unit_cell(self)  # keep in numpy format
-        else:  # TODO
-            assert False, "unit cell construction not yet implemented for single crystals"
+        else:
+            self.unit_cell_pos = new_aunit2unit_cell(collate_data_list([self]))
+            #assert False, "unit cell construction not yet implemented for single crystals"
 
-    def build_cluster(self):
+    def build_cluster(self, supercell_size: int = 10):
         if 'Batch' in self.__class__.__name__:
-            return unit_cell_to_supercell_cluster(self)
-        else:  # TODO
-            assert False, "unit cell construction not yet implemented for single crystals"
+            return unit_cell_to_supercell_cluster(self, supercell_size)
+        else:
+            crystal_batch = collate_data_list([self])
+            crystal_batch.build_unit_cell()
+            return unit_cell_to_supercell_cluster(crystal_batch, supercell_size)
+            #False, "unit cell construction not yet implemented for single crystals"
 
     def de_cluster(self):
         # delete cluster information and reset this object as a molecule
@@ -825,7 +834,11 @@ class MolCrystalData(MolData):
             )
 
         else:
-            assert False, "Radial graph construction not implemented for single crystals"
+            self.edges_dict = get_intermolecular_dists_dict(
+                collate_data_list([self]),
+                cutoff
+            )
+            #assert False, "Radial graph construction not implemented for single crystals"
 
     def compute_LJ_energy(self):
         vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()), device=self.device)
@@ -853,7 +866,9 @@ class MolCrystalData(MolData):
 
         return molwise_estat_energy
 
-    def clean_cell_parameters(self, mode: str = 'hard', canonicalize_orientations: bool = True):
+    def clean_cell_parameters(self, mode: str = 'hard',
+                              canonicalize_orientations: bool = True,
+                              angle_pad: float = 0.5):
         # force outputs into physical ranges
 
         # cell lengths have to be positive nonzero
@@ -862,9 +877,9 @@ class MolCrystalData(MolData):
         elif mode == 'soft':
             self.cell_angles = softplus_shift(self.cell_angles)
 
-        # range from (0,pi) with 20% padding to prevent too-skinny cells
+        # range from (0,pi) with 50% padding to prevent too-skinny cells
         self.cell_angles = enforce_1d_bound(self.cell_angles,
-                                            x_span=torch.pi / 2 * 0.8,
+                                            x_span=torch.pi / 2 * angle_pad,
                                             x_center=torch.pi / 2,
                                             mode=mode)
 
@@ -885,7 +900,8 @@ class MolCrystalData(MolData):
                                                                      )
 
         # enforce z component in the upper half-plane
-        self.aunit_orientation = canonicalize_rotvec(self.aunit_orientation)
+        if canonicalize_orientations:
+            self.aunit_orientation = canonicalize_rotvec(self.aunit_orientation)
 
         # update cell vectors
         self.box_analysis()
@@ -984,13 +1000,16 @@ class MolCrystalData(MolData):
         """
         full procedure for building and analyzing a molecular crystal
         """
-        self.pose_aunit()
-        self.build_unit_cell()
-        cluster_batch = self.build_cluster()
+        cluster_batch = self.mol2cluster()
         cluster_batch.construct_radial_graph()
         self.lj_pot, self.scaled_lj_pot = cluster_batch.compute_LJ_energy()
         self.es_pot = cluster_batch.compute_ES_energy()
         return self.lj_pot, self.es_pot, self.scaled_lj_pot
+
+    def mol2cluster(self):
+        self.pose_aunit()
+        self.build_unit_cell()
+        return self.build_cluster()
 
     def do_embedding(self,
                      embedding_type: str,

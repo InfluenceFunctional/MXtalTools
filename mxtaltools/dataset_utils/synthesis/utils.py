@@ -88,7 +88,7 @@ def otf_synthesize_crystals(dataset_length: int,
                             synchronize: bool = True,
                             num_chunks: Optional[int] = None,
                             debug: bool = False,
-                            do_mace_energy: bool = False,):
+                            do_mace_energy: bool = False, ):
     chunks_path = Path(workdir)  # where to save outputs
     smiles_path = Path(smiles_source)  # where to get inputs
     os.chdir(smiles_path)
@@ -246,7 +246,7 @@ def process_smiles_to_crystal_opt(lines: list,
                                   post_scramble_each: int = None,
                                   do_embedding: bool = False,
                                   embedding_type: Optional[str] = None,
-                                  encoder_checkpoint_path: Optional[str]=None,
+                                  encoder_checkpoint_path: Optional[str] = None,
                                   do_mace_energy: bool = False,
                                   **conf_kwargs):
     """starting chunk pool"""
@@ -284,7 +284,7 @@ def process_smiles_to_crystal_opt(lines: list,
             aunit_handedness=int(aunit_handedness[ind]),
             identifier=sample.smiles,
         )
-        while crystal.packing_coeff > 0.25:  # force quite diffuse crystals
+        while crystal.packing_coeff > 1:  # force less dense crystals
             crystal.cell_lengths *= 1.1
             crystal.box_analysis()
         crystals.append(crystal)
@@ -301,7 +301,7 @@ def process_smiles_to_crystal_opt(lines: list,
 
     # do embedding
     if do_embedding:
-        # embedding crystals
+        print('embedding crystals')
         samples = embed_crystal_list(
             mol_batch.num_graphs,
             samples,
@@ -310,21 +310,34 @@ def process_smiles_to_crystal_opt(lines: list,
         )
 
     if do_mace_energy:
-        # calculating crystal mace energies
-        from mxtaltools.mace_sp.utils import SPMaceCalculator
-        calculator = SPMaceCalculator('cpu')
-        for s_ind, sample in enumerate(samples):
-            try:
-                sample.mace_pot = calculator.sp_calculation(
-                    sample.pos.cpu().detach().numpy(),
-                    sample.z.cpu().detach().numpy(),
-                    sample.cell_lengths.flatten().cpu().detach().numpy(),
-                    sample.cell_angles.flatten().cpu().detach().numpy() * 90 / (np.pi / 2)
-                )
-            except AssertionError as e:  # Ase will not allow inside-out cells
-                sample.mace_pot = None
-
-        samples = [sample for sample in samples if sample.mace_pot is not None]
+        print('doing mace energy')
+        samples = add_mace_energy(samples)
+        samples = [sample for sample in samples if hasattr(sample, 'mace_mol_pot')]
+        #
+        # # sample analysis
+        # ljs = torch.tensor([elem.scaled_lj_pot for elem in samples])
+        # maces = torch.tensor([elem.mace_lattice_pot for elem in samples])
+        #
+        # best_ind = np.argmin(ljs)
+        # best_crystal = collate_data_list([samples[best_ind]])
+        # best_cluster = best_crystal.mol2cluster()
+        # best_cluster.visualize([0], mode='distance', cutoff=20)
+        #
+        # best_ind = np.argmin(maces)
+        # best_crystal = collate_data_list([samples[best_ind]])
+        # best_cluster = best_crystal.mol2cluster()
+        # best_cluster.visualize([0], mode='distance', cutoff=20)
+        #
+        # best_ind = np.argmax(maces)
+        # best_crystal = collate_data_list([samples[best_ind]])
+        # best_cluster = best_crystal.mol2cluster()
+        # best_cluster.visualize([0], mode='distance', cutoff=20)
+        #
+        # import plotly.graph_objects as go
+        # go.Figure(go.Scatter(x=ljs.cpu().detach().numpy(),
+        #                      y=maces.cpu().detach().numpy(),
+        #                      mode='markers'
+        #                      )).show()
 
     print(f"finished processing smiles list with {mol_batch.num_graphs} "
           f"molecules and optimizing crystals with {len(samples)} samples")
@@ -343,3 +356,28 @@ def process_smiles_to_crystal_opt(lines: list,
                                    atol=1e-8)), "Reparamterization of handedness failed"
 
     """
+
+
+def add_mace_energy(samples):
+    # calculating crystal mace energies
+    from mxtaltools.mace_sp.utils import SPMaceCalculator
+    calculator = SPMaceCalculator('cpu')
+    for s_ind, sample in enumerate(samples):
+        try:
+            sample.pose_aunit()
+            sample.build_unit_cell()
+            sample.mace_mol_pot, sample.mace_lattice_pot = calculator.sp_calculation(
+                sample.unit_cell_pos[0].flatten(0, 1).cpu().detach().numpy(),
+                sample.z.repeat(sample.sym_mult.flatten()).cpu().detach().numpy(),
+                sample.pos.cpu().detach().numpy(),
+                sample.z.cpu().detach().numpy(),
+                sample.cell_lengths.flatten().cpu().detach().numpy(),
+                sample.cell_angles.flatten().cpu().detach().numpy() * 90 / (np.pi / 2),
+                int(sample.sym_mult)
+            )
+        except AssertionError as e:  # Ase will not allow inside-out cells and throws an assertion to this effect
+            sample.mace_mol_pot, sample.mace_lattice_pot = None, None
+
+    torch.set_default_dtype(torch.float32)  # calculator may change the default dtype, causing problems later
+
+    return samples
