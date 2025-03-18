@@ -41,27 +41,81 @@ config_list = [
             'model': {
                 'hidden_dim': 1024,
                 'dropout': 0,
+                'norm': None,
+                'num_layers': 40,
+            }}
+    },  # 0 - AE + LJ, large, normed
+    {
+        'dataset': {
+            'otf': {
+                'build_size': 760,
+                'processes': 19,
+            }
+        },
+        'positional_noise': {'autoencoder': 0.001},
+        'proxy_discriminator': {
+            'embedding_type': 'autoencoder',
+            'electrostatic_scaling_factor': 0,
+            'train_on_mace': False,
+            'optimizer': {
+                'init_lr': 1e-4,
+                'max_lr': 2e-4,
+                'min_lr': 5e-6,
+                'weight_decay': 0.005,
+                'lr_growth_lambda': 1.01,
+                'lr_shrink_lambda': 0.995,
+            },
+            'model': {
+                'hidden_dim': 1024,
+                'dropout': 0.5,
+                'norm': None,
+                'num_layers': 40,
+            }}
+    },  # 1 - AE + LJ, large, no norm
+    {
+        'dataset': {
+            'otf': {
+                'build_size': 760,
+                'processes': 19,
+            }
+        },
+        'positional_noise': {'autoencoder': 0.001},
+        'proxy_discriminator': {
+            'embedding_type': 'autoencoder',
+            'electrostatic_scaling_factor': 0,
+            'train_on_mace': False,
+            'optimizer': {
+                'init_lr': 1e-4,
+                'max_lr': 2e-4,
+                'min_lr': 5e-6,
+                'weight_decay': 0.005,
+                'lr_growth_lambda': 1.01,
+                'lr_shrink_lambda': 0.995,
+            },
+            'model': {
+                'hidden_dim': 1024,
+                'dropout': 0,
                 'norm': 'layer',
                 'num_layers': 40,
             }}
-    },  # 0 - AE + LJ, large
+    },  # 2 - AE + LJ, large, no norm, dropout
 ]
 
-# production tests
-best_config = deepcopy(config_list[0])
-config_list = [best_config]
-for embedding in ['autoencoder', 'principal_axes', 'principal_moments']:
-    for esf in [0, 1000, 100000, 'mace']:
-        config_i = deepcopy(best_config)
-        config_i['proxy_discriminator']['embedding_type'] = embedding
-        if esf == 'mace':
-            config_i['proxy_discriminator']['electrostatic_scaling_factor'] = 0
-            config_i['proxy_discriminator']['train_on_mace'] = True
-        else:
-            config_i['proxy_discriminator']['electrostatic_scaling_factor'] = esf
-            config_i['proxy_discriminator']['train_on_mace'] = False
-
-        config_list.append(config_i)
+# # production tests
+# best_config = deepcopy(config_list[0])
+# config_list = [best_config]
+# for embedding in ['autoencoder', 'principal_axes', 'principal_moments']:
+#     for esf in [0, 1000, 100000, 'mace']:
+#         config_i = deepcopy(best_config)
+#         config_i['proxy_discriminator']['embedding_type'] = embedding
+#         if esf == 'mace':
+#             config_i['proxy_discriminator']['electrostatic_scaling_factor'] = 0
+#             config_i['proxy_discriminator']['train_on_mace'] = True
+#         else:
+#             config_i['proxy_discriminator']['electrostatic_scaling_factor'] = esf
+#             config_i['proxy_discriminator']['train_on_mace'] = False
+#
+#         config_list.append(config_i)
 
 
 """

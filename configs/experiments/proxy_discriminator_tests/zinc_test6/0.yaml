@@ -76,7 +76,7 @@ proxy_discriminator:
   model:
     dropout: 0
     hidden_dim: 1024
-    norm: layer
+    norm: null
     num_layers: 40
   optimizer:
     beta1: 0.9

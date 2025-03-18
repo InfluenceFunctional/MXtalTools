@@ -71,7 +71,7 @@ positional_noise:
   regressor: 0
 proxy_discriminator:
   cutoff: 6
-  electrostatic_scaling_factor: 1000
+  electrostatic_scaling_factor: 0
   embedding_type: autoencoder
   model:
     dropout: 0
