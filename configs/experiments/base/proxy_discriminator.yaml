@@ -100,8 +100,8 @@ proxy_discriminator:
     overwrite_on_reload: False
 
   model:
-    hidden_dim: 1024
+    hidden_dim: 128
     dropout: 0
     norm: null
-    num_layers: 4
+    num_layers: 2
     vector_norm: null

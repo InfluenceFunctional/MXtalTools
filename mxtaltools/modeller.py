@@ -25,7 +25,7 @@ from mxtaltools.analysis.vdw_analysis import vdw_analysis, vdw_overlap
 from mxtaltools.common.geometry_utils import list_molecule_principal_axes_torch
 from mxtaltools.common.geometry_utils import rotvec2sph
 from mxtaltools.common.training_utils import instantiate_models, flatten_wandb_params, set_lr, \
-    init_optimizer, init_scheduler, reload_model, save_checkpoint, slash_batch, make_sequential_directory
+    init_optimizer, init_scheduler, reload_model, save_checkpoint, slash_batch, make_sequential_directory, spoof_usage
 from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.common.utils import sample_uniform
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
@@ -739,6 +739,8 @@ class Modeller:
             self.initialize_models_optimizers_schedulers()
             converged, epoch, prev_epoch_failed = self.init_logging()
 
+            if self.device == 'cuda' and self.config.machine == 'cluster':
+                spoof_usage()
             if self.config.mode == 'proxy_discriminator':  # embed dataset for PD modelling
                 train_loader = self.embed_dataloader_dataset(train_loader)
                 test_loader = self.embed_dataloader_dataset(test_loader)

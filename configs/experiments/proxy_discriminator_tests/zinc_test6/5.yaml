@@ -72,12 +72,12 @@ positional_noise:
 proxy_discriminator:
   cutoff: 6
   electrostatic_scaling_factor: 0
-  embedding_type: principal_axes
+  embedding_type: autoencoder
   model:
-    dropout: 0
-    hidden_dim: 1024
-    norm: layer
-    num_layers: 40
+    dropout: 0.5
+    hidden_dim: 256
+    norm: null
+    num_layers: 8
   optimizer:
     beta1: 0.9
     beta2: 0.999

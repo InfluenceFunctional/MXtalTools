@@ -74,10 +74,10 @@ proxy_discriminator:
   electrostatic_scaling_factor: 0
   embedding_type: autoencoder
   model:
-    dropout: 0
-    hidden_dim: 1024
-    norm: layer
-    num_layers: 40
+    dropout: 0.5
+    hidden_dim: 512
+    norm: null
+    num_layers: 4
   optimizer:
     beta1: 0.9
     beta2: 0.999
@@ -93,7 +93,7 @@ proxy_discriminator:
     use_plateau_scheduler: false
     weight_decay: 0.005
   train_encoder: false
-  train_on_mace: true
+  train_on_mace: false
 sample_steps: 100
 save_checkpoints: true
 seeds:

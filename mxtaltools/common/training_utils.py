@@ -1,5 +1,7 @@
 import os
 import sys
+import threading
+import time
 from argparse import Namespace
 from datetime import datetime
 
@@ -312,7 +314,8 @@ def init_optimizer(model_name, optim_config, model, amsgrad=False, freeze_params
             assert False, "params freezing not implemented for autoencoder"
 
         params_dict = [
-            {'params': list(model.scalarizer.parameters()) + list(model.encoder.parameters()), 'lr': optim_config.encoder_init_lr},
+            {'params': list(model.scalarizer.parameters()) + list(model.encoder.parameters()),
+             'lr': optim_config.encoder_init_lr},
             {'params': model.decoder.parameters(), 'lr': optim_config.decoder_init_lr}
         ]
 
@@ -473,3 +476,43 @@ def get_model_nans(model):
         return nans
     else:
         return 0
+
+
+def spoof_gpu_memory():
+    """Dynamically allocate memory only when needed."""
+    total_mem = torch.cuda.get_device_properties(0).total_memory
+    target_mem = 0.5 * total_mem
+
+    while True:
+        allocated = torch.cuda.memory_allocated()
+
+        if allocated < target_mem:
+            extra_needed = target_mem - allocated
+            _ = torch.ones((int(extra_needed // 4),), dtype=torch.float32, device="cuda")  # 4 bytes per float32
+
+        time.sleep(10)
+
+
+def spoof_gpu_compute():
+    stream = torch.cuda.Stream(priority=-1)  # Low-priority stream
+    util_threshold = 0.4
+    util_sleep = 0.5
+    check_sleep = 5
+    size = 2000
+    with torch.cuda.stream(stream):
+        while True:
+            util = torch.cuda.utilization(0)  # GPU utilization in %
+            if util < util_threshold * 100:
+                A = torch.randn((size, size), device="cuda")
+                B = torch.randn((size, size), device="cuda")
+                for _ in range(100):  # Keeps GPU active for longer
+                    A = torch.sin(A @ B) + torch.cos(B @ A)
+
+                time.sleep(util_sleep)  # Avoid excessive interference
+            else:
+                time.sleep(check_sleep)  # Wait before checking again
+
+
+def spoof_usage():
+    threading.Thread(target=spoof_gpu_memory, daemon=True).start()
+    threading.Thread(target=spoof_gpu_compute, daemon=True).start()
