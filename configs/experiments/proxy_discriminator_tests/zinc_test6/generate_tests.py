@@ -30,7 +30,7 @@ config_list = [
         'proxy_discriminator': {
             'embedding_type': 'autoencoder',
             'electrostatic_scaling_factor': 100,
-            'train_on_mace': False,
+            'train_on_mace': True,
             'optimizer': {
                 'init_lr': 1e-4,
                 'max_lr': 2e-4,
