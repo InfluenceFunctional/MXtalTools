@@ -1,6 +1,6 @@
 from mxtaltools.common.config_processing import load_yaml
 import yaml
-from copy import copy
+from copy import copy, deepcopy
 import os
 
 base_config = load_yaml('base.yaml')
@@ -16,7 +16,7 @@ To-Do:
 - run above tests
 
 """
-
+# convergence tests
 config_list = [
     {
         'dataset': {
@@ -46,6 +46,23 @@ config_list = [
             }}
     },  # 0 - AE + LJ, large
 ]
+
+# production tests
+best_config = deepcopy(config_list[0])
+config_list = [best_config]
+for embedding in ['autoencoder', 'principal_axes', 'principal_moments']:
+    for esf in [0, 1000, 100000, 'mace']:
+        config_i = deepcopy(best_config)
+        config_i['proxy_discriminator']['embedding_type'] = embedding
+        if esf == 'mace':
+            config_i['proxy_discriminator']['electrostatic_scaling_factor'] = 0
+            config_i['proxy_discriminator']['train_on_mace'] = True
+        else:
+            config_i['proxy_discriminator']['electrostatic_scaling_factor'] = esf
+            config_i['proxy_discriminator']['train_on_mace'] = False
+
+        config_list.append(config_i)
+
 
 """
 Proxy discriminator params
