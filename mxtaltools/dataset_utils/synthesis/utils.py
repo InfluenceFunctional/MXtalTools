@@ -360,6 +360,7 @@ def process_smiles_to_crystal_opt(lines: list,
     except Exception as e:
         print(str(e))
         print("Crystal synthesis job failed!")
+        raise e
 
 
 def add_mace_energy(samples):

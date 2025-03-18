@@ -2,7 +2,7 @@ machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: proxy_discriminator
-dataset_name: 'test_pd_dataset_sg1.pt' #'test_dataset.pt'
+dataset_name: 'pd_dataset_sg1.pt' #'test_dataset.pt'
 dataset_yaml_path: '/proxy_discriminator.yaml'
 save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
@@ -21,14 +21,14 @@ dataset:
 
   otf:
     smiles_source: '/scratch/mk8347/zinc22'#'/home/mkilgour/crystal_datasets/zinc22/'  # /scratch/mk8347/zinc22
-    build_size: 400
+    build_size: 1520
     max_num_atoms: 30
     pare_to_size: 9
     max_num_heavy_atoms: 9
     space_group: 1
     max_radius: 15
     post_scramble_each: 10
-    processes: 4
+    processes: 19
     allowed_atom_types: [ 1, 6, 7, 8, 9 ]
   loader_processes: 0
 

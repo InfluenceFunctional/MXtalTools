@@ -13,20 +13,20 @@ dataset:
     - 7
     - 8
     - 9
-    build_size: 60
+    build_size: 760
     max_num_atoms: 30
     max_num_heavy_atoms: 9
     max_radius: 15
     pare_to_size: 9
     post_scramble_each: 10
-    processes: 4
+    processes: 19
     smiles_source: /scratch/mk8347/zinc22
     space_group: 1
   regression_target: null
   single_identifier: null
   test_fraction: 0.2
   type: molecule
-dataset_name: test_pd_dataset_sg1.pt
+dataset_name: pd_dataset_sg1.pt
 dataset_yaml_path: /proxy_discriminator.yaml
 device: cuda
 early_epochs_step_override: 5
@@ -71,12 +71,12 @@ positional_noise:
   regressor: 0
 proxy_discriminator:
   cutoff: 6
-  electrostatic_scaling_factor: 100
+  electrostatic_scaling_factor: 0
   embedding_type: autoencoder
   model:
     dropout: 0
     hidden_dim: 1024
-    norm: null
+    norm: layer
     num_layers: 40
   optimizer:
     beta1: 0.9
@@ -93,7 +93,7 @@ proxy_discriminator:
     use_plateau_scheduler: false
     weight_decay: 0.005
   train_encoder: false
-  train_on_mace: true
+  train_on_mace: false
 sample_steps: 100
 save_checkpoints: true
 seeds:
