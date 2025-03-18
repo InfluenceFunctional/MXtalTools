@@ -26,7 +26,7 @@ dataset:
   single_identifier: null
   test_fraction: 0.2
   type: molecule
-dataset_name: pd_dataset_sg1.pt
+dataset_name: test_pd_dataset_sg1.pt
 dataset_yaml_path: /proxy_discriminator.yaml
 device: cuda
 early_epochs_step_override: 5
