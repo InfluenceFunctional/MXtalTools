@@ -13,13 +13,13 @@ dataset:
     - 7
     - 8
     - 9
-    build_size: 850
+    build_size: 60
     max_num_atoms: 30
     max_num_heavy_atoms: 9
     max_radius: 15
     pare_to_size: 9
     post_scramble_each: 10
-    processes: 19
+    processes: 4
     smiles_source: /scratch/mk8347/zinc22
     space_group: 1
   regression_target: null

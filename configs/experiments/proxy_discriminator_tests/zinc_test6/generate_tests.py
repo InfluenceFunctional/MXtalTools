@@ -22,8 +22,8 @@ config_list = [
     {
         'dataset': {
             'otf': {
-                'build_size': 850,
-                'processes': 19,
+                'build_size': 60,
+                'processes': 4,
             }
         },
         'positional_noise': {'autoencoder': 0.001},

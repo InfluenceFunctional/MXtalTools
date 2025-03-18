@@ -249,113 +249,117 @@ def process_smiles_to_crystal_opt(lines: list,
                                   encoder_checkpoint_path: Optional[str] = None,
                                   do_mace_energy: bool = False,
                                   **conf_kwargs):
-    """starting chunk pool"""
-    mol_samples = process_smiles_list(lines,
-                                      allowed_atom_types,
-                                      return_samples=True,
-                                      **conf_kwargs)
-    if len(mol_samples) == 0:
-        assert False, "Zero valid molecules in batch, increase crystal generation batch size"
+    try:
+        """starting chunk pool"""
+        mol_samples = process_smiles_list(lines,
+                                          allowed_atom_types,
+                                          return_samples=True,
+                                          **conf_kwargs)
+        if len(mol_samples) == 0:
+            assert False, "Zero valid molecules in batch, increase crystal generation batch size"
 
-    # print('''sample random crystals''') # CRYGENTODO
-    crystal_generator = CSDPrior(
-        sym_info=init_sym_info(),
-        device="cpu",
-    )
-    mol_batch = collate_data_list(mol_samples)
-    normed_cell_params = crystal_generator(len(mol_samples), space_group * torch.ones(len(mol_samples)))
-    normed_cell_lengths, cell_angles, aunit_centroid, aunit_orientation = normed_cell_params.split(3, dim=1)
-    sym_mult = torch.Tensor([
-        len(SYM_OPS[space_group]) for _ in range(len(mol_samples))
-    ])
-    aunit_handedness = torch.LongTensor([
-        np.random.choice([-1, 1], size=len(mol_samples), replace=True)
-    ])[0]
-    cell_lengths = torch.pow(sym_mult * mol_batch.mol_volume, 1 / 3)[:, None] * normed_cell_lengths
-    crystals = []
-    for ind, sample in enumerate(mol_samples):
-        crystal = MolCrystalData(
-            molecule=sample,
-            sg_ind=space_group,
-            cell_lengths=cell_lengths[ind],
-            cell_angles=cell_angles[ind],
-            aunit_centroid=aunit_centroid[ind],
-            aunit_orientation=aunit_orientation[ind],
-            aunit_handedness=int(aunit_handedness[ind]),
-            identifier=sample.smiles,
+        # print('''sample random crystals''') # CRYGENTODO
+        crystal_generator = CSDPrior(
+            sym_info=init_sym_info(),
+            device="cpu",
         )
-        while crystal.packing_coeff > 1:  # force less dense crystals
-            crystal.cell_lengths *= 1.1
-            crystal.box_analysis()
-        crystals.append(crystal)
-    crystal_batch = collate_data_list(crystals)
-    crystal_batch.clean_cell_parameters()
+        mol_batch = collate_data_list(mol_samples)
+        normed_cell_params = crystal_generator(len(mol_samples), space_group * torch.ones(len(mol_samples)))
+        normed_cell_lengths, cell_angles, aunit_centroid, aunit_orientation = normed_cell_params.split(3, dim=1)
+        sym_mult = torch.Tensor([
+            len(SYM_OPS[space_group]) for _ in range(len(mol_samples))
+        ])
+        aunit_handedness = torch.LongTensor([
+            np.random.choice([-1, 1], size=len(mol_samples), replace=True)
+        ])[0]
+        cell_lengths = torch.pow(sym_mult * mol_batch.mol_volume, 1 / 3)[:, None] * normed_cell_lengths
+        crystals = []
+        for ind, sample in enumerate(mol_samples):
+            crystal = MolCrystalData(
+                molecule=sample,
+                sg_ind=space_group,
+                cell_lengths=cell_lengths[ind],
+                cell_angles=cell_angles[ind],
+                aunit_centroid=aunit_centroid[ind],
+                aunit_orientation=aunit_orientation[ind],
+                aunit_handedness=int(aunit_handedness[ind]),
+                identifier=sample.smiles,
+            )
+            while crystal.packing_coeff > 1:  # force less dense crystals
+                crystal.cell_lengths *= 1.1
+                crystal.box_analysis()
+            crystals.append(crystal)
+        crystal_batch = collate_data_list(crystals)
+        crystal_batch.clean_cell_parameters()
 
-    # print('''do local opt''')
-    samples = standalone_opt_random_crystals(
-        crystal_batch.clone().cpu(),
-        crystal_batch.cell_parameters().clone().cpu(),
-        opt_eps=1e-1,
-        post_scramble_each=post_scramble_each
-    )
-
-    # do embedding
-    if do_embedding:
-        print('embedding crystals')
-        samples = embed_crystal_list(
-            mol_batch.num_graphs,
-            samples,
-            embedding_type,
-            encoder_checkpoint_path
+        # print('''do local opt''')
+        samples = standalone_opt_random_crystals(
+            crystal_batch.clone().cpu(),
+            crystal_batch.cell_parameters().clone().cpu(),
+            opt_eps=1e-1,
+            post_scramble_each=post_scramble_each
         )
 
-    if do_mace_energy:
-        print('doing mace energy')
-        samples = add_mace_energy(samples)
-        samples = [sample for sample in samples if hasattr(sample, 'mace_mol_pot')]
-        #
-        # # sample analysis
-        # ljs = torch.tensor([elem.scaled_lj_pot for elem in samples])
-        # maces = torch.tensor([elem.mace_lattice_pot for elem in samples])
-        #
-        # best_ind = np.argmin(ljs)
-        # best_crystal = collate_data_list([samples[best_ind]])
-        # best_cluster = best_crystal.mol2cluster()
-        # best_cluster.visualize([0], mode='distance', cutoff=20)
-        #
-        # best_ind = np.argmin(maces)
-        # best_crystal = collate_data_list([samples[best_ind]])
-        # best_cluster = best_crystal.mol2cluster()
-        # best_cluster.visualize([0], mode='distance', cutoff=20)
-        #
-        # best_ind = np.argmax(maces)
-        # best_crystal = collate_data_list([samples[best_ind]])
-        # best_cluster = best_crystal.mol2cluster()
-        # best_cluster.visualize([0], mode='distance', cutoff=20)
-        #
-        # import plotly.graph_objects as go
-        # go.Figure(go.Scatter(x=ljs.cpu().detach().numpy(),
-        #                      y=maces.cpu().detach().numpy(),
-        #                      mode='markers'
-        #                      )).show()
+        # do embedding
+        if do_embedding:
+            print('embedding crystals')
+            samples = embed_crystal_list(
+                mol_batch.num_graphs,
+                samples,
+                embedding_type,
+                encoder_checkpoint_path
+            )
 
-    print(f"finished processing smiles list with {mol_batch.num_graphs} "
-          f"molecules and optimizing crystals with {len(samples)} samples")
+        if do_mace_energy:
+            print('doing mace energy')
+            samples = add_mace_energy(samples)
+            samples = [sample for sample in samples if hasattr(sample, 'mace_mol_pot')]
+            #
+            # # sample analysis
+            # ljs = torch.tensor([elem.scaled_lj_pot for elem in samples])
+            # maces = torch.tensor([elem.mace_lattice_pot for elem in samples])
+            #
+            # best_ind = np.argmin(ljs)
+            # best_crystal = collate_data_list([samples[best_ind]])
+            # best_cluster = best_crystal.mol2cluster()
+            # best_cluster.visualize([0], mode='distance', cutoff=20)
+            #
+            # best_ind = np.argmin(maces)
+            # best_crystal = collate_data_list([samples[best_ind]])
+            # best_cluster = best_crystal.mol2cluster()
+            # best_cluster.visualize([0], mode='distance', cutoff=20)
+            #
+            # best_ind = np.argmax(maces)
+            # best_crystal = collate_data_list([samples[best_ind]])
+            # best_cluster = best_crystal.mol2cluster()
+            # best_cluster.visualize([0], mode='distance', cutoff=20)
+            #
+            # import plotly.graph_objects as go
+            # go.Figure(go.Scatter(x=ljs.cpu().detach().numpy(),
+            #                      y=maces.cpu().detach().numpy(),
+            #                      mode='markers'
+            #                      )).show()
 
-    torch.save(samples, file_path)
-    # optional test script
-    """
-    crystal_batch = collate_data_list(samples[::100])
-    crystal_batch.build_unit_cell()
-    aunit_centroid, aunit_orientation, aunit_handedness, is_well_defined, pos = crystal_batch.reparameterize_unit_cell()
-    assert torch.all(torch.isclose(aunit_centroid[is_well_defined], crystal_batch.aunit_centroid[is_well_defined],
-                                   atol=1e-3)), "Reparameterization of centroids failed"
-    assert torch.all(torch.isclose(aunit_orientation[is_well_defined], crystal_batch.aunit_orientation[is_well_defined],
-                                   atol=1e-2)), "Reparameterization of rotvecs failed"
-    assert torch.all(torch.isclose(aunit_handedness[is_well_defined].cpu(), crystal_batch.aunit_handedness[is_well_defined],
-                                   atol=1e-8)), "Reparamterization of handedness failed"
+        print(f"finished processing smiles list with {mol_batch.num_graphs} "
+              f"molecules and optimizing crystals with {len(samples)} samples")
 
-    """
+        torch.save(samples, file_path)
+        # optional test script
+        """
+        crystal_batch = collate_data_list(samples[::100])
+        crystal_batch.build_unit_cell()
+        aunit_centroid, aunit_orientation, aunit_handedness, is_well_defined, pos = crystal_batch.reparameterize_unit_cell()
+        assert torch.all(torch.isclose(aunit_centroid[is_well_defined], crystal_batch.aunit_centroid[is_well_defined],
+                                       atol=1e-3)), "Reparameterization of centroids failed"
+        assert torch.all(torch.isclose(aunit_orientation[is_well_defined], crystal_batch.aunit_orientation[is_well_defined],
+                                       atol=1e-2)), "Reparameterization of rotvecs failed"
+        assert torch.all(torch.isclose(aunit_handedness[is_well_defined].cpu(), crystal_batch.aunit_handedness[is_well_defined],
+                                       atol=1e-8)), "Reparamterization of handedness failed"
+    
+        """
+    except Exception as e:
+        print(str(e))
+        print("Crystal synthesis job failed!")
 
 
 def add_mace_energy(samples):
