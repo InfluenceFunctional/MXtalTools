@@ -488,7 +488,7 @@ class DataManager:
             torch.save(self.dataset,
                        train_dataset_path)
 
-    def extract_misc_stats_and_indices(self, dataset):
+    def extract_misc_stats_and_indices(self, dataset):  #do this batchwise for memory efficiency
         if isinstance(dataset, list):
             data_batch = collate_data_list(dataset)
         else:
