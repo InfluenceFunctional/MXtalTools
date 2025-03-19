@@ -5,7 +5,7 @@ dataset:
   buffer_size: 100000
   filter_protons: false
   loader_processes: 0
-  max_dataset_length: 5000000
+  max_dataset_length: 400000
   otf:
     allowed_atom_types:
     - 1
@@ -13,14 +13,14 @@ dataset:
     - 7
     - 8
     - 9
-    build_size: 760
+    build_size: 0
     max_num_atoms: 30
     max_num_heavy_atoms: 9
     max_radius: 15
     pare_to_size: 9
     post_scramble_each: 10
-    processes: 19
-    smiles_source: /scratch/mk8347/zinc22
+    processes: 0
+    smiles_source: None
     space_group: 1
   regression_target: null
   single_identifier: null
@@ -72,11 +72,11 @@ positional_noise:
 proxy_discriminator:
   cutoff: 6
   electrostatic_scaling_factor: 0
-  embedding_type: principal_axes
+  embedding_type: autoencoder
   model:
     dropout: 0
     hidden_dim: 1024
-    norm: layer
+    norm: null
     num_layers: 40
   optimizer:
     beta1: 0.9
@@ -93,7 +93,7 @@ proxy_discriminator:
     use_plateau_scheduler: false
     weight_decay: 0.005
   train_encoder: false
-  train_on_mace: true
+  train_on_mace: false
 sample_steps: 100
 save_checkpoints: true
 seeds:

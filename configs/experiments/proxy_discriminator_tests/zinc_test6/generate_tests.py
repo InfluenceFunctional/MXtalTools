@@ -46,7 +46,7 @@ config_list = [
 # training curve
 best_config = deepcopy(config_list[0])
 config_list = [best_config]
-for length in [1000, 10000, 20000, 50000, 100000, 200000]:
+for length in [1000, 10000, 20000, 50000, 100000, 200000, 300000, 400000, 500000]:
         config_i = deepcopy(best_config)
         config_i['dataset']['max_dataset_length'] = length
         config_list.append(config_i)
