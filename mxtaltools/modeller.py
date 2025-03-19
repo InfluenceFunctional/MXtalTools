@@ -22,7 +22,7 @@ from tqdm import tqdm
 from mxtaltools.analysis.crystal_rdf import compute_rdf_distance, new_crystal_rdf
 from mxtaltools.analysis.crystals_analysis import get_intermolecular_dists_dict
 from mxtaltools.analysis.vdw_analysis import vdw_analysis, vdw_overlap
-from mxtaltools.common.geometry_utils import list_molecule_principal_axes_torch
+from mxtaltools.common.geometry_utils import list_molecule_principal_axes_torch, embed_vector_to_rank3
 from mxtaltools.common.geometry_utils import rotvec2sph
 from mxtaltools.common.training_utils import instantiate_models, flatten_wandb_params, set_lr, \
     init_optimizer, init_scheduler, reload_model, save_checkpoint, slash_batch, make_sequential_directory, spoof_usage
@@ -1093,20 +1093,47 @@ class Modeller:
 
             symmetric_tensor = (1 / 6) * (t123 + t213 + t231 + t321 + t132 + t312)
 
-            vec_to_3_tensor = torch.tensor([[0.7746, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.2582,
-                                             0.0000, 0.2582, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
-                                             0.0000, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.0000],
-                                            [0.0000, 0.2582, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
-                                             0.2582, 0.0000, 0.0000, 0.0000, 0.7746, 0.0000, 0.0000, 0.0000, 0.2582,
-                                             0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.2582, 0.0000],
-                                            [0.0000, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.0000,
-                                             0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.2582, 0.0000,
-                                             0.2582, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.7746]],
-                                           dtype=torch.float32,
-                                           device=self.device)
+            a, b, c, d = v_predictions.split([v_predictions.shape[-1] // 4 for _ in range(4)], dim=2)
 
-            vec_embedding = torch.einsum('nik, ij -> njk', d, vec_to_3_tensor).reshape(data.num_graphs, 3, 3, 3,
-                                                                                       d.shape[-1])
+            t12 = torch.einsum('nik,njk->nijk', a, b)
+            t21 = torch.einsum('nik,njk->nijk', b, a)
+            t23 = torch.einsum('nik,njk->nijk', b, c)
+            t32 = torch.einsum('nik,njk->nijk', c, b)
+            t13 = torch.einsum('nik,njk->nijk', a, c)
+            t31 = torch.einsum('nik,njk->nijk', c, a)
+
+            t123 = torch.einsum('nijk,nlk->nijlk', t12, c)
+            t213 = torch.einsum('nijk,nlk->nijlk', t21, c)
+            t231 = torch.einsum('nijk,nlk->nijlk', t23, a)
+            t321 = torch.einsum('nijk,nlk->nijlk', t32, a)
+            t132 = torch.einsum('nijk,nlk->nijlk', t13, b)
+            t312 = torch.einsum('nijk,nlk->nijlk', t31, b)
+
+            symmetric_tensor = (1 / 6) * (t123 + t213 + t231 + t321 + t132 + t312)
+
+            # vec_to_3_tensor = torch.tensor([[0.7746, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.2582,
+            #                                  0.0000, 0.2582, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+            #                                  0.0000, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.0000],
+            #                                 [0.0000, 0.2582, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+            #                                  0.2582, 0.0000, 0.0000, 0.0000, 0.7746, 0.0000, 0.0000, 0.0000, 0.2582,
+            #                                  0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.2582, 0.0000],
+            #                                 [0.0000, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.0000,
+            #                                  0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.2582, 0.0000,
+            #                                  0.2582, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.7746]],
+            #                                dtype=torch.float32,
+            #                                device=self.device)
+            #
+            # vec_embedding = torch.einsum('nik, ij -> njk', d, vec_to_3_tensor).reshape(data.num_graphs, 3, 3, 3,
+            #                                                                            d.shape[-1])
+
+            vec_embedding = embed_vector_to_rank3(d)
+            # linearly combine them, weighted by the scalar outputs
+            t_weights = F.softmax(s_predictions[:, :a.shape[-1]], dim=1)
+            v_weights = F.softmax(s_predictions[:, -a.shape[-1]:], dim=1)
+
+            t_predictions = (torch.sum(t_weights[:, None, None, None, :] * symmetric_tensor, dim=-1)
+                             + torch.sum(v_weights[:, None, None, None, :] * vec_embedding, dim=-1)
+                             )
 
             # linearly combine them, weighted by the scalar outputs
             t_weights = F.softmax(s_predictions[:, :a.shape[-1]], dim=1)

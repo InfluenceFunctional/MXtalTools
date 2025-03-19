@@ -15,6 +15,9 @@ To-Do:
 - get nice converging parameters
 - run above tests
 
+
+Notes:
+lr too high
 """
 # convergence tests
 config_list = [

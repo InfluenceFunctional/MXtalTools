@@ -725,7 +725,7 @@ def batch_compute_molecule_volume(
     # c3 = 12d
     c1 = torch.pi * (radii_i + radii_j - bond_lengths) ** 2
     c2 = bond_lengths ** 2 + 2 * bond_lengths * (
-                radii_i + radii_j) - 3 * radii_i ** 2 - 3 * radii_j ** 2 + 6 * radii_i * radii_j
+            radii_i + radii_j) - 3 * radii_i ** 2 - 3 * radii_j ** 2 + 6 * radii_i * radii_j
     c3 = 12 * bond_lengths
     # sphere_overlaps = (torch.pi * (radii_i + radii_j - bond_lengths) ** 2 *
     #                    (bond_lengths ** 2 + 2 * bond_lengths * radii_j - 3 * radii_j ** 2
@@ -761,7 +761,7 @@ def probe_compute_molecule_volume(
         bounding_volumes = torch.prod(mol_max_corner - mol_min_corner, dim=1)
         probe_batch = torch.arange(num_graphs, device=batch.device).repeat_interleave(probes_per_mol)
         random_probes = mol_min_corner[probe_batch] + (
-                    mol_max_corner[probe_batch] - mol_min_corner[probe_batch]) * torch.rand(
+                mol_max_corner[probe_batch] - mol_min_corner[probe_batch]) * torch.rand(
             (probes_per_mol * num_graphs, 3), device=pos.device)
         # Compute squared distances between each probe and each atom
         edge_i, edge_j = radius(x=pos,
@@ -776,8 +776,10 @@ def probe_compute_molecule_volume(
         inside_any_sphere = (dists < vdw_radii_tensor[atom_types[edge_j]]).float()
 
         # we want a maximum of one contact per probe
-        probe_has_a_contact = scatter(inside_any_sphere, edge_i, reduce='max', dim_size=probes_per_mol * num_graphs, dim=0)
-        inside_sphere_frac = scatter(probe_has_a_contact, probe_batch, reduce='sum', dim=0, dim_size=num_graphs) / probes_per_mol
+        probe_has_a_contact = scatter(inside_any_sphere, edge_i, reduce='max', dim_size=probes_per_mol * num_graphs,
+                                      dim=0)
+        inside_sphere_frac = scatter(probe_has_a_contact, probe_batch, reduce='sum', dim=0,
+                                     dim_size=num_graphs) / probes_per_mol
 
         # Estimate molecular volume
         mol_volume = bounding_volumes * inside_sphere_frac
@@ -787,7 +789,7 @@ def probe_compute_molecule_volume(
             cum_vols = torch.cumsum(volumes, dim=0)
             cum_iters = torch.arange(1, len(volumes) + 1, device=volumes.device)[:, None]
             cum_means = cum_vols / cum_iters
-            rel_diffs = torch.diff(cum_means/cum_means.mean(0)[None, :], dim=0)
+            rel_diffs = torch.diff(cum_means / cum_means.mean(0)[None, :], dim=0)
             criteria = rel_diffs[-min_iters:].abs().mean(0)
             if torch.all(criteria < eps):  # relative change in running average less than eps
                 converged = True
@@ -1312,3 +1314,12 @@ def sample_random_valid_rotvecs(num_samples):
     # restrict theta to upper half-sphere (positive z)
     random_vectors[:, 2] = torch.abs(random_vectors[:, 2])
     return random_vectors
+
+
+def embed_vector_to_rank3(v):
+    """embed an nxk vector as a symmetric 3-tensor"""
+    delta = torch.eye(3)
+    P = torch.einsum('ij,nk->nijk', delta, v) + \
+        torch.einsum('ik,nj->nijk', delta, v) + \
+        torch.einsum('jk,ni->nijk', delta, v)
+    return P / 3  # Normalization factor
