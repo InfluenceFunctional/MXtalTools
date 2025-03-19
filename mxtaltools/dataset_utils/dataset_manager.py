@@ -447,19 +447,21 @@ class DataManager:
                             max_chunks: int = 1e8,
                             chunks_patterns: list = None,
                             samples_per_chunk=1e8,
+                            build_stats: bool = True,
                             save_dataset=True):
         self.load_chunks(chunks_patterns=chunks_patterns,
                          max_chunks=max_chunks,
                          subsamples_per_chunk=samples_per_chunk)
 
-        self.misc_dataset = self.extract_misc_stats_and_indices(self.dataset)
+        if isinstance(self.datasets_path, str):
+            self.datasets_path = Path(self.datasets_path)
 
-        if save_dataset:
-            if isinstance(self.datasets_path, str):
-                self.datasets_path = Path(self.datasets_path)
+        if build_stats:
+            self.misc_dataset = self.extract_misc_stats_and_indices(self.dataset)
             misc_dataset_path = self.datasets_path.joinpath('misc_data_for_' + new_dataset_name)
             np.save(misc_dataset_path, self.misc_dataset)
 
+        if save_dataset:
             # dataset for unit testing
             mini_dataset_size = 100
             ints = list(
