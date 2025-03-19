@@ -17,8 +17,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
     chunk_ind = args.chunk_ind
 
-    # Access the passed integer
-    print(f'You passed the integer: {args.my_integer}')
     # initialize
     space_group = 1
     num_smiles = 100
