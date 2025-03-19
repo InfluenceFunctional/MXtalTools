@@ -739,8 +739,8 @@ class Modeller:
             self.initialize_models_optimizers_schedulers()
             converged, epoch, prev_epoch_failed = self.init_logging()
 
-            if self.device == 'cuda' and self.config.machine == 'cluster':
-                spoof_usage()
+            # if self.device == 'cuda' and self.config.machine == 'cluster':
+            #     spoof_usage()
             if self.config.mode == 'proxy_discriminator':  # embed dataset for PD modelling
                 train_loader = self.embed_dataloader_dataset(train_loader)
                 test_loader = self.embed_dataloader_dataset(test_loader)
@@ -1493,8 +1493,7 @@ class Modeller:
         self.times['otf_dataset_join_end'] = time()
         # generate temporary training dataset
         self.times['otf_dataset_collate_start'] = time()
-        otf_dataset = self.process_otf_crystals_dataset(chunks_path,
-                                                        analyze_new_dataset)
+        otf_dataset = self.process_otf_crystals_dataset(chunks_path, analyze_new_dataset)
         self.times['otf_dataset_collate_end'] = time()
         # print("integrating otf dataset into dataloader")
         self.times['otf_dataset_combine_start'] = time()

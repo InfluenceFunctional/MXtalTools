@@ -498,7 +498,7 @@ def spoof_gpu_compute():
     util_threshold = 0.4
     util_sleep = 0.5
     check_sleep = 5
-    size = 2000
+    size = 12000
     with torch.cuda.stream(stream):
         while True:
             util = torch.cuda.utilization(0)  # GPU utilization in %
