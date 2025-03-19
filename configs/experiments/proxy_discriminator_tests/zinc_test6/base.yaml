@@ -20,15 +20,15 @@ dataset:
   buffer_size: 100000
 
   otf:
-    smiles_source: '/scratch/mk8347/zinc22'#'/home/mkilgour/crystal_datasets/zinc22/'  # /scratch/mk8347/zinc22
-    build_size: 1520
+    smiles_source: None #'/scratch/mk8347/zinc22'#'/home/mkilgour/crystal_datasets/zinc22/'  # /scratch/mk8347/zinc22
+    build_size: 0
     max_num_atoms: 30
     pare_to_size: 9
     max_num_heavy_atoms: 9
     space_group: 1
     max_radius: 15
     post_scramble_each: 10
-    processes: 19
+    processes: 0
     allowed_atom_types: [ 1, 6, 7, 8, 9 ]
   loader_processes: 0
 
