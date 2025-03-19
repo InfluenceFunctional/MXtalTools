@@ -5,7 +5,7 @@ dataset:
   buffer_size: 100000
   filter_protons: false
   loader_processes: 0
-  max_dataset_length: 100000
+  max_dataset_length: 100000000
   otf:
     allowed_atom_types:
     - 1
@@ -74,19 +74,19 @@ proxy_discriminator:
   electrostatic_scaling_factor: 0
   embedding_type: autoencoder
   model:
-    dropout: 0
-    hidden_dim: 1024
-    norm: null
-    num_layers: 40
+    dropout: 0.25
+    hidden_dim: 512
+    norm: layer
+    num_layers: 16
   optimizer:
     beta1: 0.9
     beta2: 0.999
     convergence_eps: 0.0001
-    init_lr: 0.0001
+    init_lr: 5.0e-05
     lr_growth_lambda: 1.01
     lr_schedule: true
     lr_shrink_lambda: 0.995
-    max_lr: 0.0002
+    max_lr: 0.0001
     min_lr: 5.0e-06
     optimizer: adamw
     overwrite_on_reload: false

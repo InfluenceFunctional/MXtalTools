@@ -5,7 +5,6 @@ import os
 
 base_config = load_yaml('base.yaml')
 
-
 """
 Questions need answers:
 - scan over embeddings (ae, ellipsoid, principal moments)
@@ -22,7 +21,7 @@ lr too high
 # convergence tests
 config_list = [
     {
-        'dataset' :{
+        'dataset': {
             'max_dataset_length': 100000000
         },
         'positional_noise': {'autoencoder': 0.001},
@@ -31,8 +30,8 @@ config_list = [
             'electrostatic_scaling_factor': 0,
             'train_on_mace': False,
             'optimizer': {
-                'init_lr': 1e-4,
-                'max_lr': 2e-4,
+                'init_lr': 5e-5,
+                'max_lr': 1e-4,
                 'min_lr': 5e-6,
                 'weight_decay': 0.005,
                 'lr_growth_lambda': 1.01,
@@ -49,10 +48,17 @@ config_list = [
 # training curve
 best_config = deepcopy(config_list[0])
 config_list = [best_config]
-for length in [1000, 10000, 20000, 50000, 100000, 200000, 300000, 400000, 500000]:
-        config_i = deepcopy(best_config)
-        config_i['dataset']['max_dataset_length'] = length
-        config_list.append(config_i)
+for hidden_dim in [512, 1024]:
+    for layers in [16, 32]:
+        for norm in [None, 'layer']:
+            for dropout in [0, 0.25, 0.5]:
+                config_i = deepcopy(best_config)
+                config_i['proxy_discriminator']['model']['num_layers'] = layers
+                config_i['proxy_discriminator']['model']['hidden_dim'] = hidden_dim
+                config_i['proxy_discriminator']['model']['dropout'] = dropout
+                config_i['proxy_discriminator']['model']['norm'] = norm
+                config_list.append(config_i)
+
 # # production tests
 # best_config = deepcopy(config_list[0])
 # config_list = [best_config]

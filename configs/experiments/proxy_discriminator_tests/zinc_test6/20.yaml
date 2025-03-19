@@ -74,10 +74,10 @@ proxy_discriminator:
   electrostatic_scaling_factor: 0
   embedding_type: autoencoder
   model:
-    dropout: 0
-    hidden_dim: 512
-    norm: layer
-    num_layers: 16
+    dropout: 0.25
+    hidden_dim: 1024
+    norm: null
+    num_layers: 32
   optimizer:
     beta1: 0.9
     beta2: 0.999

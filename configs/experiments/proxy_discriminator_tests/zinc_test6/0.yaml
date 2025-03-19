@@ -82,11 +82,11 @@ proxy_discriminator:
     beta1: 0.9
     beta2: 0.999
     convergence_eps: 0.0001
-    init_lr: 0.0001
+    init_lr: 5.0e-05
     lr_growth_lambda: 1.01
     lr_schedule: true
     lr_shrink_lambda: 0.995
-    max_lr: 0.0002
+    max_lr: 0.0001
     min_lr: 5.0e-06
     optimizer: adamw
     overwrite_on_reload: false

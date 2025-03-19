@@ -75,8 +75,8 @@ proxy_discriminator:
   embedding_type: autoencoder
   model:
     dropout: 0
-    hidden_dim: 512
-    norm: layer
+    hidden_dim: 1024
+    norm: null
     num_layers: 16
   optimizer:
     beta1: 0.9
