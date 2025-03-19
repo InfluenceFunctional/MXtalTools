@@ -24,4 +24,4 @@ if __name__ == '__main__':
                         do_crystal_indexing=False)
     miner.process_new_dataset(new_dataset_name=new_dataset_name,
                               chunks_patterns=[f'sg_{space_group}_chunk'])
-
+    print(f"finished processing datast with {len(miner.dataset)} samples")
