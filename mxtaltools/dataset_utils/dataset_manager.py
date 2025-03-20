@@ -1,3 +1,4 @@
+import gc
 import glob
 import os
 import random
@@ -116,6 +117,7 @@ class DataManager:
                     self.dataset.extend([loaded_chunk[ind] for ind in samples_to_keep])
                 else:
                     self.dataset.extend(loaded_chunk)
+                del loaded_chunk
 
     def load_dataset_for_modelling(self,
                                    dataset_name,
@@ -453,10 +455,13 @@ class DataManager:
                          max_chunks=max_chunks,
                          subsamples_per_chunk=samples_per_chunk)
 
+        gc.collect()
+
         if isinstance(self.datasets_path, str):
             self.datasets_path = Path(self.datasets_path)
 
         if build_stats:
+            print("building dataset statistics")
             self.misc_dataset = self.extract_misc_stats_and_indices(self.dataset)
             misc_dataset_path = self.datasets_path.joinpath('misc_data_for_' + new_dataset_name)
             np.save(misc_dataset_path, self.misc_dataset)
@@ -487,6 +492,7 @@ class DataManager:
             train_dataset_path = self.datasets_path.joinpath(new_dataset_name + '.pt')
             torch.save(self.dataset,
                        train_dataset_path)
+    
 
     def extract_misc_stats_and_indices(self, dataset):  #do this batchwise for memory efficiency
         if isinstance(dataset, list):

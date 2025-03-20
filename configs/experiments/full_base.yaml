@@ -25,7 +25,7 @@ dataset:
   dumps_rids: null
   single_identifier: null
   buffer_size: 100000
-  resample_each: 1
+  resample_each: 10000000
   otf:
     smiles_source: null #'D:\crystal_datasets\zinc22'#'/home/mkilgour/crystal_datasets/zinc22/'  # /scratch/mk8347/zinc22
     build_size: 0 #100

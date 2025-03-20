@@ -59,21 +59,20 @@ for hidden_dim in [512, 1024]:
                 config_i['proxy_discriminator']['model']['norm'] = norm
                 config_list.append(config_i)
 
-# # production tests
-# best_config = deepcopy(config_list[0])
-# config_list = [best_config]
-# for embedding in ['autoencoder', 'principal_axes', 'principal_moments']:
-#     for esf in [0, 1000, 100000, 'mace']:
-#         config_i = deepcopy(best_config)
-#         config_i['proxy_discriminator']['embedding_type'] = embedding
-#         if esf == 'mace':
-#             config_i['proxy_discriminator']['electrostatic_scaling_factor'] = 0
-#             config_i['proxy_discriminator']['train_on_mace'] = True
-#         else:
-#             config_i['proxy_discriminator']['electrostatic_scaling_factor'] = esf
-#             config_i['proxy_discriminator']['train_on_mace'] = False
-#
-#         config_list.append(config_i)
+# production tests
+best_config = deepcopy(config_list[12])
+for embedding in ['autoencoder', 'principal_axes', 'principal_moments']:
+    for esf in [0, 1000, 100000, 'mace']:
+        config_i = deepcopy(best_config)
+        config_i['proxy_discriminator']['embedding_type'] = embedding
+        if esf == 'mace':
+            config_i['proxy_discriminator']['electrostatic_scaling_factor'] = 0
+            config_i['proxy_discriminator']['train_on_mace'] = True
+        else:
+            config_i['proxy_discriminator']['electrostatic_scaling_factor'] = esf
+            config_i['proxy_discriminator']['train_on_mace'] = False
+
+        config_list.append(config_i)
 
 
 """
