@@ -1093,24 +1093,6 @@ class Modeller:
 
             symmetric_tensor = (1 / 6) * (t123 + t213 + t231 + t321 + t132 + t312)
 
-            a, b, c, d = v_predictions.split([v_predictions.shape[-1] // 4 for _ in range(4)], dim=2)
-
-            t12 = torch.einsum('nik,njk->nijk', a, b)
-            t21 = torch.einsum('nik,njk->nijk', b, a)
-            t23 = torch.einsum('nik,njk->nijk', b, c)
-            t32 = torch.einsum('nik,njk->nijk', c, b)
-            t13 = torch.einsum('nik,njk->nijk', a, c)
-            t31 = torch.einsum('nik,njk->nijk', c, a)
-
-            t123 = torch.einsum('nijk,nlk->nijlk', t12, c)
-            t213 = torch.einsum('nijk,nlk->nijlk', t21, c)
-            t231 = torch.einsum('nijk,nlk->nijlk', t23, a)
-            t321 = torch.einsum('nijk,nlk->nijlk', t32, a)
-            t132 = torch.einsum('nijk,nlk->nijlk', t13, b)
-            t312 = torch.einsum('nijk,nlk->nijlk', t31, b)
-
-            symmetric_tensor = (1 / 6) * (t123 + t213 + t231 + t321 + t132 + t312)
-
             # vec_to_3_tensor = torch.tensor([[0.7746, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.2582,
             #                                  0.0000, 0.2582, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
             #                                  0.0000, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.0000],
@@ -2268,17 +2250,17 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
         if update_weights and (not skip_step):  # to abstract weight updates to class method
             self.optimizers_dict['proxy_discriminator'].zero_grad(
                 set_to_none=True)  # reset gradients from previous passes
-            if self.config.proxy_discriminator.embedding_type == 'autoencoder' and self.config.proxy_discriminator.train_encoder:
-                self.optimizers_dict['autoencoder'].zero_grad(
-                    set_to_none=True)  # reset gradients from previous passes
+            # if self.config.proxy_discriminator.embedding_type == 'autoencoder' and self.config.proxy_discriminator.train_encoder:
+            #     self.optimizers_dict['autoencoder'].zero_grad(
+            #         set_to_none=True)  # reset gradients from previous passes
             discriminator_loss.backward()  # back-propagation
             torch.nn.utils.clip_grad_norm_(self.models_dict['proxy_discriminator'].parameters(),
                                            self.config.gradient_norm_clip)  # gradient clipping
             self.optimizers_dict['proxy_discriminator'].step()  # update parameters
-            if self.config.proxy_discriminator.embedding_type == 'autoencoder' and self.config.proxy_discriminator.train_encoder:
-                torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
-                                               self.config.gradient_norm_clip)  # gradient clipping
-                self.optimizers_dict['autoencoder'].step()  # update parameters
+            # if self.config.proxy_discriminator.embedding_type == 'autoencoder' and self.config.proxy_discriminator.train_encoder:
+            #     torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
+            #                                    self.config.gradient_norm_clip)  # gradient clipping
+            #     self.optimizers_dict['autoencoder'].step()  # update parameters
 
         # don't move anything to the CPU until after the backward pass
         self.logger.update_current_losses('proxy_discriminator', self.epoch_type,
