@@ -1020,8 +1020,8 @@ class MolCrystalData(MolData):
                                                     encoder
                                                     )
             scaled_params = self.standardized_cell_parameters()
-            #return torch.cat([embedding, scaled_params], dim=1)
-            return torch.cat([embedding, scaled_params[..., :-3]], dim=1)
+            return torch.cat([embedding, scaled_params], dim=1)
+            #return torch.cat([embedding, scaled_params[..., :-3]], dim=1)
 
         else:
             assert False, "Crystal embedding not implemented for single samples"

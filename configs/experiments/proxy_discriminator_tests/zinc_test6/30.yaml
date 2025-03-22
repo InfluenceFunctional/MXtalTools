@@ -72,7 +72,7 @@ positional_noise:
 proxy_discriminator:
   cutoff: 6
   electrostatic_scaling_factor: 1000
-  embedding_type: principal_axes
+  embedding_type: null
   model:
     dropout: 0.5
     hidden_dim: 512
