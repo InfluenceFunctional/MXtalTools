@@ -548,9 +548,9 @@ class MolCrystalData(MolData):
         abc_normed = abc / (Z*Vol_m)^(1/3)
         """
         if 'Batch' in self.__class__.__name__:
-            return self.cell_lengths / torch.pow(self.sym_mult * self.mol_volume, 1 / 3)[:, None]
+            return self.cell_lengths/self.radius[:, None] #/ torch.pow(self.sym_mult * self.mol_volume, 1 / 3)[:, None]
         else:
-            return self.cell_lengths / torch.pow(self.sym_mult * self.mol_volume, 1 / 3)[None]
+            return self.cell_lengths/self.radius[:, None] #/ torch.pow(self.sym_mult * self.mol_volume, 1 / 3)[None]
 
     def scale_centroid_to_aunit(self):
         """
