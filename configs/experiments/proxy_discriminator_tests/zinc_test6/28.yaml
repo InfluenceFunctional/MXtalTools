@@ -93,7 +93,7 @@ proxy_discriminator:
     use_plateau_scheduler: false
     weight_decay: 0.005
   train_encoder: false
-  train_on_mace: true
+  train_on_mace: false
 sample_steps: 100
 save_checkpoints: true
 seeds:

@@ -72,7 +72,7 @@ positional_noise:
 proxy_discriminator:
   cutoff: 6
   electrostatic_scaling_factor: 0
-  embedding_type: mol_volume
+  embedding_type: autoencoder
   model:
     dropout: 0.5
     hidden_dim: 512
