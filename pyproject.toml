@@ -37,7 +37,7 @@ tqdm="*"
 umap-learn=">=0.5.5"
 wandb=">=0.15.12"
 rdkit=">=2024.03.5"
-ccdc=">=3.2.0"
+csd-python-api=">=3.2.0"
 pytest=">=7.4.2"
 
 ## NOTE have to set custom cuda dependencies
