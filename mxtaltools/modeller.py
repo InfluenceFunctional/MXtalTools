@@ -14,33 +14,31 @@ import wandb
 from scipy.spatial.transform import Rotation as R
 from torch import backends
 from torch.nn import functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter
 from tqdm import tqdm
 
 from mxtaltools.analysis.crystal_rdf import compute_rdf_distance, new_crystal_rdf
-from mxtaltools.analysis.crystals_analysis import get_intermolecular_dists_dict
-from mxtaltools.analysis.vdw_analysis import vdw_analysis, vdw_overlap
+from mxtaltools.analysis.vdw_analysis import vdw_analysis, vdw_overlap, get_intermolecular_dists_dict
 from mxtaltools.common.geometry_utils import list_molecule_principal_axes_torch, embed_vector_to_rank3
 from mxtaltools.common.geometry_utils import rotvec2sph
-from mxtaltools.common.training_utils import instantiate_models, flatten_wandb_params, set_lr, \
-    init_optimizer, init_scheduler, reload_model, save_checkpoint, slash_batch, make_sequential_directory, spoof_usage
 from mxtaltools.common.sym_utils import init_sym_info
+from mxtaltools.common.training_utils import flatten_wandb_params, set_lr, \
+    init_optimizer, init_scheduler, reload_model, save_checkpoint, slash_batch, make_sequential_directory
+from mxtaltools.common.instantiate_models import instantiate_models
 from mxtaltools.common.utils import sample_uniform
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
 from mxtaltools.crystal_building.builder import CrystalBuilder
 from mxtaltools.crystal_building.utils import overwrite_symmetry_info
-from mxtaltools.crystal_building.utils import (set_molecule_alignment)
+from mxtaltools.crystal_building.utils import set_molecule_alignment
 from mxtaltools.crystal_search.sampling import Sampler
-from mxtaltools.dataset_utils.CrystalData import CrystalData
+from mxtaltools.dataset_utils.construction.parallel_synthesis import otf_synthesize_molecules, otf_synthesize_crystals
 from mxtaltools.dataset_utils.data_classes import MolData
 from mxtaltools.dataset_utils.dataset_manager import DataManager
-from mxtaltools.dataset_utils.synthesis.utils import otf_synthesize_molecules, otf_synthesize_crystals
 from mxtaltools.dataset_utils.utils import quick_combine_dataloaders, get_dataloaders, update_dataloader_batch_size, \
-    collate_data_list, SimpleDataset, quick_combine_crystal_embedding_dataloaders
-from mxtaltools.modelling.utils import get_model_sizes
+    SimpleDataset, quick_combine_crystal_embedding_dataloaders
 from mxtaltools.models.autoencoder_utils import compute_type_evaluation_overlap, compute_coord_evaluation_overlap, \
     compute_full_evaluation_overlap, test_decoder_equivariance, test_encoder_equivariance, decoding2mol_batch, \
     ae_reconstruction_loss, batch_rmsd
@@ -49,7 +47,7 @@ from mxtaltools.models.utils import (softmax_and_score, get_regression_loss,
                                      compute_reduced_volume_fraction,
                                      dict_of_tensors_to_cpu_numpy,
                                      clean_cell_params, denormalize_generated_cell_params, compute_prior_loss,
-                                     embed_crystal_list,
+                                     embed_crystal_list, get_model_sizes,
                                      )
 from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering
 from mxtaltools.reporting.logger import Logger
@@ -985,7 +983,7 @@ class Modeller:
 
     def run_epoch(self,
                   epoch_type: str,
-                  data_loader: CrystalData = None,
+                  data_loader = None,
                   update_weights: bool = True,
                   iteration_override: int = None):
         self.epoch_type = epoch_type
@@ -1216,8 +1214,8 @@ class Modeller:
         return input_cloud
 
     def ae_stats_and_reporting(self,
-                               data: CrystalData,
-                               decoded_data: CrystalData,
+                               data,
+                               decoded_data,
                                last_step: bool,
                                stats: dict,
                                step: int,
@@ -1311,7 +1309,7 @@ class Modeller:
                                       [mol_samples, decoded_mol_samples],
                                       mode='extend')
 
-    def ae_equivariance_loss(self, data: CrystalData) -> Tuple[torch.Tensor, torch.Tensor]:
+    def ae_equivariance_loss(self, data) -> Tuple[torch.Tensor, torch.Tensor]:
         rotations = torch.tensor(
             R.random(data.num_graphs).as_matrix() *
             np.random.choice((-1, 1), replace=True, size=data.num_graphs)[:, None, None],
@@ -1746,7 +1744,7 @@ class Modeller:
                                  decoding: torch.Tensor,
                                  mol_batch,
                                  skip_stats: bool = False,
-                                 ) -> Tuple[torch.Tensor, dict, CrystalData]:
+                                 ):
         """
         Function for analyzing autoencoder outputs and calculating loss & other key metrics
         1) process inputs and outputs into the correct format
@@ -1755,7 +1753,7 @@ class Modeller:
         ----------
         decoding : Tensor
             raw output for gaussian mixture
-        mol_batch : CrystalData
+        mol_batch 
             Input data to be reconstructed
         skip_stats : bool
             Whether to skip saving summary statistics for this step

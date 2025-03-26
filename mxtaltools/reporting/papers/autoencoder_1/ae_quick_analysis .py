@@ -8,7 +8,6 @@ import torch
 import yaml
 from torch_geometric.loader.dataloader import Collater
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 from torch_scatter import scatter
 
 from mxtaltools.common.config_processing import load_yaml, process_main_config
@@ -78,7 +77,7 @@ if __name__ == '__main__':
             print(mol_batch.smiles[sample_ranking[-ind-1]])
             fig.show(renderer='browser')
 
-        fig = go.Figure(go.Histogram(x=overlaps, nbinsx=100)).show()
+        go.Figure(go.Histogram(x=overlaps, nbinsx=100)).show()
 
         ''' high-symmetry samples appear worst, let's confirm this statistically '''
         Ip, Ipm, I = scatter_compute_Ip(mol_batch.pos, mol_batch.batch)
@@ -102,7 +101,7 @@ if __name__ == '__main__':
         }
 
         corr_dict = {key: np.corrcoef(val, overlaps)[0, 1].astype(np.float16) for (key, val) in properties_dict.items()}
-        fig = go.Figure(go.Bar(x=list(corr_dict.keys()), y=list(corr_dict.values()))).show()
+        go.Figure(go.Bar(x=list(corr_dict.keys()), y=list(corr_dict.values()))).show()
 
         aa = 1
 

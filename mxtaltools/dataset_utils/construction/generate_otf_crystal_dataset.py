@@ -4,7 +4,7 @@ from argparse import Namespace
 from pathlib import Path
 
 from mxtaltools.dataset_utils.dataset_manager import DataManager
-from mxtaltools.dataset_utils.synthesis.utils import otf_synthesize_crystals
+from mxtaltools.dataset_utils.construction.parallel_synthesis import otf_synthesize_crystals
 
 if __name__ == '__main__':
     # initialize

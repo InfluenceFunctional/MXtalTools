@@ -5,7 +5,7 @@ from torch import nn as nn
 from torch.nn import functional as F
 from torch_scatter import scatter, scatter_softmax
 
-from mxtaltools.models.functions.asymmetric_radius_graph import radius
+from mxtaltools.models.functions.radial_graph import radius
 
 
 def compute_gaussian_overlap(ref_types,

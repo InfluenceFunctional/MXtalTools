@@ -1,4 +1,3 @@
-# WORK IN PROGRESS
 [tool.poetry]
 name = "mxtaltools"
 version = "0.1.0"
@@ -12,8 +11,8 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "License :: BSD-3",
-    "Operating System :: Windows, Linux",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: Windows :: Linux",
 ]
 
 [tool.poetry.urls]
@@ -21,7 +20,6 @@ classifiers = [
 "issues" = "https://github.com/InfluenceFunctional/MXtalTools/issues"
 "documentation" = "https://mxtaltools.readthedocs.io/en/latest/index.html"
 
-# NOTE pip installation with poetry shell DOES NOT WORK
 [tool.poetry.dependencies]
 python = ">=3.9"
 ase=">=3.22.1"
@@ -35,23 +33,21 @@ plotly=">=5.17.0"
 PyYAML=">=6.0.1"
 scikit-learn=">=1.2.2"
 scipy=">=1.11.3"
-torch=">=2.1.0"
-torch_geometric=">=2.4.0"
 tqdm="*"
 umap-learn=">=0.5.5"
 wandb=">=0.15.12"
+rdkit=">=2024.03.5"
+ccdc=">=3.2.0"
+pytest=">=7.4.2"
 
-# NOTE may have to set custom cuda dependencies
-torch-scatter = ">=2.1.2"#+pt20cu118"
-torch-sparse = ">=0.6.18"#+pt20cu118"
-torch-cluster = ">=1.6.3"#+pt20cu118"
+## NOTE have to set custom cuda dependencies
+#torch=">=2.1.0"
+#torch_geometric=">=2.4.0"
 
-pytest = { version = ">=7.4.2", optional = true }
-#
-#[tool.poetry.source]
-#name = "cu118"
-#url = "https://data.pyg.org/whl/torch-2.0.1+cu118.html"
-#priority = "primary"
+#torch-scatter = ">=2.1.2"#+pt20cu118"
+#torch-sparse = ">=0.6.18"#+pt20cu118"
+#torch-cluster = ">=1.6.3"#+pt20cu118"
+#pynvml
 
 [build-system]
 requires = ["poetry-core"]

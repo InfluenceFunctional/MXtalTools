@@ -1,18 +1,14 @@
 import os
+import warnings
 from pathlib import Path
 
-import tqdm
-import warnings
 import torch
+import tqdm
+from rdkit import Chem as Chem
 
 from mxtaltools.common.utils import chunkify
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII, ATOMIC_SYMBOLS, \
     ELECTRONEGATIVITY, PERIOD, GROUP
-from rdkit import Chem as Chem
-
-from mxtaltools.dataset_utils.CrystalData import CrystalData
-from mxtaltools.dataset_utils.construction.featurization_utils import chunkify_path_list, get_qm9_properties, \
-    featurize_xyz_molecule
 from mxtaltools.dataset_utils.data_classes import MolData
 
 HDonorSmarts = Chem.MolFromSmarts(

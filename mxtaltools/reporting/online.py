@@ -11,7 +11,6 @@ import plotly.express as px
 import pandas as pd
 from sklearn.metrics import roc_auc_score, f1_score, confusion_matrix
 from torch import scatter
-from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter
 import torch.nn.functional as F
 
@@ -987,10 +986,7 @@ def blind_test_scores_distributions_fig(crystals_for_targets, target_identifiers
     fig.update_xaxes(range=[np.amin(good_scores), np.amax(good_scores)], row=1, col=1)
 
     # plot2 inset
-    plot_color_dict = {}
-    plot_color_dict['CSD'] = ('rgb(200,0,50)')  # test
-    plot_color_dict['BT Targets'] = ('rgb(50,0,50)')
-    plot_color_dict['BT Submissions'] = ('rgb(50,150,250)')
+    plot_color_dict = {'CSD': ('rgb(200,0,50)'), 'BT Targets': ('rgb(50,0,50)'), 'BT Submissions': ('rgb(50,150,250)')}
 
     scores_range = np.ptp(scores_dict['CSD'])
     bandwidth = scores_range / 200
@@ -1674,7 +1670,6 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
     dataDims
     epoch_stats_dict
     epoch_type
-    molecule_radius_normalization
 
     Returns
     -------

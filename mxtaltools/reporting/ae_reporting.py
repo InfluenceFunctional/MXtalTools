@@ -6,12 +6,9 @@ from plotly.subplots import make_subplots
 from scipy.spatial.distance import cdist
 from sklearn.cluster import AgglomerativeClustering
 from torch.nn import functional as F
-from torch_scatter import scatter_softmax
 
-from mxtaltools.models.functions.asymmetric_radius_graph import radius
-from mxtaltools.models.autoencoder_utils import compute_gaussian_overlap, compute_type_evaluation_overlap, \
-    compute_coord_evaluation_overlap, compute_full_evaluation_overlap, get_node_weights, decoding2mol_batch, \
-    batch_rmsd
+from mxtaltools.models.autoencoder_utils import compute_type_evaluation_overlap, \
+    compute_coord_evaluation_overlap, compute_full_evaluation_overlap
 
 
 def autoencoder_evaluation_overlaps(data, decoded_data, config, dataDims):

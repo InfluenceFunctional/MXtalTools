@@ -181,7 +181,7 @@ class Mo3ENet(BaseGraphModel):
                                     num_atom_types,
                                     type_distance_scaling,
                                     sigma,
-                                    ae_loss_func='L2')
+                                    )
 
         rmsds = torch.zeros(data.num_graphs)
         max_dists = torch.zeros_like(rmsds)

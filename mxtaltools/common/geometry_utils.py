@@ -8,7 +8,7 @@ from torch_scatter import scatter, scatter_max
 
 from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.constants.atom_properties import VDW_RADII
-from mxtaltools.models.functions.asymmetric_radius_graph import radius
+from mxtaltools.models.functions.radial_graph import radius
 
 
 def compute_principal_axes_np(coords):
@@ -388,7 +388,7 @@ def extract_batching_info(nodes_list, device='cpu'):
     Parameters
     ----------
     nodes_list : list(torch.tensor(n,3)) with different n throughout
-    devide : str
+    device : str
 
     Returns
     -------

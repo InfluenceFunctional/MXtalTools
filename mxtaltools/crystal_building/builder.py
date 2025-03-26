@@ -3,15 +3,14 @@ from typing import Optional
 import torch
 from torch_geometric.loader.dataloader import Collater
 
+from mxtaltools.common.geometry_utils import sph2rotvec, rotvec2rotmat
 from mxtaltools.common.sym_utils import init_sym_info
+from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.crystal_building.utils import \
     (update_supercell_data, unit_cell_to_convolution_cluster,
      align_mol_batch_to_standard_axes,
      batch_asymmetric_unit_pose_analysis_torch, aunit2unit_cell, generate_sorted_fractional_translations,
-     get_symmetry_functions, new_unit_cell_to_convolution_cluster)
-from mxtaltools.common.geometry_utils import sph2rotvec, rotvec2rotmat
-from mxtaltools.constants.asymmetric_units import ASYM_UNITS
-from mxtaltools.dataset_utils.CrystalData import CrystalData
+     get_symmetry_functions)
 
 
 class CrystalBuilder:
@@ -171,7 +170,7 @@ class CrystalBuilder:
         return molwise_data, molwise_parameters
 
     def build_zp1_supercells(self,
-                             mol_batch: CrystalData,
+                             mol_batch,
                              cell_parameters: torch.tensor,
                              supercell_size: int = 5,
                              graph_convolution_cutoff: float = 6,

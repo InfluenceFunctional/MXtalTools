@@ -1,7 +1,6 @@
 from time import time
 
 import numpy as np
-from torch_geometric.loader.dataloader import Collater
 
 from mxtaltools.common.training_utils import update_stats_dict, check_convergence
 from mxtaltools.dataset_utils.analysis.compare_molecule_dataset_to_otf import analyze_mol_dataset, \

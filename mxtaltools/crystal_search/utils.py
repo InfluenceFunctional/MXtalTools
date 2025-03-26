@@ -8,7 +8,7 @@ from mxtaltools.analysis.crystal_rdf import compute_rdf_distmat_parallel, comput
 
 
 def rdf_clustering(packing_coeff, rdf, rdf_cutoff, rr, samples, vdw, num_cpus=None):
-    'cluster samples according to rdf distances'
+    """cluster samples according to rdf distances"""
     #rdf_dists = compute_rdf_distmat(rdf, rr)
     if num_cpus is not None:
         rdf_dists = compute_rdf_distmat_parallel(rdf, rr, num_cpus, 50)

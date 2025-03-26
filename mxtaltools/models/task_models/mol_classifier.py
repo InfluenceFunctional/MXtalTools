@@ -2,7 +2,6 @@ from typing import Tuple, Optional
 
 import torch
 
-from mxtaltools.dataset_utils.CrystalData import CrystalData
 from mxtaltools.models.graph_models.base_graph_model import BaseGraphModel
 from mxtaltools.models.graph_models.molecule_graph_model import MoleculeClusterModel
 
@@ -36,7 +35,7 @@ class MoleculeClusterClassifier(BaseGraphModel):
         )
 
     def forward(self,
-                data_batch: CrystalData,
+                data_batch,
                 return_dists: bool = False,
                 return_latent: bool = False,
                 return_embedding: bool = False,

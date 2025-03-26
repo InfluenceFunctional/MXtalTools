@@ -5,7 +5,6 @@ from rdkit import Chem
 from rdkit.Chem import Draw
 import numpy as np
 from PIL import Image
-import os
 from scipy.interpolate import interpn
 from scipy.stats import linregress
 from model_paths import ae_results_paths, er_results_paths, targets, proxy_results_paths
@@ -195,7 +194,7 @@ def add_mol_diagrams_to_rmsd_violin(fig, finite_x, ind, smiles):
     # best_rmsd = finite_x.min()
     # worst_rmsd = finite_x.max()
     mol = Chem.MolFromSmiles(best_smiles)
-    Draw.MolToImageFile(mol, 'conformer.png')
+    Draw.MolToFile(mol, 'conformer.png')
     fig.add_layout_image(dict(
         source=Image.open('conformer.png'),
         x=0, y=[0.2, 0.4, 0.6][ind],
@@ -203,7 +202,7 @@ def add_mol_diagrams_to_rmsd_violin(fig, finite_x, ind, smiles):
         opacity=.75, yref='y domain', xref='x domain')
     )
     mol = Chem.MolFromSmiles(worst_smiles)
-    Draw.MolToImageFile(mol, 'conformer.png')
+    Draw.MolToFile(mol, 'conformer.png')
     fig.add_layout_image(dict(
         source=Image.open('conformer.png'),
         x=1, y=[0.2, 0.4, 0.6][ind],
@@ -216,7 +215,7 @@ def mol_point_callout(fig2, xref, yref, ex, ey, embedding, smiles, imsize, row, 
     tr = np.argmin(
         np.linalg.norm(embedding - [xref, yref] + np.random.randn(len(embedding), embedding.shape[1]) * 0.05, axis=1))
     mol = Chem.MolFromSmiles(smiles[tr])
-    Draw.MolToImageFile(mol, 'conformer.png')
+    Draw.MolToFile(mol, 'conformer.png')
     fig2.add_layout_image(dict(
         source=Image.open('conformer.png'),
         x=xref + (0.5 - xref) * imsize, y=yref + (0.5 - yref) * imsize,

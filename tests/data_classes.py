@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 
+import mxtaltools.models.functions.radial_graph
 from mxtaltools.common.geometry_utils import batch_compute_fractional_transform, get_batch_centroids
 from mxtaltools.crystal_building.utils import fractional_transform, extract_aunit_orientation
 from mxtaltools.dataset_utils.data_classes import MolData, MolCrystalData

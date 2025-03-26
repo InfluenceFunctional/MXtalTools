@@ -16,7 +16,7 @@ user_path = r'/configs/Users/mikem.yaml'
 config = process_main_config(user_yaml_path=user_path, main_yaml_path=config_path)
 modeller = Modeller(config)
 _, data_loader, _ = modeller.load_dataset_and_dataloaders(override_test_fraction=1)
-modeller.init_gaussian_generator()
+modeller.init_gaussian_generator()  # todo deprecated
 supercell_builder = modeller.crystal_builder
 test_crystals = next(iter(data_loader))
 
@@ -72,10 +72,10 @@ class TestClass:
 
     # todo this check may fail for high symmetry molecules - need either to get rid of them or find a way to deal with them
     def test_align_crystaldata_to_principal_axes(self):
-        '''
+        """
         align some crystaldata to cartesian axes in natural handedness
         then check that this is what happened
-        '''
+        """
 
         aligned_test_crystals = align_mol_batch_to_standard_axes(test_crystals.clone(),
                                                                  handedness=test_crystals.aunit_handedness)

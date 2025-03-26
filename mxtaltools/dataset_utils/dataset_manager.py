@@ -203,7 +203,7 @@ class DataManager:
         self.dataset_stats = self.misc_dataset['dataset_stats']
 
     def molecule_cluster_edge_indexing(self, conv_cutoff):
-        'prepopulate edge information - expensive to do repeatedly - will not work if we noise the coordinates'
+        """prepopulate edge information - expensive to do repeatedly - will not work if we noise the coordinates"""
         for ind in tqdm(range(len(self.dataset))):
             edges_dict = argwhere_minimum_image_convention_edges(1,
                                                                  self.dataset[ind].pos,

@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 import argparse
 
-from mxtaltools.dataset_utils.synthesis.utils import generate_smiles_dataset, \
+from mxtaltools.dataset_utils.construction.parallel_synthesis import generate_smiles_dataset, \
     process_smiles_to_crystal_opt
 
 if __name__ == '__main__':

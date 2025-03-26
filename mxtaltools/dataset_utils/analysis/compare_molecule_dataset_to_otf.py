@@ -15,8 +15,8 @@ from torch_scatter import scatter
 from mxtaltools.analysis.crystal_rdf import earth_movers_distance_torch, get_elementwise_dists, batch_histogram_1d
 from mxtaltools.common.geometry_utils import batch_compute_molecule_volume
 from mxtaltools.constants.atom_properties import VDW_RADII
-from mxtaltools.dataset_utils.synthesis.utils import otf_synthesize_molecules
-from mxtaltools.models.functions.asymmetric_radius_graph import radius
+from mxtaltools.dataset_utils.construction.parallel_synthesis import otf_synthesize_molecules
+from mxtaltools.models.functions.radial_graph import radius
 
 HDonorSmarts = Chem.MolFromSmarts(
     '[$([N;!H0;v3]),$([N;!H0;+1;v4]),$([O,S;H1;+0]),$([n;H1;+0])]')  # from rdkit lipinski https://github.com/rdkit/rdkit/blob/7c6d9cf4e9d95b4daa954f4f094e026093dbc13f/rdkit/Chem/Lipinski.py#L26

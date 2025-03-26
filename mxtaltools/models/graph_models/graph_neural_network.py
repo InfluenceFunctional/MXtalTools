@@ -4,9 +4,8 @@ import torch
 import torch.nn as nn
 
 from mxtaltools.models.modules.basis_functions import GaussianEmbedding, BesselBasisLayer
-from mxtaltools.models.modules.components import scalarMLP, vectorMLP
+from mxtaltools.models.modules.components import scalarMLP, vectorMLP, EmbeddingBlock
 from mxtaltools.models.modules.graph_convolution import MConv, v_MConv
-from mxtaltools.models.modules.node_embedding_layer import EmbeddingBlock
 
 
 class ScalarGNN(torch.nn.Module):

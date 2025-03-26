@@ -1,0 +1,9 @@
+include LICENSE
+include README.md
+include main.py
+recursive-include mxtaltools *.py
+recursive-include mxtaltools *.yaml
+recursive-include configs *.yaml
+recursive-include configs *.py
+recursive-include misc *.py
+recursive-include tests *.py

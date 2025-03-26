@@ -1,18 +1,27 @@
-import plotly
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
 from torch_geometric.loader.dataloader import Collater
-import torch
 from scipy.spatial.distance import cdist
 from tqdm import tqdm
 
-from mxtaltools.common.geometry_utils import list_molecule_principal_axes_torch
 from mxtaltools.crystal_building.utils import align_mol_batch_to_standard_axes
-from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering, swarm_vs_tgt_fig
+from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering
 
 from mxtaltools.standalone.qm9_encoder import Qm9Autoencoder
 from mxtaltools.standalone.qm9_loader import QM9Loader
+import numpy as np
+import plotly.graph_objects as go
+from mxtaltools.standalone.qm9_encoder import Qm9Autoencoder
+from mxtaltools.standalone.qm9_loader import QM9Loader
+from plotly.subplots import make_subplots
+from scipy.spatial.distance import cdist
+from torch_geometric.loader.dataloader import Collater
+from tqdm import tqdm
+
+from mxtaltools.crystal_building.utils import align_mol_batch_to_standard_axes
+from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering
+
 
 def crude_2d_gaussian():
     n_input_particles = 4

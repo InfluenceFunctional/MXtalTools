@@ -4,7 +4,7 @@ from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.analysis.crystal_rdf import compute_rdf_distance
 from mxtaltools.crystal_building.utils import batch_asymmetric_unit_pose_analysis_torch, get_intra_mol_dists
 from mxtaltools.models.utils import clean_cell_params
-from mxtaltools.models.functions.crystal_rdf import crystal_rdf
+from mxtaltools.analysis.crystal_rdf import crystal_rdf
 from mxtaltools.modeller import Modeller
 import numpy as np
 import torch
@@ -25,7 +25,7 @@ user_path = r'/configs/users/mkilgour.yaml'
 config = process_main_config(user_yaml_path=user_path, main_yaml_path=config_path)
 modeller = Modeller(config)
 _, data_loader, _ = modeller.load_dataset_and_dataloaders(override_test_fraction=1)
-modeller.init_gaussian_generator()
+modeller.init_gaussian_generator()  # todo this had been deprecated
 supercell_builder = modeller.crystal_builder
 test_crystals = next(iter(data_loader))
 

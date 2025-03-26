@@ -13,7 +13,7 @@ from mxtaltools.common.geometry_utils import single_molecule_principal_axes_torc
     list_molecule_principal_axes_torch, compute_Ip_handedness, rotvec2sph, batch_compute_fractional_transform, \
     get_batch_centroids, \
     rotvec2rotmat, batch_molecule_principal_axes_torch, extract_rotmat, apply_rotation_to_batch, rotmat2rotvec
-from mxtaltools.models.functions.asymmetric_radius_graph import radius
+from mxtaltools.models.functions.radial_graph import radius
 
 
 def generate_sorted_fractional_translations(supercell_size):
@@ -724,7 +724,11 @@ def align_batch_to_principal_axes(mol_batch, handedness=None):
     """
     coords_list = [mol_batch.pos[mol_batch.ptr[i]:mol_batch.ptr[i + 1]] for i in range(mol_batch.num_graphs)]
     coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(mol_batch.num_graphs)]
-    principal_axes_list, _, _ = batch_molecule_principal_axes_torch(coords_list_centred)  # much faster
+    principal_axes_list, _, _ = (
+        batch_molecule_principal_axes_torch(
+            mol_batch.pos, mol_batch.batch,
+            num_graphs=mol_batch.num_graphs,
+        nodes_per_graph=mol_batch.num_atoms))  # much faster
 
     eye = torch.tile(torch.eye(3, device=mol_batch.x.device),
                      (mol_batch.num_graphs, 1, 1))  # set as right-handed in general

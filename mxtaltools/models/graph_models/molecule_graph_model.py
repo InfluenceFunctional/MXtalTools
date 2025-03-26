@@ -7,7 +7,8 @@ import torch.nn as nn
 from mxtaltools.models.graph_models.graph_neural_network import ScalarGNN, VectorGNN, \
     MolCrystalScalarGNN
 from mxtaltools.models.modules.augmented_softmax_aggregator import AugSoftmaxAggregation, VectorAugSoftmaxAggregation
-from mxtaltools.models.modules.components import construct_radial_graph, scalarMLP, vectorMLP
+from mxtaltools.models.modules.components import scalarMLP, vectorMLP
+from mxtaltools.models.functions.radial_graph import build_radial_graph
 from mxtaltools.models.functions.minimum_image_neighbors import argwhere_minimum_image_convention_edges
 
 
@@ -271,7 +272,7 @@ class VectorMoleculeGraphModel(nn.Module):
         if len(self.graph_net.interaction_blocks) > 0 or return_dists:
             # todo clean up options around prebuilt radial graphs
             if edges_dict is None:  # option to rebuild radial graph
-                edges_dict = construct_radial_graph(
+                edges_dict = build_radial_graph(
                     pos,
                     batch,
                     ptr,
@@ -464,7 +465,7 @@ class MolecularCrystalGraphModel(nn.Module):
 
         if len(self.graph_net.interaction_blocks) > 0 or return_dists:
             if edges_dict is None:  # option to rebuild radial graph
-                edges_dict = construct_radial_graph(
+                edges_dict = build_radial_graph(
                     pos,
                     batch,
                     ptr,

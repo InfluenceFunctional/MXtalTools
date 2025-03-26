@@ -4,48 +4,49 @@
 ## Documentation
 See our detailed documentation including installation and deployment instructions at our [readthedocs](https://mxtaltools.readthedocs.io/en/latest/index.html) page.
 
-<!-- <<<<<<< feb_reorg
-## Usage
-This package contains models and tools to assist in the training of models for a variety of tasks on molecular crystals, including most importantly:
-1. Fast, parallel, differentiable, reproducible building of unit cells / supercells given molecule structure & crystal parameters.
-2. Likewise, tools for analysis of generated structures.
-3. Utilities for the collation and analysis of crystal & molecule datasets.
-4. Flexible support for training & evaluating various types of models. 
-5. Custom graph neural network models for molecular crystal learning tasks. 
- -->
-<!-- ======= -->
-## 1. Installation
+## Installation for Users
+
+
+1. Install PyTorch, Pytorch Geometric (including torch-scatter, torch-sparse, torch-cluster),  based on your system and CUDA version:  
+[PyTorch installation guide](https://pytorch.org/get-started/locally/)  
+[PyG installation guide](https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html)
+
+2. Install this package:
+
+    ```bash
+    pip install git+https://github.com/InfluenceFunctional/MXtalTools.git
+    ```
+
+
+## Installation for Developers
+
 1. Download the code from this repository via
 
-```bash
-git clone git@github.com:InfluenceFunctional/MXtalTools.git MXtalTools
-```
+    ```bash
+    git clone git@github.com:InfluenceFunctional/MXtalTools.git MXtalTools
+    ```
+2. Create a python environment of your choice. We recommend using pip+virtualenv. 
+3. Install PyTorch, Pytorch Geometric (including torch-scatter, torch-sparse, torch-cluster),  based on your system and CUDA version:  
+[PyTorch installation guide](https://pytorch.org/get-started/locally/)  
+[PyG installation guide](https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html)
+4. Install remaining requirements with 
 
-2. Locate `mxtaltools-env.yaml` in the downloaded MXtalTools codebase directory. Edit to correspond to your CUDA version. Then at the codebase directory, run
-```bash
-conda env create -f mxtaltools-env.yaml
-```
-   on command line to create a conda virutal environment with the required packages.
-   Alternatively, do 
-```bash
-conda env create -f mxtaltools-env-simple-cpu.yaml
-```
-   for a more bare-bones environment e.g., for small local inference. 
-   Activate the environment with 
-```bash
-conda activate mxtaltools-env
-```
-3. Login to your weights and biases ("wandb") account, which is necessary for run monitoring and reporting with 
-```bash
-wandb login
-```
-
-   on the terminal command line.
-4. In configs/users create a .yaml file for yourself and edit the paths and wandb details to correspond to your preferences.
+    ```bash
+    poetry install
+    ```
+5. Login to your weights and biases ("wandb") account, which is necessary for run monitoring and reporting with 
+    
+   ```bash
+    wandb login
+    ```
+6. In configs/users create a .yaml file for yourself and edit the paths and wandb details to correspond to your preferences.
 When running the code, append the following to your command line prompt. 
-    > --user YOUR_USERNAME
+    
+   ```
+    --user YOUR_USERNAME
+    ```
 
-
+<!--
 ## 2. Datasets
 1. This software generates training datasets of molecular crystal structures from collections of .cif files.
     .cifs are collated and processed primarily with the CSD Python API and RDKit.
@@ -55,7 +56,7 @@ When running the code, append the following to your command line prompt.
     Customized functions are available for processing CSD Blind Test submissions TODO clean & test.
     
 2. In the most common case, processing the CSD, to generate a dataset, run the following scripts,
-    `dump_csd.py` --> `cif_processor.py` --> `manager.py`,
+    `dump_csd.py` -> `cif_processor.py` -> `manager.py`,
     with the appropriate paths set in each script.
     `cif_processor.py` takes on the order of dozens of hours to process the full CSD (>1M crystals).
     `manager.py` also may take a few minutes to process a large dataset, as this is where we do pose analysis, 
@@ -63,7 +64,7 @@ When running the code, append the following to your command line prompt.
     We recommend running several instances in parallel to reduce this time.
     As they process datasets chunkwise in random order, this parallelism is fairly efficient.
     Note that the speed here depends strongly on disk read-write speed. 
-<!-- >>>>>>> master -->
+
 
 ### Key components
 1. `crystal_modeller` - class which contains everything else and does all the work
@@ -75,7 +76,8 @@ When running the code, append the following to your command line prompt.
    2. dataset - specifies information for dataset construction and featurization
    3. main / dev / experiments - define all other parameters of a given run including losses, hyperparameters, convergence, etc.
 6. `dataset_management` - tools for dataset generator, curation, and modelling
-7`standalone` - tools for true standalone deployment of crystal models, e.g., stability score & density prediction
+7. `standalone` - tools for true standalone deployment of crystal models, e.g., stability score & density prediction
+-->
 
 ## Reference
 If you use this code in any future publications, please cite our work using

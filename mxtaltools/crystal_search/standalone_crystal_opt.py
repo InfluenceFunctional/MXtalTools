@@ -1,87 +1,17 @@
 from itertools import compress
 from typing import Optional
 
-import numpy as np
 import torch
 from torch import optim
 from torch.nn import functional as F
 from tqdm import tqdm
 
-from mxtaltools.analysis.crystals_analysis import get_intermolecular_dists_dict
-from mxtaltools.analysis.vdw_analysis import electrostatic_analysis, vdw_analysis, scale_molwise_lj_pot
+from mxtaltools.analysis.vdw_analysis import electrostatic_analysis, vdw_analysis, \
+    get_intermolecular_dists_dict
 from mxtaltools.common.geometry_utils import enforce_crystal_system
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.utils import enforce_1d_bound
 
-
-def standalone_add_scrambled_molecule_samples(aunit_poses, dist_dict, handedness_record, hit_max_lr, loss, loss_record,
-                                              lr_record, max_lr, mol_batch, optimizer, packing_coeff, packing_record,
-                                              post_scramble_each, raw_samples_record, s_ind, sample, sample_to_compare,
-                                              samples_record, scheduler1, scheduler2, score_func, standardize_pose,
-                                              store_aunit, supercell_batch, vdw_record, supercell_size, cutoff,
-                                              supercell_builder):
-    s_ind -= 1
-    inds_to_scramble = torch.arange(0, s_ind, max(1, s_ind // post_scramble_each))
-    scrambled_samples_record = torch.zeros_like(samples_record)[:len(inds_to_scramble)]
-    scrambled_packing_record = torch.zeros_like(packing_record)[:len(inds_to_scramble)]
-    scrambled_loss_record = torch.zeros_like(packing_record)[:len(inds_to_scramble)]
-    scrambled_vdw_record = torch.zeros_like(packing_record)[:len(inds_to_scramble)]
-    scrambled_aunit_poses = torch.zeros_like(aunit_poses)[:len(inds_to_scramble)]
-    scrambled_handedness_record = torch.zeros_like(handedness_record)[
-                                  :len(inds_to_scramble)]
-    for s_ind2, scramble_ind in enumerate(inds_to_scramble):
-        sample = raw_samples_record[scramble_ind] + torch.cat([
-            torch.zeros_like(sample[:, :9]), torch.randn_like(sample[:, -3:])
-        ], dim=1)  # scramble molecule orientation
-        sample.requires_grad_(True)
-        descaled_cleaned_sample, dist_dict, loss, packing_coeff, supercell_batch, vdw_potential = standalone_gd_opt_step(
-            hit_max_lr, lr_record, max_lr, mol_batch, optimizer, s_ind, sample, scheduler1,
-            scheduler2,
-            score_func, standardize_pose, supercell_size, cutoff, supercell_builder)
-
-        sample_to_compare = descaled_cleaned_sample.clone()
-        sample_to_compare[:, 9:] = supercell_batch.cell_params[:, 9:]
-
-        scrambled_vdw_record[s_ind2] = vdw_potential.detach()
-        scrambled_samples_record[s_ind2] = sample_to_compare.detach()
-        scrambled_loss_record[s_ind2] = loss.detach()
-        scrambled_packing_record[s_ind2] = packing_coeff.detach()
-        scrambled_handedness_record[s_ind2] = supercell_batch.aunit_handedness
-        if store_aunit:
-            scrambled_aunit_poses[s_ind2] = supercell_batch.pos[
-                supercell_batch.aux_ind == 0].detach()
-    s_ind += len(inds_to_scramble)
-    samples_record = torch.cat([samples_record, scrambled_samples_record], dim=0)
-    vdw_record = torch.cat([vdw_record, scrambled_vdw_record], dim=0)
-    loss_record = torch.cat([loss_record, scrambled_loss_record], dim=0)
-    packing_record = torch.cat([packing_record, scrambled_packing_record], dim=0)
-    aunit_poses = torch.cat([aunit_poses, scrambled_aunit_poses], dim=0)
-    return aunit_poses, loss, loss_record, packing_coeff, packing_record, s_ind, sample, sample_to_compare, samples_record, supercell_batch, vdw_record
-
-
-def standalone_score_crystal_batch(mol_batch, score_func, supercell_data, vdw_radii_tensor, cutoff: float = 6,
-                                   discriminator: Optional = None):
-    if score_func == 'discriminator':
-        output, extra_outputs = discriminator(
-            supercell_data.clone(), return_dists=True, return_latent=False)
-        dist_dict = extra_outputs['dists_dict']
-    elif score_func.lower() == 'vdw':
-        dist_dict = get_intermolecular_dists_dict(supercell_data,
-                                                  cutoff, 100)
-    else:
-        assert False, f"{score_func} is not an implemented score function for gradient descent optimization"
-    molwise_overlap, molwise_normed_overlap, vdw_potential, vdw_loss, lj_pot \
-        = vdw_analysis(vdw_radii_tensor,
-                       dist_dict,
-                       mol_batch.num_graphs)
-    estat_energy = electrostatic_analysis(dist_dict, supercell_data.num_graphs)
-    vdw_potential += estat_energy
-    vdw_loss += estat_energy
-    if score_func == 'discriminator':
-        loss = F.softplus(output[:, 2])
-    elif score_func.lower() == 'vdw':
-        loss = vdw_loss
-    return dist_dict, loss, vdw_potential
 
 
 def standalone_gradient_descent_optimization(

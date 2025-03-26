@@ -19,18 +19,17 @@ class SPMaceCalculator:
         model_path = dir_path.joinpath("mace-mpa-0-medium.model")  # config.get("model_paths", ["/path/to/your/model"])
         self.mace_calc = MACECalculator(model_paths=str(model_path), device=device_str)
 
-    def sp_calculation(self,
-                       cell_pos: np.ndarray,
-                       cell_z: np.ndarray,
-                       mol_pos: np.ndarray,
-                       mol_z: np.ndarray,
-                       cell_lengths: np.ndarray,
-                       cell_angles: np.ndarray,
-                       mols_per_cell: int
-                       ):
+    def lattice_energy_calculation(self,
+                                   cell_pos: np.ndarray,
+                                   cell_z: np.ndarray,
+                                   mol_pos: np.ndarray,
+                                   mol_z: np.ndarray,
+                                   cell_lengths: np.ndarray,
+                                   cell_angles: np.ndarray,
+                                   mols_per_cell: int
+                                   ):
         if np.any(cell_angles < 10):  # automatically detect and convert to degrees
             cell_angles *= 90 / (np.pi / 2)
-
 
         # crystal
         cell_params = np.concatenate([cell_lengths, cell_angles])

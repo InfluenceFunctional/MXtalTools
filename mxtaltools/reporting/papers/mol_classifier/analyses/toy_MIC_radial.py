@@ -3,10 +3,8 @@ for a single graph
 """
 
 import torch
-import torch_cluster
 import numpy as np
 import torch_geometric.nn as gnn
-from time import time
 
 periodic = True
 device = 'cpu'

@@ -12,8 +12,7 @@ from torch_geometric.data.storage import (BaseStorage, EdgeStorage,
 from torch_geometric.typing import OptTensor
 from torch_sparse import SparseTensor
 
-from mxtaltools.analysis.crystals_analysis import get_intermolecular_dists_dict
-from mxtaltools.analysis.vdw_analysis import vdw_analysis, electrostatic_analysis
+from mxtaltools.analysis.vdw_analysis import vdw_analysis, electrostatic_analysis, get_intermolecular_dists_dict
 from mxtaltools.common.geometry_utils import batch_compute_molecule_volume, \
     compute_mol_radius, batch_compute_mol_radius, batch_compute_mol_mass, compute_mol_mass, center_mol_batch, \
     apply_rotation_to_batch, enforce_crystal_system, batch_compute_fractional_transform
@@ -23,9 +22,9 @@ from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
 from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE
 from mxtaltools.crystal_building.utils import get_aunit_positions, new_aunit2unit_cell, parameterize_crystal_batch, \
     unit_cell_to_supercell_cluster, align_mol_batch_to_standard_axes, canonicalize_rotvec
-from mxtaltools.dataset_utils.synthesis.mol_building import smiles2conformer
+from mxtaltools.dataset_utils.mol_building import smiles2conformer
 from mxtaltools.dataset_utils.utils import collate_data_list
-from mxtaltools.models.modules.components import construct_radial_graph
+from mxtaltools.models.functions.radial_graph import build_radial_graph
 from mxtaltools.models.utils import enforce_1d_bound, get_mol_embedding_for_proxy
 
 
@@ -174,7 +173,7 @@ class MXtalBase(BaseData):
 # noinspection PyPropertyAccess
 
 
-class MolData(MXtalBase):
+class MolData(MXtalBase):  # todo add method for batch_molecule_compute_principal_axes
     r"""
     A graph representing a single molecule
     """
@@ -279,12 +278,12 @@ class MolData(MXtalBase):
             return None
 
     def construct_radial_graph(self, cutoff: float = 6):
-        self.edges_dict = construct_radial_graph(self.pos,
-                                                 self.batch,
-                                                 self.ptr,
-                                                 cutoff,
-                                                 max_num_neighbors=10000
-                                                 )
+        self.edges_dict = build_radial_graph(self.pos,
+                                             self.batch,
+                                             self.ptr,
+                                             cutoff,
+                                             max_num_neighbors=10000
+                                             )
         self.edge_index = self.edges_dict['edge_index']
 
     def radius_calculation(self):
@@ -818,12 +817,12 @@ class MolCrystalData(MolData):
     def construct_intra_radial_graph(self, cutoff: float = 6):
         if self.aux_ind is not None:
             assert False, "Cannot build molecular graph when we have already built the supercell"
-        self.edges_dict = construct_radial_graph(self.pos,
-                                                 self.batch,
-                                                 self.ptr,
-                                                 cutoff,
-                                                 max_num_neighbors=10000
-                                                 )
+        self.edges_dict = build_radial_graph(self.pos,
+                                             self.batch,
+                                             self.ptr,
+                                             cutoff,
+                                             max_num_neighbors=10000
+                                             )
         self.edge_index = self.edges_dict['edge_index']
 
     def construct_radial_graph(self, cutoff: float = 6):

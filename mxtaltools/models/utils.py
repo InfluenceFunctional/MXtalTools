@@ -9,6 +9,7 @@ from torch_scatter import scatter
 from mxtaltools.common.config_processing import load_yaml, dict2namespace
 from mxtaltools.common.geometry_utils import cell_vol_torch, components2angle, enforce_crystal_system, \
     batch_molecule_principal_axes_torch
+from mxtaltools.common.training_utils import get_n_config
 from mxtaltools.common.utils import softmax_np
 from mxtaltools.crystal_building.utils import descale_asymmetric_unit, rescale_asymmetric_unit
 from mxtaltools.dataset_utils.utils import collate_data_list
@@ -490,3 +491,12 @@ def load_encoder(checkpoint_path):
     model.load_state_dict(checkpoint['model_state_dict'])
 
     return model
+
+
+def get_model_sizes(models_dict: dict):
+    num_params_dict = {model_name + "_num_params": get_n_config(model) for model_name, model in
+                       models_dict.items()}
+    [print(
+        f'{model_name} {num_params_dict[model_name] / 1e6:.3f} million or {int(num_params_dict[model_name])} parameters')
+        for model_name in num_params_dict.keys()]
+    return num_params_dict
