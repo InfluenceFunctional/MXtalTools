@@ -20,6 +20,12 @@ classifiers = [
 "issues" = "https://github.com/InfluenceFunctional/MXtalTools/issues"
 "documentation" = "https://mxtaltools.readthedocs.io/en/latest/index.html"
 
+[tool.poetry.include]
+"tests/**"
+
+[tool.poetry.scripts]
+test = "pytest"
+
 [tool.poetry.dependencies]
 python = ">=3.9"
 ase=">=3.22.1"
