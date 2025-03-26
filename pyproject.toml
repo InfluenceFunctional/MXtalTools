@@ -37,11 +37,11 @@ tqdm="*"
 umap-learn=">=0.5.5"
 wandb=">=0.15.12"
 rdkit=">=2024.03.5"
-csd-python-api="*"
+#csd-python-api="*"
 pytest=">=7.4.2"
 
-[tool.poetry.sources]
-ccdc = { url = "https://pip.ccdc.cam.ac.uk/", priority = "supplemental" }
+#[tool.poetry.sources]
+#ccdc = { url = "https://pip.ccdc.cam.ac.uk/", priority = "supplemental" }
 
 ## NOTE have to set custom cuda dependencies
 #torch=">=2.1.0"
