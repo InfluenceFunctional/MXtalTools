@@ -41,7 +41,7 @@ csd-python-api="*"
 pytest=">=7.4.2"
 
 [tool.poetry.sources]
-ccdc = { url = "https://pip.ccdc.cam.ac.uk/simple/", priority = "supplemental" }
+ccdc = { url = "https://pip.ccdc.cam.ac.uk/", priority = "supplemental" }
 
 ## NOTE have to set custom cuda dependencies
 #torch=">=2.1.0"
