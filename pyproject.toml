@@ -14,14 +14,12 @@ classifiers = [
     "License :: OSI Approved :: BSD License",
     "Operating System :: Windows :: Linux",
 ]
+include=["tests/**"]
 
 [tool.poetry.urls]
 "repository" = "https://github.com/InfluenceFunctional/MXtalTools"
 "issues" = "https://github.com/InfluenceFunctional/MXtalTools/issues"
 "documentation" = "https://mxtaltools.readthedocs.io/en/latest/index.html"
-
-[tool.poetry.include]
-"tests/**"
 
 [tool.poetry.scripts]
 test = "pytest"
