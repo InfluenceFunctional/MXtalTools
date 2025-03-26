@@ -34,7 +34,7 @@ See our detailed documentation including installation and deployment instruction
     ```bash
     poetry install
     ```
-5. Login to your weights and biases ("wandb") account, which is necessary for run monitoring and reporting with 
+5. If you plan to train any models, login to your weights and biases ("wandb") account, which is necessary for run monitoring and reporting with 
     
    ```bash
     wandb login
@@ -45,6 +45,10 @@ When running the code, append the following to your command line prompt.
    ```
     --user YOUR_USERNAME
     ```
+   
+7. If you plan to construct crystal datasets from .cif files, you'll need to install the CSD python api, with a valid license from CCDC.
+
+   [CSD Python API]([PyTorch installation guide](https://pytorch.org/get-started/locally/))
 
 <!--
 ## 2. Datasets
