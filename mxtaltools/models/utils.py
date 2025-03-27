@@ -6,7 +6,6 @@ import torch
 from torch.nn import functional as F
 from torch_scatter import scatter
 
-from mxtaltools.common.config_processing import load_yaml, dict2namespace
 from mxtaltools.common.geometry_utils import cell_vol_torch, components2angle, enforce_crystal_system, \
     batch_molecule_principal_axes_torch
 from mxtaltools.common.training_utils import get_n_config

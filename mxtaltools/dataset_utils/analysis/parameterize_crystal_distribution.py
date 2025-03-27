@@ -7,7 +7,6 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch_geometric.loader.dataloader import Collater
 
 from mxtaltools.common.geometry_utils import rotvec2sph, batch_compute_molecule_volume, \
     batch_compute_normed_cell_vectors
@@ -21,7 +20,6 @@ from mxtaltools.constants.space_group_info import LATTICE_TYPE
 
 
 def prep_good_dataset(dataset):
-    collater = Collater(0, 0)
     # filter Z'=1
     good_dataset = [elem for elem in dataset if elem.z_prime == 1]
     print(f"Z' filter took {len(dataset) - len(good_dataset)}")
@@ -30,7 +28,7 @@ def prep_good_dataset(dataset):
     red_vol = torch.tensor([elem.reduced_volume for elem in good_dataset])
     vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()))
 
-    col_dataset = collater(dataset)
+    col_dataset = collate_data_list(dataset)
 
     molecule_volumes = batch_compute_molecule_volume(col_dataset.x.flatten(),
                                                      col_dataset.pos,
@@ -42,7 +40,7 @@ def prep_good_dataset(dataset):
     good_dataset = [elem for i, elem in enumerate(dataset) if 0.5 < packing_coeff[i] < 0.9]
     print(f"diffuse filter took {len(dataset) - len(good_dataset)}")
     dataset = good_dataset
-    dataset = collater(dataset)
+    dataset = collate_data_list(dataset)
 
     molecule_volumes = batch_compute_molecule_volume(dataset.x.flatten(),
                                                      dataset.pos,

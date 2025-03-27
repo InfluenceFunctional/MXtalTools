@@ -2,6 +2,7 @@ import torch
 from tqdm import tqdm
 from mxtaltools.dataset_utils.utils import collate_data_list
 
+
 def compute_volumes(batch_size, volumes, dataset):
     num_batches = len(dataset) // batch_size
     if len(dataset) % batch_size != 0:
@@ -15,6 +16,7 @@ def compute_volumes(batch_size, volumes, dataset):
             volumes[start:end] = batch.volume_calculation().cpu()
 
     return volumes
+
 
 if __name__ == "__main__":
     dataset_paths = [
@@ -44,7 +46,9 @@ if __name__ == "__main__":
                 torch.cuda.empty_cache()
 
         for ind in tqdm(range(len(dataset))):
-            dataset[ind].volume = volumes[ind]
+            dataset[ind].mol_volume = volumes[ind]
+            if hasattr(dataset[0], 'packing_coeff'):
+                dataset[ind].packing_coeff = dataset[ind].mol_volume * dataset[ind].sym_mult / dataset[ind].cell_volume
 
         torch.save(dataset, dataset_path)
         print('Saved dataset at {}'.format(dataset_path))

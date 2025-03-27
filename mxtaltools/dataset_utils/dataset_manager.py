@@ -9,7 +9,6 @@ from typing import Optional
 import numpy as np
 import torch
 from torch_geometric import nn as gnn
-from torch_geometric.loader.dataloader import Collater
 from tqdm import tqdm
 
 from mxtaltools.common.geometry_utils import batch_compute_molecule_volume
@@ -72,7 +71,6 @@ class DataManager:
 
         np.random.seed(seed=seed if config is None else config.seed)
         torch.manual_seed(seed=seed if config is None else config.seed)
-        self.collater = Collater(None, None)
 
         self.asym_unit_dict = ASYM_UNITS.copy()
         for key in self.asym_unit_dict:
@@ -159,7 +157,7 @@ class DataManager:
         self.truncate_and_shuffle_dataset(override_length, do_shuffle=do_shuffle)
         self.misc_dataset = self.extract_misc_stats_and_indices(self.dataset)
         self.dataset_stats = self.misc_dataset['dataset_stats']
-        self.assign_targets()
+        self.assign_regression_targets()
         self.present_atom_types, _ = self.dataset_stats['atomic_number']['uniques']
         if filter_protons:
             if 1 in self.present_atom_types:
@@ -233,7 +231,7 @@ class DataManager:
         self.dataset = [self.dataset[ind] for ind in inds_to_keep]
         self.times['dataset_shuffle_end'] = time()
 
-    def assign_targets(self):
+    def assign_regression_targets(self):
         self.times['dataset_targets_assignment_start'] = time()
         targets = self.get_target()  # todo assign targets element-by-element in data list rather than as batch, omitting collation
         for ind in range(len(self.dataset)):
@@ -339,17 +337,15 @@ class DataManager:
 
     def get_target(self):
         if self.regression_target is not None:  # todo rewrite as data list method
-            if self.regression_target == 'crystal_reduced_volume_fraction':
-                targets = self.get_reduced_volume_fraction()
-            elif self.regression_target == 'crystal_reduced_volume':
-                targets = torch.tensor([elem.reduced_volume for elem in self.dataset])
-            elif self.regression_target in qm9_targets_list:
+            if self.regression_target in qm9_targets_list:
                 target_ind = qm9_targets_list.index(self.regression_target)
                 targets = torch.tensor([elem.y[:, target_ind] for elem in self.dataset])
             elif self.regression_target == 'crystal_packing_coefficient':
                 targets = torch.tensor([elem.packing_coeff for elem in self.dataset])
             elif self.regression_target == 'dipole':
                 targets = torch.cat([elem.dipole for elem in self.dataset])
+            elif self.regression_target == 'normed_aunit_volume':
+                targets = torch.cat([elem.aunit_volume()/elem.radius**3 for elem in self.dataset])
             else:
                 try:
                     targets = torch.cat([elem.__dict__['_store'][self.regression_target] for elem in self.dataset])

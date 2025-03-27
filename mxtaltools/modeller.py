@@ -15,7 +15,6 @@ from scipy.spatial.transform import Rotation as R
 from torch import backends
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
-from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter
 from tqdm import tqdm
 
@@ -33,12 +32,12 @@ from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTR
 from mxtaltools.crystal_building.builder import CrystalBuilder
 from mxtaltools.crystal_building.utils import overwrite_symmetry_info
 from mxtaltools.crystal_building.utils import set_molecule_alignment
-from mxtaltools.crystal_search.sampling import Sampler
+#from mxtaltools.crystal_search.sampling import Sampler
 from mxtaltools.dataset_utils.construction.parallel_synthesis import otf_synthesize_molecules, otf_synthesize_crystals
 from mxtaltools.dataset_utils.data_classes import MolData
 from mxtaltools.dataset_utils.dataset_manager import DataManager
 from mxtaltools.dataset_utils.utils import quick_combine_dataloaders, get_dataloaders, update_dataloader_batch_size, \
-    SimpleDataset, quick_combine_crystal_embedding_dataloaders
+    SimpleDataset, quick_combine_crystal_embedding_dataloaders, collate_data_list
 from mxtaltools.models.autoencoder_utils import compute_type_evaluation_overlap, compute_coord_evaluation_overlap, \
     compute_full_evaluation_overlap, test_decoder_equivariance, test_encoder_equivariance, decoding2mol_batch, \
     ae_reconstruction_loss, batch_rmsd
@@ -89,7 +88,6 @@ class Modeller:
 
         self.nan_lr_shrink_lambda = 0.9
         self.overall_minimum_lr = 1e-7
-        self.collater = Collater(None, None)
 
         self.train_models_dict = {
             'discriminator': False,
@@ -1618,7 +1616,7 @@ class Modeller:
                 ind += 1
             ens = lj_pot + self.config.proxy_discriminator.electrostatic_scaling_factor * es_pot
         return embedding, ens
-
+    '''
     def crystal_structure_prediction(self):
         with (wandb.init(config=self.config,
                          project=self.config.wandb.project_name,
@@ -1649,12 +1647,12 @@ class Modeller:
             self.models_dict['discriminator'].eval()
 
             # test autoencoder performance on this sample
-            sample = self.collater(data_loader.dataset[0:200])
+            sample = collate_data_list(data_loader.dataset[0:200])
             data, input_data = self.preprocess_ae_inputs(sample.to(self.device), no_noise=True,
                                                          orientation_override=None)
             loss, rmsd, max_dist, tot_overlap, matched = self.models_dict['autoencoder'].check_embedding_quality(
                 input_data.clone())
-            # topk_samples = self.collater([data_loader.dataset[ind] for ind in torch.argsort(loss)])
+            # topk_samples = collate_data_list([data_loader.dataset[ind] for ind in torch.argsort(loss)])
             # sample = data_loader.dataset[torch.argmin(loss)]
             # 131369 is a good molecule, good reconstruction loss and flat-ish double ring
             ids = [data_loader.dataset[ind].identifier for ind in range(len(data_loader.dataset))]
@@ -1699,6 +1697,7 @@ class Modeller:
                                                    )
             np.save(f'../sampling_results/{str(int(sample.identifier))}_{self.run_identifier}_sampling_results',
                     sampling_dict)
+    '''
 
     def ae_annealing(self):
         # if we have learned the existing distribution AND there are no orphaned nodes

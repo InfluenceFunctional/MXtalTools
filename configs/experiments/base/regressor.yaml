@@ -17,7 +17,7 @@ dataset:
   max_dataset_length: 10000000
   test_fraction: 0.2
   filter_protons: False
-  regression_target: crystal_packing_coefficient #
+  regression_target: crystal_packing_coefficient # normed_aunit_volume #crystal_packing_coefficient #
 
 # batching & convergence
 early_epochs_step_override: 5

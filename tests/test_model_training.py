@@ -5,7 +5,7 @@ NOTE: tends to take at least several minutes
 """
 import os
 
-from tests.utils import train_model
+from tests.utils import train_model  # todo rewrite this test
 
 # ====================================
 

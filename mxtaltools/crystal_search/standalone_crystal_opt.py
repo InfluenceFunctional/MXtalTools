@@ -1,17 +1,12 @@
 from itertools import compress
-from typing import Optional
 
 import torch
 from torch import optim
-from torch.nn import functional as F
 from tqdm import tqdm
 
-from mxtaltools.analysis.vdw_analysis import electrostatic_analysis, vdw_analysis, \
-    get_intermolecular_dists_dict
 from mxtaltools.common.geometry_utils import enforce_crystal_system
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.utils import enforce_1d_bound
-
 
 
 def standalone_gradient_descent_optimization(

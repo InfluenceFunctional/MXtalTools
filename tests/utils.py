@@ -1,7 +1,5 @@
-import os
 import torch
 
-from mxtaltools.common.config_processing import process_main_config
 # from mxtaltools.modeller import Modeller
 
 test_smiles = [

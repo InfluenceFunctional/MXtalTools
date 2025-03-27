@@ -25,7 +25,7 @@ user_path = r'/configs/users/mkilgour.yaml'
 config = process_main_config(user_yaml_path=user_path, main_yaml_path=config_path)
 modeller = Modeller(config)
 _, data_loader, _ = modeller.load_dataset_and_dataloaders(override_test_fraction=1)
-modeller.init_gaussian_generator()  # todo this had been deprecated
+modeller.init_gan_constants()
 supercell_builder = modeller.crystal_builder
 test_crystals = next(iter(data_loader))
 
@@ -105,7 +105,7 @@ class TestClass:
         test_molecule = test_crystals[0]
         test_molecule.pos = torch.randn_like(test_molecule.pos)
         collater = Collater(None, None)
-        mol_batch = collater([test_molecule for _ in range(230)])
+        mol_batch = collate_data_list([test_molecule for _ in range(230)])
         mol_batch.sg_ind = torch.arange(1, 231)
         for i in range(230):
             mol_batch.symmetry_operators[i] = supercell_builder.sym_ops[i + 1]

@@ -1,6 +1,5 @@
 from typing import Tuple, Optional
 
-from torch_geometric.loader.dataloader import Collater
 import torch
 
 from torch_scatter import scatter
@@ -18,7 +17,7 @@ from mxtaltools.crystal_building.builder import CrystalBuilder
 from mxtaltools.crystal_building.utils import set_molecule_alignment, overwrite_symmetry_info
 from mxtaltools.crystal_search.standalone_crystal_opt import _init_for_local_opt, cleanup_sample
 from mxtaltools.crystal_search.utils import cell_clustering, coarse_filter, get_topk_samples
-from mxtaltools.dataset_utils.CrystalData import CrystalData
+from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.utils import denormalize_generated_cell_params
 
 
@@ -48,7 +47,6 @@ class Sampler:
         self.sym_info = init_sym_info()
         self.vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()), device=self.device)
         self.autoencoder = autoencoder
-        self.collater = Collater(0, 0)
         self.supercell_builder = CrystalBuilder(device=self.device,
                                                 rotation_basis='cartesian')
         self.show_tqdm = show_tqdm
@@ -59,7 +57,7 @@ class Sampler:
         self.gd_score_func = gd_score_func
 
     def crystal_search(self,
-                       molecule_data: CrystalData,
+                       molecule_data,
                        sampling_type: str,
                        num_samples: int,
                        batch_size: int,
@@ -136,7 +134,7 @@ class Sampler:
 
     def _rebuild_sampled_crystals(self, molecule_data, space_group_ind, samples):
 
-        mol_batch = self.collater([molecule_data for _ in range(len(samples))])
+        mol_batch = collate_data_list([molecule_data for _ in range(len(samples))])
         mol_batch = overwrite_symmetry_info(mol_batch,
                                             [space_group_ind for _ in range(len(samples))],
                                             self.sym_info,
@@ -168,7 +166,7 @@ class Sampler:
         # sampling
 
         if 'MCMC' in sampling_type:
-            mol_batch = self.collater([molecule_data for _ in range(batch_size)])
+            mol_batch = collate_data_list([molecule_data for _ in range(batch_size)])
             mol_batch, scalar_mol_embedding, vector_mol_embedding = self.embed_molecule_for_sampling(
                 mol_batch,
                 'random',
@@ -292,7 +290,7 @@ class Sampler:
                             sg_to_sample,
                             opt_eps):
 
-        if 'CrystalDataBatch' in str(type(molecule_data)):
+        if 'Batch' in str(type(molecule_data)):
             num_batches = 1
             prebatched = True
         else:
@@ -303,7 +301,7 @@ class Sampler:
             if prebatched:
                 mol_batch = molecule_data
             else:
-                mol_batch = self.collater([molecule_data for _ in range(batch_size)])
+                mol_batch = collate_data_list([molecule_data for _ in range(batch_size)])
 
             mol_batch, scalar_mol_embedding, vector_mol_embedding = self.embed_molecule_for_sampling(
                 mol_batch,
@@ -317,7 +315,7 @@ class Sampler:
             (packing_coeff[current_inds], rdf[current_inds], samples[current_inds], vdw[current_inds],
              optimization_record) = self._gradient_descent_optimization(
                 samples[current_inds],
-                self.collater(mol_batch[:len(current_inds)]).clone(),
+                collate_data_list(mol_batch[:len(current_inds)]).clone(),
                 max_num_steps=1000,
                 convergence_eps=opt_eps,
                 lr=1e-3,
@@ -377,7 +375,7 @@ class Sampler:
         )
 
     def sample_from_distribution(self,
-                                 sample_data: CrystalData,
+                                 sample_data,
                                  batch_size: int,
                                  sg_to_sample: torch.LongTensor,
                                  tot_samples: int,
@@ -416,7 +414,7 @@ class Sampler:
                                         sample_source: str,
                                         ):
 
-        data = self.collater([sample_data for _ in range(batch_size)]).to(self.device)
+        data = collate_data_list([sample_data for _ in range(batch_size)]).to(self.device)
 
         mol_data, scalar_mol_embedding, vector_mol_embedding = self.embed_molecule_for_sampling(
             data,
@@ -504,7 +502,7 @@ class Sampler:
         sample_record, vdw_potential_record, packing_coeff_record, rdf_record = [], [], [], []
 
         for _ in tqdm(range(num_batches), disable=not self.show_tqdm):
-            data_batch = self.collater([sample_data for _ in range(batch_size)]).to(self.device)
+            data_batch = collate_data_list([sample_data for _ in range(batch_size)]).to(self.device)
             mol_data, scalar_mol_embedding, vector_mol_embedding = self.embed_molecule_for_sampling(
                 data_batch,
                 cc_orientation,

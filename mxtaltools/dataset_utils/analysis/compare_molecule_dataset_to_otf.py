@@ -9,13 +9,13 @@ import torch
 from plotly.subplots import make_subplots
 from rdkit import Chem
 from rdkit.Chem import Descriptors, rdMolDescriptors, Fragments
-from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter
 
 from mxtaltools.analysis.crystal_rdf import earth_movers_distance_torch, get_elementwise_dists, batch_histogram_1d
 from mxtaltools.common.geometry_utils import batch_compute_molecule_volume
 from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.dataset_utils.construction.parallel_synthesis import otf_synthesize_molecules
+from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.functions.radial_graph import radius
 
 HDonorSmarts = Chem.MolFromSmarts(
@@ -47,7 +47,6 @@ def get_edge_distribution(dataset,
                           max_edge_length: float,
                           relevant_elements: list = [1, 6, 7, 8, 9],
                           device: str = 'cpu'):
-    collater = Collater(0, 0)
     with torch.no_grad():
         batch_size = 100
         num_chunks = dataset.num_graphs // 100
@@ -55,7 +54,7 @@ def get_edge_distribution(dataset,
             num_chunks += 1
 
         for ind in range(num_chunks):
-            mol_batch = collater(dataset[ind * batch_size: (ind + 1) * batch_size]).to(device)
+            mol_batch = collate_data_list(dataset[ind * batch_size: (ind + 1) * batch_size]).to(device)
             edges = radius(
                 x=mol_batch.pos,
                 y=mol_batch.pos,
@@ -229,7 +228,7 @@ def generate_otf_dataset(generate_samples: int,
 
     shuffle(otf_dataset)
     otf_dataset = otf_dataset[:dataset_length]
-    otf_dataset = collater(otf_dataset)
+    otf_dataset = collate_data_list(otf_dataset)
     vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()))
     otf_dataset.mol_volume = batch_compute_molecule_volume(otf_dataset.z.flatten(),
                                                            otf_dataset.pos,
@@ -279,7 +278,6 @@ N
 
 if __name__ == '__main__':
     """config"""
-    collater = Collater(None, None)
     dataset_path = Path(r'D:\crystal_datasets\qm9_dataset.pt')
     qm9_properties_path = Path('D:\crystal_datasets\otf_chunks\qm9_properties_dict.pt')
     dataset_size = 130000
@@ -288,7 +286,7 @@ if __name__ == '__main__':
 
     """get evaluation dataset"""
     if not os.path.exists(qm9_properties_path) or force_qm9_reanalyzis:
-        qm9_dataset = collater(torch.load(dataset_path)[:dataset_size])
+        qm9_dataset = collate_data_list(torch.load(dataset_path)[:dataset_size])
         qm9_properties_dict = analyze_mol_dataset(qm9_dataset, 'cpu')
         del qm9_dataset
         torch.save(qm9_properties_dict, 'D:\crystal_datasets\otf_chunks\qm9_properties_dict.pt')

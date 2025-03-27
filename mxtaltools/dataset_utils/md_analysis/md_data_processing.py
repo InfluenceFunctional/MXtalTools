@@ -13,7 +13,6 @@ from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, ATOMIC_NUMBERS, V
 from mxtaltools.constants.mol_classifier_constants import MOLECULE_NUM_ATOMS, structure2polymorph
 import torch
 
-from mxtaltools.dataset_utils.CrystalData import CrystalData
 from torch_scatter import scatter
 
 """
@@ -438,7 +437,7 @@ def generate_dataset_from_dumps(dumps_dirs: list,
                          molecule_num_atoms, polymorph, molecule_types, cluster_type) = process_cluster(
                             run_config, vals)
 
-                        datapoint = CrystalData(  # CRYTODO
+                        datapoint = CrystalData(  # TODO update workflow with new data types
                             x=torch.tensor(vals['element'], dtype=torch.long),
                             mol_ind=torch.tensor(vals['mol'], dtype=torch.long),
                             pos=cluster_coords,

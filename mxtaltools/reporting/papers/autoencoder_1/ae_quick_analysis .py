@@ -12,6 +12,7 @@ from torch_scatter import scatter
 
 from mxtaltools.common.config_processing import load_yaml, process_main_config
 from mxtaltools.common.geometry_utils import scatter_compute_Ip
+from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.modeller import Modeller
 from mxtaltools.reporting.ae_reporting import gaussian_3d_overlap_plot
 
@@ -48,7 +49,6 @@ if __name__ == '__main__':
             predictor = Modeller(config)
             predictor.ae_analysis(save_results=True)
 
-        collater = Collater(0, 0)
         stats = np.load(results_path, allow_pickle=True).item()
         stats_dict = stats['train_stats']
 
@@ -56,8 +56,8 @@ if __name__ == '__main__':
         overlaps = np.concatenate(stats_dict['evaluation_overlap'])
         sample_ranking = np.argsort(overlaps)
 
-        mol_batch = collater(stats_dict['sample'])
-        decoded_mol_batch = collater(stats_dict['decoded_sample'])
+        mol_batch = collate_data_list(stats_dict['sample'])
+        decoded_mol_batch = collate_data_list(stats_dict['decoded_sample'])
         num_to_show = 5
         for ind in range(num_to_show):
             fig = (

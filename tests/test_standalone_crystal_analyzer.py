@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from mxtaltools.standalone.crystal_analyzer.crystal_analyzer import CrystalAnalyzer
+from mxtaltools.standalone.crystal_analyzer.crystal_analyzer import CrystalAnalyzer  # todo rewrite this test
 
 
 class test_crystal_analyzer:

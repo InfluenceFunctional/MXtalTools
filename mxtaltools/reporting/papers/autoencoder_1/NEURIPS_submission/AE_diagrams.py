@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 from mxtaltools.common.geometry_utils import list_molecule_principal_axes_torch
 from mxtaltools.crystal_building.utils import align_mol_batch_to_standard_axes
+from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering, swarm_vs_tgt_fig
 
 from mxtaltools.standalone.qm9_encoder import Qm9Autoencoder
@@ -138,8 +139,7 @@ def converging_gaussians_fig():
     """
     num_atom_types = loader.dataDims['num_atom_types']
     # get 1k samples
-    collater = Collater(None, None)
-    batch = collater(loader.data_manager.datapoints[:1000])
+    batch = collate_data_list(loader.data_manager.datapoints[:1000])
     # pick out flat molecules
     # flat_mols = []
     # for ind in range(batch.num_graphs):

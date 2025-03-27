@@ -1,7 +1,6 @@
 from typing import Optional
 
 import torch
-from torch_geometric.loader.dataloader import Collater
 
 from mxtaltools.common.geometry_utils import sph2rotvec, rotvec2rotmat
 from mxtaltools.common.sym_utils import init_sym_info
@@ -11,6 +10,7 @@ from mxtaltools.crystal_building.utils import \
      align_mol_batch_to_standard_axes,
      batch_asymmetric_unit_pose_analysis_torch, aunit2unit_cell, generate_sorted_fractional_translations,
      get_symmetry_functions)
+from mxtaltools.dataset_utils.utils import collate_data_list
 
 
 class CrystalBuilder:
@@ -28,7 +28,6 @@ class CrystalBuilder:
             self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(device)
 
         self.sorted_fractional_translations = generate_sorted_fractional_translations(supercell_size).to(device)
-        self.collater = Collater(None, None)
 
     def build_integer_zp_supercells(self,
                                     molecule_data,
@@ -163,7 +162,7 @@ class CrystalBuilder:
                 molwise_sg_inds[mol_ind] = molecule_data.sg_ind[ind]
                 molwise_sym_ops.append(molecule_data.symmetry_operators[ind])
                 mol_ind += 1
-        molwise_data = self.collater(molwise_data)  #
+        molwise_data = collate_data_list(molwise_data)  #
         molwise_data.cell_params = molwise_parameters
         molwise_data.sg_ind = molwise_sg_inds
         molwise_data.symmetry_operators = molwise_sym_ops

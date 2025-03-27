@@ -1,4 +1,3 @@
-import os
 from random import shuffle
 
 import numpy as np

@@ -525,6 +525,7 @@ class MolCrystalData(MolData):
         if aux_ind is not None:
             self.aux_ind = aux_ind
 
+
     def box_analysis(self):
         self.T_fc, self.T_cf, self.cell_volume = (
             batch_compute_fractional_transform(self.cell_lengths,
@@ -904,6 +905,9 @@ class MolCrystalData(MolData):
 
         # update cell vectors
         self.box_analysis()
+
+    def aunit_volume(self):
+        return self.cell_volume / self.sym_mult
 
     def cell_parameters(self):
         """
