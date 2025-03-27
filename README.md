@@ -14,7 +14,7 @@ See our detailed documentation including installation and deployment instruction
 2. Install this package:
 
     ```bash
-    pip install git+https://github.com/InfluenceFunctional/MXtalTools.git
+    pip install mxtaltools
     ```
 
 

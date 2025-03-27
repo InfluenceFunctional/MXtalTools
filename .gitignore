@@ -7,3 +7,4 @@ __pycache__/
 /wandb/
 /bulk_molecule_classification/
 /mxtal_venv_ccdc/
+/docs/_build/

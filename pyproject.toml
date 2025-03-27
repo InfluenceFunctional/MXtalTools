@@ -12,9 +12,22 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "License :: OSI Approved :: BSD License",
-    "Operating System :: Windows :: Linux",
 ]
-include=["tests/**"]
+include=[
+    "LICENSE",
+    "README.md",
+    "main.py",
+    "mxtaltools/**/*.py",
+    "mxtaltools/**/*.yaml",
+    "configs/**/*.yaml",
+    "misc/**/*.py",
+    "tests/**/*.py"
+]
+exclude=[
+    "**/old/**",
+    "**/*.model",
+    "**/*.pt"
+]
 
 [tool.poetry.urls]
 "repository" = "https://github.com/InfluenceFunctional/MXtalTools"
