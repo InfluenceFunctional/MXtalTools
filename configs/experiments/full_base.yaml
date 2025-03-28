@@ -37,7 +37,7 @@ dataset:
     post_scramble_each: 10
     processes: 0 #4
     allowed_atom_types: [1, 6, 7, 8, 9]
-  loader_processes: 1
+  loader_processes: 0
 
 # batching & convergence
 num_samples: 1.0E+8
