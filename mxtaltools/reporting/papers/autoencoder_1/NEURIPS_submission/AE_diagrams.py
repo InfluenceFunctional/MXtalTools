@@ -12,8 +12,8 @@ from mxtaltools.crystal_building.utils import align_mol_batch_to_standard_axes
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering, swarm_vs_tgt_fig
 
-from mxtaltools.standalone.qm9_encoder import Qm9Autoencoder
-from mxtaltools.standalone.qm9_loader import QM9Loader
+from mxtaltools.examples.qm9_encoder import Qm9Autoencoder
+from mxtaltools.examples.qm9_loader import QM9Loader
 
 def crude_2d_gaussian():
     n_input_particles = 4

@@ -298,9 +298,7 @@ def swarm_vs_tgt_fig(data, decoded_data, atom_types = [1,6,7,8,9], graph_ind=0):
 
 
 def autoencoder_embedding_map(stats_dict, max_num_samples=1000000):
-    """
 
-    """
     ''' # spherical coordinates analysis
     def to_spherical(x, y, z):
         """Converts a cartesian coordinate (x, y, z) into a spherical one (radius, theta, phi)."""

@@ -32,7 +32,7 @@ class MoleculeScalarRegressor(BaseGraphModel):
             self.register_buffer('target_std', target_standardization_tensor[1])
         else:
             self.register_buffer('target_mean', torch.ones(1)[0])
-            self.register_buffer('target_std',torch.ones(1)[0])
+            self.register_buffer('target_std', torch.ones(1)[0])
 
         self.model = ScalarMoleculeGraphModel(
             input_node_dim=self.n_atom_feats,

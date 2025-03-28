@@ -2,6 +2,7 @@ import os
 import sys
 import threading
 import time
+from argparse import Namespace
 from datetime import datetime
 
 import numpy as np
@@ -12,6 +13,8 @@ from torch.optim import lr_scheduler as lr_scheduler
 
 from mxtaltools.common.utils import flatten_dict, namespace2dict
 from mxtaltools.dataset_utils.utils import update_dataloader_batch_size
+from mxtaltools.models.task_models.autoencoder_models import Mo3ENet
+from mxtaltools.models.task_models.regression_models import MoleculeScalarRegressor
 
 
 def update_stats_dict(dictionary: dict, keys, values, mode='append'):
@@ -261,6 +264,68 @@ def reload_model(model, device, optimizer, path, reload_optimizer=False):
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
     return model, optimizer
+
+
+def load_molecule_scalar_regressor(checkpoint_path, device):
+    """script to reload a regression model for molecule scalar properties"""
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
+    #opt_config = model_config.optimizer
+    model_config = model_config.model
+    r_dataDims = checkpoint['dataDims']
+    model = MoleculeScalarRegressor(seed=12345,
+                                    config=model_config,
+                                    atom_features=r_dataDims['atom_features'],
+                                    molecule_features=r_dataDims['molecule_features'],
+                                    )
+    for param in model.parameters():  # freeze model
+        param.requires_grad = False
+
+    model, _ = reload_model(model, device=device, optimizer=None,
+                            path=checkpoint_path)
+    model.eval()
+    model.to(device)
+    return model
+
+
+def load_molecule_autoencoder(checkpoint_path, device):
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
+    #opt_config = model_config.optimizer
+    model_config = model_config.model
+    r_dataDims = checkpoint['dataDims']
+    allowed_types = r_dataDims['allowed_atom_types']
+    num_atom_types = len(allowed_types)
+
+    type_translation_index = np.zeros(np.array(allowed_types).max() + 1) - 1
+    for ind, atype in enumerate(allowed_types):
+        type_translation_index[atype] = ind
+    autoencoder_type_index = torch.tensor(type_translation_index, dtype=torch.long, device='cpu')
+
+    model = Mo3ENet(seed=12345,
+                    config=model_config,
+                    num_atom_types=num_atom_types,
+                    atom_embedding_vector=autoencoder_type_index,
+                    radial_normalization=1,  # overwritten on reload
+                    protons_in_input=True,  # overwritten on reload
+                    )
+    for param in model.parameters():  # freeze model
+        param.requires_grad = False
+
+    model, _ = reload_model(model, device=device, optimizer=None,
+                            path=checkpoint_path)
+    model.eval()
+    model.to(device)
+    return model
+
+
+def enable_dropout(model):
+    """Enable dropout layers in evaluation mode."""
+    for module in model.modules():
+        if isinstance(module, torch.nn.Dropout):
+            module.train()  # Enable dropout during inference
+
+    return model
 
 
 def save_checkpoint(epoch: int,

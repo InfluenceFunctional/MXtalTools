@@ -8,12 +8,12 @@ from tqdm import tqdm
 from mxtaltools.crystal_building.utils import align_mol_batch_to_standard_axes
 from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering
 
-from mxtaltools.standalone.qm9_encoder import Qm9Autoencoder
-from mxtaltools.standalone.qm9_loader import QM9Loader
+from mxtaltools.examples.qm9_encoder import Qm9Autoencoder
+from mxtaltools.examples.qm9_loader import QM9Loader
 import numpy as np
 import plotly.graph_objects as go
-from mxtaltools.standalone.qm9_encoder import Qm9Autoencoder
-from mxtaltools.standalone.qm9_loader import QM9Loader
+from mxtaltools.examples.qm9_encoder import Qm9Autoencoder
+from mxtaltools.examples.qm9_loader import QM9Loader
 from plotly.subplots import make_subplots
 from scipy.spatial.distance import cdist
 from torch_geometric.loader.dataloader import Collater

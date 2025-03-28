@@ -102,7 +102,10 @@ class BaseGraphModel(torch.nn.Module):
 
         # get radial graph
         if data_batch.edge_index is None or force_edges_rebuild:
-            data_batch.construct_intra_radial_graph(float(self.model.convolution_cutoff))
+            if 'crystal' in data_batch.__class__.__name__.lower():
+                data_batch.construct_intra_radial_graph(float(self.model.convolution_cutoff))
+            else:
+                data_batch.construct_radial_graph(float(self.model.convolution_cutoff))
 
         return self.model(data_batch.x,
                           data_batch.pos,

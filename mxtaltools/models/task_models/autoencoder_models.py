@@ -1,7 +1,8 @@
 import torch
 from torch import nn as nn
+import torch.nn.functional as F
 
-from mxtaltools.models.autoencoder_utils import decoding2mol_batch, ae_reconstruction_loss
+from mxtaltools.models.autoencoder_utils import decoding2mol_batch, ae_reconstruction_loss, batch_rmsd
 from mxtaltools.models.graph_models.base_graph_model import BaseGraphModel
 from mxtaltools.models.graph_models.graph_neural_network import VectorGNN
 from mxtaltools.models.graph_models.molecule_graph_model import VectorMoleculeGraphModel
@@ -151,7 +152,7 @@ class Mo3ENet(BaseGraphModel):
         self.decoder = torch.compile(self.decoder, dynamic=dynamic, fullgraph=fullgraph)
         self.scalarizer = torch.compile(self.scalarizer, dynamic=dynamic, fullgraph=fullgraph)
 
-    def check_embedding_quality(self, data,
+    def check_embedding_quality(self, mol_batch,
                                 sigma=0.35,
                                 type_distance_scaling=2,
                                 # todo next two should be properties of the model
@@ -159,46 +160,42 @@ class Mo3ENet(BaseGraphModel):
                                 num_atom_types=5,
                                 visualize=False,
                                 ):
-        encoding = self.encode(data.clone())
+        encoding = self.encode(mol_batch.clone())
         decoding = self.decode(encoding)
 
-        data.x = self.atom_embedding_vector[data.x].flatten()
-        decoded_data, nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = (
-            decoding2mol_batch(data,
+        mol_batch.x = self.atom_embedding_vector[mol_batch.z].flatten()
+        decoded_mol_batch, nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = (
+            decoding2mol_batch(mol_batch,
                                decoding,
                                self.num_decoder_nodes,
                                node_weight_temperature,
-                               data.x.device))
+                               mol_batch.x.device))
 
-        (nodewise_reconstruction_loss,  # todo adjust with new losses
-         nodewise_type_loss,
-         reconstruction_loss,
-         self_likelihoods,
-         ) = ae_reconstruction_loss(data,
-                                    decoded_data,
-                                    nodewise_weights,
-                                    nodewise_weights_tensor,
-                                    num_atom_types,
-                                    type_distance_scaling,
-                                    sigma,
-                                    )
+        (nodewise_reconstruction_loss, nodewise_type_loss,
+         graph_reconstruction_loss, self_likelihoods,
+         nearest_node_loss, graph_clumping_loss,
+         nearest_component_dist, nearest_component_loss) = ae_reconstruction_loss(mol_batch,
+                                                                                  decoded_mol_batch,
+                                                                                  nodewise_weights,
+                                                                                  nodewise_weights_tensor,
+                                                                                  num_atom_types,
+                                                                                  type_distance_scaling,
+                                                                                  sigma,
+                                                                                  )
 
-        rmsds = torch.zeros(data.num_graphs)
-        max_dists = torch.zeros_like(rmsds)
-        tot_overlaps = torch.zeros_like(rmsds)
-        match_successful = torch.zeros_like(rmsds)
-        # for ind in range(data.num_graphs):
-        #     rmsds[ind], max_dists[ind], tot_overlaps[ind], match_successful[ind], fig2 = scaffolded_decoder_clustering(
-        #         ind,
-        #         data,
-        #         decoded_data,
-        #         num_atom_types,
-        #         return_fig=True)
+
+        true_node_one_hot = F.one_hot(mol_batch.x.flatten().long(), num_classes=num_atom_types).float()
+
+        (rmsd, pred_dists, complete_graph_bools, particle_matched_bools,
+         pred_particle_points, pred_particle_weights)=(
+            batch_rmsd(mol_batch,
+                       decoded_mol_batch,
+                       true_node_one_hot))
         if visualize:
-            for ind in range(data.num_graphs):
-                swarm_vs_tgt_fig(data, decoded_data, num_atom_types, graph_ind=ind).show()
+            for ind in range(mol_batch.num_graphs):
+                swarm_vs_tgt_fig(mol_batch, decoded_mol_batch, [1, 6, 7, 8, 9], graph_ind=ind).show(renderer='browser')
 
-        return reconstruction_loss, rmsds, max_dists, tot_overlaps, match_successful
+        return graph_reconstruction_loss, rmsd, complete_graph_bools
 
 
 class Mo3ENetDecoder(nn.Module):
