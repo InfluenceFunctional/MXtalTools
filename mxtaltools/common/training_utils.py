@@ -34,8 +34,9 @@ def update_stats_dict(dictionary: dict, keys, values, mode='append'):
         for key, value in zip(keys, values):
             if key not in dictionary.keys():
                 dictionary[key] = []
-
-            if (mode == 'append') or ('crystaldata' in str(type(value)).lower()):
+            if isinstance(value, int):
+                value = np.array(value)[None]
+            if (mode == 'append') or ('Batch' in str(type(value)).lower()):
                 dictionary[key].append(value)
             elif mode == 'extend':
                 dictionary[key].extend(value)

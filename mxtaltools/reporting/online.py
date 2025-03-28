@@ -156,9 +156,9 @@ def process_discriminator_outputs(dataDims, epoch_stats_dict, extra_test_dict=No
     pred_distance_dict = {}
     true_distance_dict = {}
 
-    generator_inds = np.where(epoch_stats_dict['generator_sample_source'] == 0)[0]
+    generator_inds = np.where(epoch_stats_dict['generator_sample_source'] == 2)[0]
     randn_inds = np.where(epoch_stats_dict['generator_sample_source'] == 1)[0]
-    distorted_inds = np.where(epoch_stats_dict['generator_sample_source'] == 2)[0]
+    distorted_inds = np.where(epoch_stats_dict['generator_sample_source'] == 0)[0]
 
     scores_dict['CSD'] = epoch_stats_dict['discriminator_real_score']
     scores_dict['Gaussian'] = epoch_stats_dict['discriminator_fake_score'][randn_inds]
@@ -182,10 +182,10 @@ def process_discriminator_outputs(dataDims, epoch_stats_dict, extra_test_dict=No
     vdw_penalty_dict['Generator'] = epoch_stats_dict['fake_vdw_penalty'][generator_inds]
     vdw_penalty_dict['Distorted'] = epoch_stats_dict['fake_vdw_penalty'][distorted_inds]
 
-    packing_coeff_dict['CSD'] = epoch_stats_dict['real_volume_fractions']
-    packing_coeff_dict['Gaussian'] = epoch_stats_dict['generated_volume_fractions'][randn_inds]
-    packing_coeff_dict['Generator'] = epoch_stats_dict['generated_volume_fractions'][generator_inds]
-    packing_coeff_dict['Distorted'] = epoch_stats_dict['generated_volume_fractions'][distorted_inds]
+    packing_coeff_dict['CSD'] = epoch_stats_dict['real_packing_coeff']
+    packing_coeff_dict['Gaussian'] = epoch_stats_dict['fake_packing_coeff'][randn_inds]
+    packing_coeff_dict['Generator'] = epoch_stats_dict['fake_packing_coeff'][generator_inds]
+    packing_coeff_dict['Distorted'] = epoch_stats_dict['fake_packing_coeff'][distorted_inds]
 
     pred_distance_dict['CSD'] = epoch_stats_dict['discriminator_real_predicted_distance']
     pred_distance_dict['Gaussian'] = epoch_stats_dict['discriminator_fake_predicted_distance'][randn_inds]
@@ -201,7 +201,7 @@ def process_discriminator_outputs(dataDims, epoch_stats_dict, extra_test_dict=No
         scores_dict['extra_test'] = extra_test_dict['discriminator_real_score']
         #tracking_features_dict['extra_test'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], extra_test_dict['tracking_features'].T)}
         vdw_penalty_dict['extra_test'] = extra_test_dict['real_vdw_penalty']
-        packing_coeff_dict['extra_test'] = extra_test_dict['real_volume_fractions']
+        packing_coeff_dict['extra_test'] = extra_test_dict['real_packing_coeff']
         pred_distance_dict['extra_test'] = extra_test_dict['discriminator_real_predicted_distance']
         true_distance_dict['extra_test'] = extra_test_dict['discriminator_real_true_distance']
 
@@ -226,7 +226,7 @@ def discriminator_scores_plots(scores_dict, vdw_penalty_dict, packing_coeff_dict
     scores_range = np.ptp(all_scores)
 
     'score vs vs vdw'
-    bandwidth1, fig, vdw_cutoff, viridis = score_vs_vdw_plot(all_scores, all_vdws, layout,
+    bandwidth1, fig, viridis = score_vs_vdw_plot(all_scores, all_vdws, layout,
                                                              plot_color_dict, sample_types, scores_dict,
                                                              scores_range, vdw_penalty_dict)
     fig_dict['Discriminator vs vdw scores'] = fig
@@ -238,7 +238,7 @@ def discriminator_scores_plots(scores_dict, vdw_penalty_dict, packing_coeff_dict
                                                                        viridis)
 
     fig_dict['Discriminator Scores Analysis'] = combined_scores_plot(all_coeffs, all_scores, all_vdws, layout,
-                                                                     sample_source, vdw_cutoff)
+                                                                     sample_source)
 
     return fig_dict
 
@@ -246,8 +246,7 @@ def discriminator_scores_plots(scores_dict, vdw_penalty_dict, packing_coeff_dict
 def score_vs_vdw_plot(all_scores, all_vdws, layout, plot_color_dict, sample_types, scores_dict, scores_range,
                       vdw_penalty_dict):
     bandwidth1 = scores_range / 200
-    vdw_cutoff = min(np.quantile(all_vdws, 0.975), 3)
-    bandwidth2 = vdw_cutoff / 200
+    bandwidth2 = np.ptp(all_vdws) / 200
     viridis = px.colors.sequential.Viridis
     scores_labels = sample_types
     fig = make_subplots(rows=2, cols=2, subplot_titles=('a)', 'b)', 'c)'),
@@ -258,7 +257,7 @@ def score_vs_vdw_plot(all_scores, all_vdws, layout, plot_color_dict, sample_type
                                 side='positive', orientation='h', width=4,
                                 meanline_visible=True, bandwidth=bandwidth1, points=False),
                       row=1, col=1)
-        fig.add_trace(go.Violin(x=-np.minimum(vdw_penalty_dict[label], vdw_cutoff), name=legend_label,
+        fig.add_trace(go.Violin(x=vdw_penalty_dict[label], name=legend_label,
                                 line_color=plot_color_dict[label],
                                 side='positive', orientation='h', width=4, meanline_visible=True,
                                 bandwidth=bandwidth2, points=False),
@@ -268,7 +267,7 @@ def score_vs_vdw_plot(all_scores, all_vdws, layout, plot_color_dict, sample_type
     cscale = [[1 / rrange[i], viridis[i]] for i in range(len(rrange))]
     cscale[0][0] = 0
     fig.add_trace(go.Histogram2d(x=np.clip(all_scores, a_min=np.quantile(all_scores, 0.05), a_max=np.amax(all_scores)),
-                                 y=-np.minimum(all_vdws, vdw_cutoff),
+                                 y=all_vdws,
                                  showscale=False,
                                  nbinsy=50, nbinsx=200,
                                  colorscale=cscale,
@@ -288,7 +287,7 @@ def score_vs_vdw_plot(all_scores, all_vdws, layout, plot_color_dict, sample_type
     fig.layout.annotations[0].update(x=0.025)
     fig.layout.annotations[1].update(x=0.575)
     fig.layout.margin = layout.margin
-    return bandwidth1, fig, vdw_cutoff, viridis
+    return bandwidth1, fig, viridis
 
 
 def score_vs_volume_plot(all_coeffs, all_scores, bandwidth1, layout, packing_coeff_dict, plot_color_dict, sample_types,
@@ -324,9 +323,9 @@ def score_vs_volume_plot(all_coeffs, all_scores, bandwidth1, layout, packing_coe
                   row=2, col=1)
     fig.update_layout(showlegend=False, yaxis_showgrid=True)
     fig.update_xaxes(title_text='Model Score', row=1, col=1)
-    fig.update_xaxes(title_text='Reduced Volume Fraction', row=1, col=2)
+    fig.update_xaxes(title_text='Packing Coefficient', row=1, col=2)
     fig.update_xaxes(title_text='Model Score', row=2, col=1)
-    fig.update_yaxes(title_text='Reduced Volume Fraction', row=2, col=1)
+    fig.update_yaxes(title_text='Packing Coefficient', row=2, col=1)
     fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
     fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
     fig.layout.annotations[0].update(x=0.025)
@@ -335,26 +334,26 @@ def score_vs_volume_plot(all_coeffs, all_scores, bandwidth1, layout, packing_coe
     return fig
 
 
-def combined_scores_plot(all_coeffs, all_scores, all_vdws, layout, sample_source, vdw_cutoff):
+def combined_scores_plot(all_coeffs, all_scores, all_vdws, layout, sample_source):
     """
     # All in one  # todo replace 'packing coefficient' throughout
     """
-    scatter_dict = {'vdW Score': -all_vdws.clip(max=vdw_cutoff), 'Classification Score': all_scores,
-                    'Reduced Volume Fraction': all_coeffs, 'Sample Source': sample_source}
+    scatter_dict = {'LJ Potential': all_vdws, 'Classification Score': all_scores,
+                    'Packing Coefficient': all_coeffs, 'Sample Source': sample_source}
     opacity = max(0.1, 1 - len(all_vdws) / 5e4)
 
     df = pd.DataFrame.from_dict(scatter_dict)
     fig = px.scatter(df,
-                     x='vdW Score', y='Reduced Volume Fraction',
+                     x='LJ Potential', y='Packing Coefficient',
                      color='Classification Score', symbol='Sample Source',
                      marginal_x='histogram', marginal_y='histogram',
                      range_color=(np.amin(all_scores), np.amax(all_scores)),
                      opacity=opacity,
                      )
     fig.layout.margin = layout.margin
-    fig.update_layout(xaxis_range=[-vdw_cutoff, 0.1],
+    fig.update_layout(#xaxis_range=[-vdw_cutoff, 0.1],
                       yaxis_range=[np.quantile(all_coeffs, 0.01), np.quantile(all_coeffs, 0.99)])
-    fig.update_layout(xaxis_title='vdW Score', yaxis_title='Reduced Volume Fraction')
+    fig.update_layout(xaxis_title='Scaled LJ Potential', yaxis_title='Packing Coefficient')
     fig.update_layout(legend=dict(yanchor="top", y=0.99, xanchor="right", x=1))
     return fig
 

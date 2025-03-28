@@ -20,6 +20,6 @@ filter_conditions: [['crystal_z_prime','in', [1]],  # NOTE we can currently only
                     ['molecule_num_atoms','range',[3,100]],
                     #['molecule_radius','range',[1,5]],
                     #['asymmetric_unit_is_well_defined','in',[True]],
-                    ['crystal_packing_coefficient', 'range',[0.3, 1.1]],
+                    ['crystal_packing_coefficient', 'range',[0.45, 95]],
                     #['crystal_space_group_number','in',[2,14,19]]
                     ]

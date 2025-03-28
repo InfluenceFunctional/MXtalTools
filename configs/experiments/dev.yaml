@@ -1,6 +1,6 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/regressor.yaml #/experiments/base/generator.yaml #/experiments/base/discriminator.yaml
+base_config_path: /experiments/base/discriminator.yaml #/experiments/base/generator.yaml #/experiments/base/discriminator.yaml
 dataset_name: test_CSD_dataset.pt #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
 extra_test_set_name: null
 save_checkpoints: True

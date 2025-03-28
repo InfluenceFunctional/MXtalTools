@@ -89,7 +89,7 @@ class Logger:
             sys.exit()
         return stat_dict
 
-    def update_stats_dict(self, epoch_type, keys, values, mode='extend'):
+    def update_stats_dict(self, epoch_type, keys, values, mode: str ='extend'):
         keys_type = type({}.keys())
         values_type = type({}.values())
         if type(keys) == keys_type:

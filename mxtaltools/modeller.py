@@ -4,6 +4,7 @@ import multiprocessing as mp
 import os
 from argparse import Namespace
 from pathlib import Path
+from random import choice
 from time import time
 from typing import Tuple, Optional
 
@@ -22,22 +23,22 @@ from mxtaltools.analysis.crystal_rdf import compute_rdf_distance, new_crystal_rd
 from mxtaltools.analysis.vdw_analysis import vdw_analysis, vdw_overlap, get_intermolecular_dists_dict
 from mxtaltools.common.geometry_utils import list_molecule_principal_axes_torch, embed_vector_to_rank3
 from mxtaltools.common.geometry_utils import rotvec2sph
+from mxtaltools.common.instantiate_models import instantiate_models
 from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.common.training_utils import flatten_wandb_params, set_lr, \
     init_optimizer, init_scheduler, reload_model, save_checkpoint, slash_batch, make_sequential_directory
-from mxtaltools.common.instantiate_models import instantiate_models
 from mxtaltools.common.utils import sample_uniform
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
 from mxtaltools.crystal_building.builder import CrystalBuilder
 from mxtaltools.crystal_building.utils import overwrite_symmetry_info
 from mxtaltools.crystal_building.utils import set_molecule_alignment
-#from mxtaltools.crystal_search.sampling import Sampler
+# from mxtaltools.crystal_search.sampling import Sampler
 from mxtaltools.dataset_utils.construction.parallel_synthesis import otf_synthesize_molecules, otf_synthesize_crystals
 from mxtaltools.dataset_utils.data_classes import MolData
 from mxtaltools.dataset_utils.dataset_manager import DataManager
 from mxtaltools.dataset_utils.utils import quick_combine_dataloaders, get_dataloaders, update_dataloader_batch_size, \
-    SimpleDataset, quick_combine_crystal_embedding_dataloaders, collate_data_list
+    SimpleDataset, quick_combine_crystal_embedding_dataloaders
 from mxtaltools.models.autoencoder_utils import compute_type_evaluation_overlap, compute_coord_evaluation_overlap, \
     compute_full_evaluation_overlap, test_decoder_equivariance, test_encoder_equivariance, decoding2mol_batch, \
     ae_reconstruction_loss, batch_rmsd
@@ -2047,72 +2048,6 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
 
 '''
 
-    # def update_buffers(self):
-    #     # reprocess buffers
-    #     if self.epoch_type == 'train':
-    #         buffer = self.train_buffer
-    #     elif self.epoch_type == 'test':
-    #         buffer = self.test_buffer
-    #     else:
-    #         assert False
-    #
-    #     new_samples = torch.stack(buffer['new_samples'], dim=0)
-    #     new_values = torch.tensor(buffer['new_values'], dtype=torch.float32, device='cpu')
-    #
-    #     if self.logger.epoch == 0:
-    #         # first epoch, no new samples
-    #         buffer['samples'] = new_samples
-    #         buffer['values'] = new_values
-    #
-    #     elif len(buffer['new_samples']) + len(buffer['samples']) <= self.config.dataset.buffer_size:
-    #         # take everything during the buffer building phase
-    #         buffer['samples'] = torch.cat([buffer['samples'], new_samples], dim=0)
-    #         buffer['values'] = torch.cat([buffer['values'], new_values], dim=0)
-    #     else:
-    #         # more samples than we need
-    #         # replace old samples with new samples
-    #         # weigh samples to replace by energy
-    #
-    #         temperature = 10
-    #         old_samples = buffer['samples']
-    #         old_values = buffer['values']
-    #         samples_to_add = min(len(new_samples), self.config.dataset.buffer_size)
-    #         # old_values = old_values.clip(max=100)
-    #         # probs = np.exp(old_values.numpy() / temperature) / np.sum(
-    #         #     np.exp(old_values.numpy() / temperature))
-    #         # probs = np.nan_to_num(probs, posinf=0, neginf=0, nan=0)
-    #         # probs /= probs.sum()
-    #         old_rands = np.random.choice(len(old_samples),
-    #                                      samples_to_add,
-    #                                      #p=probs,
-    #                                      replace=False
-    #                                      )
-    #         old_samples[old_rands] = new_samples[:self.config.dataset.buffer_size]
-    #         old_values[old_rands] = new_values[:self.config.dataset.buffer_size]
-    #         buffer['samples'] = old_samples[:self.config.dataset.buffer_size]
-    #         buffer['values'] = old_values[:self.config.dataset.buffer_size]
-    #
-    #     buffer['new_samples'], buffer['new_values'] = [], []
-    #     if self.epoch_type == 'train':
-    #         self.logger.train_buffer_size = len(buffer['samples'])
-    #     elif self.epoch_type == 'test':
-    #         self.logger.test_buffer_size = len(buffer['samples'])
-
-    # def init_sample_buffers(self):
-    #     self.train_buffer = {'samples': torch.zeros((self.config.dataset.buffer_size,
-    #                                                  self.config.proxy_discriminator.model.bottleneck_dim + 9),
-    #                                                 dtype=torch.float32, device='cpu'),
-    #                          'values': torch.zeros(self.config.proxy_discriminator.model.bottleneck_dim,
-    #                                                dtype=torch.float32, device='cpu'),
-    #                          'new_samples': [], 'new_values': []
-    #                          }
-    #     self.test_buffer = {'samples': torch.zeros((self.config.dataset.buffer_size,
-    #                                                 self.config.proxy_discriminator.model.bottleneck_dim + 9),
-    #                                                dtype=torch.float32, device='cpu'),
-    #                         'values': torch.zeros(self.config.dataset.buffer_size,
-    #                                               dtype=torch.float32, device='cpu'),
-    #                         'new_samples': [], 'new_values': []
-    #                         }
 
     def generator_epoch(self,
                         data_loader=None,
@@ -2161,11 +2096,9 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
 
         self.generator_prior = CSDPrior(
             sym_info=self.sym_info, device=self.config.device,
-            cell_means=self.lattice_means[:6],
-            cell_stds=self.lattice_stds[:6],
-            lengths_cov_mat=self.dataDims['lattice_length_cov_mat'], )
+            )
 
-    def adversarial_score(self, data, return_latent=False):
+    def discriminator_score(self, data, return_latent=False):
         """
         get the score from the discriminator on data
         """
@@ -2177,43 +2110,95 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
         else:
             return output, extra_outputs['dists_dict']
 
-    def discriminator_step(self, data, i, update_weights, skip_step):
+    def discriminator_step(self, crystal_batch, i, update_weights, skip_step):
         """
         execute a complete training step for the discriminator
-        compute losses, do reporting, update gradients
+        synthesize crystals, compute losses, do reporting, update gradients
         """
-        if self.train_models_dict['discriminator']:
-            (discriminator_output_on_real, discriminator_output_on_fake,
-             real_fake_rdf_distances, stats) \
-                = self.get_discriminator_output(data, i)
+        fake_crystal_batch = crystal_batch.detach().clone()
+        real_lj_pot, real_es_pot, real_scaled_lj_pot, real_cluster_batch = crystal_batch.build_and_analyze(return_cluster=True)
+        index_generator_to_use = int(np.random.randint(0, 2, size=1))
+        if index_generator_to_use == 0:  # distort crysatl
+            fake_crystal_batch.noise_cell_parameters(self.config.discriminator.distortion_magnitude)
+            fake_lj_pot, fake_es_pot, fake_scaled_lj_pot, fake_cluster_batch = (
+                fake_crystal_batch.build_and_analyze(return_cluster=True))
+        elif index_generator_to_use == 1:  # randomly sampled crystals
+            sg_to_build = choice(self.config.generate_sgs)
+            sg_rand_ind = list(self.sym_info['space_groups'].values()).index(sg_to_build) + 1  # indexing from 0
+            normed_cell_params = self.generator_prior(
+                len(crystal_batch), sg_rand_ind * torch.ones(crystal_batch.num_graphs),
+            ).to(crystal_batch.device)
+            fake_crystal_batch.reset_sg_info(sg_rand_ind)
+            normed_cell_lengths, fake_crystal_batch.cell_angles, fake_crystal_batch.aunit_centroid, fake_crystal_batch.aunit_orientation = normed_cell_params.split(3, dim=1)
+            fake_crystal_batch.cell_lengths = fake_crystal_batch.denorm_cell_lengths(normed_cell_lengths)
+            fake_crystal_batch.box_analysis()
+            fake_lj_pot, fake_es_pot, fake_scaled_lj_pot, fake_cluster_batch = (
+                fake_crystal_batch.build_and_analyze(return_cluster=True))
+        else:
+            assert False
 
-            discriminator_losses, loss_stats = self.aggregate_discriminator_losses(
-                discriminator_output_on_real,
-                discriminator_output_on_fake,
-                real_fake_rdf_distances)
+        if self.config.positional_noise.discriminator > 0:
+            fake_cluster_batch.pos += \
+                torch.randn_like(fake_cluster_batch.pos) * self.config.positional_noise.discriminator
+            real_cluster_batch.pos += \
+                torch.randn_like(real_cluster_batch.pos) * self.config.positional_noise.discriminator
 
-            stats.update(loss_stats)
-            discriminator_loss = discriminator_losses.mean()
+        discriminator_output_on_real, real_pairwise_distances_dict = self.discriminator_score(
+            real_cluster_batch, return_latent=False)
+        discriminator_output_on_fake, fake_pairwise_distances_dict = self.discriminator_score(
+            fake_cluster_batch, return_latent=False)
 
-            if update_weights and (not skip_step):
-                self.optimizers_dict['discriminator'].zero_grad(
-                    set_to_none=True)  # reset gradients from previous passes
-                discriminator_loss.backward()  # back-propagation
-                torch.nn.utils.clip_grad_norm_(self.models_dict['discriminator'].parameters(),
-                                               self.config.gradient_norm_clip)  # gradient clipping
-                self.optimizers_dict['discriminator'].step()  # update parameters
+        rdf_dists = torch.zeros(real_cluster_batch.num_graphs, device=self.config.device, dtype=torch.float32)
+        if self.config.discriminator.use_rdf_distance_loss:
+            real_rdf, rr, _ = new_crystal_rdf(real_cluster_batch, real_pairwise_distances_dict,
+                                              rrange=[0, self.config.discriminator.model.graph.cutoff], bins=2000,
+                                              mode='intermolecular', elementwise=True, raw_density=True,
+                                              cpu_detach=False)
+            fake_rdf, _, _ = new_crystal_rdf(fake_cluster_batch, fake_pairwise_distances_dict,
+                                             rrange=[0, self.config.discriminator.model.graph.cutoff], bins=2000,
+                                             mode='intermolecular', elementwise=True, raw_density=True,
+                                             cpu_detach=False)
 
-            # don't move anything to the CPU until after the backward pass
-            self.logger.update_current_losses('discriminator', self.epoch_type,
-                                              discriminator_losses.mean().cpu().detach().numpy(),
-                                              discriminator_losses.cpu().detach().numpy())
+            for i in range(real_cluster_batch.num_graphs):
+                rdf_dists[i] = compute_rdf_distance(real_rdf[i], fake_rdf[i], rr) / real_cluster_batch.num_atoms[i]
+                # divides out the trivial size correlation
 
-            dict_of_tensors_to_cpu_numpy(stats)
+        stats = {'generator_sample_source': np.array(index_generator_to_use)[None],
+                 'real_vdw_penalty': real_scaled_lj_pot.detach(),
+                 'fake_vdw_penalty': fake_scaled_lj_pot.detach(),
+                 'real_cell_parameters': crystal_batch.cell_parameters().detach(),
+                 'generated_cell_parameters': fake_crystal_batch.cell_parameters().detach(),
+                 'real_packing_coeff': crystal_batch.packing_coeff.detach(),
+                 'fake_packing_coeff': fake_crystal_batch.packing_coeff.detach(),
+                 }
 
-            self.logger.update_stats_dict(self.epoch_type,
-                                          stats.keys(),
-                                          stats.values(),
-                                          mode='extend')
+        discriminator_losses, loss_stats = self.aggregate_discriminator_losses(
+            discriminator_output_on_real,
+            discriminator_output_on_fake,
+            rdf_dists)
+        stats.update(loss_stats)
+
+        discriminator_loss = discriminator_losses.mean()
+
+        if update_weights and (not skip_step):
+            self.optimizers_dict['discriminator'].zero_grad(
+                set_to_none=True)  # reset gradients from previous passes
+            discriminator_loss.backward()  # back-propagation
+            torch.nn.utils.clip_grad_norm_(self.models_dict['discriminator'].parameters(),
+                                           self.config.gradient_norm_clip)  # gradient clipping
+            self.optimizers_dict['discriminator'].step()  # update parameters
+
+        # don't move anything to the CPU until after the backward pass
+        self.logger.update_current_losses('discriminator', self.epoch_type,
+                                          discriminator_losses.mean().cpu().detach().numpy(),
+                                          discriminator_losses.cpu().detach().numpy())
+
+        dict_of_tensors_to_cpu_numpy(stats)
+
+        self.logger.update_stats_dict(self.epoch_type,
+                                      stats.keys(),
+                                      stats.values(),
+                                      mode='extend')
 
     def pd_step(self, embedding, lattice_pot, i, update_weights, skip_step, skip_stats: bool = False):
         """
@@ -2561,154 +2546,6 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
 
         return mol_data, scalar_mol_embedding, vector_mol_embedding
 
-    def get_discriminator_output(self, data, i):
-        """
-        generate real and fake crystals
-        and score them
-        """
-        '''get real supercells'''  # todo revise this function with packing coeff, vdw overlap calc
-        real_supercell_data = self.crystal_builder.prebuilt_unit_cell_to_supercell(
-            data, self.config.supercell_size, self.config.discriminator.model.graph.cutoff)
-
-        '''get fake supercells'''
-        generated_samples_i, negative_type, generator_data, negatives_stats = \
-            self.generate_discriminator_negatives(data,
-                                                  train_adversarial=self.config.discriminator.train_adversarially,
-                                                  train_on_randn=self.config.discriminator.train_on_randn,
-                                                  train_on_distorted=self.config.discriminator.train_on_distorted,
-                                                  orientation='random')
-
-        fake_supercell_data, generated_cell_volumes = self.crystal_builder.build_zp1_supercells(
-            generator_data, generated_samples_i, self.config.supercell_size,
-            self.config.discriminator.model.graph.cutoff,
-            align_to_standardized_orientation=(negative_type != 'generated'),  # take generator samples as-given
-            target_handedness=generator_data.aunit_handedness,
-            skip_refeaturization=True,
-        )
-
-        canonical_fake_cell_params = fake_supercell_data.cell_params
-
-        '''apply noise'''
-        if self.config.positional_noise.discriminator > 0:
-            real_supercell_data.pos += \
-                torch.randn_like(real_supercell_data.pos) * self.config.positional_noise.discriminator
-            fake_supercell_data.pos += \
-                torch.randn_like(fake_supercell_data.pos) * self.config.positional_noise.discriminator
-
-        '''score'''
-        discriminator_output_on_real, real_pairwise_distances_dict = self.adversarial_score(
-            real_supercell_data, return_latent=False)
-        discriminator_output_on_fake, fake_pairwise_distances_dict = self.adversarial_score(
-            fake_supercell_data, return_latent=False)
-
-        '''recompute reduced volumes'''
-        # TODO convert this back to packing coefficient calculations
-        real_volume_fractions = compute_reduced_volume_fraction(cell_lengths=real_supercell_data.cell_lengths,
-                                                                cell_angles=real_supercell_data.cell_angles,
-                                                                atom_radii=self.vdw_radii_tensor[
-                                                                    data.x.long().flatten()],
-                                                                batch=data.batch,
-                                                                crystal_multiplicity=real_supercell_data.sym_mult)
-        fake_volume_fractions = compute_reduced_volume_fraction(cell_lengths=fake_supercell_data.cell_lengths,
-                                                                cell_angles=fake_supercell_data.cell_angles,
-                                                                atom_radii=self.vdw_radii_tensor[
-                                                                    data.x.long().flatten()],
-                                                                batch=data.batch,
-                                                                crystal_multiplicity=fake_supercell_data.sym_mult)
-
-        '''distances'''
-        if self.config.discriminator.use_rdf_distance_loss:
-            real_rdf, rr, _ = new_crystal_rdf(real_supercell_data, real_pairwise_distances_dict,
-                                              rrange=[0, self.config.discriminator.model.graph.cutoff], bins=2000,
-                                              mode='intermolecular', elementwise=True, raw_density=True,
-                                              cpu_detach=False)
-            fake_rdf, _, _ = new_crystal_rdf(fake_supercell_data, fake_pairwise_distances_dict,
-                                             rrange=[0, self.config.discriminator.model.graph.cutoff], bins=2000,
-                                             mode='intermolecular', elementwise=True, raw_density=True,
-                                             cpu_detach=False)
-
-            rdf_dists = torch.zeros(real_supercell_data.num_graphs, device=self.config.device, dtype=torch.float32)
-            for i in range(real_supercell_data.num_graphs):
-                rdf_dists[i] = compute_rdf_distance(real_rdf[i], fake_rdf[i], rr) / real_supercell_data.num_atoms[i]
-                # divides out the trivial size correlation
-        else:
-            rdf_dists = torch.randn(real_supercell_data.num_graphs, device=self.config.device,
-                                    dtype=torch.float32).abs()  # dummy
-
-        stats = {'real_vdw_penalty': -vdw_overlap(self.vdw_radii, crystaldata=real_supercell_data,
-                                                  return_score_only=True).detach(),
-                 'fake_vdw_penalty': -vdw_overlap(self.vdw_radii, crystaldata=fake_supercell_data,
-                                                  return_score_only=True).detach(),
-                 'real_cell_parameters': torch.cat([data.cell_lengths, data.cell_angles, data.pose_params0],
-                                                   dim=1).detach(),
-                 'generated_cell_parameters': canonical_fake_cell_params.detach(),
-                 'real_volume_fractions': real_volume_fractions.detach(),
-                 'generated_volume_fractions': fake_volume_fractions.detach(),
-                 'fake_volume_fractions': fake_volume_fractions.detach()}
-
-        stats.update(negatives_stats)
-
-        return (discriminator_output_on_real, discriminator_output_on_fake,
-                rdf_dists, stats)
-
-    ''' test crystal rebuilding with different rescalings
-    
-from mxtaltools.dataset_management.dataset_generation.generate_dataset_from_smiles import test_crystal_rebuild_from_embedding
-
-opt_vdw_pot = mol_batch.vdw_pot[None, ...].cpu()
-opt_vdw_loss = mol_batch.vdw_loss[None, ...].cpu()
-opt_aunits = mol_batch.pos[None,...].cpu()
-cell_params=cell_params.cpu()
-opt_cell_params = cell_params[None, ...]
-
-normed_params = renormalize_generated_cell_params(
-    cell_params.cuda(),
-    mol_batch.cuda(),
-    self.crystal_builder.asym_unit_dict
-).cpu()
-
-r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
-    mol_batch.clone().cpu(),
-    opt_vdw_pot,
-    opt_vdw_loss,
-    opt_aunits,
-    normed_params[None,...],
-    denorm=True,
-    destd=False,
-    renorm=False,
-    restd=False,
-    make_figs=False,
-)
-
-# subtract means
-lattice_means = torch.tensor([
-    1, 1, 1,
-    torch.pi / 2, torch.pi / 2, torch.pi / 2,
-    0.5, 0.5, 0.5,
-    torch.pi / 4, 0, torch.pi / 2
-], device='cpu', dtype=torch.float32)
-lattice_stds = torch.tensor([
-    .35, .35, .35,
-    .45, .45, .45,
-    0.25, 0.25, 0.25,
-    0.33, torch.pi / 2, torch.pi / 2
-], device='cpu', dtype=torch.float32)
-scaled_params = (normed_params - lattice_means[None, :]) / lattice_stds[None, :]
-
-r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
-    mol_batch.clone().cpu(),
-    opt_vdw_pot,
-    opt_vdw_loss,
-    opt_aunits,
-    scaled_params[None,...],
-    denorm=True,
-    destd=True,
-    renorm=False,
-    restd=False,
-    make_figs=False,
-)
-
-    '''
 
     def anneal_prior_loss(self, good_inds):
         """

@@ -172,51 +172,6 @@ fig.show()
 """
 
 
-def subsample_crystal_opt_traj(samples_record):  # todo deprecate
-    lj_pots = torch.stack(
-        [torch.tensor([sample.scaled_lj_pot for sample in sample_list]) for sample_list in samples_record])
-    es_pots = torch.stack([torch.tensor([sample.es_pot for sample in sample_list]) for sample_list in samples_record])
-    cell_params = torch.stack(
-        [collate_data_list(samples_list).standardized_cell_parameters() for samples_list in samples_record])
-    en_traj = es_pots * 10 + lj_pots
-    en_diffs = torch.diff(en_traj, dim=0, prepend=torch.zeros_like(en_traj[None, 0])).abs() / en_traj
-    cell_diffs = torch.diff(cell_params, dim=0, prepend=torch.zeros_like(cell_params[None, 0])).norm(
-        dim=2) / cell_params.norm(dim=2)
-    keep_bools = torch.zeros(es_pots.shape, dtype=bool)
-
-    for ind in range(0, len(es_pots), 10):  # always keep every 10 steps
-        keep_bools[ind] = True
-    # keep also samples with sufficiently large stepwise deviations
-    keep_bools[en_diffs >= 0.01] = True
-    keep_bools[cell_diffs >= 0.01] = True
-    #
-    # keep_bools = torch.zeros(es_pots.shape, dtype=bool)
-    # normed_en_traj = en_traj - en_traj.amin(0)
-    # std = normed_en_traj.std(0)
-    # probs = torch.exp(-normed_en_traj / std) + 0.1
-    # probs /= probs.sum(0)[None, :]
-    #
-    # for ind in range(keep_bools.shape[1]):
-    #     inds = np.random.choice(len(keep_bools), p=probs[:, ind].cpu().detach().numpy(), replace=False, size=10)
-    #     keep_bools[inds, ind] = True
-
-    flat_keep_bools = keep_bools.flatten()
-    # return flattened & filtered list
-    flat_list = [sample for samples_list in samples_record for sample in samples_list]
-    flat_list = list(compress(flat_list, flat_keep_bools))
-    return flat_list
-
-
-""" # test - confirm correct indexing
-ljs = torch.tensor([elem.scaled_lj_pot for elem in ll])
-ljs2 = torch.stack(
-        [torch.tensor([sample.scaled_lj_pot for sample in sample_list]) for sample_list in samples_record])
-fig = go.Figure()
-fig.add_histogram(x=ljs, nbinsx=100)
-fig.add_histogram(x=ljs2[keep_bools], nbinsx=100)
-fig.show()
-"""
-
 
 def sample_about_crystal(opt_samples: list,
                          noise_level: float,

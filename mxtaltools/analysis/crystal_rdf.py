@@ -76,7 +76,7 @@ def crystal_rdf(crystal_batch,
     if elementwise:  # todo this could also be sped up
         relevant_elements = [5, 6, 7, 8, 9, 15, 16, 17, 35]
         element_symbols = {5: 'B', 6: 'C', 7: 'N', 8: 'O', 9: 'F', 15: 'P', 16: 'S', 17: 'Cl', 35: 'Br'}
-        elements = [crystal_batch.x[edges[0], 0], crystal_batch.x[edges[1], 0]]
+        elements = [crystal_batch.z[edges[0]], crystal_batch.z[edges[1]]]
         rdfs_dict = {}
         rdfs_array = torch.zeros(
             (crystal_batch.num_graphs, int((len(relevant_elements) ** 2 + len(relevant_elements)) / 2), bins),
@@ -202,7 +202,7 @@ def new_crystal_rdf(crystal_batch,
     efficiently gather the relevant distances
     '''
     if elementwise:
-        dists_per_hist, sorted_dists, rdfs_dict = get_elementwise_dists(crystal_batch.x[:, 0], edges, dists, device,
+        dists_per_hist, sorted_dists, rdfs_dict = get_elementwise_dists(crystal_batch.z, edges, dists, device,
                                                                         num_graphs,
                                                                         edge_in_crystal_number, atomic_numbers_override)
         num_pairs = len(rdfs_dict.keys())
@@ -217,7 +217,7 @@ def new_crystal_rdf(crystal_batch,
         rdf = hist / shell_volumes[None, :] / rdf_density[:, None]  # un-smoothed radial density
         rdf = rdf.reshape(num_graphs, num_pairs, -1)  # sample-wise indexing
     elif atomwise:  # todo this is only implemented for an identical atom indexing (assumes batch is repetetition of same molecule)
-        dists_per_hist, sorted_dists, rdfs_dict = get_atomwise_dists(crystal_batch.x[:, 0], edges, dists, device,
+        dists_per_hist, sorted_dists, rdfs_dict = get_atomwise_dists(crystal_batch.z, edges, dists, device,
                                                                      num_graphs,
                                                                      edge_in_crystal_number,
                                                                      crystal_batch.num_atoms)

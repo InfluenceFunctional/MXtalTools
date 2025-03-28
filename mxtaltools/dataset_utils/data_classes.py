@@ -650,14 +650,14 @@ class MolCrystalData(MolData):
         if cell_means is None:  # these norms assume incoming cell lengths are pre-normed
             means = torch.tensor(
                 [1.0411, 1.1640, 1.4564, 1.5619, 1.5691, 1.5509],
-                dtype=torch.float32)
+                dtype=torch.float32, device=self.device)
 
         else:
             means = cell_means
         if cell_stds is None:
             stds = torch.tensor(
                 [0.3846, 0.4280, 0.4864, 0.2363, 0.2046, 0.2624],
-                dtype=torch.float32)
+                dtype=torch.float32, device=self.device)
         else:
             stds = cell_stds
         return torch.cat([normed_lengths, cell_angles], dim=-1) * stds + means
@@ -999,7 +999,7 @@ class MolCrystalData(MolData):
          self.aunit_centroid, self.aunit_orientation) = (
             cell_parameters.split(3, dim=1))
 
-    def build_and_analyze(self):
+    def build_and_analyze(self, return_cluster):
         """
         full procedure for building and analyzing a molecular crystal
         """
@@ -1007,12 +1007,30 @@ class MolCrystalData(MolData):
         cluster_batch.construct_radial_graph()
         self.lj_pot, self.scaled_lj_pot = cluster_batch.compute_LJ_energy()
         self.es_pot = cluster_batch.compute_ES_energy()
-        return self.lj_pot, self.es_pot, self.scaled_lj_pot
+        if return_cluster:
+            return self.lj_pot, self.es_pot, self.scaled_lj_pot, cluster_batch
+        else:
+            return self.lj_pot, self.es_pot, self.scaled_lj_pot
 
     def mol2cluster(self):
         self.pose_aunit()
         self.build_unit_cell()
         return self.build_cluster()
+
+    def reset_sg_info(self, sg_ind):
+        if isinstance(sg_ind, int):
+            sg_ind_list = torch.ones_like(self.sg_ind) * sg_ind
+        elif torch.is_tensor(sg_ind):
+            sg_ind_list = sg_ind * 1
+        else:
+            assert False, "sg_ind must be a tensor or an integer"
+
+        self.sg_ind = sg_ind_list
+        self.symmetry_operators = [np.stack(SYM_OPS[int(SG)]) for SG in sg_ind_list]  # if saved as a tensor, we get collation issues
+        self.sym_mult = torch.tensor(
+            [len(sym_ops) for sym_ops in self.symmetry_operators],
+            dtype=torch.long, device=self.device
+        )
 
     def do_embedding(self,
                      embedding_type: str,
