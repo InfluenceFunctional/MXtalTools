@@ -14,6 +14,7 @@ from torch.optim import lr_scheduler as lr_scheduler
 from mxtaltools.common.utils import flatten_dict, namespace2dict
 from mxtaltools.dataset_utils.utils import update_dataloader_batch_size
 from mxtaltools.models.task_models.autoencoder_models import Mo3ENet
+from mxtaltools.models.task_models.crystal_models import MolecularCrystalModel
 from mxtaltools.models.task_models.regression_models import MoleculeScalarRegressor
 
 
@@ -286,6 +287,34 @@ def load_molecule_scalar_regressor(checkpoint_path, device):
     model.eval()
     model.to(device)
     return model
+
+
+def load_crystal_score_model(checkpoint_path, device):
+    """script to reload a regression model for molecule scalar properties"""
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
+    #opt_config = model_config.optimizer
+    model_config = model_config.model
+    r_dataDims = checkpoint['dataDims']
+    model = MolecularCrystalModel(
+        12345,
+        model_config,
+        r_dataDims['atom_features'],
+        r_dataDims['molecule_features'],
+        output_dim=3,
+        node_standardization_tensor=r_dataDims['node_standardization_vector'],
+        graph_standardization_tensor=r_dataDims['graph_standardization_vector']
+    )
+    for param in model.parameters():  # freeze model
+        param.requires_grad = False
+
+    model, _ = reload_model(model, device=device, optimizer=None,
+                            path=checkpoint_path)
+    model.eval()
+    model.to(device)
+    return model
+
+
 
 
 def load_molecule_autoencoder(checkpoint_path, device):

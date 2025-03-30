@@ -353,7 +353,10 @@ class MolCrystalScalarGNN(torch.nn.Module):
         x = self.zeroth_fc_block(x=x, batch=batch)
 
         # assumes input with inside-outside structure, and enforces periodicity after each convolution
-        edge_index, edge_index_inter, inside_inds, outside_inds, inside_batch, n_repeats = list(edges_dict.values())
+        edge_index, edge_index_inter, inside_inds, outside_inds, inside_batch, n_repeats = (
+            edges_dict['edge_index'], edges_dict['edge_index_inter'], edges_dict['inside_inds'],
+            edges_dict['outside_inds'], edges_dict['inside_batch'], edges_dict['n_repeats']
+        )
         edge_index = torch.cat((edge_index, edge_index_inter), dim=1)  # all edges counted in one big batch
 
         if len(self.interaction_blocks) > 0:

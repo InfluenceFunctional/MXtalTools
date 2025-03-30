@@ -34,22 +34,24 @@ class MolecularCrystalModel(BaseGraphModel):
             graph_config=config.graph,
         )
 
-    def forward(self, data_batch, return_dists=False, return_latent=False):
+    def forward(self, crystal_batch, return_dists=False, return_latent=False):
         """overwrites base method"""
         # on the fly atom property embeddings
-        data_batch = self.featurize_input_graph(data_batch)
+        crystal_batch = self.featurize_input_graph(crystal_batch)
         # on the fly input standardization
-        data_batch = self.standardize(data_batch)
+        crystal_batch = self.standardize(crystal_batch)
 
-        return self.model(data_batch.x,
-                          data_batch.pos,
-                          data_batch.batch,
-                          data_batch.ptr,
-                          data_batch.mol_x,
-                          data_batch.num_graphs,
-                          data_batch.aux_ind,
-                          data_batch.mol_ind,
-                          return_dists=return_dists, return_latent=return_latent)
+        return self.model(crystal_batch.x,
+                          crystal_batch.pos,
+                          crystal_batch.batch,
+                          crystal_batch.ptr,
+                          crystal_batch.mol_x,
+                          crystal_batch.num_graphs,
+                          crystal_batch.aux_ind,
+                          crystal_batch.mol_ind,
+                          edges_dict=crystal_batch.edges_dict,
+                          return_dists=return_dists,
+                          return_latent=return_latent)
 
 
 # class HierarchicalCrystalDiscriminator(nn.Module):

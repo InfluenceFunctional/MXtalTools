@@ -27,7 +27,7 @@ For installation instructions, go :ref:`here <installation>`.
     source/dataset_creation
     source/crystal_building
     source/model_training
-    source/model_components
+    source/modules
 
 Indices and tables
 ==================

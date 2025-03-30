@@ -455,8 +455,8 @@ class MolecularCrystalGraphModel(nn.Module):
                 ptr: torch.LongTensor,
                 mol_x: Union[torch.Tensor],
                 num_graphs: int,
-                aux_ind: torch.Tensor,
-                mol_ind: torch.Tensor,
+                aux_ind: torch.LongTensor,
+                mol_ind: torch.LongTensor,
                 edges_dict: Optional[dict] = None,
                 return_latent: bool = False,
                 return_dists: bool = False,
@@ -474,8 +474,6 @@ class MolecularCrystalGraphModel(nn.Module):
                     aux_ind=aux_ind,
                     mol_ind=mol_ind,
                 )
-            else:
-                edges_dict = None
 
         x = self.append_init_node_features(x, ptr, mol_x, aux_ind, mol_ind)
         g = self.graph_net(x,

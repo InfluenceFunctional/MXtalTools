@@ -525,7 +525,6 @@ class MolCrystalData(MolData):
         if aux_ind is not None:
             self.aux_ind = aux_ind
 
-
     def box_analysis(self):
         self.T_fc, self.T_cf, self.cell_volume = (
             batch_compute_fractional_transform(self.cell_lengths,
@@ -534,23 +533,28 @@ class MolCrystalData(MolData):
         self.packing_coeff = self.mol_volume * self.sym_mult / self.cell_volume
         self.density = self.mass * self.sym_mult / self.cell_volume * 1.66054  # conversion from D/A^3 to g/cm^3
 
+
     def denorm_cell_lengths(self, normed_cell_length):
         """
         abc = (Z*Vol_m)^(1/3) * abc_normed
         """
         if 'Batch' in self.__class__.__name__:
             return torch.pow(self.sym_mult * self.mol_volume, 1 / 3)[:, None] * normed_cell_length
+            #return normed_cell_length * self.radius[:, None]
         else:
             return torch.pow(self.sym_mult * self.mol_volume, 1 / 3)[None] * normed_cell_length
+            #return normed_cell_length * self.radius[None]
 
     def norm_cell_lengths(self):
         """
         abc_normed = abc / (Z*Vol_m)^(1/3)
         """
         if 'Batch' in self.__class__.__name__:
-            return self.cell_lengths/self.radius[:, None] #/ torch.pow(self.sym_mult * self.mol_volume, 1 / 3)[:, None]
+            #return self.cell_lengths / self.radius[:, None]
+            return self.cell_lengths/ torch.pow(self.sym_mult * self.mol_volume, 1 / 3)[:, None]
         else:
-            return self.cell_lengths/self.radius[:, None] #/ torch.pow(self.sym_mult * self.mol_volume, 1 / 3)[None]
+            #return self.cell_lengths / self.radius[None]
+            return self.cell_lengths / torch.pow(self.sym_mult * self.mol_volume, 1 / 3)[None]
 
     def scale_centroid_to_aunit(self):
         """
@@ -716,9 +720,9 @@ class MolCrystalData(MolData):
             self.unit_cell_pos = new_aunit2unit_cell(collate_data_list([self]))
             #assert False, "unit cell construction not yet implemented for single crystals"
 
-    def build_cluster(self, supercell_size: int = 10):
+    def build_cluster(self, cutoff: float = 6, supercell_size: int = 10):
         if 'Batch' in self.__class__.__name__:
-            return unit_cell_to_supercell_cluster(self, supercell_size)
+            return unit_cell_to_supercell_cluster(self, cutoff=cutoff, supercell_size=supercell_size)
         else:
             crystal_batch = collate_data_list([self])
             crystal_batch.build_unit_cell()
@@ -999,11 +1003,15 @@ class MolCrystalData(MolData):
          self.aunit_centroid, self.aunit_orientation) = (
             cell_parameters.split(3, dim=1))
 
-    def build_and_analyze(self, return_cluster):
+    def build_and_analyze(self, return_cluster, noise: Optional[float] = None):
         """
         full procedure for building and analyzing a molecular crystal
         """
         cluster_batch = self.mol2cluster()
+
+        if noise is not None:
+            cluster_batch.pos += torch.randn_like(cluster_batch.pos) * noise
+
         cluster_batch.construct_radial_graph()
         self.lj_pot, self.scaled_lj_pot = cluster_batch.compute_LJ_energy()
         self.es_pot = cluster_batch.compute_ES_energy()
@@ -1026,7 +1034,8 @@ class MolCrystalData(MolData):
             assert False, "sg_ind must be a tensor or an integer"
 
         self.sg_ind = sg_ind_list
-        self.symmetry_operators = [np.stack(SYM_OPS[int(SG)]) for SG in sg_ind_list]  # if saved as a tensor, we get collation issues
+        self.symmetry_operators = [np.stack(SYM_OPS[int(SG)]) for SG in
+                                   sg_ind_list]  # if saved as a tensor, we get collation issues
         self.sym_mult = torch.tensor(
             [len(sym_ops) for sym_ops in self.symmetry_operators],
             dtype=torch.long, device=self.device

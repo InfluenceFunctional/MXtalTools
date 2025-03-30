@@ -74,7 +74,7 @@ discriminator:
   train_on_distorted: True
   use_classification_loss: True
   use_rdf_distance_loss: True
-  distortion_magnitude: 0.1 #-1 # -1 for wide range test # noise for distorted generation
+  distortion_magnitude: 0.05
 
   # discriminator optimizer and model
   optimizer:

@@ -65,7 +65,7 @@ supercell_size: 5
 
 discriminator:
   # settings
-  train_adversarially: False
+  train_adversarially: False  # currently deprecated
   train_on_randn: True
   train_on_distorted: True
   use_classification_loss: True

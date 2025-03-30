@@ -32,13 +32,13 @@ def generate_sorted_fractional_translations(supercell_size):
 
 
 def unit_cell_to_supercell_cluster(crystal_batch, cutoff: float = 6, supercell_size: int = 10):
-    cluster_batch = crystal_batch.clone()
 
     cc_centroids = fractional_transform(crystal_batch.aunit_centroid, crystal_batch.T_fc)
     good_translations, good_translations_bool = get_cart_translations(cc_centroids,
                                                                       crystal_batch.T_fc,
                                                                       crystal_batch.radius,
-                                                                      cutoff, supercell_size)
+                                                                      cutoff,
+                                                                      supercell_size)
 
     ucell_num_atoms = crystal_batch.num_atoms * crystal_batch.sym_mult
     unit_cell_pos = torch.cat([torch.tensor(poses.reshape(ucell_num_atoms[ind], 3),
@@ -55,38 +55,81 @@ def unit_cell_to_supercell_cluster(crystal_batch, cutoff: float = 6, supercell_s
     atoms_per_translation = ucell_num_atoms.repeat_interleave(num_cells, dim=0)
     atomwise_translation = good_translations.repeat_interleave(atoms_per_translation, dim=0)
 
-    # index final features
-    # pos, x, z, mol_ind, aux_ind, ptr, batch
+    # index cluster features
+
+    # number of atoms per unit cell
     atoms_per_unit_cell = (crystal_batch.num_atoms * crystal_batch.sym_mult).long()
-    apuc_cum = torch.cat([torch.tensor([0], device=crystal_batch.device), torch.cumsum(atoms_per_unit_cell, dim=0)]).long()
+
+    # counter number of atoms per unit cell, accumulated over crystals, indexed from 0
+    apuc_cum = torch.cat(
+        [torch.tensor([0], device=crystal_batch.device), torch.cumsum(atoms_per_unit_cell, dim=0)]).long()
+
+    # corresponding unit cell atom for each atom in each cluster
     unit_cell_to_cluster_index = torch.cat([
         (torch.arange(atoms_per_unit_cell[ind], device=crystal_batch.device) + apuc_cum[ind]).repeat(num_cells[ind])
         for ind in range(crystal_batch.num_graphs)
     ])
-    mol_to_unit_cell_index = torch.cat([
-        (torch.arange(crystal_batch.num_atoms[ind], device=crystal_batch.device) + crystal_batch.ptr[ind]).repeat(crystal_batch.sym_mult[ind])
+
+    # corresponding aunit atom for each atom in each unit cell
+    aunit_to_unit_cell_index = torch.cat([
+        (torch.arange(crystal_batch.num_atoms[ind], device=crystal_batch.device) + crystal_batch.ptr[ind]).repeat(
+            crystal_batch.sym_mult[ind])
         for ind in range(crystal_batch.num_graphs)
     ])
 
+    # build cluster by reindexing unit cells
+    cluster_batch = crystal_batch.clone()
+
     cluster_batch.pos = unit_cell_pos[unit_cell_to_cluster_index]
     cluster_batch.pos += atomwise_translation
-    cluster_batch.z = crystal_batch.z[mol_to_unit_cell_index][unit_cell_to_cluster_index]
-    cluster_batch.x = crystal_batch.x[mol_to_unit_cell_index][unit_cell_to_cluster_index]
+
+    cluster_batch.z = crystal_batch.z[aunit_to_unit_cell_index][unit_cell_to_cluster_index]
+    cluster_batch.x = crystal_batch.x[aunit_to_unit_cell_index][unit_cell_to_cluster_index]
+
     cluster_batch.ptr = torch.cat([torch.zeros(1, dtype=torch.long, device=crystal_batch.device),
                                    torch.cumsum(ucell_num_atoms * num_cells, dim=0)]).long()
+
     cluster_batch.batch = unit_cell_batch.repeat_interleave(translations_per_atom, dim=0)
+
     cluster_batch.aux_ind = torch.ones_like(cluster_batch.z)
     cluster_batch.mol_ind = torch.ones_like(cluster_batch.z)
     for ind in range(cluster_batch.num_graphs):
         cluster_batch.aux_ind[cluster_batch.ptr[ind]:cluster_batch.ptr[ind] + cluster_batch.num_atoms[ind]] = 0
-        cluster_batch.mol_ind[cluster_batch.ptr[ind]:cluster_batch.ptr[ind+1]] = (
-            torch.arange(num_cells[ind]*crystal_batch.sym_mult[ind], device=crystal_batch.device).repeat_interleave(crystal_batch.num_atoms[ind]))
+        cluster_batch.mol_ind[cluster_batch.ptr[ind]:cluster_batch.ptr[ind + 1]] = (
+            torch.arange(num_cells[ind] * crystal_batch.sym_mult[ind], device=crystal_batch.device).repeat_interleave(
+                crystal_batch.num_atoms[ind]))
 
-    #'''
-    #cluster_batch.visualize_structure([1,2,3,4,5], exclusion_level='unit cell')
-    #cluster_batch.visualize_structure([1,2,3,4,5], exclusion_level='distance')
-    #'''
+    # we then can further pare by molecule centroid, since our original box calculation is rather permissive
+    # get all mol centroids
+    mols_per_cluster = num_cells * cluster_batch.sym_mult
+    # indexes which molecule each atom belongs to
+    flat_mol_inds = cluster_batch.mol_ind + torch.cat([torch.zeros(1, device=cluster_batch.device, dtype=torch.long),
+                                                       torch.cumsum(mols_per_cluster, dim=0)])[:-1].repeat_interleave(
+        torch.diff(cluster_batch.ptr), dim=0)
+    mol_centroids = scatter(cluster_batch.pos, flat_mol_inds, reduce='mean', dim=0)
+    cc_centroids = scatter(cluster_batch.pos[cluster_batch.aux_ind==0], crystal_batch.batch, reduce='mean', dim=0)
+
+    # get the mol indices within the widest conv cutoff
+    molwise_batch = torch.arange(len(cc_centroids), device=cc_centroids.device).repeat_interleave(mols_per_cluster, dim=0)
+    mol_inds = torch.arange(len(molwise_batch), device=cluster_batch.device)
+    mol_to_cc_dist = torch.linalg.norm(mol_centroids - cc_centroids.repeat_interleave(mols_per_cluster, dim=0), dim=1)
+
+    # finer mol dependent cutoff
+    mol_cutoff = (cutoff + 2 * crystal_batch.radius + 0.1)[molwise_batch[mol_inds]]
+
+    # molecules to keep
+    bad_mol_inds = mol_inds[mol_to_cc_dist > mol_cutoff]
+    #_, filtered_mols_per_cluster = torch.unique(molwise_batch[bad_mol_inds], return_counts=True)
+    # convert back to atomic indices
+    # atom for each molecule in the kept list
+    atoms_in_bad_mols_bool = torch.isin(flat_mol_inds, bad_mol_inds)
+
+    cluster_batch.aux_ind[atoms_in_bad_mols_bool] = 2  # marker for "outside convolutional field"
+
     return cluster_batch
+
+    # cluster_batch.visualize([1, 2, 3, 4, 5], mode='unit cell')
+    # cluster_batch.visualize([1, 2, 3, 4, 5], mode='convolve with')
 
 
 def get_cart_translations(cc_centroids,
@@ -106,7 +149,7 @@ def get_cart_translations(cc_centroids,
     # we compute this in a brute force way, adding the diagonal length of each parallelpiped to the cutoff
     # this will take extra boxes, but is fast and simple
     cell_diag = cell_vectors.sum(1).norm(dim=-1)
-    cutoff_distance = mol_radii * 2 + cutoff + 0.1 + cell_diag/2  # convolutional radius plus cell diagonal
+    cutoff_distance = mol_radii * 2 + cutoff + 0.1 + cell_diag / 2  # convolutional radius plus cell diagonal
 
     centroid_dists = torch.linalg.norm(cc_centroids[:, None, :] - parallelpiped_centroids, dim=-1)
     good_translations_bool = centroid_dists < cutoff_distance[:, None]
@@ -728,7 +771,7 @@ def align_batch_to_principal_axes(mol_batch, handedness=None):
         batch_molecule_principal_axes_torch(
             mol_batch.pos, mol_batch.batch,
             num_graphs=mol_batch.num_graphs,
-        nodes_per_graph=mol_batch.num_atoms))  # much faster
+            nodes_per_graph=mol_batch.num_atoms))  # much faster
 
     eye = torch.tile(torch.eye(3, device=mol_batch.x.device),
                      (mol_batch.num_graphs, 1, 1))  # set as right-handed in general

@@ -54,17 +54,18 @@ if __name__ == '__main__':
         device
     )
 
-    """predict crystal packing coefficient - single-point"""
-    packing_coeff_pred = model(mol_batch).flatten() * model.target_std + model.target_mean
-    aunit_volume_pred = mol_batch.mol_volume / packing_coeff_pred  # A^3
-    density_pred = mol_batch.mass / aunit_volume_pred * 1.6654  # g/cm^3
+    with torch.no_grad():
+        """predict crystal packing coefficient - single-point"""
+        packing_coeff_pred = model(mol_batch).flatten() * model.target_std + model.target_mean
+        aunit_volume_pred = mol_batch.mol_volume / packing_coeff_pred  # A^3
+        density_pred = mol_batch.mass / aunit_volume_pred * 1.6654  # g/cm^3
 
-    """get prediction with uncertainty via resampling with dropout"""
-    predictions = []
-    model = enable_dropout(model)
-    for _ in range(num_samples):
-        predictions.append(model(mol_batch).flatten() * model.target_std + model.target_mean)
+        """get prediction with uncertainty via resampling with dropout"""
+        predictions = []
+        model = enable_dropout(model)
+        for _ in range(num_samples):
+            predictions.append(model(mol_batch).flatten() * model.target_std + model.target_mean)
 
-    predictions = torch.stack(predictions)
-    packing_coeff_mean = predictions.mean(0)
-    packing_coeff_std = predictions.std(0)
+        predictions = torch.stack(predictions)
+        packing_coeff_mean = predictions.mean(0)
+        packing_coeff_std = predictions.std(0)
