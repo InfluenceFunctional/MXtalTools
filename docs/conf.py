@@ -15,9 +15,6 @@ import sys
 sys.path.insert(0, os.path.abspath("../"))
 sys.path.insert(0, os.path.abspath("../mxtaltools/"))
 
-
-
-
 # -- Project information -----------------------------------------------------
 
 project = "MXtalTools"
@@ -47,7 +44,7 @@ intersphinx_mapping = {
 intersphinx_disabled_domains = ['std']
 
 templates_path = ['_templates']
-autodoc_mock_imports = ["torch", "torch_geometric", "torch_scatter", 'torch_cluster', 'rdkit','ccdc']
+#autodoc_mock_imports = ["torch", "torch_geometric", "torch_scatter", 'torch_cluster', 'rdkit','ccdc']
 
 # -- Options for HTML output
 
@@ -117,7 +114,7 @@ autodoc_default_options = {
     "inherited-members": False,
     "show-inheritance": True,
     "autosummary": True,
-    "autosummary_generate": False,
+    "autosummary_generate": False,  # because building on read the docs is annoying, we build locally and upload
 }
 #
 # # The reST default role to use for all documents.

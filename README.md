@@ -2,7 +2,7 @@
 # MXtalTools: Toolbox for machine learning on molecular crystals
 
 ## Documentation
-See our detailed documentation including installation and deployment instructions at our [readthedocs](https://mxtaltools.readthedocs.io/en/latest/index.html) page.
+See our detailed documentation including installation and deployment instructions at our [readthedocs](https://mxtaltools.readthedocs.io/en/master/index.html) page.
 
 ## Installation for Users
 

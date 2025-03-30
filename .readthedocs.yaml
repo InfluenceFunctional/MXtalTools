@@ -12,8 +12,8 @@ build:
 
 python:
   install:
-    - method: pip
-      path: .
+#    - method: pip
+#      path: .
     - requirements: docs/requirements.txt
 
 sphinx:
