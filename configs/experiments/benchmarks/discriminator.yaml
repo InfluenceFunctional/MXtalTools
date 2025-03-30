@@ -80,7 +80,7 @@ discriminator:
   optimizer:
     optimizer: adamw
     init_lr: 1.0E-4
-    max_lr: 5.0E-4
+    max_lr: 2.0E-4
     min_lr: 5.0E-6
     lr_schedule: True
     beta1: 0.9

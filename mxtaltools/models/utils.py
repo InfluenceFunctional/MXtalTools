@@ -34,12 +34,14 @@ def softmax_and_score(raw_classwise_output, temperature=1, old_method=False, cor
         if torch.is_tensor(raw_classwise_output):
             soft_activation = F.softmax(raw_classwise_output, dim=-1)
             score = torch.log10(soft_activation[:, 1] / soft_activation[:, 0])
-            assert torch.sum(torch.isnan(score)) == 0
+            if torch.sum(torch.isnan(score)) == 0:
+                raise ValueError("Numerical Error: discriminator output is not finite")
             return score
         else:
             soft_activation = softmax_np(raw_classwise_output)
             score = np.log10(soft_activation[:, 1] / soft_activation[:, 0])
-            assert np.sum(np.isnan(score)) == 0
+            if np.sum(np.isnan(score)) == 0:
+                raise ValueError("Numerical Error: discriminator output is not finite")
             return score
     else:
         if correct_discontinuity:
