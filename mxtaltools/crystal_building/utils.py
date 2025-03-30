@@ -37,7 +37,7 @@ def generate_sorted_fractional_translations(supercell_size):
 
     # Flatten the meshgrid and stack the results into a 2D tensor
     fractional_translations = torch.stack([xx.flatten(), yy.flatten(), zz.flatten()], dim=1)
-    return fractional_translations
+    return fractional_translations.float()
 
 def unit_cell_to_supercell_cluster(crystal_batch, cutoff: float = 6, supercell_size: int = 10):
 

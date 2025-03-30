@@ -1198,21 +1198,6 @@ class Modeller:
                                         step,
                                         override_do_analysis=self.always_do_analysis)
 
-    def fix_autoencoder_protonation(self, data, override_deprotonate=False):
-        if (self.models_dict['autoencoder'].protons_in_input and not override_deprotonate):
-            input_cloud = data.detach().clone()
-        else:
-            heavy_atom_inds = torch.argwhere(data.x != 1).flatten()  # protons are atom type 1
-            input_cloud = data.detach().clone()
-            input_cloud.x = input_cloud.x[heavy_atom_inds]
-            input_cloud.pos = input_cloud.pos[heavy_atom_inds]
-            input_cloud.batch = input_cloud.batch[heavy_atom_inds]
-            a, b = torch.unique(input_cloud.batch, return_counts=True)
-            input_cloud.ptr = torch.cat([torch.zeros(1, device=self.device), torch.cumsum(b, dim=0)]).long()
-            input_cloud.num_atoms = torch.diff(input_cloud.ptr).long()
-
-        return input_cloud
-
     def ae_stats_and_reporting(self,
                                data,
                                decoded_data,
