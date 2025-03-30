@@ -1,8 +1,9 @@
 Module Index
 ============
 
-.. toctree::
-   :maxdepth: 2
-   :glob:
+.. autosummary::
+    :toctree: _autosummary
+    :recursive:
 
-   modules/*
+    mxtaltools
+

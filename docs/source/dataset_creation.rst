@@ -1,5 +1,9 @@
 Dataset Creation
 ================
+
+.. warning::
+    This module has not been recently updated and may be out-of-date in some ways
+
 This software generates training datasets of molecules/molecular crystal/molecular cluster structures from collections of .xyz or .cif files, respectively.
 Structures collated and processed using the CSD Python API (for crystals only), RDKit, and custom functions.
 Small datasets are may be saved and loaded into RAM, whereas large ones are loaded in batches from on-disk lmdb databases.

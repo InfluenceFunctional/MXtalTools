@@ -36,7 +36,8 @@ extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.autosummary',
     'sphinx.ext.intersphinx',
-    'sphinx.ext.napoleon'
+    'sphinx.ext.napoleon',
+    'sphinx.ext.viewcode',
 ]
 
 intersphinx_mapping = {
@@ -111,11 +112,11 @@ napoleon_use_rtype = True
 #     "ase": ("https://wiki.fysik.dtu.dk/ase/", None),
 # }
 #
-# autodoc_default_options = {
-#     "inherited-members": False,
-#     "show-inheritance": True,
-#     "autosummary": False,
-# }
+autodoc_default_options = {
+    "inherited-members": False,
+    "show-inheritance": True,
+    "autosummary": True,
+}
 #
 # # The reST default role to use for all documents.
 # default_role = "any"

@@ -1,6 +1,11 @@
 Model Training
 ==============
 
+
+.. warning::
+    This module has not been recently updated and may be out-of-date in some ways
+
+
 Training is controlled by a set of .yaml configs.
 Every run has a base config, and a main config, which optionally overwrites entries in the base.
 The main config can be specified on command line like so

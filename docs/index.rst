@@ -21,7 +21,7 @@ For installation instructions, go :ref:`here <installation>`.
 
     source/about
     source/installation
-    source/inference
+    source/examples
     source/crystal_analysis
 
     source/dataset_creation
@@ -29,8 +29,7 @@ For installation instructions, go :ref:`here <installation>`.
     source/model_training
     source/modules
 
+
 Indices and tables
 ==================
 * :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
