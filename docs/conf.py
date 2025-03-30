@@ -117,6 +117,7 @@ autodoc_default_options = {
     "inherited-members": False,
     "show-inheritance": True,
     "autosummary": True,
+    "autosummary_generate": False,
 }
 #
 # # The reST default role to use for all documents.
