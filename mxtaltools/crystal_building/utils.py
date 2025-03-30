@@ -18,18 +18,26 @@ from mxtaltools.models.functions.radial_graph import radius
 
 def generate_sorted_fractional_translations(supercell_size):
     # initialize fractional translations for supercell construction
-    n_cells = (2 * supercell_size + 1) ** 3
-    fractional_translations = torch.zeros((n_cells, 3))  # initialize the translations in fractional coords
-    i = 0
-    for xx in range(-supercell_size, supercell_size + 1):
-        for yy in range(-supercell_size, supercell_size + 1):
-            for zz in range(-supercell_size, supercell_size + 1):
-                fractional_translations[i] = torch.tensor((xx, yy, zz))
-                i += 1
+    # n_cells = (2 * supercell_size + 1) ** 3
+    # fractional_translations = torch.zeros((n_cells, 3))  # initialize the translations in fractional coords
+    # i = 0
+    # for xx in range(-supercell_size, supercell_size + 1):
+    #     for yy in range(-supercell_size, supercell_size + 1):
+    #         for zz in range(-supercell_size, supercell_size + 1):
+    #             fractional_translations[i] = torch.tensor((xx, yy, zz))
+    #             i += 1
+    #
+    # # sort fractional vectors from closest to furthest from central unit cell
+    # return fractional_translations[torch.argsort(fractional_translations.abs().sum(1))]
+    xx, yy, zz = torch.meshgrid(
+        torch.arange(-supercell_size, supercell_size + 1),
+        torch.arange(-supercell_size, supercell_size + 1),
+        torch.arange(-supercell_size, supercell_size + 1)
+    )
 
-    # sort fractional vectors from closest to furthest from central unit cell
-    return fractional_translations[torch.argsort(fractional_translations.abs().sum(1))]
-
+    # Flatten the meshgrid and stack the results into a 2D tensor
+    fractional_translations = torch.stack([xx.flatten(), yy.flatten(), zz.flatten()], dim=1)
+    return fractional_translations
 
 def unit_cell_to_supercell_cluster(crystal_batch, cutoff: float = 6, supercell_size: int = 10):
 
