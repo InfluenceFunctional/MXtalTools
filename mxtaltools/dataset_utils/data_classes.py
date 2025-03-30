@@ -433,7 +433,7 @@ class MolData(MXtalBase):  # todo add method for batch_molecule_compute_principa
 
 
 # noinspection PyPropertyAccess
-class MolCrystalData(MolData):
+class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
     r"""
     A data object representing a molecular crystal with Z prime = 1 (exactly one molecule in asymmetric unit)
     """

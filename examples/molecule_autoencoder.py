@@ -22,7 +22,7 @@ test_smiles = [
 if __name__ == '__main__':
     """configs"""
     device = 'cpu'
-    checkpoint = Path(r"C:\Users\mikem\PycharmProjects\Python_Codes\MXtalTools\models\autoencoder.pt")
+    checkpoint = Path(r"../models/autoencoder.pt")
 
     """load some molecules"""
     base_molData = MolData()

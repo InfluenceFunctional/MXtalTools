@@ -34,7 +34,7 @@ test_smiles = [
 if __name__ == '__main__':
     """configs"""
     device = 'cpu'
-    checkpoint = Path(r"C:\Users\mikem\PycharmProjects\Python_Codes\MXtalTools\models\cp_regressor.pt")
+    checkpoint = Path(r"../models/cp_regressor.pt")
     num_samples = 50
 
     """load some molecules"""
