@@ -47,6 +47,7 @@ intersphinx_mapping = {
 intersphinx_disabled_domains = ['std']
 
 templates_path = ['_templates']
+autodoc_mock_imports = ["torch", "torch_geometric", "torch_scatter", 'torch_cluster', 'rdkit','ccdc']
 
 # -- Options for HTML output
 
