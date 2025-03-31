@@ -24,7 +24,12 @@ if __name__ == '__main__':
     device = 'cpu'
     checkpoint = Path(r"../models/autoencoder.pt")
 
-    """load some molecules"""
+    """
+    First we load some molecules, and ensure they are each centered on the origin.
+    Here we are having RDKit build and minimize molecules generated 
+    from some SMILES codes. This is automated in our MolData class.
+    One can also directly input the atom types and coordinates.
+    """
     base_molData = MolData()
     num_mols = len(test_smiles)
     mols = [base_molData.from_smiles(test_smiles[ind],
@@ -36,16 +41,20 @@ if __name__ == '__main__':
     mol_batch = collate_data_list(mols).to(device)
     mol_batch.recenter_molecules()
 
-    with torch.no_grad():
-        """load model"""
-        model = load_molecule_autoencoder(
-            checkpoint,
-            device
-        )
+    """load pre-trained model"""
+    model = load_molecule_autoencoder(
+        checkpoint,
+        device
+    )
 
-        """get encoding & decoding"""
+    with torch.no_grad():
+        """get vector and scalar embeddings"""
         vector_encoding = model.encode(mol_batch.clone())
         scalar_encoding = model.scalarizer(vector_encoding)
 
-        """check the quality of the embedding for this molecule"""
-        reconstruction_loss, rmsd, matched_molecule = model.check_embedding_quality(mol_batch, visualize=True)
+        """
+        Check the quality of the embedding for this batch of
+        molecules, and visualize the reconstruction
+        """
+        reconstruction_loss, rmsd, matched_molecule = (
+            model.check_embedding_quality(mol_batch, visualize=True))

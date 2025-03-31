@@ -22,7 +22,6 @@ For installation instructions, go :ref:`here <installation>`.
     source/about
     source/installation
     source/examples
-    source/crystal_analysis
 
     source/dataset_creation
     source/crystal_building

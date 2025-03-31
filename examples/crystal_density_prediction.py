@@ -37,7 +37,12 @@ if __name__ == '__main__':
     checkpoint = Path(r"../models/cp_regressor.pt")
     num_samples = 50
 
-    """load some molecules"""
+    """
+    First we load some molecules.
+    Here we are having RDKit build and minimize molecules generated from some SMILES codes.
+    This is automated in our :class:`MolData` class.
+    One can also directly input the atom types and coordinates.
+    """
     base_molData = MolData()
     num_mols = len(test_smiles)
     mols = [base_molData.from_smiles(test_smiles[ind],
@@ -53,7 +58,10 @@ if __name__ == '__main__':
         checkpoint,
         device
     )
-
+    """
+    Now, we make predictions using the model, which we 
+    can easily convert from packing coefficient, to `V_{aunit}`, to the density.
+    """
     with torch.no_grad():
         """predict crystal packing coefficient - single-point"""
         packing_coeff_pred = model(mol_batch).flatten() * model.target_std + model.target_mean
