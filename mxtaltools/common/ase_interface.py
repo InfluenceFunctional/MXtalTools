@@ -6,7 +6,7 @@ from ase.visualize import view
 from torch_scatter import scatter
 
 from mxtaltools.crystal_building.utils import find_coord_in_box_torch
-from mxtaltools.crystal_building.utils import fractional_transform
+from mxtaltools.common.geometry_utils import fractional_transform
 
 
 def data_batch_to_ase_mols_list(crystaldata_batch,

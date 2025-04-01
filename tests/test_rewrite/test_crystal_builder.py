@@ -2,7 +2,7 @@ from torch_geometric.loader.dataloader import Collater
 
 from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.analysis.crystal_rdf import compute_rdf_distance
-from mxtaltools.crystal_building.utils import batch_asymmetric_unit_pose_analysis_torch, get_intra_mol_dists
+from mxtaltools.crystal_building.utils import batch_aunit_pose_analysis, get_intra_mol_dists
 from mxtaltools.models.utils import clean_cell_params
 from mxtaltools.analysis.crystal_rdf import crystal_rdf
 from mxtaltools.modeller import Modeller
@@ -52,7 +52,7 @@ class TestClass:
         pose analysis
         '''
         position, rotation, handedness, well_defined_asym_unit, canonical_coords_list = \
-            batch_asymmetric_unit_pose_analysis_torch(
+            batch_aunit_pose_analysis(
                 [torch.Tensor(test_crystals.unit_cell_pos[ii]) for ii in range(test_crystals.num_graphs)],
                 torch.Tensor(test_crystals.sg_ind),
                 supercell_builder.ASYM_UNITS,

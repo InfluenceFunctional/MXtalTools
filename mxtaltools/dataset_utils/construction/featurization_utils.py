@@ -6,7 +6,6 @@ import torch
 from rdkit import Chem as Chem
 from rdkit import rdBase
 from rdkit.Chem import Descriptors, rdMolDescriptors
-from rdkit.Chem import rdForceFieldHelpers
 from scipy.spatial.distance import cdist
 
 from mxtaltools.common.geometry_utils import compute_principal_axes_np, coor_trans_matrix_np
@@ -15,8 +14,6 @@ from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ELECTRONEGATIVITY, PERIOD, GROUP, VDW_RADII, ATOMIC_SYMBOLS, \
     ATOMIC_NUMBERS
 from mxtaltools.constants.space_group_info import SPACE_GROUPS
-from mxtaltools.crystal_building.utils import batch_asymmetric_unit_pose_analysis_torch, aunit2unit_cell, \
-    fractional_transform
 
 """
 Utilities for featurizing molecules and crystals for construction of MXtalTools Data objects.
@@ -483,83 +480,3 @@ def get_qm9_properties(text):
     }
     return molecule_dict, props
 
-
-def rebuild_reparameterize_unit_cell(molecules, crystal_dict):
-    """
-    function for rebuilding a given crystal and confirming correct parameterization
-    """
-    reconstructed_unit_cell_coords_list = []
-    reparameterized_aunit_coords_list = []
-    pose_params_list = []
-    handedness_list = []
-    is_well_defined_list = []
-    T_fc = torch.tensor(crystal_dict['fc_transform'], dtype=torch.float32)
-    T_cf = torch.linalg.inv(T_fc)
-    for mol in molecules:
-        # for each z prime
-        # separately build each unit cell
-        # then, parameterize
-        # rebuild combined cell and compare to original TODO
-        # these functions are built to be fast and parallel - but should be reasonable one at a time as well
-
-        zp_unit_cell_coords = aunit2unit_cell(
-            torch.tensor(len(crystal_dict['symmetry_operators']), dtype=torch.int32)[None],
-            [torch.tensor(mol['atom_coordinates'], dtype=torch.float32)],
-            T_fc[None, :, :],
-            T_cf[None, :, :],
-            [torch.tensor(np.stack(crystal_dict['symmetry_operators']),
-                          dtype=torch.float32)]
-        )
-
-        position, orientation, handedness, is_well_defined, mol_coords = (
-            batch_asymmetric_unit_pose_analysis_torch(zp_unit_cell_coords,
-                                                      [crystal_dict['space_group_number']],
-                                                      ASYM_UNITS,
-                                                      T_fc[None, ...],
-                                                      rotation_basis='cartesian',
-                                                      return_asym_unit_coords=True))
-
-        pose_params_list.append(np.concatenate([position[0], orientation[0]]))
-        handedness_list.append(handedness[0])
-        is_well_defined_list.append(is_well_defined[0])
-        reconstructed_unit_cell_coords_list.append(zp_unit_cell_coords[0])
-        reparameterized_aunit_coords_list.append(mol_coords[0])
-
-    reparameterized_aunit_coords = torch.cat(reparameterized_aunit_coords_list)
-    reconstructed_cell_coords = torch.cat(reconstructed_unit_cell_coords_list, dim=1)
-    z_value, num_atoms = reconstructed_cell_coords.shape[0:2]
-
-    # sometimes, the symmetries place a molecule on the opposite side of a cell due to disagreements in centroid positioning
-    # convert to all-inside unit cell and get dists
-    orig_cell_coords = torch.tensor(np.concatenate(crystal_dict['unit_cell_coordinates'], axis=0),
-                                    dtype=torch.float32)
-    orig_cell_coords_f = fractional_transform(orig_cell_coords, T_cf)
-    orig_cell_coords_f -= orig_cell_coords_f.floor()
-    orig_cell_coords_f -= orig_cell_coords_f.mean(0)
-
-    reconstructed_cell_coords_flat = reconstructed_cell_coords.reshape(z_value * num_atoms, 3)
-    reconstructed_cell_coords_f = fractional_transform(reconstructed_cell_coords_flat, T_cf)
-    reconstructed_cell_coords_f -= reconstructed_cell_coords_f.floor()
-    reconstructed_cell_coords_f -= reconstructed_cell_coords_f.mean(0)
-
-    min_dists = torch.cdist(orig_cell_coords_f, reconstructed_cell_coords_f).amin(1)
-
-    low_mean_distortion = min_dists.mean() < 5e-2
-    low_max_distortion = min_dists.amax() < 5e-2
-
-    parameterization_and_reconstruction_successful = all([low_mean_distortion, low_max_distortion])
-    #
-    if not parameterization_and_reconstruction_successful:
-        aa = 1
-    # from ase import Atoms
-    # from ase.visualize import view
-    #
-    # m1 = Atoms(numbers=np.tile(np.concatenate([mol['atom_atomic_numbers'] for mol in molecules]), z_value),
-    #            positions=reconstructed_cell_coords.reshape(z_value * num_atoms, 3),
-    #            cell=crystal_dict['fc_transform'].T)
-    # m2 = Atoms(numbers=np.tile(np.concatenate([mol['atom_atomic_numbers'] for mol in molecules]), z_value),
-    #            positions=orig_cell_coords.reshape(z_value * num_atoms, 3), cell=crystal_dict['fc_transform'].T)
-    # view([m1, m2])
-
-    return pose_params_list, handedness_list, all(
-        is_well_defined), reconstructed_cell_coords, reparameterized_aunit_coords, parameterization_and_reconstruction_successful

@@ -5,7 +5,6 @@ import torch.nn.functional as F
 from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.common.training_utils import load_crystal_score_model
 from mxtaltools.dataset_utils.utils import collate_data_list
-from mxtaltools.models.task_models.generator_models import CSDPrior
 from mxtaltools.models.utils import softmax_and_score
 
 if __name__ == '__main__':
@@ -26,7 +25,6 @@ if __name__ == '__main__':
     """
     # initialize prior distribution
     crystal_batch2 = crystal_batch.detach().clone()
-    prior = CSDPrior(sym_info=sym_info, device=device)
     # pick space groups to sample
     sgs_to_build = np.random.choice(space_groups_to_sample,
                                     replace=True,
@@ -35,16 +33,10 @@ if __name__ == '__main__':
         [list(sym_info['space_groups'].values()).index(SG) + 1 for SG in sgs_to_build],
         dtype=torch.long,
         device=device)  # indexing from 0
+    # assign SG info to crystals - critical to do this before resampling cell parameters
     crystal_batch2.reset_sg_info(sg_rand_inds)
-    # sample cell parameters
-    normed_cell_params = prior(len(crystal_batch), sg_rand_inds).to(crystal_batch.device)
-    # assign new parameters to crystal
-    (normed_cell_lengths, crystal_batch2.cell_angles,
-     crystal_batch2.aunit_centroid, crystal_batch2.aunit_orientation) = (
-        normed_cell_params.split(3, dim=1))
-    crystal_batch2.cell_lengths = crystal_batch2.denorm_cell_lengths(normed_cell_lengths)
-    crystal_batch2.box_analysis()
-
+    # sample random cell parameters
+    crystal_batch2.sample_random_crystal_parameters()
     """load crystal score model"""
     model = load_crystal_score_model(checkpoint, device)
 
@@ -72,3 +64,6 @@ if __name__ == '__main__':
     model_score2 = softmax_and_score(model_output2[:, :2])
     rdf_dist_pred2 = F.softplus(model_output2[:, 2])
     packing_coeff2 = crystal_batch2.packing_coeff
+    cluster_batch2.visualize([1, 2, 3, 4], mode='convolve with')
+
+    print("Finished Crystal Analysis!")

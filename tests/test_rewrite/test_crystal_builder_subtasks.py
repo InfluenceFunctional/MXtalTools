@@ -1,7 +1,7 @@
 from mxtaltools.common.config_processing import process_main_config
 from mxtaltools.modeller import Modeller
 from mxtaltools.crystal_building.utils import (aunit2unit_cell, descale_asymmetric_unit,
-                                               align_mol_batch_to_standard_axes, batch_asymmetric_unit_pose_analysis_torch)
+                                               align_mol_batch_to_standard_axes, batch_aunit_pose_analysis)
 from scipy.spatial.transform import Rotation
 from mxtaltools.common.geometry_utils import sph2rotvec, rotvec2sph, list_molecule_principal_axes_torch, rotvec2rotmat
 import numpy as np
@@ -92,7 +92,7 @@ class TestClass:
     # todo this is redundant, as this same function is used to define these parameters in dataset construction
     def WIP_batch_asymmetric_unit_pose_analysis(self):
         positions, orientations, handedness, well_defined_asym_unit, canonical_conformer_coords = (
-            batch_asymmetric_unit_pose_analysis_torch(
+            batch_aunit_pose_analysis(
                 unit_cell_coords_list=[torch.Tensor(test_crystals.unit_cell_pos[ii]) for ii in range(test_crystals.num_graphs)],
                 sg_ind_list=test_crystals.sg_ind,
                 asym_unit_dict=supercell_builder.ASYM_UNITS,

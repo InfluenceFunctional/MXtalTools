@@ -1,8 +1,9 @@
 import numpy as np
 import torch
 
-from mxtaltools.common.geometry_utils import batch_compute_fractional_transform, get_batch_centroids
-from mxtaltools.crystal_building.utils import fractional_transform, extract_aunit_orientation
+from mxtaltools.common.geometry_utils import batch_compute_fractional_transform, get_batch_centroids, \
+    fractional_transform
+from mxtaltools.crystal_building.utils import extract_aunit_orientation
 from mxtaltools.dataset_utils.data_classes import MolData, MolCrystalData
 from mxtaltools.dataset_utils.utils import collate_data_list
 

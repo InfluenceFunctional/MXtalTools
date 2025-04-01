@@ -181,7 +181,6 @@ def sample_about_crystal(opt_samples: list,
     for ind in range(num_samples):
         crystal_batch = collate_data_list(opt_samples)
         crystal_batch.noise_cell_parameters(noise_level)
-
         lj_pot, es_pot, scaled_lj_pot = crystal_batch.build_and_analyze()
         samples_list = crystal_batch.detach().cpu().to_data_list()
 

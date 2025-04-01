@@ -10,7 +10,7 @@ from ccdc import io
 from mxtaltools.constants.space_group_info import SYM_OPS
 from mxtaltools.dataset_utils.construction.featurization_utils import extract_crystal_data, featurize_molecule, \
     crystal_filter, \
-    chunkify_path_list, extract_custom_cif_data, rebuild_reparameterize_unit_cell
+    chunkify_path_list, extract_custom_cif_data
 from mxtaltools.dataset_utils.data_classes import MolData, MolCrystalData
 from mxtaltools.dataset_utils.utils import collate_data_list
 

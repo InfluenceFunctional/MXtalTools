@@ -8,13 +8,10 @@ import numpy as np
 import torch
 from rdkit import RDLogger
 
-from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.common.utils import chunkify
-from mxtaltools.constants.space_group_info import SYM_OPS
 from mxtaltools.crystal_search.standalone_crystal_opt import standalone_opt_random_crystals
 from mxtaltools.dataset_utils.data_classes import MolData, MolCrystalData
 from mxtaltools.dataset_utils.utils import collate_data_list
-from mxtaltools.models.task_models.generator_models import CSDPrior
 from mxtaltools.models.utils import embed_crystal_list
 
 RDLogger.DisableLog('rdApp.*')
@@ -258,34 +255,24 @@ def process_smiles_to_crystal_opt(lines: list,
         if len(mol_samples) == 0:
             assert False, "Zero valid molecules in batch, increase crystal generation batch size"
 
-        # print('''sample random crystals''') # CRYGENTODO
-        crystal_generator = CSDPrior(
-            sym_info=init_sym_info(),
-            device="cpu",
-        )
         mol_batch = collate_data_list(mol_samples)
-        normed_cell_params = crystal_generator(len(mol_samples), space_group * torch.ones(len(mol_samples)))
-        normed_cell_lengths, cell_angles, aunit_centroid, aunit_orientation = normed_cell_params.split(3, dim=1)
-        sym_mult = torch.Tensor([
-            len(SYM_OPS[space_group]) for _ in range(len(mol_samples))
-        ])
         aunit_handedness = torch.LongTensor([
             np.random.choice([-1, 1], size=len(mol_samples), replace=True)
         ])[0]
-        cell_lengths = torch.pow(sym_mult * mol_batch.mol_volume, 1 / 3)[:, None] * normed_cell_lengths
         crystals = []
         for ind, sample in enumerate(mol_samples):
             crystal = MolCrystalData(
                 molecule=sample,
                 sg_ind=space_group,
-                cell_lengths=cell_lengths[ind],
-                cell_angles=cell_angles[ind],
-                aunit_centroid=aunit_centroid[ind],
-                aunit_orientation=aunit_orientation[ind],
+                cell_lengths=torch.ones((1, 3)),
+                cell_angles=torch.ones((1, 3)),
+                aunit_centroid=torch.ones((1, 3)),
+                aunit_orientation=torch.ones((1, 3)),
                 aunit_handedness=int(aunit_handedness[ind]),
                 identifier=sample.smiles,
             )
-            while crystal.packing_coeff > 1:  # force less dense crystals
+            crystal.sample_random_crystal_parameters()
+            while crystal.packing_coeff > 1:  # force not-too dense crystals
                 crystal.cell_lengths *= 1.1
                 crystal.box_analysis()
             crystals.append(crystal)

@@ -9,7 +9,7 @@ from tests.utils import train_model  # todo rewrite this test
 
 # ====================================
 
-os.chdir('../')  # go up to main source directory
+os.chdir('../../')  # go up to main source directory
 source_dir = os.getcwd()
 test_user_path = os.path.join(source_dir, 'configs/users/test_user.yaml')
 

@@ -573,6 +573,14 @@ def cell_vol_torch(v: torch.tensor, a: torch.tensor):
     return vol
 
 
+def cell_vol_angle_factor(cell_angles):
+    cos_a = torch.cos(cell_angles)  # in natural units
+
+    return torch.sqrt(
+        torch.abs(1.0 - cos_a[..., 0] ** 2 - cos_a[..., 1] ** 2 - cos_a[..., 2] ** 2
+                  + 2.0 * cos_a[..., 0] * cos_a[..., 1] * cos_a[..., 2]))
+
+
 def compute_Ip_handedness(Ip):
     """
     determine the right or left handedness from the cross products of principal inertial axes
@@ -907,14 +915,6 @@ def grid_compute_molecule_volume_pointwise(atom_types, pos, vdw_radii_tensor, ep
             print(conv)
 
     return occupied_volume
-
-
-def batch_compute_normed_cell_vectors(data):
-    return data.cell_lengths / torch.pow(data.sym_mult[:, None] * data.mol_volume[:, None], 1 / 3)
-
-
-def batch_denorm_cell_vectors(normed_cell_vecs, data):
-    return normed_cell_vecs * torch.pow(data.sym_mult[:, None] * data.mol_volume[:, None], 1 / 3)
 
 
 def norm_circular_components(components: torch.tensor):
@@ -1323,3 +1323,37 @@ def embed_vector_to_rank3(v):
         torch.einsum('ik,nj->nijk', delta, v) + \
         torch.einsum('jk,ni->nijk', delta, v)
     return P / 3  # Normalization factor
+
+
+def fractional_transform(coords, transform_matrix):
+    """
+    Transform between fractional/cartesian bases.
+    Assumes the fractional->cartesian transform is the transpose of the box vectors
+    Args:
+        coords:
+        transform_matrix:
+
+    Returns: transformed_coords
+    """
+    if isinstance(coords, np.ndarray):
+        return fractional_transform_np(coords, transform_matrix)
+    elif torch.is_tensor(coords):
+        return fractional_transform_torch(coords, transform_matrix)
+
+
+def fractional_transform_np(coords, transform_matrix):
+    if coords.ndim == 2 and transform_matrix.ndim == 2:
+        return np.einsum('nj,ij->ni', coords, transform_matrix)
+    elif coords.ndim == 3 and transform_matrix.ndim == 2:
+        return np.einsum('nmj,ij->nmi', coords, transform_matrix)
+    elif coords.ndim == 2 and transform_matrix.ndim == 3:
+        return np.einsum('nj,nij->ni', coords, transform_matrix)
+
+
+def fractional_transform_torch(coords, transform_matrix):
+    if coords.ndim == 2 and transform_matrix.ndim == 2:
+        return torch.einsum('nj,ij->ni', (coords, transform_matrix))
+    elif coords.ndim == 3 and transform_matrix.ndim == 2:
+        return torch.einsum('nmj,ij->nmi', (coords, transform_matrix))
+    elif coords.ndim == 2 and transform_matrix.ndim == 3:
+        return torch.einsum('nj,nij->ni', (coords, transform_matrix))

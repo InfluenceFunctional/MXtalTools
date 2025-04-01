@@ -352,7 +352,7 @@ def combined_scores_plot(all_coeffs, all_scores, all_vdws, layout, sample_source
                      )
     fig.layout.margin = layout.margin
     fig.update_layout(#xaxis_range=[-vdw_cutoff, 0.1],
-                      yaxis_range=[np.quantile(all_coeffs, 0.01), np.quantile(all_coeffs, 0.99)])
+                      yaxis_range=[np.quantile(all_coeffs, 0.001), np.quantile(all_coeffs, 0.999)])
     fig.update_layout(xaxis_title='Scaled LJ Potential', yaxis_title='Packing Coefficient')
     fig.update_layout(legend=dict(yanchor="top", y=0.99, xanchor="right", x=1))
     return fig
@@ -1921,7 +1921,8 @@ def discriminator_distances_plots(pred_distance_dict, true_distance_dict, epoch_
                          symbol='sample_source', color='sample_source',
                          marginal_x='histogram', marginal_y='histogram',
                          range_color=(0, np.amax(pred_value)),
-                         opacity=opacity
+                         opacity=opacity,
+                         log_y=True
                          )
         fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=True, name='Diagonal', marker_color='rgba(0,0,0,1)'),
                       )

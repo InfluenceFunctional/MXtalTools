@@ -20,7 +20,9 @@ from mxtaltools.common.utils import softplus_shift
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
 from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE
-from mxtaltools.crystal_building.utils import get_aunit_positions, new_aunit2unit_cell, parameterize_crystal_batch, \
+from mxtaltools.crystal_building.random_crystal_sampling import sample_aunit_lengths, sample_cell_angles, \
+    sample_aunit_orientations, sample_aunit_centroids
+from mxtaltools.crystal_building.utils import get_aunit_positions, aunit2unit_cell, parameterize_crystal_batch, \
     unit_cell_to_supercell_cluster, align_mol_batch_to_standard_axes, canonicalize_rotvec
 from mxtaltools.dataset_utils.mol_building import smiles2conformer
 from mxtaltools.dataset_utils.utils import collate_data_list
@@ -533,28 +535,115 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
         self.packing_coeff = self.mol_volume * self.sym_mult / self.cell_volume
         self.density = self.mass * self.sym_mult / self.cell_volume * 1.66054  # conversion from D/A^3 to g/cm^3
 
-
-    def denorm_cell_lengths(self, normed_cell_length):
+    def sample_random_cell_lengths(self, target_packing_coeff: Optional = None):
         """
-        abc = (Z*Vol_m)^(1/3) * abc_normed
-        """
-        if 'Batch' in self.__class__.__name__:
-            return torch.pow(self.sym_mult * self.mol_volume, 1 / 3)[:, None] * normed_cell_length
-            #return normed_cell_length * self.radius[:, None]
-        else:
-            return torch.pow(self.sym_mult * self.mol_volume, 1 / 3)[None] * normed_cell_length
-            #return normed_cell_length * self.radius[None]
-
-    def norm_cell_lengths(self):
-        """
-        abc_normed = abc / (Z*Vol_m)^(1/3)
+        NOTE depends on cell angles, so must do those first if resampling both
         """
         if 'Batch' in self.__class__.__name__:
-            #return self.cell_lengths / self.radius[:, None]
-            return self.cell_lengths/ torch.pow(self.sym_mult * self.mol_volume, 1 / 3)[:, None]
+            aunit_lengths = sample_aunit_lengths(self.num_graphs,
+                                                 self.cell_angles,
+                                                 self.mol_volume,
+                                                 target_packing_coeff=target_packing_coeff)
         else:
-            #return self.cell_lengths / self.radius[None]
-            return self.cell_lengths / torch.pow(self.sym_mult * self.mol_volume, 1 / 3)[None]
+            self_batch = collate_data_list(self)
+            aunit_lengths = sample_aunit_lengths(1,
+                                                 self_batch.cell_lengths,
+                                                 self_batch.mol_volume,
+                                                 target_packing_coeff=target_packing_coeff)
+
+        self.cell_lengths = self.scale_aunit_lengths_to_unit_cell(aunit_lengths)
+
+    def sample_random_cell_angles(self):
+        if 'Batch' in self.__class__.__name__:
+            self.cell_angles = sample_cell_angles(self.num_graphs).to(self.device)
+        else:
+            self.cell_angles = sample_cell_angles(1).to(self.device)
+
+    def sample_random_aunit_orientations(self):
+        if 'Batch' in self.__class__.__name__:
+            self.aunit_orientation = sample_aunit_orientations(self.num_graphs).to(self.device)
+        else:
+            self.aunit_orientation = sample_aunit_orientations(1).to(self.device)
+
+    def sample_random_aunit_centroids(self):
+        if 'Batch' in self.__class__.__name__:
+            aunit_centroid = sample_aunit_centroids(self.num_graphs).to(self.device)
+        else:
+            aunit_centroid = sample_aunit_centroids(1).to(self.device)
+
+        self.aunit_centroid = self.scale_centroid_to_unit_cell(aunit_centroid)
+
+    def sample_random_crystal_parameters(self,
+                                         target_packing_coeff: Optional = None,
+                                         ):
+        self.sample_random_cell_angles()  # must do this one before cell lengths !!!
+        self.sample_random_cell_lengths(target_packing_coeff)
+        self.sample_random_aunit_orientations()
+        self.sample_random_aunit_centroids()
+        self.clean_cell_parameters(mode='hard')
+
+    def denorm_by_radius(self, arr):
+        """
+        arr *= mol_radius
+        assumes arr shape [n, m]
+        """
+        if 'Batch' in self.__class__.__name__:
+            return arr * self.radius[:, None]
+        else:
+            return arr * self.radius[None]
+
+    def norm_by_radius(self, arr):
+        """
+        arr /= mol_radius
+        assumes arr shape [n, m]
+        """
+        if 'Batch' in self.__class__.__name__:
+            return arr / self.radius[:, None]
+        else:
+            return arr / self.radius[None]
+
+    def build_asym_unit_dict(self):  # todo add capability to only do this for the necessary keys
+        """
+        NOTE this function is extremely slow
+        Best used during batch operations
+        """
+        asym_unit_dict = ASYM_UNITS.copy()
+        for key in asym_unit_dict:
+            asym_unit_dict[key] = torch.Tensor(asym_unit_dict[key]).to(self.device)
+        return asym_unit_dict
+
+    def scale_lengths_to_aunit(self):
+        """
+        scale unit cell lengths to the asymmetric unit, according to the canonical
+        asymmetric unit shape within the unit cell.
+        """
+        if 'Batch' in self.__class__.__name__:
+            asym_unit_dict = self.build_asym_unit_dict()
+
+            return self.cell_lengths * torch.stack([asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
+        else:
+            return self.cell_lengths * torch.Tensor(ASYM_UNITS[str(int(self.sg_ind))]).to(self.device)
+
+    def scale_aunit_lengths_to_unit_cell(self, aunit_lengths):
+        """
+        input asymmetric unit lengths
+        rescale these for the specific ranges according to each space group
+        only space groups in asym_unit_dict will work - not all have been manually encoded
+        this approach will not work for asymmetric units which are not neat parallelpipeds
+        Parameters
+        ----------
+        asym_unit_dict
+        mol_position
+        sg_inds
+
+        Returns
+        -------
+        """
+        if 'Batch' in self.__class__.__name__:
+            asym_unit_dict = self.build_asym_unit_dict()
+            return aunit_lengths / torch.stack([asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
+        else:
+            return aunit_lengths / torch.Tensor(ASYM_UNITS[str(int(self.sg_ind))]).to(self.device)
 
     def scale_centroid_to_aunit(self):
         """
@@ -571,14 +660,12 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
         Returns
         -------
         """
-        asym_unit_dict = ASYM_UNITS.copy()
-        for key in asym_unit_dict:
-            asym_unit_dict[key] = torch.Tensor(asym_unit_dict[key]).to(self.device)
 
         if 'Batch' in self.__class__.__name__:
+            asym_unit_dict = self.build_asym_unit_dict()
             return self.aunit_centroid / torch.stack([asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
         else:
-            return self.aunit_centroid / asym_unit_dict[str(int(self.sg_ind))]
+            return self.aunit_centroid / torch.Tensor(ASYM_UNITS[str(int(self.sg_ind))]).to(self.device)
 
     def scale_centroid_to_unit_cell(self, normed_centroid):
         """
@@ -595,80 +682,15 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
         Returns
         -------
         """
-        asym_unit_dict = ASYM_UNITS.copy()
-        for key in asym_unit_dict:
-            asym_unit_dict[key] = torch.Tensor(asym_unit_dict[key]).to(self.device)
-
         if 'Batch' in self.__class__.__name__:
+            asym_unit_dict = self.build_asym_unit_dict()
             return normed_centroid * torch.stack([asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
         else:
-            return normed_centroid * asym_unit_dict[str(int(self.sg_ind))]
-
-    def compute_normed_cell_parameters(self):
-        return torch.cat(
-            [self.norm_cell_lengths(), self.cell_angles,
-             self.scale_centroid_to_aunit(), self.aunit_orientation],
-            dim=-1
-        )
-
-    def compute_denormed_cell_parameters(self, normed_cell_parameters):
-        return torch.cat(
-            [self.denorm_cell_lengths(normed_cell_parameters[..., :3]),
-             self.cell_angles,
-             self.scale_centroid_to_unit_cell(normed_cell_parameters[..., 6:9]),
-             self.aunit_orientation],
-            dim=-1
-        )
-
-    def standardize_normed_cell_vectors(self,
-                                        normed_lengths: torch.Tensor,
-                                        cell_angles: torch.Tensor,
-                                        cell_means: OptTensor = None,
-                                        cell_stds: OptTensor = None):
-        if cell_means is None:
-            means = torch.tensor(  # todo replace by call to constants file
-                [1.0411, 1.1640, 1.4564, 1.5619, 1.5691, 1.5509],  # use triclinic statistics
-                dtype=torch.float32, device=self.device)
-
-        else:
-            means = cell_means
-
-        if cell_stds is None:
-            stds = torch.tensor(
-                [0.3846, 0.4280, 0.4864, 0.2363, 0.2046, 0.2624],
-                dtype=torch.float32, device=self.device)
-        else:
-            stds = cell_stds
-
-        if self.is_batch:
-            stds = stds.unsqueeze(0)
-            means = means.unsqueeze(0)
-
-        return (torch.cat([normed_lengths, cell_angles], dim=-1) - means) / stds
-
-    def destandardize_normed_cell_vectors(self,
-                                          normed_lengths: torch.Tensor,
-                                          cell_angles: torch.Tensor,
-                                          cell_means: OptTensor = None,
-                                          cell_stds: OptTensor = None):
-        if cell_means is None:  # these norms assume incoming cell lengths are pre-normed
-            means = torch.tensor(
-                [1.0411, 1.1640, 1.4564, 1.5619, 1.5691, 1.5509],
-                dtype=torch.float32, device=self.device)
-
-        else:
-            means = cell_means
-        if cell_stds is None:
-            stds = torch.tensor(
-                [0.3846, 0.4280, 0.4864, 0.2363, 0.2046, 0.2624],
-                dtype=torch.float32, device=self.device)
-        else:
-            stds = cell_stds
-        return torch.cat([normed_lengths, cell_angles], dim=-1) * stds + means
+            return normed_centroid * torch.Tensor(ASYM_UNITS[str(int(self.sg_ind))]).to(self.device)
 
     def noise_cell_parameters(self, noise_level: float):
         # standardize
-        std_cell_params = self.standardized_cell_parameters()
+        std_cell_params = self.standardize_cell_parameters()
         # noise
         new_std_cell_params = std_cell_params + torch.randn_like(std_cell_params) * noise_level
         # destandardize
@@ -680,20 +702,28 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
         # refresh box
         self.box_analysis()
 
+    def standardize_cell_parameters(self):
+        standardized_aunit_lengths = self.standardize_cell_lengths()
+        standardized_cell_angles = self.standardize_cell_angles()
+        standardized_aunit_centroid = self.standardize_aunit_position()
+        standardized_orientation = self.standardize_aunit_orientation()
+
+        return torch.cat([standardized_aunit_lengths,
+                          standardized_cell_angles,
+                          standardized_aunit_centroid,
+                          standardized_orientation], dim=1)
+
     def destandardize_cell_parameters(self, std_cell_params):
-        (std_cell_lengths,
+        (std_aunit_lengths,
          std_cell_angles,
          std_aunit_positions,
          std_aunit_orientations) = std_cell_params.split(3, dim=1)
 
-        normed_cell_lengths, cell_angles = self.destandardize_normed_cell_vectors(
-            std_cell_lengths,
-            std_cell_angles
-        ).split(3, dim=1)
+        cell_lengths = self.destandardize_cell_lengths(std_aunit_lengths)
+        cell_angles = self.destandardize_cell_angles(std_cell_angles)
         aunit_positions = self.destandardize_aunit_position(std_aunit_positions)
         aunit_orientations = self.destandardize_aunit_orientation(std_aunit_orientations)
 
-        cell_lengths = self.denorm_cell_lengths(normed_cell_lengths)
         return torch.cat([
             cell_lengths, cell_angles, aunit_positions, aunit_orientations
         ], dim=1)
@@ -711,14 +741,12 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
                 align_to_standardized_orientation=True,
                 mol_handedness=self.aunit_handedness,
             )
-            #assert False, "aunit posing not yet implemented for single crystals"
 
     def build_unit_cell(self):
         if 'Batch' in self.__class__.__name__:
-            self.unit_cell_pos = new_aunit2unit_cell(self)  # keep in numpy format
+            self.unit_cell_pos = aunit2unit_cell(self)  # keep in numpy format
         else:
-            self.unit_cell_pos = new_aunit2unit_cell(collate_data_list([self]))
-            #assert False, "unit cell construction not yet implemented for single crystals"
+            self.unit_cell_pos = aunit2unit_cell(collate_data_list([self]))
 
     def build_cluster(self, cutoff: float = 6, supercell_size: int = 10):
         if 'Batch' in self.__class__.__name__:
@@ -727,7 +755,6 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
             crystal_batch = collate_data_list([self])
             crystal_batch.build_unit_cell()
             return unit_cell_to_supercell_cluster(crystal_batch, supercell_size)
-            #False, "unit cell construction not yet implemented for single crystals"
 
     def de_cluster(self):
         # delete cluster information and reset this object as a molecule
@@ -925,18 +952,55 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
                           self.aunit_centroid,
                           self.aunit_orientation], dim=1)
 
-    def standardized_cell_parameters(self):
-        # todo more sophisticated standardization here
-        # norm cell lengths by aunit volume
-        normed_lengths = self.norm_cell_lengths()
-        standardized_aunit_centroid = self.standardize_aunit_position()
-        standardized_orientation = self.standardize_aunit_orientation()
-        standardized_box_params = self.standardize_normed_cell_vectors(
-            normed_lengths, self.cell_angles
-        )
-        return torch.cat([standardized_box_params,
-                          standardized_aunit_centroid,
-                          standardized_orientation], dim=1)
+    def standardize_cell_lengths(self):
+        """
+        Standardize the cell lengths tensor
+        1. convert to asymmetric unit basis
+        2. norm by mol radius
+        3. standardize by stats
+        mean = [1.0563, 0.7978, 1.7570]
+        std = [0.6001, 0.5115, 0.7147]
+        """
+        aunit_lengths = self.scale_lengths_to_aunit()
+        normed_aunit_lengths = self.norm_by_radius(aunit_lengths)
+        mean = torch.tensor([1.0563, 0.7978, 1.7570], dtype=torch.float32, device=self.device)
+        std = torch.tensor([0.6001, 0.5115, 0.7147], dtype=torch.float32, device=self.device)
+        return (normed_aunit_lengths - mean[None, :]) / std[None, :]
+
+    def destandardize_cell_lengths(self, std_aunit_lengths):
+        """
+        Destandardize the cell lengths tensor
+        1. destandardize by stats
+        2. denorm by mol radius
+        3. convert to unit cell basis
+        mean = [1.0563, 0.7978, 1.7570]
+        std = [0.6001, 0.5115, 0.7147]
+        """
+        mean = torch.tensor([1.0563, 0.7978, 1.7570], dtype=torch.float32, device=self.device)
+        std = torch.tensor([0.6001, 0.5115, 0.7147], dtype=torch.float32, device=self.device)
+        normed_aunit_lengths = std_aunit_lengths * std[None, :] + mean[None, :]
+        aunit_lengths = self.denorm_by_radius(normed_aunit_lengths)
+        return self.scale_aunit_lengths_to_unit_cell(aunit_lengths)
+
+    def standardize_cell_angles(self):
+        """
+        Using triclinic CSD stats
+        mean = [1.5656, 1.5728, 1.5579]
+        std = [0.2339, 0.2075, 0.2598]
+        """
+        mean = torch.tensor([1.5656, 1.5728, 1.5579], dtype=torch.float32, device=self.device)
+        std = torch.tensor([0.2339, 0.2075, 0.2598], dtype=torch.float32, device=self.device)
+        return (self.cell_angles - mean[None, :]) / std[None, :]
+
+    def destandardize_cell_angles(self, std_cell_angles):
+        """
+        Using triclinic CSD stats
+        mean = [1.5656, 1.5728, 1.5579]
+        std = [0.2339, 0.2075, 0.2598]
+        """
+        mean = torch.tensor([1.5656, 1.5728, 1.5579], dtype=torch.float32, device=self.device)
+        std = torch.tensor([0.2339, 0.2075, 0.2598], dtype=torch.float32, device=self.device)
+        return std_cell_angles * std[None, :] + mean[None, :]
 
     def standardize_aunit_position(self):
         """
@@ -959,7 +1023,6 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
         return self.scale_centroid_to_unit_cell(std_aunit_position * aunit_std + aunit_mean)
 
     def standardize_aunit_orientation(self):
-        # standardize aunit orientation
         """
         num_graphs = 100000
         random_vectors = torch.randn(size=(num_graphs, 3))
@@ -1049,7 +1112,7 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
                                                     embedding_type,
                                                     encoder
                                                     )
-            scaled_params = self.standardized_cell_parameters()
+            scaled_params = self.standardize_cell_parameters()
             return torch.cat([embedding, scaled_params], dim=1)
             #return torch.cat([embedding, scaled_params[..., :-3]], dim=1)
 
