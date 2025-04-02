@@ -1895,7 +1895,7 @@ def score_vs_distance_plot(pred_distance_dict, scores_dict):
 
 def discriminator_distances_plots(pred_distance_dict, true_distance_dict, epoch_stats_dict):
     if epoch_stats_dict['discriminator_fake_predicted_distance'] is not None:
-        tgt_value = np.concatenate(list(true_distance_dict.values()))
+        tgt_value = np.concatenate(list(true_distance_dict.values())) + 1e-4
         pred_value = np.concatenate(list(pred_distance_dict.values()))
 
         # filter out 'true' samples
@@ -1914,7 +1914,7 @@ def discriminator_distances_plots(pred_distance_dict, true_distance_dict, epoch_
         sample_sources = pred_distance_dict.keys()
         sample_source = np.concatenate(
             [[stype for _ in range(len(pred_distance_dict[stype]))] for stype in sample_sources])
-        scatter_dict = {'true_distance': tgt_value + 1e-4, 'predicted_distance': pred_value, 'sample_source': sample_source}
+        scatter_dict = {'true_distance': tgt_value, 'predicted_distance': pred_value, 'sample_source': sample_source}
         df = pd.DataFrame.from_dict(scatter_dict)
         fig = px.scatter(df,
                          x='true_distance', y='predicted_distance',
@@ -1922,7 +1922,7 @@ def discriminator_distances_plots(pred_distance_dict, true_distance_dict, epoch_
                          marginal_x='histogram', marginal_y='histogram',
                          range_color=(0, np.amax(pred_value)),
                          opacity=opacity,
-                         log_x = True, log_y=True
+                         log_x=True, log_y=True
                          )
         fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=True, name='Diagonal', marker_color='rgba(0,0,0,1)'),
                       )
