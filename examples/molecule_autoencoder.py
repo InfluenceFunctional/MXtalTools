@@ -22,7 +22,7 @@ test_smiles = [
 if __name__ == '__main__':
     """configs"""
     device = 'cpu'
-    checkpoint = Path(r"../models/autoencoder.pt")
+    checkpoint = Path(r"../checkpoints/autoencoder.pt")
 
     """
     First we load some molecules, and ensure they are each centered on the origin.

@@ -10,7 +10,7 @@ from mxtaltools.models.utils import softmax_and_score
 if __name__ == '__main__':
     device = 'cpu'
     mini_dataset_path = '../mini_datasets/mini_CSD_dataset.pt'
-    checkpoint = r"../models/crystal_score.pt"
+    checkpoint = r"../checkpoints/crystal_score.pt"
     space_groups_to_sample = ["P1", "P-1", "P21/c", "C2/c", "P212121"]
     sym_info = init_sym_info()
 

@@ -34,7 +34,7 @@ test_smiles = [
 if __name__ == '__main__':
     """configs"""
     device = 'cpu'
-    checkpoint = Path(r"../models/cp_regressor.pt")
+    checkpoint = Path(r"../checkpoints/cp_regressor.pt")
     num_samples = 50
 
     """

@@ -266,8 +266,8 @@ def score_vs_vdw_plot(all_scores, all_vdws, layout, plot_color_dict, sample_type
     rrange = np.logspace(3, 0, len(viridis))
     cscale = [[1 / rrange[i], viridis[i]] for i in range(len(rrange))]
     cscale[0][0] = 0
-    fig.add_trace(go.Histogram2d(x=np.clip(all_scores, a_min=np.quantile(all_scores, 0.05), a_max=np.amax(all_scores)),
-                                 y=all_vdws,
+    fig.add_trace(go.Histogram2d(x=np.clip(all_scores, a_min=np.quantile(all_scores, 0.001), a_max=np.amax(all_scores)),
+                                 y=np.clip(all_vdws, a_min=np.amin(all_vdws), a_max=np.quantile(all_vdws, 0.999)),
                                  showscale=False,
                                  nbinsy=50, nbinsx=200,
                                  colorscale=cscale,
@@ -310,8 +310,8 @@ def score_vs_volume_plot(all_coeffs, all_scores, bandwidth1, layout, packing_coe
     rrange = np.logspace(3, 0, len(viridis))
     cscale = [[1 / rrange[i], viridis[i]] for i in range(len(rrange))]
     cscale[0][0] = 0
-    fig.add_trace(go.Histogram2d(x=np.clip(all_scores, a_min=np.quantile(all_scores, 0.05), a_max=np.amax(all_scores)),
-                                 y=np.clip(all_coeffs, a_min=0, a_max=1),
+    fig.add_trace(go.Histogram2d(x=np.clip(all_scores, a_min=np.quantile(all_scores, 0.001), a_max=np.amax(all_scores)),
+                                 y=np.clip(all_coeffs, a_min=0, a_max=1.1),
                                  showscale=False,
                                  nbinsy=50, nbinsx=200,
                                  colorscale=cscale,
