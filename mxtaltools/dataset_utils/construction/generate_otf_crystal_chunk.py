@@ -18,7 +18,7 @@ if __name__ == '__main__':
     chunk_ind = args.chunk_ind
 
     # initialize
-    space_group = 1
+    space_group = 2
     num_smiles = 100
     num_chunks = 1
     smiles_path = "/scratch/mk8347/zinc22"

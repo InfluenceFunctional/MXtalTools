@@ -18,7 +18,7 @@ def standalone_gradient_descent_optimization(
         optimizer_func,
         show_tqdm: bool = False,
         quantile_to_optim: float = 0.9,
-        es_scaling_factor: float = 100,
+        es_scaling_factor: float = 10,
 ):
     """
     do a local optimization via gradient descent on some score function
@@ -146,7 +146,9 @@ def standalone_opt_random_crystals(
     # extract optimized samples
     opt_samples = samples_record[-1]
 
-    opt_samples = [sample for sample in opt_samples if sample.lj_pot < 0]  # filter bound states
+    # filter unbound states
+    opt_samples = [sample for sample in opt_samples if sample.lj_pot < 0]
+
     # sample noisily about optimized minima
     nearby_samples = sample_about_crystal(opt_samples,
                                           noise_level=0.05,  # empirically gets us an LJ std about 3

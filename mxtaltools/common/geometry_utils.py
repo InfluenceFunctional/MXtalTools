@@ -986,8 +986,10 @@ def enforce_crystal_system(lattice_lengths,
 
     if symmetries_dict is None:
         symmetries_dict = init_sym_info()
-
-    lattices = [symmetries_dict['lattice_type'][int(sg_inds[n])] for n in range(len(sg_inds))]
+    if sg_inds.ndim == 0:
+        lattices = [symmetries_dict['lattice_type'][int(sg_inds)]]
+    else:
+        lattices = [symmetries_dict['lattice_type'][int(sg_inds[n])] for n in range(len(lattice_lengths))]
 
     pi_tensor = torch.ones_like(lattice_lengths[0, 0]) * torch.pi
 

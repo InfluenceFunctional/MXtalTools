@@ -1,6 +1,6 @@
 import copy
 from collections.abc import Mapping, Sequence
-from typing import (Any, Dict, Iterable, List, NamedTuple, Optional)
+from typing import (Any, Dict, Iterable, List, NamedTuple, Optional, Union)
 
 import numpy as np
 import torch
@@ -442,7 +442,7 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
 
     def __init__(self,
                  molecule: Optional[MolData] = None,
-                 sg_ind: Optional[int] = None,
+                 sg_ind: Optional[Union[int, torch.LongTensor]] = None,
                  cell_lengths: Optional[torch.Tensor] = None,
                  cell_angles: Optional[torch.Tensor] = None,
                  aunit_centroid: Optional[torch.Tensor] = None,
@@ -473,7 +473,10 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
         if identifier is not None:
             self.identifier = identifier
         if sg_ind is not None:
-            self.sg_ind = sg_ind
+            if not torch.is_tensor(sg_ind):
+                self.sg_ind = torch.tensor(sg_ind, dtype=torch.long, device=self.device)
+            else:
+                self.sg_ind = sg_ind.long().to(self.device)
             if nonstandard_symmetry:  # set as np stack for correct collation behavior (we don't want batches to stack)
                 if symmetry_operators is not None:
                     self.symmetry_operators = symmetry_operators
@@ -545,7 +548,7 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
                                                  self.mol_volume,
                                                  target_packing_coeff=target_packing_coeff)
         else:
-            self_batch = collate_data_list(self)
+            self_batch = collate_data_list([self])
             aunit_lengths = sample_aunit_lengths(1,
                                                  self_batch.cell_lengths,
                                                  self_batch.mol_volume,
@@ -1066,7 +1069,9 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
          self.aunit_centroid, self.aunit_orientation) = (
             cell_parameters.split(3, dim=1))
 
-    def build_and_analyze(self, return_cluster, noise: Optional[float] = None):
+    def build_and_analyze(self,
+                          return_cluster: Optional[bool] = False,
+                          noise: Optional[float] = None):
         """
         full procedure for building and analyzing a molecular crystal
         """

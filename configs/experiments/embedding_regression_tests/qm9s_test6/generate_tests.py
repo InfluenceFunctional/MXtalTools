@@ -38,7 +38,7 @@ targets = [
 config_list = [
     [  # 0 - baseline
         models[0], False, targets[0],
-        128, 4, 0, None, 10000000,
+        128, 4, 0, None, 10000000,  # the 128 here is assigning to nothing - should be hidden_dim, which was 256
         'scalar', 1, 'qm9_dataset.pt'
     ],
 ]
