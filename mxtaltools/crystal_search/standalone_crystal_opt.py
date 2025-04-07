@@ -156,7 +156,7 @@ def standalone_opt_random_crystals(
     crystal_batch.orient_molecule(mode='standardized')
 
     # print("doing opt")
-    standalone_gradient_descent_optimization(
+    samples_record = standalone_gradient_descent_optimization(
         init_state,
         crystal_batch.clone(),
         max_num_steps=1000,
