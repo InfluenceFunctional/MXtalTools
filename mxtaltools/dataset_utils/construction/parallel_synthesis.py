@@ -271,10 +271,16 @@ def process_smiles_to_crystal_opt(lines: list,
                 aunit_handedness=int(aunit_handedness[ind]),
                 identifier=sample.smiles,
             )
-            crystal.sample_random_crystal_parameters()
-            while crystal.packing_coeff > 1:  # force not-too dense crystals
-                crystal.cell_lengths *= 1.1
-                crystal.box_analysis()
+            # initiate very diffuse
+            converged = False
+            while not converged:
+                crystal.sample_random_crystal_parameters(target_packing_coeff=0.1)
+                # while crystal.packing_coeff > 1:  # force not-too dense crystals
+                #     crystal.cell_lengths *= 1.1
+                #     crystal.box_analysis()
+                lj_pot, _, _ = crystal.build_and_analyze()
+                if lj_pot <= 0:
+                    converged = True
             crystals.append(crystal)
         crystal_batch = collate_data_list(crystals)
         crystal_batch.clean_cell_parameters()
@@ -283,7 +289,7 @@ def process_smiles_to_crystal_opt(lines: list,
         samples = standalone_opt_random_crystals(
             crystal_batch.clone().cpu(),
             crystal_batch.cell_parameters().clone().cpu(),
-            opt_eps=1e-1,
+            opt_eps=1e-5,
             post_scramble_each=post_scramble_each
         )
 

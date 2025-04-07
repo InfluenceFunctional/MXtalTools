@@ -572,6 +572,30 @@ def cell_vol_torch(v: torch.tensor, a: torch.tensor):
 
     return vol
 
+def batch_cell_vol_torch(v: torch.tensor, a: torch.tensor):
+    """
+    compute the volume of a parallelpiped given basis vector lengths and internal angles
+    Parameters
+    ----------
+    v : torch.tensor(3)
+        [a b c]
+    a : torch.tensor(3)
+        [alpha beta gamma]
+
+    Returns
+    -------
+    cell_volume : float
+
+    """
+    ''' Calculate cos and sin of cell angles '''
+    cos_a = torch.cos(a)  # in natural units
+
+    ''' Calculate volume of the unit cell '''
+    vol = v[:, 0] * v[:, 1] * v[:, 2] * torch.sqrt(
+        torch.abs(1.0 - cos_a[:, 0] ** 2 - cos_a[:, 1] ** 2 - cos_a[:, 2] ** 2 + 2.0 * cos_a[:, 0] * cos_a[:, 1] * cos_a[:, 2]))
+
+    return vol
+
 
 def cell_vol_angle_factor(cell_angles):
     cos_a = torch.cos(cell_angles)  # in natural units

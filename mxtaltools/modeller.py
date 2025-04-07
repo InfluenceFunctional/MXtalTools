@@ -1989,13 +1989,19 @@ class Modeller:
         # reset new dataset as simple tensors
         embedding, ens = self.extract_pd_data(data_list)
         dataset = SimpleDataset(embedding, ens)
-        data_loader = DataLoader(dataset,
+        embedding_data_loader = DataLoader(dataset,
                                  batch_size=data_loader.batch_size,
                                  shuffle=True,
                                  pin_memory=data_loader.pin_memory,
                                  num_workers=data_loader.num_workers)
 
-        return data_loader
+        if not hasattr(self.models_dict['proxy_discriminator'], 'target_std'):
+            self.models_dict['proxy_discriminator'].target_std = ens.std()
+            self.models_dict['proxy_discriminator'].target_mean = ens.mean()
+
+        del data_loader
+
+        return embedding_data_loader
 
     #
     # def generator_epoch(self,  # todo rewrite with our new crystal methods
@@ -2140,19 +2146,6 @@ class Modeller:
         execute a complete training step for the discriminator
         compute losses, do reporting, update gradients
         """
-        if not hasattr(self.models_dict['proxy_discriminator'], 'target_std'):
-            if self.config.proxy_discriminator.train_on_mace:
-                self.models_dict['proxy_discriminator'].target_std = .54
-                self.models_dict['proxy_discriminator'].target_mean = -0.94
-            else:  # LJ statistics
-                self.models_dict['proxy_discriminator'].target_std = 4.715
-                self.models_dict['proxy_discriminator'].target_mean = -7.978
-
-        # if self.config.proxy_discriminator.embedding_type == 'autoencoder' and self.config.proxy_discriminator.train_encoder:
-        #     crystal_batch.embedding = crystal_batch.do_embedding(
-        #         self.config.proxy_discriminator.embedding_type,
-        #         self.models_dict['autoencoder']
-        #         )
 
         prediction = self.models_dict['proxy_discriminator'](x=embedding)[:, 0]
 

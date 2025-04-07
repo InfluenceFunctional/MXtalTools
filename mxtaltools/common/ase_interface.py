@@ -49,7 +49,8 @@ def ase_mol_from_crystaldata(crystal_batch,
                              highlight_canonical_conformer: bool = False,
                              mode=None,
                              cutoff: float = 4,
-                             return_crystal: bool = False):
+                             return_crystal: bool = False,
+                             highlight_mol_ind: bool=False):
     """
     Extract an atomic structure from a Crystaldata object according to its batch index, and convert it into an ase mol object.
     Several options for visualization of crystals.
@@ -143,8 +144,11 @@ def ase_mol_from_crystaldata(crystal_batch,
 
     if highlight_canonical_conformer:  # highlight the atom aux index
         numbers = crystal_batch.aux_ind[atom_inds].cpu().detach().numpy() + 6
+    elif highlight_mol_ind:
+        numbers = crystal_batch.mol_ind[atom_inds].cpu().detach().numpy() + 6
     else:
         numbers = crystal_batch.z[atom_inds].cpu().detach().numpy()
+
 
     if hasattr(crystal_batch, "T_fc"):
         if index is not None:

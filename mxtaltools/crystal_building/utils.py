@@ -1,21 +1,13 @@
-import sys
-from typing import Optional
-
 import numpy as np
 import torch
-from scipy.spatial.transform import Rotation
 from torch import Tensor
 from torch.nn.utils import rnn as rnn
 from torch_geometric.typing import OptTensor
 from torch_scatter import scatter
 
-from mxtaltools.common.geometry_utils import single_molecule_principal_axes_torch, \
-    list_molecule_principal_axes_torch, compute_Ip_handedness, rotvec2sph, batch_compute_fractional_transform, \
-    get_batch_centroids, \
+from mxtaltools.common.geometry_utils import compute_Ip_handedness, get_batch_centroids, \
     rotvec2rotmat, batch_molecule_principal_axes_torch, extract_rotmat, apply_rotation_to_batch, rotmat2rotvec, \
     fractional_transform
-from mxtaltools.models.functions.radial_graph import radius
-
 
 
 def generate_sorted_fractional_translations(supercell_size):
@@ -42,8 +34,8 @@ def generate_sorted_fractional_translations(supercell_size):
     # sort fractional vectors from closest to furthest from central unit cell
     return fractional_translations[torch.argsort(fractional_translations.abs().sum(1))]
 
-def unit_cell_to_supercell_cluster(crystal_batch, cutoff: float = 6, supercell_size: int = 10):
 
+def unit_cell_to_supercell_cluster(crystal_batch, cutoff: float = 6, supercell_size: int = 10):
     cc_centroids = fractional_transform(crystal_batch.aunit_centroid, crystal_batch.T_fc)
     good_translations, good_translations_bool = get_cart_translations(cc_centroids,
                                                                       crystal_batch.T_fc,
@@ -118,10 +110,11 @@ def unit_cell_to_supercell_cluster(crystal_batch, cutoff: float = 6, supercell_s
                                                        torch.cumsum(mols_per_cluster, dim=0)])[:-1].repeat_interleave(
         torch.diff(cluster_batch.ptr), dim=0)
     mol_centroids = scatter(cluster_batch.pos, flat_mol_inds, reduce='mean', dim=0)
-    cc_centroids = scatter(cluster_batch.pos[cluster_batch.aux_ind==0], crystal_batch.batch, reduce='mean', dim=0)
+    cc_centroids = scatter(cluster_batch.pos[cluster_batch.aux_ind == 0], crystal_batch.batch, reduce='mean', dim=0)
 
     # get the mol indices within the widest conv cutoff
-    molwise_batch = torch.arange(len(cc_centroids), device=cc_centroids.device).repeat_interleave(mols_per_cluster, dim=0)
+    molwise_batch = torch.arange(len(cc_centroids), device=cc_centroids.device).repeat_interleave(mols_per_cluster,
+                                                                                                  dim=0)
     mol_inds = torch.arange(len(molwise_batch), device=cluster_batch.device)
     mol_to_cc_dist = torch.linalg.norm(mol_centroids - cc_centroids.repeat_interleave(mols_per_cluster, dim=0), dim=1)
 
@@ -343,7 +336,6 @@ def identify_canonical_asymmetric_unit(T_cf, asym_unit_dict, sg_ind, unit_cell_c
     return canonical_conformer_index, centroids_fractional, well_defined_asym_unit
 
 
-
 def align_mol_batch_to_standard_axes(mol_batch, handedness=None):
     """
     align principal inertial axes of molecules in a crystaldata object to the xyz or xy(-z) axes
@@ -364,7 +356,10 @@ def align_mol_batch_to_standard_axes(mol_batch, handedness=None):
 
     if handedness is not None:  # otherwise, custom
         # alignment vector is (x,y,z) by default, or (-x,y,z) for left-handed structures
-        eye[:, 0, 0] = handedness.flatten()  # flatten - in case it's higher dimensional [n,1]
+        if torch.is_tensor(handedness):
+            eye[:, 0, 0] = handedness.flatten()  # flatten - in case it's higher dimensional [n,1]
+        else:
+            eye[:, 0, 0] = handedness
 
     # rotation is p_align = R @ p_orig,
     # R = p_align \ p_orig
@@ -443,6 +438,7 @@ def aunit2unit_cell(mol_batch):
 
     return reference_cell_list
 
+
 def descale_asymmetric_unit(asym_unit_dict, mol_position, sg_inds):
     """
     input fractional coordinates are scaled on 0-1
@@ -480,7 +476,6 @@ def rescale_asymmetric_unit(asym_unit_dict, mol_position, sg_inds):
     return mol_position / torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_inds])
 
 
-
 def get_aunit_positions(mol_batch,
                         align_to_standardized_orientation: bool = True,
                         mol_handedness: OptTensor = None,
@@ -504,5 +499,3 @@ def get_aunit_positions(mol_batch,
                      + fractional_transform(mol_batch.aunit_centroid, mol_batch.T_fc)[mol_batch.batch])
 
     return mol_batch.pos
-
-

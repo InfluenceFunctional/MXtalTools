@@ -9,8 +9,8 @@ from mxtaltools.dataset_utils.construction.parallel_synthesis import otf_synthes
 if __name__ == '__main__':
     # initialize
     debug = True
-    space_group = 2
-    num_smiles = 10
+    space_group = 1
+    num_smiles = 100
     num_processes = 1
     new_dataset_name = f'pd_dataset_sg{space_group}'
 

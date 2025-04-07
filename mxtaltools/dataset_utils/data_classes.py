@@ -550,7 +550,7 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
         else:
             self_batch = collate_data_list([self])
             aunit_lengths = sample_aunit_lengths(1,
-                                                 self_batch.cell_lengths,
+                                                 self_batch.cell_angles,
                                                  self_batch.mol_volume,
                                                  target_packing_coeff=target_packing_coeff)
 
@@ -966,8 +966,11 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
         """
         aunit_lengths = self.scale_lengths_to_aunit()
         normed_aunit_lengths = self.norm_by_radius(aunit_lengths)
+        # flatten stats across length dimensions
         mean = torch.tensor([1.0563, 0.7978, 1.7570], dtype=torch.float32, device=self.device)
         std = torch.tensor([0.6001, 0.5115, 0.7147], dtype=torch.float32, device=self.device)
+        mean = mean.mean() * torch.ones_like(mean)
+        std = std.mean() * torch.ones_like(std)
         return (normed_aunit_lengths - mean[None, :]) / std[None, :]
 
     def destandardize_cell_lengths(self, std_aunit_lengths):
@@ -979,8 +982,11 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
         mean = [1.0563, 0.7978, 1.7570]
         std = [0.6001, 0.5115, 0.7147]
         """
+        # flatten stats across length dimensions
         mean = torch.tensor([1.0563, 0.7978, 1.7570], dtype=torch.float32, device=self.device)
         std = torch.tensor([0.6001, 0.5115, 0.7147], dtype=torch.float32, device=self.device)
+        mean = mean.mean() * torch.ones_like(mean)
+        std = std.mean() * torch.ones_like(std)
         normed_aunit_lengths = std_aunit_lengths * std[None, :] + mean[None, :]
         aunit_lengths = self.denorm_by_radius(normed_aunit_lengths)
         return self.scale_aunit_lengths_to_unit_cell(aunit_lengths)
@@ -1071,16 +1077,19 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
 
     def build_and_analyze(self,
                           return_cluster: Optional[bool] = False,
-                          noise: Optional[float] = None):
+                          noise: Optional[float] = None,
+                          cutoff: float = 6,
+                          supercell_size: int = 10
+                          ):
         """
         full procedure for building and analyzing a molecular crystal
         """
-        cluster_batch = self.mol2cluster()
+        cluster_batch = self.mol2cluster(cutoff, supercell_size)
 
         if noise is not None:
             cluster_batch.pos += torch.randn_like(cluster_batch.pos) * noise
 
-        cluster_batch.construct_radial_graph()
+        cluster_batch.construct_radial_graph(cutoff=cutoff)
         self.lj_pot, self.scaled_lj_pot = cluster_batch.compute_LJ_energy()
         self.es_pot = cluster_batch.compute_ES_energy()
         if return_cluster:
@@ -1088,10 +1097,10 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
         else:
             return self.lj_pot, self.es_pot, self.scaled_lj_pot
 
-    def mol2cluster(self):
+    def mol2cluster(self,  cutoff: float = 6, supercell_size: int = 10):
         self.pose_aunit()
         self.build_unit_cell()
-        return self.build_cluster()
+        return self.build_cluster(cutoff, supercell_size)
 
     def reset_sg_info(self, sg_ind):
         if isinstance(sg_ind, int):
@@ -1119,8 +1128,6 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
                                                     )
             scaled_params = self.standardize_cell_parameters()
             return torch.cat([embedding, scaled_params], dim=1)
-            #return torch.cat([embedding, scaled_params[..., :-3]], dim=1)
-
         else:
             assert False, "Crystal embedding not implemented for single samples"
 

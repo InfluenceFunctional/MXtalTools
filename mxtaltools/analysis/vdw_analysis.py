@@ -81,9 +81,7 @@ def compute_lj_pot(dist_dict, vdw_radii):
 def scale_edgewise_vdw_pot(lj_pot: Union[np.ndarray, torch.tensor],
                            clip_max: float = 100) \
         -> Union[np.ndarray, torch.tensor]:
-    """
 
-    """
     if torch.is_tensor(lj_pot):
         scaled_lj_pot = torch.log(2 + lj_pot) / np.log(2) - 1
         #scaled_lj_pot = lj_pot.clone()

@@ -1,7 +1,7 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/discriminator.yaml #/experiments/base/generator.yaml #/experiments/base/discriminator.yaml
-dataset_name: test_CSD_dataset.pt #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
+base_config_path: /experiments/base/proxy_discriminator.yaml #/experiments/base/generator.yaml #/experiments/base/discriminator.yaml
+dataset_name: test_pd_dataset_sg2_test.pt #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
 extra_test_set_name: null
 save_checkpoints: True
 anomaly_detection: False
@@ -38,8 +38,8 @@ min_batch_size: 10
 max_batch_size: 500
 batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
-minimum_epochs: 5
-max_epochs: 5 # 0 epochs takes us straight to sampling/evaluation (WIP)
+minimum_epochs: 10000
+max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (WIP)
 history: 50 # for convergence checks
 gradient_norm_clip: 1
 extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
@@ -61,7 +61,7 @@ model_paths:
   discriminator: null #best_discriminator_experiments_dev_27-09-19-24-55
   generator: null #cluster/best_generator_experiments_generator_tests_run1_dev_8_18-09-12-52-04
   regressor: null #'volume_model.pt'
-  autoencoder: null #cluster/best_autoencoder_experiments_autoencoder_tests_otf_zinc_test9_2_24-01-09-15-05
+  autoencoder: cluster/best_autoencoder_experiments_autoencoder_tests_otf_zinc_test9_2_24-01-09-15-05
   embedding_regressor: null
   polymorph_classifier: null # 'best_polymorph_classifier_experiments_dev_25-06-17-41-37'
 
