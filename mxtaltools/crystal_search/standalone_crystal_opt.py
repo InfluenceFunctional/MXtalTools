@@ -31,7 +31,7 @@ def standalone_gradient_descent_optimization(
     max_lr_target_time = max_num_steps // 10
     max_lr = lr * 100
     grow_lambda = (max_lr / lr) ** (1 / max_lr_target_time)
-    scheduler1 = optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: 0.975)
+    scheduler1 = optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: 0.985)
     scheduler2 = optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: grow_lambda)
     hit_max_lr = False
     loss_record = torch.zeros((max_num_steps, crystal_batch.num_graphs))
@@ -60,7 +60,7 @@ def standalone_gradient_descent_optimization(
 
                 cell_vols = batch_cell_vol_torch(params_to_optim[:, :3], params_to_optim[:, 3:6])
                 packing_coeffs = crystal_batch.mol_volume / (crystal_batch.sym_mult * cell_vols)
-                cp_loss = F.relu(-(packing_coeffs - 0.65))**2  # encourages cells to close large voids
+                cp_loss = F.relu(-(packing_coeffs - 1))**2  # encourages cells to close large voids
                 # cp_loss = (F.softplus(params_to_optim[:, :3])/crystal_batch.radius[:,None]).sum()  # omnidirectional pressure
                 # # intermolecular centroid long range attraction
                 # _, atoms_per_cluster = torch.unique(cluster_batch.batch, return_counts=True)
@@ -84,7 +84,7 @@ def standalone_gradient_descent_optimization(
                 normed_aunit_lengths = cluster_batch.norm_by_radius(cluster_batch.scale_lengths_to_aunit())
                 box_loss = F.relu(normed_aunit_lengths - 3).sum(dim=1)**2
 
-                loss = lj_pot + cp_loss + 10*box_loss #+ es_pot.clip(min=-5) * es_scaling_factor + 0.1 * cp_loss
+                loss = lj_pot + cp_loss*10 + 100*box_loss #+ es_pot.clip(min=-5) * es_scaling_factor + 0.1 * cp_loss
                 loss.mean().backward()  # compute gradients
                 torch.nn.utils.clip_grad_norm_(params_to_optim, grad_norm_clip)  # gradient clipping
                 optimizer.step()  # apply grad
@@ -114,6 +114,7 @@ def standalone_gradient_descent_optimization(
 
 
 """
+
 import plotly.graph_objects as go
 fig = go.Figure()
 lj_pots = torch.stack(

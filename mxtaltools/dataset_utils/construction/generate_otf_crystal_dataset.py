@@ -10,7 +10,7 @@ if __name__ == '__main__':
     # initialize
     debug = True
     space_group = 1
-    num_smiles = 100
+    num_smiles = 10
     num_processes = 1
     new_dataset_name = f'pd_dataset_sg{space_group}'
 
