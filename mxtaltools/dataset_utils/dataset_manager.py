@@ -109,13 +109,16 @@ class DataManager:
         self.dataset = []
         for ind, chunk in enumerate(tqdm(chunks[:num_chunks])):
             if '.pkl' in chunk or '.pt' in chunk:
-                loaded_chunk = torch.load(chunk)
-                if subsamples_per_chunk < len(loaded_chunk):
-                    samples_to_keep = np.random.choice(len(loaded_chunk), subsamples_per_chunk, replace=False)
-                    self.dataset.extend([loaded_chunk[ind] for ind in samples_to_keep])
-                else:
-                    self.dataset.extend(loaded_chunk)
-                del loaded_chunk
+                try:
+                    loaded_chunk = torch.load(chunk)
+                    if subsamples_per_chunk < len(loaded_chunk):
+                        samples_to_keep = np.random.choice(len(loaded_chunk), subsamples_per_chunk, replace=False)
+                        self.dataset.extend([loaded_chunk[ind] for ind in samples_to_keep])
+                    else:
+                        self.dataset.extend(loaded_chunk)
+                    del loaded_chunk
+                except EOFError:
+                    print(f"chunk {ind} failed to load - corrupted? EOFError")
 
     def load_dataset_for_modelling(self,
                                    dataset_name,

@@ -1842,10 +1842,10 @@ def proxy_discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_
 
         fig_dict['Proxy Residuals'] = fig
 
-        for key, fig in fig_dict.items():
-            fig.write_image(key + 'fig.png', width=480,
-                            height=480)  # save the image rather than the fig, for size reasons
-            fig_dict[key] = wandb.Image(key + 'fig.png')
+        # for key, fig in fig_dict.items():
+        #     fig.write_image(key + 'fig.png', width=480,
+        #                     height=480)  # save the image rather than the fig, for size reasons
+        #     fig_dict[key] = wandb.Image(key + 'fig.png')
 
         wandb.log(data=fig_dict, commit=False)
         wandb.log(data={"proxy_discrim_R_value": linreg_result.rvalue,

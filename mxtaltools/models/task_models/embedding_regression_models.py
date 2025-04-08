@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 
 from mxtaltools.models.graph_models.base_graph_model import BaseGraphModel
@@ -48,12 +50,20 @@ class InvariantEmbeddingRegressor(BaseGraphModel):
     def __init__(self, seed, config,
                  num_targets: int = 1,
                  conditions_dim: int = 0,
+                 target_standardization_tensor: Optional[torch.Tensor] = None,
                  ):
         super(InvariantEmbeddingRegressor, self).__init__()
 
         torch.manual_seed(seed)
 
         self.output_dim = int(1 * num_targets)
+
+        if target_standardization_tensor is not None:
+            self.register_buffer('target_mean', target_standardization_tensor[0])
+            self.register_buffer('target_std', target_standardization_tensor[1])
+        else:
+            self.register_buffer('target_mean', torch.ones(1)[0])
+            self.register_buffer('target_std', torch.ones(1)[0])
 
         # regression model
         self.model = scalarMLP(layers=config.num_layers,

@@ -24,6 +24,7 @@ from mxtaltools.common.instantiate_models import instantiate_models
 from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.common.training_utils import flatten_wandb_params, set_lr, \
     init_optimizer, init_scheduler, reload_model, save_checkpoint, slash_batch, make_sequential_directory
+from mxtaltools.common.utils import namespace2dict
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
 # from mxtaltools.crystal_search.sampling import Sampler
@@ -522,64 +523,54 @@ class Modeller:
                 np.save(self.config.model_paths.autoencoder[:-3] + path_prepend + '_results.npy',
                         {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
 
-    #
-    # def pd_analysis(self, samples_per_molecule: int = 1):
-    #     """prep workdir"""
-    #     self.source_directory = os.getcwd()
-    #     self.prep_new_working_directory()
-    #
-    #     self.train_models_dict = {
-    #         'discriminator': False,
-    #         'generator': False,
-    #         'regressor': False,
-    #         'autoencoder': True,
-    #         'embedding_regressor': False,
-    #         'proxy_discriminator': True
-    #     }
-    #
-    #     '''initialize datasets and useful classes'''
-    #     train_loader, test_loader, _ = self.load_dataset_and_dataloaders(override_test_fraction=0.2)
-    #     self.initialize_models_optimizers_schedulers()
-    #
-    #     self.config.autoencoder_sigma = self.config.autoencoder.evaluation_sigma
-    #     self.config.autoencoder.molecule_radius_normalization = self.models_dict[
-    #         'autoencoder'].radial_normalization  #self.dataDims['standardization_dict']['radius']['max']
-    #
-    #     self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
-    #
-    #     with (wandb.init(config=self.config,
-    #                      project=self.config.wandb.project_name,
-    #                      entity=self.config.wandb.username,
-    #                      tags=[self.config.logger.experiment_tag],
-    #                      # online=False,
-    #                      settings=wandb.Settings(code_dir="."))):
-    #         wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
-    #         wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
-    #         wandb.log(self.num_params_dict)
-    #         wandb.log({"All Models Parameters": np.sum(np.asarray(list(self.num_params_dict.values()))),
-    #                    "Initial Batch Size": self.config.current_batch_size})
-    #
-    #         self.always_do_analysis = True
-    #         self.models_dict['autoencoder'].eval()
-    #         self.models_dict['proxy_discriminator'].eval()
-    #         update_weights = False
-    #         with torch.no_grad():
-    #             self.init_gan_constants()
-    #
-    #             self.epoch_type = 'test'
-    #             for ind in range(samples_per_molecule):
-    #                 for i, data in enumerate(tqdm(test_loader, miniters=int(len(test_loader) / 25))):
-    #                     data = data.to(self.config.device)
-    #                     self.pd_step(data, i, update_weights, skip_step=False)
-    #
-    #             # post epoch processing
-    #             self.logger.concatenate_stats_dict(self.epoch_type)
-    #
-    #         # save results
-    #         np.save(
-    #             r'C:\Users\mikem\crystals\CSP_runs\models\ae_draft2_models_and_artifacts\proxy_discriminator\results/'
-    #             + self.config.model_paths.proxy_discriminator.split("\\")[-1] + '_results.npy',
-    #             {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
+
+    def pd_evaluation(self, test_loader: Optional=None, dataDims: Optional=None):
+        """prep workdir"""
+        self.source_directory = os.getcwd()
+        self.prep_new_working_directory()
+
+        self.train_models_dict = {
+            'discriminator': False,
+            'generator': False,
+            'regressor': False,
+            'autoencoder': True,
+            'embedding_regressor': False,
+            'proxy_discriminator': True
+        }
+        '''initialize datasets and useful classes'''
+        _, test_loader, _ = self.load_dataset_and_dataloaders(override_test_fraction=1)
+        test_loader = self.embed_dataloader_dataset(test_loader)
+
+        self.initialize_models_optimizers_schedulers()
+
+        self.config.logger.stats_reporting_frequency = 1
+        self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
+
+        with (wandb.init(config=self.config,
+                         project=self.config.wandb.project_name,
+                         entity=self.config.wandb.username,
+                         tags=[self.config.logger.experiment_tag],
+                         settings=wandb.Settings(code_dir="."))):
+            wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
+            wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
+            wandb.log(self.num_params_dict)
+            wandb.log({"All Models Parameters": np.sum(np.asarray(list(self.num_params_dict.values()))),
+                       "Initial Batch Size": self.config.current_batch_size})
+
+            self.models_dict['autoencoder'].eval()
+            self.models_dict['proxy_discriminator'].eval()
+            with torch.no_grad():
+                self.epoch_type = 'test'
+                self.pd_epoch(
+                    test_loader,
+                    update_weights=False,
+                )
+
+            np.save(
+                r'C:\Users\mikem\crystals\CSP_runs\models\ae_draft2_models_and_artifacts\proxy_discriminator\results/'
+                + self.config.model_paths.proxy_discriminator.split("\\")[-1] + '_results.npy',
+                {'test_stats': self.logger.test_stats, 'config':namespace2dict({'config':self.config})['config']})
+
 
     def ae_embedding_step(self, mol_batch):
         mol_batch = mol_batch.to(self.device)
@@ -1988,6 +1979,7 @@ class Modeller:
         )
         # reset new dataset as simple tensors
         embedding, ens = self.extract_pd_data(data_list)
+        ens = ens.clip(min=torch.quantile(ens, 0.02), max=torch.quantile(ens, 0.98))
         dataset = SimpleDataset(embedding, ens)
         embedding_data_loader = DataLoader(dataset,
                                  batch_size=data_loader.batch_size,
@@ -1995,7 +1987,7 @@ class Modeller:
                                  pin_memory=data_loader.pin_memory,
                                  num_workers=data_loader.num_workers)
 
-        if not hasattr(self.models_dict['proxy_discriminator'], 'target_std'):
+        if self.models_dict['proxy_discriminator'] != 0:
             self.models_dict['proxy_discriminator'].target_std = ens.std()
             self.models_dict['proxy_discriminator'].target_mean = ens.mean()
 

@@ -3,7 +3,7 @@ from argparse import Namespace
 import torch
 from torch import nn as nn
 
-from mxtaltools.models.graph_models.embedding_regression_models import EquivariantEmbeddingRegressor, \
+from mxtaltools.models.task_models.embedding_regression_models import EquivariantEmbeddingRegressor, \
     InvariantEmbeddingRegressor
 from mxtaltools.models.task_models.autoencoder_models import Mo3ENet
 from mxtaltools.models.task_models.crystal_models import MolecularCrystalModel
