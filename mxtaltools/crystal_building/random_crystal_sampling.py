@@ -87,10 +87,10 @@ def sample_aunit_lengths(num_samples,
 
     if target_packing_coeff is not None:
         if isinstance(target_packing_coeff, float):
-            random_packing_coeffs = target_packing_coeff * torch.ones(num_samples)
+            random_packing_coeffs = target_packing_coeff * torch.ones(num_samples, dtype=torch.float32, device=cell_angles.device)
         elif torch.is_tensor(target_packing_coeff):
             if len(target_packing_coeff) > 1:
-                random_packing_coeffs = target_packing_coeff * torch.ones(num_samples)
+                random_packing_coeffs = target_packing_coeff * torch.ones(num_samples, dtype=torch.float32, device=cell_angles.device)
             else:
                 random_packing_coeffs = target_packing_coeff
         else:

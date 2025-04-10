@@ -1,14 +1,11 @@
-import sys
-from typing import Optional, Union
+from typing import Union
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch_scatter import scatter
 
-from mxtaltools.models.functions.radial_graph import asymmetric_radius_graph, radius, build_radial_graph
-
-
+from mxtaltools.models.functions.radial_graph import radius, build_radial_graph
 
 
 def vdw_analysis(vdw_radii: torch.Tensor,

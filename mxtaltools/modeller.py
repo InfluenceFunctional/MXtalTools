@@ -492,13 +492,13 @@ class Modeller:
                 self.epoch_type = 'train'
 
                 if train_loader is not None:
-                    for i, data in enumerate(tqdm(train_loader, miniters=int(len(train_loader) / 25))):
-                        data = data.to(self.device)
-                        data.z = data.z.flatten()
-                        data, input_data = self.preprocess_ae_inputs(data,
+                    for i, mol_batch in enumerate(tqdm(train_loader, miniters=int(len(train_loader) / 25))):
+                        mol_batch = mol_batch.to(self.device)
+                        mol_batch.z = mol_batch.z.flatten()
+                        mol_batch, input_data = self.preprocess_ae_inputs(mol_batch,
                                                                      noise=0.01,
                                                                      no_noise=False)
-                        self.ae_step(input_data, data, update_weights, step=i, last_step=True)
+                        self.ae_step(input_data, mol_batch, update_weights, step=i, last_step=True)
 
                     # post epoch processing
                     self.logger.concatenate_stats_dict(self.epoch_type)
@@ -507,13 +507,18 @@ class Modeller:
 
                 self.epoch_type = 'test'
 
-                for i, data in enumerate(tqdm(test_loader, miniters=int(len(test_loader) / 25))):
-                    data = data.to(self.device)
-                    data.z = data.z.flatten()
-                    data, input_data = self.preprocess_ae_inputs(data,
-                                                                 noise=0.01,
-                                                                 no_noise=False)
-                    self.ae_step(input_data, data, update_weights, step=i, last_step=True)
+                for i, mol_batch in enumerate(tqdm(test_loader, miniters=int(len(test_loader) / 25))):
+                    mol_batch = mol_batch.to(self.device)
+                    mol_batch = self.preprocess_ae_inputs(
+                        mol_batch,
+                        noise=0.01,
+                        affine_scale=None
+                    )
+                    self.ae_step(mol_batch,
+                                 update_weights,
+                                 step=i,
+                                 last_step=True,
+                                 )
 
                 # post epoch processing
                 self.logger.concatenate_stats_dict(self.epoch_type)
@@ -539,9 +544,8 @@ class Modeller:
         }
         '''initialize datasets and useful classes'''
         _, test_loader, _ = self.load_dataset_and_dataloaders(override_test_fraction=1)
-        test_loader = self.embed_dataloader_dataset(test_loader)
-
         self.initialize_models_optimizers_schedulers()
+        test_loader = self.embed_dataloader_dataset(test_loader)
 
         self.config.logger.stats_reporting_frequency = 1
         self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
@@ -1987,7 +1991,7 @@ class Modeller:
                                  pin_memory=data_loader.pin_memory,
                                  num_workers=data_loader.num_workers)
 
-        if self.models_dict['proxy_discriminator'] != 0:
+        if self.models_dict['proxy_discriminator'].target_std == 0:
             self.models_dict['proxy_discriminator'].target_std = ens.std()
             self.models_dict['proxy_discriminator'].target_mean = ens.mean()
 

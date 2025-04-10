@@ -24,6 +24,8 @@ from mxtaltools.crystal_building.random_crystal_sampling import sample_aunit_len
     sample_aunit_orientations, sample_aunit_centroids
 from mxtaltools.crystal_building.utils import get_aunit_positions, aunit2unit_cell, parameterize_crystal_batch, \
     unit_cell_to_supercell_cluster, align_mol_batch_to_standard_axes, canonicalize_rotvec
+from mxtaltools.crystal_search.standalone_crystal_opt import optimize_crystal_batch, \
+    standalone_gradient_descent_optimization
 from mxtaltools.dataset_utils.mol_building import smiles2conformer
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.functions.radial_graph import build_radial_graph
@@ -435,7 +437,7 @@ class MolData(MXtalBase):  # todo add method for batch_molecule_compute_principa
 
 
 # noinspection PyPropertyAccess
-class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
+class MolCrystalData(MolData):
     r"""
     A data object representing a molecular crystal with Z prime = 1 (exactly one molecule in asymmetric unit)
     """
@@ -1130,6 +1132,33 @@ class MolCrystalData(MolData):  # todo add automated prior sampling & reshaping
             return torch.cat([embedding, scaled_params], dim=1)
         else:
             assert False, "Crystal embedding not implemented for single samples"
+
+    def optimize_crystal_parameters(self,
+                                    opt_func: Optional[str] = 'LJ',
+                                    opt_eps: Optional[float] = 1e-2,
+                                    max_num_steps: Optional[int] = 500,
+                                    init_lr: Optional[float] = 1e-5,
+                                    show_tqdm: Optional[bool] = False,
+                                    ):
+        if self.is_batch:
+            batch_to_optim = self.clone().to(self.device)
+        else:
+            batch_to_optim = collate_data_list([self]).clone().to(self.device)
+        # (batch_to_optim.aunit_centroid,
+        #  batch_to_optim.aunit_orientation,
+        #  batch_to_optim.aunit_handedness) = batch_to_optim.reparameterize_unit_cell()
+        batch_to_optim.orient_molecule(mode='standardized')
+        optimization_record = standalone_gradient_descent_optimization(
+            batch_to_optim.cell_parameters(),
+            batch_to_optim,
+            max_num_steps=max_num_steps,
+            convergence_eps=opt_eps,
+            lr=init_lr,
+            optimizer_func=torch.optim.Rprop,
+            optim_target=opt_func,
+            show_tqdm=show_tqdm,
+        )
+        return optimization_record, collate_data_list(optimization_record[-1])
 
     @property
     def x(self) -> Any:

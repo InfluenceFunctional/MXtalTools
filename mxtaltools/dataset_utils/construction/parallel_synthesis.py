@@ -9,7 +9,7 @@ import torch
 from rdkit import RDLogger
 
 from mxtaltools.common.utils import chunkify
-from mxtaltools.crystal_search.standalone_crystal_opt import standalone_opt_random_crystals
+from mxtaltools.crystal_search.standalone_crystal_opt import optimize_crystal_batch
 from mxtaltools.dataset_utils.data_classes import MolData, MolCrystalData
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.utils import embed_crystal_list
@@ -286,7 +286,7 @@ def process_smiles_to_crystal_opt(lines: list,
         crystal_batch.clean_cell_parameters()
 
         # print('''do local opt''')
-        samples = standalone_opt_random_crystals(
+        samples = optimize_crystal_batch(
             crystal_batch.clone().cpu(),
             crystal_batch.cell_parameters().clone().cpu(),
             opt_eps=1e-5,

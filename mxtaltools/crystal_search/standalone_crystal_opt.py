@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 import torch.nn.functional as F
 import torch_geometric.nn as gnn
@@ -18,8 +20,8 @@ def standalone_gradient_descent_optimization(
         lr: float,
         optimizer_func,
         show_tqdm: bool = False,
-        es_scaling_factor: float = 10,
-        grad_norm_clip: float = 1.0
+        grad_norm_clip: float = 1.0,
+        optim_target: Optional[str] = 'LJ'
 ):
     """
     do a local optimization via gradient descent on some score function
@@ -49,7 +51,7 @@ def standalone_gradient_descent_optimization(
                 crystal_batch.clean_cell_parameters()
                 lj_pot, es_pot, scaled_lj_pot, cluster_batch = crystal_batch.build_and_analyze(return_cluster=True,
                                                                                                cutoff=20)
-                samples_list = crystal_batch.detach().cpu().to_data_list()
+                samples_list = crystal_batch.clone().cpu().detach().to_data_list()
 
                 for si, sample in enumerate(samples_list):
                     sample.lj_pot = lj_pot[si].detach()
@@ -58,33 +60,45 @@ def standalone_gradient_descent_optimization(
 
                 samples_record.append(samples_list)
 
-                cell_vols = batch_cell_vol_torch(params_to_optim[:, :3], params_to_optim[:, 3:6])
-                packing_coeffs = crystal_batch.mol_volume / (crystal_batch.sym_mult * cell_vols)
-                cp_loss = F.relu(-(packing_coeffs - 1))**2  # encourages cells to close large voids
-                # cp_loss = (F.softplus(params_to_optim[:, :3])/crystal_batch.radius[:,None]).sum()  # omnidirectional pressure
-                # # intermolecular centroid long range attraction
-                # _, atoms_per_cluster = torch.unique(cluster_batch.batch, return_counts=True)
-                # mols_per_cluster = (atoms_per_cluster / cluster_batch.num_atoms).long()
-                # molwise_batch = torch.arange(cluster_batch.num_graphs, device=cluster_batch.device).repeat_interleave(mols_per_cluster,
-                #     dim=0)
-                # flat_mol_inds = cluster_batch.mol_ind + torch.cat(
-                #     [torch.zeros(1, device=cluster_batch.device, dtype=torch.long),
-                #      torch.cumsum(mols_per_cluster, dim=0)]).long()[:-1].repeat_interleave(
-                #     torch.diff(cluster_batch.ptr), dim=0)
-                # mol_centroids = scatter(cluster_batch.pos, flat_mol_inds, reduce='mean', dim=0, dim_size=flat_mol_inds[-1] + 1)
-                # edge_i, edge_j = gnn.radius_graph(x=mol_centroids, batch=molwise_batch, max_num_neighbors=1000, r=1000)
-                # inter_dists = torch.linalg.norm(
-                #     mol_centroids[edge_i] - mol_centroids[edge_j], dim=1
-                # )
-                # scaled_inter_dists = inter_dists / crystal_batch.radius[molwise_batch[edge_i]]
-                # inter_pot = 1/scaled_inter_dists**12 - 1/scaled_inter_dists
-                # cp_loss = scatter(inter_pot, molwise_batch[edge_i], reduce='sum', dim_size=cluster_batch.num_graphs, dim=0)
+                if optim_target.lower() == 'lj':
+                    # encourage density
+                    cell_vols = batch_cell_vol_torch(params_to_optim[:, :3], params_to_optim[:, 3:6])
+                    packing_coeffs = crystal_batch.mol_volume / (crystal_batch.sym_mult * cell_vols)
+                    cp_loss = F.relu(-(packing_coeffs - 1)) ** 2
 
-                # enforce box shape cannot become too long in any direction
-                normed_aunit_lengths = cluster_batch.norm_by_radius(cluster_batch.scale_lengths_to_aunit())
-                box_loss = F.relu(normed_aunit_lengths - 3).sum(dim=1)**2
+                    # enforce box shape cannot become too long in any direction
+                    normed_aunit_lengths = cluster_batch.norm_by_radius(cluster_batch.scale_lengths_to_aunit())
+                    box_loss = F.relu(normed_aunit_lengths - 3).sum(dim=1) ** 2
 
-                loss = lj_pot + cp_loss*10 + 100*box_loss #+ es_pot.clip(min=-5) * es_scaling_factor + 0.1 * cp_loss
+                    loss = lj_pot + cp_loss*10 + 100*box_loss
+                elif optim_target.lower() == 'inter_overlaps':
+                    # enforce molecules far enough away that they cannot possibly overlap
+                    # intermolecular centroid range repulsion
+                    _, atoms_per_cluster = torch.unique(cluster_batch.batch, return_counts=True)
+                    mols_per_cluster = (atoms_per_cluster / cluster_batch.num_atoms).long()
+                    molwise_batch = torch.arange(cluster_batch.num_graphs, device=cluster_batch.device).repeat_interleave(mols_per_cluster,
+                        dim=0)
+                    flat_mol_inds = cluster_batch.mol_ind + torch.cat(
+                        [torch.zeros(1, device=cluster_batch.device, dtype=torch.long),
+                         torch.cumsum(mols_per_cluster, dim=0)]).long()[:-1].repeat_interleave(
+                        torch.diff(cluster_batch.ptr), dim=0)
+                    mol_centroids = scatter(cluster_batch.pos, flat_mol_inds, reduce='mean', dim=0, dim_size=flat_mol_inds[-1] + 1)
+                    edge_i, edge_j = gnn.radius_graph(
+                        x=mol_centroids,
+                        batch=molwise_batch,
+                        max_num_neighbors=10,
+                        r=float(cluster_batch.radius.amax() * 2))
+                    inter_dists = torch.linalg.norm(
+                        mol_centroids[edge_i] - mol_centroids[edge_j], dim=1
+                    )
+                    scaled_inter_dists = inter_dists / crystal_batch.radius[molwise_batch[edge_i]]
+                    edgewise_losses = F.relu(-(scaled_inter_dists - 2)) # push molecules apart if they are within each others' radii
+                    loss = scatter(edgewise_losses,
+                                   molwise_batch[edge_i],
+                                   dim_size=cluster_batch.num_graphs,
+                                   dim=0,
+                                   reduce='sum')
+
                 loss.mean().backward()  # compute gradients
                 torch.nn.utils.clip_grad_norm_(params_to_optim, grad_norm_clip)  # gradient clipping
                 optimizer.step()  # apply grad
@@ -100,12 +114,12 @@ def standalone_gradient_descent_optimization(
                     scheduler2.step()  # grow
 
                 s_ind += 1
-                if s_ind % 100 == 0:
-                    pbar.update(100)
+                if s_ind % 25 == 0:
+                    pbar.update(25)
 
-                if s_ind > 250:
-                    flag1 = torch.all((loss_record[s_ind - 10:s_ind, :] / loss_record[s_ind - 10:s_ind, :].mean()).std(
-                        0) < convergence_eps)  # loss is converged
+                if s_ind > 50:
+                    relative_rolling_mean = torch.nan_to_num((loss_record[s_ind - 10:s_ind, :] / loss_record[s_ind - 10:s_ind, :].mean()))
+                    flag1 = torch.all(relative_rolling_mean.std(0) < convergence_eps)  # loss is converged
                     flag2 = s_ind > (max_num_steps - 1)  # run out of time
                     if flag1 or flag2:
                         converged = True
@@ -120,14 +134,9 @@ fig = go.Figure()
 lj_pots = torch.stack(
     [torch.tensor([sample.scaled_lj_pot for sample in sample_list]) for sample_list in samples_record])
 es_pots = torch.stack([torch.tensor([sample.es_pot for sample in sample_list]) for sample_list in samples_record])
-for ind in range(lj_pot.shape[-1]):
+for ind in range(lj_pots.shape[-1]):
     fig.add_scatter(y=lj_pots[..., ind], marker_color='blue', name='lj', legendgroup='lg',
                     showlegend=True if ind == 0 else False)
-    fig.add_scatter(y=es_pots[..., ind] * es_scaling_factor, marker_color='red', name='es', legendgroup='es',
-                    showlegend=True if ind == 0 else False)
-    fig.add_scatter(y=es_pots[..., ind] * es_scaling_factor + lj_pots[..., ind], marker_color='green', name='combo', legendgroup='combo',
-                    showlegend=True if ind == 0 else False)
-
 fig.show()
 
 
@@ -147,7 +156,7 @@ cluster_batch.visualize(mode='convolve with')
 """
 
 
-def standalone_opt_random_crystals(
+def optimize_crystal_batch(
         crystal_batch,
         init_state,
         opt_eps,

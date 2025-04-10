@@ -5,7 +5,7 @@ head_path = Path(r'C:\Users\mikem\crystals\CSP_runs\models\ae_draft2_models_and_
 #--------------------------------------
 ae_path = head_path.joinpath('autoencoder')
 ae_paths = ['with_protons.pt',
-            #'without_protons.pt',
+            'without_protons.pt',
             #'inferred_protons.pt'
             ]
 ae_results_paths = ['with_protons_results.npy',

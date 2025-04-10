@@ -246,7 +246,6 @@ def UMAP_fig(max_entries=10000000):
             try:
                 combo = np.concatenate([stats_dict['train_stats'][key], stats_dict['test_stats'][key]])
 
-
             except:
                 try:
                     combo = np.concatenate([np.concatenate(stats_dict['train_stats'][key]),
@@ -264,7 +263,7 @@ def UMAP_fig(max_entries=10000000):
     #del stats_dict['train_stats'], stats_dict['test_stats']
 
     from torch_geometric.loader.dataloader import Collater
-    collater = Collater(0,0)
+    collater = Collater(0, 0)
     stats_dict['sample'] = collater(stats_dict['sample'])
     _, Ipm, _ = scatter_compute_Ip(stats_dict['sample'].pos, stats_dict['sample'].batch)
 
@@ -432,10 +431,10 @@ def UMAP_fig(max_entries=10000000):
                        )
 
     # fig2.update_layout(
-        # xaxis_title='Component 1',
-        # yaxis1_title='Component 2',
-        # yaxis4_title='Ip1/Ip3',
-        # xaxis4_title='Ip2/Ip3'
+    # xaxis_title='Component 1',
+    # yaxis1_title='Component 2',
+    # yaxis4_title='Ip1/Ip3',
+    # xaxis4_title='Ip2/Ip3'
     # )
     fig2.update_layout(legend={'itemsizing': 'constant'})  # , 'orientation': 'h'})
 
@@ -520,7 +519,11 @@ def embedding_regression_figure():
         prediction = np.concatenate(stats_dict['test_stats']['regressor_prediction']).flatten()
 
         MAE = np.abs(target - prediction).mean()
-        NMAE = (np.abs((target - prediction) / np.abs(target))).mean()
+        # NMAE_i = (np.abs((target - prediction) / np.abs(target)))
+        #         # NMAE_i[target == 0] = 0
+        #         # NMAE = NMAE_i.mean()
+        #NMAE = np.abs((target - prediction) / np.mean(target)).mean()
+        NMAE = MAE / np.abs(np.mean(target))
 
         linreg_result = linregress(target, prediction)
         R_value = linreg_result.rvalue
@@ -532,7 +535,7 @@ def embedding_regression_figure():
     fig3 = make_subplots(cols=5, rows=4,
                          subplot_titles=pretty_target_names,
                          horizontal_spacing=0.06,
-                         vertical_spacing=0.1)
+                         vertical_spacing=0.125)
 
     annotations = []
     for ind, (path, target_name) in enumerate(zip(er_results_paths, target_names)):
@@ -673,7 +676,7 @@ def proxy_discriminator_figure():
         if is_mace:
             energy_func = 'MACE'
         elif es_factor > 0:
-            energy_func = f"LJ + {int(es_factor)/1000}k ES"
+            energy_func = f"LJ + {int(es_factor / 1000)}k ES"
         else:
             energy_func = "LJ"
         target_name = str(embedding) + ' ' + energy_func
@@ -691,15 +694,24 @@ def proxy_discriminator_figure():
         NMAE_dict[target_name] = NMAE
         R_dict[target_name] = R_value
 
-    num_rows = 4
+    good_inds = [ind for ind in range(len(proxy_results_paths)) if 'ES' not in list(R_dict.keys())[ind]]
+    inds_reorder = [0, 2, 4, 6, 1, 3, 5, 7]
+    good_inds = [good_inds[ind] for ind in inds_reorder]
+    good_target_names = [target_names[ind] for ind in good_inds]
+    good_proxy_paths = [proxy_results_paths[ind] for ind in good_inds]
+
+    col_labels = ["Autoencoder", "Principal Vectors", "Molecule Volume", "No Embedding"]
+    row_labels = ["Lennard-Jones Energy", 'MACE Energy']
+
+    num_rows = 2
     num_cols = 4
     fig3 = make_subplots(cols=num_cols, rows=num_rows,
-                         subplot_titles=target_names,
-                         horizontal_spacing=0.06,
-                         vertical_spacing=0.1)
+                         #subplot_titles=target_names,
+                         horizontal_spacing=0.05,
+                         vertical_spacing=0.075)
 
     annotations = []
-    for ind, (path, target_name) in enumerate(zip(proxy_results_paths, target_names)):
+    for ind, (path, target_name) in enumerate(zip(good_proxy_paths, good_target_names)):
         stats_dict = np.load(path, allow_pickle=True).item()
         target = stats_dict['test_stats']['vdw_score']
         prediction = stats_dict['test_stats']['vdw_prediction']
@@ -731,14 +743,21 @@ def proxy_discriminator_figure():
         fig3.update_layout({f'yaxis{ind + 1}_range': [minval, maxval]})
 
         annotations.append(dict(xref="x" + str(ind + 1), yref="y" + str(ind + 1),
-                                x=minval + np.ptp(target) * 0.05,
-                                y=maxval - np.ptp(target) * 0.25,
+                                x=minval + np.ptp(target) * 0.15,
+                                y=maxval - np.ptp(target) * 0.225,
                                 showarrow=False,
-                                text=f"R={R_dict[target_name]:.4f} <br> MAE={MAE_dict[target_name]:.3g}"
+                                text=f"R={R_dict[target_name]:.2f} <br> MAE={MAE_dict[target_name]:.3g}"
                                 ))
 
     fig3['layout']['annotations'] += tuple(annotations)
     fig3.update_annotations(font=dict(size=18))
+    fig3.update_layout(yaxis1_title=row_labels[0])
+    fig3.update_layout(yaxis5_title=row_labels[1])
+    fig3.update_layout(xaxis5_title=col_labels[0])
+    fig3.update_layout(xaxis6_title=col_labels[1])
+    fig3.update_layout(xaxis7_title=col_labels[2])
+    fig3.update_layout(xaxis8_title=col_labels[3])
+
     fig3.update_layout(plot_bgcolor='rgba(0,0,0,0)')
     fig3.update_xaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
     fig3.update_yaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
@@ -746,12 +765,11 @@ def proxy_discriminator_figure():
                       showgrid=True, zeroline=True)
     fig3.update_xaxes(linecolor='black', mirror=True,
                       showgrid=True, zeroline=True)
-    fig3.update_layout(yaxis5_title='Predicted Energy')
-    fig3.update_layout(xaxis14_title='Target energy')
     fig3.update_layout(font=dict(size=20))
     fig3.update_annotations(font_size=20)
     fig3.update_annotations(yshift=10)
     fig3.update_xaxes(tickangle=0)
+
     fig3.show(renderer='browser')
 
     return fig3
@@ -761,16 +779,16 @@ if __name__ == '__main__':
     # fig = RMSD_fig()
     # fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
 
-    # fig2 = UMAP_fig(max_entries=100000000)
-    # fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
+    #fig2 = UMAP_fig(max_entries=100000000)
+    #fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
     #
-    # fig3 = embedding_regression_figure()
-    # fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
+    fig3 = embedding_regression_figure()
+    fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
     #
     # fig4 = regression_training_curve()
     # fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=1200, height=800)
     #
-    fig5 = proxy_discriminator_figure()
-    fig5.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\proxy_discrim.png', width=600, height=600)
+    # fig5 = proxy_discriminator_figure()
+    # fig5.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\proxy_discrim.png', width=600, height=600)
 
 aa = 1

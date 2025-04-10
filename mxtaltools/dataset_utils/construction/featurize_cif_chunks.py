@@ -21,7 +21,7 @@ convert raw cif files into featurized chunks for later collation
 """
 
 
-def process_dataset_chunks(n_chunks: int,
+def process_cifs_to_chunks(n_chunks: int,
                            cifs_path: str,
                            chunks_path: str,
                            chunk_prefix: str,
@@ -197,7 +197,7 @@ aunit_centroid, aunit_orientation, aunit_handedness, is_well_defined, pos = crys
 
 
 if __name__ == '__main__':
-    process_dataset_chunks(n_chunks=1000,
+    process_cifs_to_chunks(n_chunks=1000,
                            cifs_path='D:/crystal_datasets/CSD_cifs/',
                            chunks_path='D:/crystal_datasets/CSD_featurized_chunks/',
                            chunk_prefix='',

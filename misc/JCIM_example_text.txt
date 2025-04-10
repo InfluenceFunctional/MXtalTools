@@ -6,7 +6,7 @@ MolData Initialization
 from mxtaltools.dataset_utils.data_classes import MolData
 
 # explicit enumeration
-data = MolData(
+molecule = MolData(
     z=atomic_numbers_tensor,
     pos=coordinates_tensor,
     smiles=smiles_string)
@@ -88,3 +88,85 @@ scalar_encoding = model.scalarizer(vector_encoding)
 
 reconstruction_loss, rmsd, matched_molecule = (  # confirm reconstruction quality
     model.check_embedding_quality(molecule_batch, visualize=True))
+
+
+"""  # test yaml
+machine: "local"  # or "cluster"
+device: "cuda"  # or "cpu"
+mode: autoencoder
+dataset_name: 'test_CSD_dataset.pt'
+model_names: ['autoencoder']
+
+dataset:
+  type: 'molecule'
+  max_dataset_length: 10000
+  test_fraction: 0.2
+
+# batching & convergence
+grow_batch_size: True
+min_batch_size: 10
+max_batch_size: 500
+batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
+overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
+minimum_epochs: 100
+max_epochs: 10000
+history: 100  # for convergence checks
+gradient_norm_clip: 1
+
+logger:
+  run_name: example_1
+  experiment_tag: examples
+  log_figures: True
+
+seeds:
+  model: 12345
+  dataset: 12345
+
+regressor:
+  optimizer:
+    optimizer: adamw
+    init_lr: 1.0E-3
+    max_lr: 1.0E-5
+    min_lr: 1.0E-5
+    lr_schedule: True
+    beta1: 0.9
+    beta2: 0.999
+    weight_decay: 0.075
+    convergence_eps: 1.0E-5
+    lr_growth_lambda: 1.00
+    lr_shrink_lambda: 0.999
+    use_plateau_scheduler: False
+
+  model:
+    graph_aggregator: 'softmax'
+
+    graph:
+      node_dim: 256
+      message_dim: 128
+      #num_attention_heads: 16
+      embedding_dim: 256
+      num_convs: 4
+      fcs_per_gc: 1
+      num_radial: 32
+      num_input_classes: 101
+      norm: 'graph layer'
+      dropout: 0.5
+
+      atom_type_embedding_dim: 32
+      radial_embedding: 'bessel'
+      cutoff: 3
+      max_num_neighbors: 100
+      envelope_exponent: 5
+
+    fc:
+      hidden_dim: 256
+      num_layers: 4
+      dropout: 0.5
+      norm: 'layer'
+
+    activation: gelu
+
+
+
+
+"""

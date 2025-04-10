@@ -153,7 +153,7 @@ def get_cart_translations(cc_centroids,
     # we compute this in a brute force way, adding the diagonal length of each parallelpiped to the cutoff
     # this will take extra boxes, but is fast and simple
     cell_diag = cell_vectors.sum(1).norm(dim=-1)
-    cutoff_distance = mol_radii * 2 + cutoff + 0.1 + cell_diag / 2  # convolutional radius plus cell diagonal
+    cutoff_distance = mol_radii * 2 + cutoff + 0.1 + cell_diag  # convolutional radius plus cell diagonal
 
     centroid_dists = torch.linalg.norm(cc_centroids[:, None, :] - parallelpiped_centroids, dim=-1)
     good_translations_bool = centroid_dists < cutoff_distance[:, None]

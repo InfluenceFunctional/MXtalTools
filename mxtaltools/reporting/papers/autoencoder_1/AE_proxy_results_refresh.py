@@ -8,6 +8,7 @@ from mxtaltools.common.config_processing import load_yaml, process_main_config
 from mxtaltools.modeller import Modeller
 import torch
 from mxtaltools.common.utils import namespace2dict
+from mxtaltools.reporting.papers.autoencoder_1.AE_figures import proxy_discriminator_figure
 
 mxt_path = r'C:\\Users\\mikem\\PycharmProjects\\Python_Codes\\MXtalTools'
 
@@ -41,5 +42,5 @@ for er_path in proxy_paths:
     del predictor
 
 """collect results and make fig"""
-aa = 1
+fig5 = proxy_discriminator_figure()
 
