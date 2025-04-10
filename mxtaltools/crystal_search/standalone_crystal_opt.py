@@ -20,7 +20,7 @@ def standalone_gradient_descent_optimization(
         lr: float,
         optimizer_func,
         show_tqdm: bool = False,
-        grad_norm_clip: float = 1.0,
+        grad_norm_clip: float = 0.1,
         optim_target: Optional[str] = 'LJ'
 ):
     """
@@ -38,6 +38,7 @@ def standalone_gradient_descent_optimization(
     hit_max_lr = False
     loss_record = torch.zeros((max_num_steps, crystal_batch.num_graphs))
     lr_record = torch.zeros(max_num_steps)
+    params_record = torch.zeros((max_num_steps, crystal_batch.num_graphs, 12), dtype=torch.float32)
 
     samples_record = []
 
@@ -59,18 +60,22 @@ def standalone_gradient_descent_optimization(
                     sample.es_pot = es_pot[si].detach()
 
                 samples_record.append(samples_list)
+                params_record[s_ind] = cluster_batch.standardize_cell_parameters().detach().cpu()
 
                 if optim_target.lower() == 'lj':
                     # encourage density
-                    cell_vols = batch_cell_vol_torch(params_to_optim[:, :3], params_to_optim[:, 3:6])
-                    packing_coeffs = crystal_batch.mol_volume / (crystal_batch.sym_mult * cell_vols)
-                    cp_loss = F.relu(-(packing_coeffs - 1)) ** 2
+                    #cell_vols = batch_cell_vol_torch(F.softplus(params_to_optim[:, :3]), params_to_optim[:, 3:6])
+                    #packing_coeffs = (crystal_batch.mol_volume * crystal_batch.sym_mult) / cell_vols
+                    #cp_loss = F.relu(params_to_optim[:, :3] - 3).sum() ** 2  # push down cell lengths (hold at 3 angstroms
 
-                    # enforce box shape cannot become too long in any direction
-                    normed_aunit_lengths = cluster_batch.norm_by_radius(cluster_batch.scale_lengths_to_aunit())
-                    box_loss = F.relu(normed_aunit_lengths - 3).sum(dim=1) ** 2
+                    # enforce box shape cannot become too long (3 mol radii) or narrow (3 angstroms) in any direction
+                    aunit_lengths = cluster_batch.scale_lengths_to_aunit()
+                    #normed_aunit_lengths = cluster_batch.norm_by_radius(aunit_lengths)
+                    #box_loss = F.relu(normed_aunit_lengths - 3).sum(dim=1) ** 2 + F.relu(-(normed_aunit_lengths - 3)).sum(dim=1) ** 2
 
-                    loss = lj_pot + cp_loss*10 + 100*box_loss
+                    box_loss = (80000/aunit_lengths**12 + 10*aunit_lengths - 31.25).sum(dim=1)  # forces boxes to be larger than 3 angstroms, but squeezes them otherwise
+
+                    loss = lj_pot + 10 * box_loss
                 elif optim_target.lower() == 'inter_overlaps':
                     # enforce molecules far enough away that they cannot possibly overlap
                     # intermolecular centroid range repulsion
@@ -118,8 +123,10 @@ def standalone_gradient_descent_optimization(
                     pbar.update(25)
 
                 if s_ind > 50:
-                    relative_rolling_mean = torch.nan_to_num((loss_record[s_ind - 10:s_ind, :] / loss_record[s_ind - 10:s_ind, :].mean()))
-                    flag1 = torch.all(relative_rolling_mean.std(0) < convergence_eps)  # loss is converged
+                    diffs = params_record[s_ind-10:s_ind, :, :].diff(dim=0).abs()
+                    flag1 = torch.all(diffs < convergence_eps)
+                    #relative_rolling_mean = torch.nan_to_num((loss_record[s_ind - 10:s_ind, :] / loss_record[s_ind - 10:s_ind, :].mean()))
+                    #flag1 = torch.all(relative_rolling_mean.std(0) < convergence_eps)  # loss is converged
                     flag2 = s_ind > (max_num_steps - 1)  # run out of time
                     if flag1 or flag2:
                         converged = True

@@ -26,7 +26,7 @@ dataset:
   single_identifier: null
   test_fraction: 0.2
   type: molecule
-dataset_name: pd_dataset_sg1.pt
+dataset_name: pd_dataset_sg1_test.pt
 dataset_yaml_path: /proxy_discriminator.yaml
 device: cuda
 early_epochs_step_override: 5
@@ -71,8 +71,8 @@ positional_noise:
   regressor: 0
 proxy_discriminator:
   cutoff: 6
-  electrostatic_scaling_factor: 10000
-  embedding_type: autoencoder
+  electrostatic_scaling_factor: 0
+  embedding_type: principal_axes
   model:
     dropout: 0.5
     hidden_dim: 512

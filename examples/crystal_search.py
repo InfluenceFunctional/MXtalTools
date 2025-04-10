@@ -13,7 +13,7 @@ if __name__ == '__main__':
     mini_dataset_path = '../mini_datasets/mini_CSD_dataset.pt'
     checkpoint = r"../checkpoints/crystal_score.pt"
     batch_size = 100
-    num_samples = 500
+    num_samples = 10000
     num_batches = num_samples // batch_size
     sym_info = init_sym_info()
 
@@ -51,12 +51,15 @@ if __name__ == '__main__':
             crystal_batch.optimize_crystal_parameters(
                 opt_func='inter_overlaps',
                 init_lr=1e-3,
-                show_tqdm=True))
+                show_tqdm=False
+            ))
 
         optimization_trajectory, _ = (
             crystal_batch.optimize_crystal_parameters(
                 opt_func='LJ',
-                show_tqdm=True))
+                show_tqdm=True,
+                opt_eps=1e-3,
+            ))
 
         optimized_crystal_batch = collate_data_list(optimization_trajectory[-1])
         _, _, _, optimized_cluster_batch = (
@@ -78,6 +81,8 @@ if __name__ == '__main__':
 
     """filter unrealistic samples"""
     optimized_samples = [sample for sample in optimized_samples if sample.lj_pot < 10]
+    optimized_samples = [sample for sample in optimized_samples if sample.packing_coeff < 1]
+    optimized_samples = [sample for sample in optimized_samples if sample.packing_coeff > 0.5]
 
     """extract sampling results"""
     optimized_crystal_batch = collate_data_list(optimized_samples)
@@ -183,5 +188,7 @@ if __name__ == '__main__':
     _, _, _, best_cluster_batch = best_crystals_batch.to('cpu').build_and_analyze(return_cluster=True)
     best_cluster_batch.visualize(mode='unit cell')
     original_cluster_batch.visualize([0], mode='unit cell')
+
+    torch.save(optimized_samples, 'optimized_samples.pt')
 
     print("Analysis finished!")

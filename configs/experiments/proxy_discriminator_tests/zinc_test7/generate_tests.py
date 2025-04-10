@@ -61,8 +61,8 @@ for hidden_dim in [512, 1024]:
 
 # production tests
 best_config = deepcopy(config_list[12])
-for embedding in ['autoencoder', 'principal_axes', 'mol_volume', None]:
-    for esf in [0, 10000, 100000, 'mace']:
+for embedding in ['autoencoder', 'principal_axes']:#, 'mol_volume', None]:
+    for esf in [0]:#, 'mace']:
         config_i = deepcopy(best_config)
         config_i['proxy_discriminator']['embedding_type'] = embedding
         if esf == 'mace':
