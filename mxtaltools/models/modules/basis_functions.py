@@ -23,7 +23,10 @@ class BesselBasisLayer(torch.nn.Module):  # NOTE borrowed from DimeNet implement
                 dist: torch.Tensor
                 ) -> torch.Tensor:
         dist = dist.unsqueeze(-1) / self.cutoff
-        return self.envelope(dist) * (self.freq * dist).sin()
+        envelope = self.envelope(dist)
+        envelope[dist > self.cutoff] = 0 # this function explodes beyond the cutoff
+        return envelope * (self.freq * dist).sin()
+        # return self.envelope(dist) * (self.freq * dist).sin()
 
 
 class Envelope(torch.nn.Module):

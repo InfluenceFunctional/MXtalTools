@@ -9,7 +9,7 @@ import torch
 from rdkit import RDLogger
 
 from mxtaltools.common.utils import chunkify
-from mxtaltools.crystal_search.standalone_crystal_opt import optimize_crystal_batch
+from mxtaltools.crystal_search.standalone_crystal_opt import sample_about_crystal
 from mxtaltools.dataset_utils.data_classes import MolData, MolCrystalData
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.utils import embed_crystal_list
@@ -265,33 +265,46 @@ def process_smiles_to_crystal_opt(lines: list,
                 molecule=sample,
                 sg_ind=space_group,
                 cell_lengths=torch.ones(3),
-                cell_angles=torch.ones(3) * torch.pi/2,
+                cell_angles=torch.ones(3) * torch.pi / 2,
                 aunit_centroid=torch.ones(3) * 0.5,
                 aunit_orientation=torch.ones(3),
                 aunit_handedness=int(aunit_handedness[ind]),
                 identifier=sample.smiles,
             )
-            # initiate very diffuse
-            converged = False
-            while not converged:
-                crystal.sample_random_crystal_parameters(target_packing_coeff=0.1)
-                # while crystal.packing_coeff > 1:  # force not-too dense crystals
-                #     crystal.cell_lengths *= 1.1
-                #     crystal.box_analysis()
-                lj_pot, _, _ = crystal.build_and_analyze()
-                if lj_pot <= 0:
-                    converged = True
             crystals.append(crystal)
         crystal_batch = collate_data_list(crystals)
-        crystal_batch.clean_cell_parameters()
-
-        # print('''do local opt''')
-        samples = optimize_crystal_batch(
-            crystal_batch.clone().cpu(),
-            crystal_batch.cell_parameters().clone().cpu(),
-            opt_eps=1e-5,
-            post_scramble_each=post_scramble_each
+        crystal_batch.sample_reasonable_random_parameters(
+            target_packing_coeff=0.5,  # diffuse target
+            tolerance=3,
+            max_attempts=500
         )
+
+        # print("doing opt")
+        optimization_trajectory = crystal_batch.optimize_crystal_parameters(
+            optim_target='LJ',
+            show_tqdm=False,
+            convergence_eps=1e-5,
+            do_box_restriction=True,
+            cutoff=10,
+            compression_factor=0.1,
+        )
+
+        # extract optimized samples
+        samples = optimization_trajectory[-1]
+
+        # filter unbound states
+        samples = [sample for sample in samples if sample.scaled_lj_pot < 3]
+
+        # sample noisily about optimized minima
+        nearby_samples = sample_about_crystal(samples,
+                                              noise_level=0.05,  # empirically gets us an LJ std about 3
+                                              num_samples=post_scramble_each,
+                                              cutoff=10)
+
+        for ind in range(post_scramble_each):
+            samples.extend(nearby_samples[ind])
+
+        samples = [sample for sample in samples if sample.scaled_lj_pot < 3]  # filter bound states
 
         # do embedding
         if do_embedding:
@@ -307,49 +320,12 @@ def process_smiles_to_crystal_opt(lines: list,
             print('doing mace energy')
             samples = add_mace_energy(samples)
             samples = [sample for sample in samples if hasattr(sample, 'mace_mol_pot')]
-            #
-            # # sample analysis
-            # ljs = torch.tensor([elem.scaled_lj_pot for elem in samples])
-            # maces = torch.tensor([elem.mace_lattice_pot for elem in samples])
-            #
-            # best_ind = np.argmin(ljs)
-            # best_crystal = collate_data_list([samples[best_ind]])
-            # best_cluster = best_crystal.mol2cluster()
-            # best_cluster.visualize([0], mode='distance', cutoff=20)
-            #
-            # best_ind = np.argmin(maces)
-            # best_crystal = collate_data_list([samples[best_ind]])
-            # best_cluster = best_crystal.mol2cluster()
-            # best_cluster.visualize([0], mode='distance', cutoff=20)
-            #
-            # best_ind = np.argmax(maces)
-            # best_crystal = collate_data_list([samples[best_ind]])
-            # best_cluster = best_crystal.mol2cluster()
-            # best_cluster.visualize([0], mode='distance', cutoff=20)
-            #
-            # import plotly.graph_objects as go
-            # go.Figure(go.Scatter(x=ljs.cpu().detach().numpy(),
-            #                      y=maces.cpu().detach().numpy(),
-            #                      mode='markers'
-            #                      )).show()
 
         print(f"finished processing smiles list with {mol_batch.num_graphs} "
               f"molecules and optimizing crystals with {len(samples)} samples")
 
         torch.save(samples, file_path)
-        # optional test script
-        """
-        crystal_batch = collate_data_list(samples[::100])
-        crystal_batch.build_unit_cell()
-        aunit_centroid, aunit_orientation, aunit_handedness, is_well_defined, pos = crystal_batch.reparameterize_unit_cell()
-        assert torch.all(torch.isclose(aunit_centroid[is_well_defined], crystal_batch.aunit_centroid[is_well_defined],
-                                       atol=1e-3)), "Reparameterization of centroids failed"
-        assert torch.all(torch.isclose(aunit_orientation[is_well_defined], crystal_batch.aunit_orientation[is_well_defined],
-                                       atol=1e-2)), "Reparameterization of rotvecs failed"
-        assert torch.all(torch.isclose(aunit_handedness[is_well_defined].cpu(), crystal_batch.aunit_handedness[is_well_defined],
-                                       atol=1e-8)), "Reparamterization of handedness failed"
-    
-        """
+
     except Exception as e:
         print(str(e))
         print("Crystal synthesis job failed!")

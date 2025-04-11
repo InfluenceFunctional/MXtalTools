@@ -460,11 +460,12 @@ class MolecularCrystalGraphModel(nn.Module):
                 edges_dict: Optional[dict] = None,
                 return_latent: bool = False,
                 return_dists: bool = False,
-                return_embedding: bool = False
+                return_embedding: bool = False,
+                force_edges_rebuild: bool = False,
                 ) -> Tuple[torch.Tensor, Optional[dict]]:
 
-        if len(self.graph_net.interaction_blocks) > 0 or return_dists:
-            if edges_dict is None:  # option to rebuild radial graph
+        if len(self.graph_net.interaction_blocks) > 0 or return_dists or force_edges_rebuild:
+            if edges_dict is None or force_edges_rebuild:  # option to rebuild radial graph
                 edges_dict = build_radial_graph(
                     pos,
                     batch,

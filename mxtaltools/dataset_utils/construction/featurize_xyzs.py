@@ -65,6 +65,8 @@ def process_xyzs_to_chunks(xyzs_path, chunks_path, n_chunks):
                         skip_mol_analysis=False,
                     )
 
+                    batch = collate_data_batch([mol1, mol2, mol3, mol4])
+
                     data_list.append(data)
 
                 except ValueError:

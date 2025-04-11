@@ -34,7 +34,7 @@ class MolecularCrystalModel(BaseGraphModel):
             graph_config=config.graph,
         )
 
-    def forward(self, crystal_batch, return_dists=False, return_latent=False):
+    def forward(self, crystal_batch, return_dists=False, return_latent=False, force_edges_rebuild=False):
         """overwrites base method"""
         # on the fly atom property embeddings
         crystal_batch = self.featurize_input_graph(crystal_batch)
@@ -49,9 +49,10 @@ class MolecularCrystalModel(BaseGraphModel):
                           crystal_batch.num_graphs,
                           crystal_batch.aux_ind,
                           crystal_batch.mol_ind,
-                          edges_dict=crystal_batch.edges_dict,
+                          edges_dict=crystal_batch.edges_dict if hasattr(crystal_batch, 'edges_dict') else None,
                           return_dists=return_dists,
-                          return_latent=return_latent)
+                          return_latent=return_latent,
+                          force_edges_rebuild=force_edges_rebuild,)
 
 
 # class HierarchicalCrystalDiscriminator(nn.Module):

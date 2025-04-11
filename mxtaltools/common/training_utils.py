@@ -253,7 +253,8 @@ def reload_model(model, device, optimizer, path, reload_optimizer=False):
     load model and state dict from path
     includes fix for potential dataparallel issue
     """
-    checkpoint = torch.load(path, map_location=device)
+    # todo we load a config here as well as weights so we will have to change how we do this in an upcoming pytorch release when they get rid of this option
+    checkpoint = torch.load(path, map_location=device, weights_only=False)
     if list(checkpoint['model_state_dict'])[0][
        0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
         for i in list(checkpoint['model_state_dict']):

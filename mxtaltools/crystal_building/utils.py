@@ -26,7 +26,8 @@ def generate_sorted_fractional_translations(supercell_size):
     xx, yy, zz = torch.meshgrid(
         torch.arange(-supercell_size, supercell_size + 1),
         torch.arange(-supercell_size, supercell_size + 1),
-        torch.arange(-supercell_size, supercell_size + 1)
+        torch.arange(-supercell_size, supercell_size + 1),
+        indexing='ij'
     )
 
     # Flatten the meshgrid and stack the results into a 2D tensor

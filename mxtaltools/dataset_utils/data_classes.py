@@ -24,8 +24,7 @@ from mxtaltools.crystal_building.random_crystal_sampling import sample_aunit_len
     sample_aunit_orientations, sample_aunit_centroids
 from mxtaltools.crystal_building.utils import get_aunit_positions, aunit2unit_cell, parameterize_crystal_batch, \
     unit_cell_to_supercell_cluster, align_mol_batch_to_standard_axes, canonicalize_rotvec
-from mxtaltools.crystal_search.standalone_crystal_opt import optimize_crystal_batch, \
-    standalone_gradient_descent_optimization
+from mxtaltools.crystal_search.standalone_crystal_opt import standalone_gradient_descent_optimization
 from mxtaltools.dataset_utils.mol_building import smiles2conformer
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.functions.radial_graph import build_radial_graph
@@ -587,6 +586,38 @@ class MolCrystalData(MolData):
         self.sample_random_aunit_centroids()
         self.clean_cell_parameters(mode='hard')
 
+    def sample_reasonable_random_parameters(self,
+                                            tolerance: float = 1,
+                                            target_packing_coeff: Optional = None,
+                                            max_attempts: int = 100):
+        """
+        Sample random crystal parameters
+        build the resulting crystals and check their vdW overlaps
+        If they are sufficiently small, retain that sample
+        Repeat until convergence
+        """
+        good_params_tensor = torch.zeros(self.num_graphs, 12, device=self.device)
+        found_params_flags = torch.zeros(self.num_graphs, dtype=torch.bool)
+        best_ljs = torch.ones(self.num_graphs, dtype=torch.float32, device=self.device) * 1e7
+        converged = False
+        iter = 0
+        while not converged and iter < max_attempts:
+            self.sample_random_crystal_parameters(target_packing_coeff)
+            _, _, scaled_lj = self.build_and_analyze(cutoff=4)
+            improved_inds = torch.argwhere(scaled_lj < best_ljs)
+            best_ljs[improved_inds] = scaled_lj[improved_inds]
+            good_inds = torch.argwhere(scaled_lj < tolerance)
+            good_params_tensor[improved_inds] = self.cell_parameters()[improved_inds]
+            found_params_flags[good_inds] = True
+            iter += 1
+            if torch.all(found_params_flags):
+                converged = True
+
+        self.set_cell_parameters(good_params_tensor)
+
+        if not converged:
+            print(f"Failed to converge {torch.sum(~found_params_flags)} out of {self.num_graphs} crystals")
+
     def denorm_by_radius(self, arr):
         """
         arr *= mol_radius
@@ -701,7 +732,7 @@ class MolCrystalData(MolData):
         # destandardize
         destandardized_cell_params = self.destandardize_cell_parameters(new_std_cell_params)
         # assign
-        self.set_cell_parameters(destandardized_cell_params)
+        self.set_cell_parameters(destandardized_cell_params, skip_box_analysis=True)
         # clean
         self.clean_cell_parameters(mode='hard')
         # refresh box
@@ -1072,16 +1103,18 @@ class MolCrystalData(MolData):
         orientation_means = torch.tensor([[0, 0, torch.pi / 2]], dtype=torch.float32, device=self.device)
         return std_aunit_orientation * orientation_stds + orientation_means
 
-    def set_cell_parameters(self, cell_parameters):
+    def set_cell_parameters(self, cell_parameters, skip_box_analysis: bool=False):
         (self.cell_lengths, self.cell_angles,
          self.aunit_centroid, self.aunit_orientation) = (
             cell_parameters.split(3, dim=1))
+        if not skip_box_analysis:
+            self.box_analysis()
 
     def build_and_analyze(self,
                           return_cluster: Optional[bool] = False,
                           noise: Optional[float] = None,
-                          cutoff: float = 6,
-                          supercell_size: int = 10
+                          cutoff: float = 10,
+                          supercell_size: int = 10,
                           ):
         """
         full procedure for building and analyzing a molecular crystal
@@ -1094,12 +1127,13 @@ class MolCrystalData(MolData):
         cluster_batch.construct_radial_graph(cutoff=cutoff)
         self.lj_pot, self.scaled_lj_pot = cluster_batch.compute_LJ_energy()
         self.es_pot = cluster_batch.compute_ES_energy()
+
         if return_cluster:
             return self.lj_pot, self.es_pot, self.scaled_lj_pot, cluster_batch
         else:
             return self.lj_pot, self.es_pot, self.scaled_lj_pot
 
-    def mol2cluster(self,  cutoff: float = 6, supercell_size: int = 10):
+    def mol2cluster(self, cutoff: float = 6, supercell_size: int = 10):
         self.pose_aunit()
         self.build_unit_cell()
         return self.build_cluster(cutoff, supercell_size)
@@ -1133,32 +1167,19 @@ class MolCrystalData(MolData):
         else:
             assert False, "Crystal embedding not implemented for single samples"
 
-    def optimize_crystal_parameters(self,
-                                    opt_func: Optional[str] = 'LJ',
-                                    opt_eps: Optional[float] = 1e-2,
-                                    max_num_steps: Optional[int] = 500,
-                                    init_lr: Optional[float] = 1e-5,
-                                    show_tqdm: Optional[bool] = False,
-                                    ):
+    def optimize_crystal_parameters(self, **opt_kwargs):
         if self.is_batch:
             batch_to_optim = self.clone().to(self.device)
         else:
             batch_to_optim = collate_data_list([self]).clone().to(self.device)
-        # (batch_to_optim.aunit_centroid,
-        #  batch_to_optim.aunit_orientation,
-        #  batch_to_optim.aunit_handedness) = batch_to_optim.reparameterize_unit_cell()
+
         batch_to_optim.orient_molecule(mode='standardized')
         optimization_record = standalone_gradient_descent_optimization(
             batch_to_optim.cell_parameters(),
             batch_to_optim,
-            max_num_steps=max_num_steps,
-            convergence_eps=opt_eps,
-            lr=init_lr,
-            optimizer_func=torch.optim.Rprop,
-            optim_target=opt_func,
-            show_tqdm=show_tqdm,
+            **opt_kwargs
         )
-        return optimization_record, collate_data_list(optimization_record[-1])
+        return optimization_record
 
     @property
     def x(self) -> Any:
