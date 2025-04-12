@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 import torch.nn.functional as F
 import wandb
@@ -8,6 +7,8 @@ from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.common.training_utils import load_crystal_score_model, load_molecule_scalar_regressor, enable_dropout
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.utils import softmax_and_score
+sys.path.insert(0, os.path.abspath("../"))
+
 
 if __name__ == '__main__':
     with (wandb.init(
