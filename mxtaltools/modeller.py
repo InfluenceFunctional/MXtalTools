@@ -27,7 +27,6 @@ from mxtaltools.common.training_utils import flatten_wandb_params, set_lr, \
 from mxtaltools.common.utils import namespace2dict
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
-# from mxtaltools.crystal_search.sampling import Sampler
 from mxtaltools.dataset_utils.construction.parallel_synthesis import otf_synthesize_molecules, otf_synthesize_crystals
 from mxtaltools.dataset_utils.data_classes import MolData
 from mxtaltools.dataset_utils.dataset_manager import DataManager
@@ -1991,7 +1990,7 @@ class Modeller:
                                  pin_memory=data_loader.pin_memory,
                                  num_workers=data_loader.num_workers)
 
-        if self.models_dict['proxy_discriminator'].target_std == 0:
+        if self.models_dict['proxy_discriminator'].target_std == 1:
             self.models_dict['proxy_discriminator'].target_std = ens.std()
             self.models_dict['proxy_discriminator'].target_mean = ens.mean()
 
