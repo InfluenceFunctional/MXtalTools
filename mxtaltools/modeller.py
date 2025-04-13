@@ -84,6 +84,7 @@ class Modeller:
             'autoencoder': False,
             'embedding_regressor': False,
             'proxy_discriminator': False,
+            'crystal_regressor': False,
         }
 
         mp.set_start_method('spawn', force=True)  # parallel work requires this on linux
@@ -257,6 +258,8 @@ class Modeller:
             conv_cutoff = self.config.discriminator.model.graph.cutoff
         elif self.config.mode == 'proxy_discriminator' or self.config.mode == 'embedding_regression':
             conv_cutoff = self.config.autoencoder.model.encoder.graph.cutoff
+        elif self.config.mode == 'crystal_regression':
+            conv_cutoff = self.config.crystal_regressor.model.graph.cutoff
         else:
             assert False, "Missing convolutional cutoff information"
         return conv_cutoff
@@ -315,6 +318,7 @@ class Modeller:
             'regressor': False,
             'autoencoder': True,
             'embedding_regressor': False,
+            'crystal_regressor': False
         }
 
         '''initialize datasets and useful classes'''
@@ -395,6 +399,7 @@ class Modeller:
             'regressor': False,
             'autoencoder': True,
             'embedding_regressor': True,
+            'crystal_regressor': False
         }
 
         '''initialize datasets and useful classes'''
@@ -454,6 +459,7 @@ class Modeller:
             'regressor': False,
             'autoencoder': True,
             'embedding_regressor': False,
+            'crystal_regressor': False,
         }
 
         '''initialize datasets and useful classes'''
@@ -495,8 +501,8 @@ class Modeller:
                         mol_batch = mol_batch.to(self.device)
                         mol_batch.z = mol_batch.z.flatten()
                         mol_batch, input_data = self.preprocess_ae_inputs(mol_batch,
-                                                                     noise=0.01,
-                                                                     no_noise=False)
+                                                                          noise=0.01,
+                                                                          no_noise=False)
                         self.ae_step(input_data, mol_batch, update_weights, step=i, last_step=True)
 
                     # post epoch processing
@@ -527,8 +533,7 @@ class Modeller:
                 np.save(self.config.model_paths.autoencoder[:-3] + path_prepend + '_results.npy',
                         {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
 
-
-    def pd_evaluation(self, test_loader: Optional=None, dataDims: Optional=None):
+    def pd_evaluation(self, test_loader: Optional = None, dataDims: Optional = None):
         """prep workdir"""
         self.source_directory = os.getcwd()
         self.prep_new_working_directory()
@@ -539,7 +544,8 @@ class Modeller:
             'regressor': False,
             'autoencoder': True,
             'embedding_regressor': False,
-            'proxy_discriminator': True
+            'proxy_discriminator': True,
+            'crystal_regressor': False,
         }
         '''initialize datasets and useful classes'''
         _, test_loader, _ = self.load_dataset_and_dataloaders(override_test_fraction=1)
@@ -572,8 +578,7 @@ class Modeller:
             np.save(
                 r'C:\Users\mikem\crystals\CSP_runs\models\ae_draft2_models_and_artifacts\proxy_discriminator\results/'
                 + self.config.model_paths.proxy_discriminator.split("\\")[-1] + '_results.npy',
-                {'test_stats': self.logger.test_stats, 'config':namespace2dict({'config':self.config})['config']})
-
+                {'test_stats': self.logger.test_stats, 'config': namespace2dict({'config': self.config})['config']})
 
     def ae_embedding_step(self, mol_batch):
         mol_batch = mol_batch.to(self.device)
@@ -942,6 +947,7 @@ class Modeller:
             'embedding_regressor': self.config.mode == 'embedding_regression',
             'polymorph_classifier': self.config.mode == 'polymorph_classification',
             'proxy_discriminator': self.config.mode == 'proxy_discriminator',
+            'crystal_regressor': self.config.mode == 'crystal_regression',
         }
 
     def process_sweep_config(self):
@@ -977,8 +983,11 @@ class Modeller:
         if self.train_models_dict['discriminator']:
             self.discriminator_epoch(data_loader, update_weights, iteration_override)
 
-        if self.train_models_dict['generator']:
-            self.generator_epoch(data_loader, update_weights, iteration_override)
+        if self.train_models_dict['crystal_regressor']:
+            self.cr_epoch(data_loader, update_weights, iteration_override)
+
+        # if self.train_models_dict['generator']:
+        #     self.generator_epoch(data_loader, update_weights, iteration_override)
 
         elif self.config.mode == 'regression':
             self.regression_epoch(data_loader, update_weights, iteration_override)
@@ -1929,6 +1938,35 @@ class Modeller:
 
         self.logger.concatenate_stats_dict(self.epoch_type)
 
+    def cr_epoch(self,
+                 data_loader=None,
+                 update_weights=True,
+                 iteration_override=None):
+
+        if not hasattr(self, 'generator_prior'):  # first GAN epoch
+            self.init_gan_constants()
+
+        if update_weights:
+            self.models_dict['crystal_regressor'].train(True)
+        else:
+            self.models_dict['crystal_regressor'].eval()
+
+        if hasattr(data_loader.dataset[0], 'unit_cell_pos'):
+            for elem in data_loader.dataset:
+                elem.unit_cell_pos = None
+        for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
+            data = data.to(self.config.device)
+            '''
+            crystal_regressor
+            '''
+            self.cr_step(data, i, update_weights, skip_step=False)
+
+            if iteration_override is not None:
+                if i >= iteration_override:
+                    break  # stop training early
+
+        self.logger.concatenate_stats_dict(self.epoch_type)
+
     def pd_epoch(self,
                  data_loader=None,
                  update_weights=True,
@@ -1985,10 +2023,10 @@ class Modeller:
         ens = ens.clip(min=torch.quantile(ens, 0.005), max=torch.quantile(ens, 0.995))
         dataset = SimpleDataset(embedding, ens)
         embedding_data_loader = DataLoader(dataset,
-                                 batch_size=data_loader.batch_size,
-                                 shuffle=True,
-                                 pin_memory=data_loader.pin_memory,
-                                 num_workers=data_loader.num_workers)
+                                           batch_size=data_loader.batch_size,
+                                           shuffle=True,
+                                           pin_memory=data_loader.pin_memory,
+                                           num_workers=data_loader.num_workers)
 
         if self.models_dict['proxy_discriminator'].target_std == 1:
             self.models_dict['proxy_discriminator'].target_std = ens.std()
@@ -2043,7 +2081,6 @@ class Modeller:
         '''set space groups to be included and generated'''
         if self.config.generate_sgs == 'all':
             self.config.generate_sgs = [self.sym_info['space_groups'][int(key)] for key in ASYM_UNITS.keys()]
-
 
     def discriminator_step(self, crystal_batch, step, update_weights, skip_step):
         """
@@ -2103,6 +2140,50 @@ class Modeller:
                                       stats.values(),
                                       mode='extend')
 
+    def cr_step(self, crystal_batch, step, update_weights, skip_step):
+        """
+        execute a complete training step for the discriminator
+        synthesize crystals, compute losses, do reporting, update gradients
+        """
+        lj_pot, es_pot, scaled_lj_pot, cluster_batch = (
+            crystal_batch.build_and_analyze(return_cluster=True,
+                                            noise=self.config.positional_noise.discriminator))
+
+        cr_losses, predictions, targets = get_regression_loss(
+            self.models_dict['crystal_regressor'],
+            cluster_batch,
+            cluster_batch.y, #(lj_pot - self.dataDims['target_mean'])/self.dataDims['target_std'],
+            self.dataDims['target_mean'],
+            self.dataDims['target_std'])
+
+        cr_loss = cr_losses.mean()
+
+        if update_weights and (not skip_step):
+            self.optimizers_dict['crystal_regressor'].zero_grad(
+                set_to_none=True)  # reset gradients from previous passes
+            cr_loss.backward()  # back-propagation
+            torch.nn.utils.clip_grad_norm_(self.models_dict['crystal_regressor'].parameters(),
+                                           self.config.gradient_norm_clip)  # gradient clipping
+            self.optimizers_dict['crystal_regressor'].step()  # update parameters
+
+        # don't move anything to the CPU until after the backward pass
+        self.logger.update_current_losses('crystal_regressor',
+                                          self.epoch_type,
+                                          cr_losses.mean().detach().cpu().numpy(),
+                                          cr_losses.detach().cpu().numpy())
+
+        stats = {
+            'regressor_target': predictions.detach(),
+            'regressor_prediction': targets.detach(),
+        }
+
+        dict_of_tensors_to_cpu_numpy(stats)
+
+        self.logger.update_stats_dict(self.epoch_type,
+                                      stats.keys(),
+                                      stats.values(),
+                                      mode='extend')
+
     def compute_discriminator_rdf_distance(self, fake_cluster_batch, real_cluster_batch):
         rdf_dists = torch.zeros(real_cluster_batch.num_graphs, device=self.config.device, dtype=torch.float32)
         if self.config.discriminator.use_rdf_distance_loss:
@@ -2128,7 +2209,9 @@ class Modeller:
 
         elif index_generator_to_use == 1:  # randomly sampled crystals
             sgs_to_build = np.random.choice(self.config.generate_sgs, replace=True, size=crystal_batch.num_graphs)
-            sg_rand_inds = torch.tensor([list(self.sym_info['space_groups'].values()).index(SG) + 1 for SG in sgs_to_build], dtype=torch.long, device=crystal_batch.device) # indexing from 0
+            sg_rand_inds = torch.tensor(
+                [list(self.sym_info['space_groups'].values()).index(SG) + 1 for SG in sgs_to_build], dtype=torch.long,
+                device=crystal_batch.device)  # indexing from 0
             fake_crystal_batch.reset_sg_info(sg_rand_inds)
             fake_crystal_batch.sample_random_crystal_parameters()
 
@@ -2228,6 +2311,7 @@ class Modeller:
         discriminator_losses = torch.sum(torch.stack(discriminator_losses_list), dim=0)
 
         return discriminator_losses, stats
+
     #
     # def generator_step(self, mol_batch, step, update_weights, skip_stats):
     #     """  # todo rewrite this whole method with our new crystal sampling and building methods

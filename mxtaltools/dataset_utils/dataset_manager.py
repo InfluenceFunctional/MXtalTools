@@ -351,7 +351,7 @@ class DataManager:
                 targets = torch.cat([elem.aunit_volume()/elem.radius**3 for elem in self.dataset])
             else:
                 try:
-                    targets = torch.cat([elem.__dict__['_store'][self.regression_target] for elem in self.dataset])
+                    targets = torch.tensor([elem.__dict__['_store'][self.regression_target] for elem in self.dataset])
                 except:
                     assert False, "Unrecognized regression target"
 
@@ -381,34 +381,6 @@ class DataManager:
             [torch.sum(4 / 3 * torch.pi * self.vdw_radii_tensor[elem.x] ** 3) for elem in self.dataset])
         targets = red_vol / atom_volumes
         return targets
-
-    # target_list = [
-    #     "molecule_rotational_constant_a",
-    #     "molecule_rotational_constant_b",
-    #     "molecule_rotational_constant_c",
-    #     "molecule_dipole_moment",
-    #     "molecule_isotropic_polarizability",
-    #     "molecule_HOMO_energy",
-    #     "molecule_LUMO_energy",
-    #     "molecule_gap_energy",
-    #     "molecule_el_spatial_extent",
-    #     "molecule_zpv_energy",
-    #     "molecule_internal_energy_0",
-    #     "molecule_internal_energy_STP",
-    #     "molecule_enthalpy_STP",
-    #     "molecule_free_energy_STP",
-    #     "molecule_heat_capacity_STP"]
-    #
-    # import plotly.graph_objects as go
-    # from plotly.subplots import make_subplots
-    #
-    # fig = make_subplots(rows=4, cols=4, subplot_titles=target_list)
-    # for i, target in enumerate(target_list):
-    #     targets = self.dataset[target]
-    #     targets = np.clip(targets, a_min=np.quantile(targets, 0.001), a_max=np.quantile(targets, 0.999))
-    #     fig.add_histogram(x=targets, nbinsx=100, histnorm='probability density', row=i % 4 + 1, col=i // 4 + 1)
-    #
-    # fig.show(renderer='browser')
 
     def rebuild_crystal_indices(self):
         # identify which molecules are in which crystals and vice-versa
@@ -567,18 +539,23 @@ class DataManager:
 
         at train time, we can use this to repeat sampling of identical molecules
         """
-        # print("getting unique molecule fingerprints")
-        fingerprints = []
-        for z1 in range(len(self.dataset)):
-            zp = int(1)#self.dataset[z1].z_prime)
-            for ind in range(zp):
-                fingerprints.append(self.dataset[z1].fingerprint[2048 * ind:2048 * (ind + 1)])
-        fps = np.stack(fingerprints)
+        if hasattr(self.dataset[0],'fingerprint'):
+            # print("getting unique molecule fingerprints")
+            fingerprints = []
+            for z1 in range(len(self.dataset)):
+                zp = int(1)#self.dataset[z1].z_prime)
+                for ind in range(zp):
+                    fingerprints.append(self.dataset[z1].fingerprint[2048 * ind:2048 * (ind + 1)])
+            fps = np.stack(fingerprints)
 
-        unique_fps, inverse_map = np.unique(fps, axis=0, return_inverse=True)
-        molecules_in_crystals_dict = {unique.tobytes(): [] for unique in unique_fps}
-        for ind, mapping in enumerate(inverse_map):  # we record the molecule inex for each unique molecular fingerprint
-            molecules_in_crystals_dict[unique_fps[mapping].tobytes()].append(ind)
+            unique_fps, inverse_map = np.unique(fps, axis=0, return_inverse=True)
+            molecules_in_crystals_dict = {unique.tobytes(): [] for unique in unique_fps}
+            for ind, mapping in enumerate(inverse_map):  # we record the molecule inex for each unique molecular fingerprint
+                molecules_in_crystals_dict[unique_fps[mapping].tobytes()].append(ind)
+        else:
+            print("Dataset missing fingerprint information, "
+                  "skipping unique molecule checks")
+            molecules_in_crystals_dict = None
 
         return molecules_in_crystals_dict
 

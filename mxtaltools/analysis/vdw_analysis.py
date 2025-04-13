@@ -75,20 +75,6 @@ def compute_lj_pot(dist_dict, vdw_radii):
     return lj_pot, normed_overlap, overlap
 
 
-def scale_edgewise_vdw_pot(lj_pot: Union[np.ndarray, torch.tensor],
-                           clip_max: float = 100) \
-        -> Union[np.ndarray, torch.tensor]:
-
-    if torch.is_tensor(lj_pot):
-        scaled_lj_pot = torch.log(2 + lj_pot) / np.log(2) - 1
-        #scaled_lj_pot = lj_pot.clone()
-        #scaled_lj_pot[high_bools] = turnover_pot + torch.log10(scaled_lj_pot[high_bools] + 1 - turnover_pot)
-    else:
-        scaled_lj_pot = torch.log(2 + lj_pot) / torch.log(torch.Tensor([2])) - 1
-        #scaled_lj_pot = lj_pot.copy()
-        #scaled_lj_pot[high_bools] = turnover_pot + np.log10(scaled_lj_pot[high_bools] + 1 - turnover_pot)
-    return scaled_lj_pot.clip(max=clip_max)
-
 
 def old_compute_num_h_bonds(supercell_data, atom_acceptor_ind, atom_donor_ind, i):
     """

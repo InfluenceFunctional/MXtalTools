@@ -78,12 +78,14 @@ model_paths:
   autoencoder: null
   embedding_regressor: null
   polymorph_classifier: null
+  crystal_regressor: null
 
 positional_noise:
   discriminator: 0
   generator: 0
   regressor: 0
   autoencoder: 0
+  crystal_regressor: 0
 
 generate_sgs: null  #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 supercell_size: 5
@@ -125,7 +127,6 @@ proxy_discriminator:
   train_encoder: False
   electrostatic_scaling_factor: 100  # training energy is scaled_lj + factor * es_energy
   train_on_mace: False
-  vdw_turnover_potential: 10
   cutoff: 6
 
   model:
@@ -152,7 +153,6 @@ generator:
 
 discriminator:
   # settings
-  train_adversarially: False
   train_on_randn: False
   train_on_distorted: False
   use_classification_loss: False
@@ -165,6 +165,13 @@ discriminator:
 
 
 polymorph_classifier:
-  # discriminator optimizer and model
+  # polymorph_classifier optimizer and model
   optimizer: null
   model: null
+
+
+  crystal_regressor:
+    # crystal_regression optimizer and model
+    optimizer: null
+    model: null
+

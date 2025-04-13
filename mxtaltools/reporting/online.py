@@ -1249,179 +1249,73 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
         raw_target = np.concatenate(epoch_stats_dict['regressor_target'])
         raw_prediction = np.concatenate(epoch_stats_dict['regressor_prediction'])
 
-    if False:  #raw_target.ndim > 2 and raw_target.shape[1] > 1:
-        aa = 1
-        # 'treat each element, even in a tensor, as an independent regression problem'
-        # flat_target = raw_target.reshape(len(raw_target), np.prod(raw_target.shape[1:]))
-        # flat_prediction = raw_prediction.reshape(len(raw_prediction), np.prod(raw_prediction.shape[1:]))
-        # fig_dict = {}
-        # fig = go.Figure()
-        # norms = np.linalg.norm(flat_prediction - flat_target, axis=1)
-        #
-        #
-        # loss_dict = {
-        #     'abs_error_mean': norms.mean(),
-        #     'abs_error_std': norms.std(),
-        #     }
-        #
-        # fig.add_trace(go.Histogram(x=norms,
-        #                            histnorm='probability density',
-        #                            nbinsx=100,
-        #                            name="Error Distribution",
-        #                            showlegend=False,
-        #                            marker_color='rgba(0,0,100,1)'),
-        #               )
-        #
-        # #
-        # target_name = dataDims['regression_target']
-        # fig.update_xaxes(title_text=f'{target_name} Error', tickformat=".2g")
-        # fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
-        # fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
-        # fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-        #
-        # fig.write_image('fig.png', width=1024, height=512)  # save the image rather than the fig, for size reasons
-        # fig_dict['Regression Results'] = wandb.Image('fig.png')
-        #
-        # #num_entries = flat_target.shape[1]
-        # #num_cols = int(np.ceil(np.sqrt(num_entries)))
-        # #num_rows = int(np.ceil(num_entries/num_cols))
-        # # fig = make_subplots(cols=num_cols, rows=num_rows)
-        # # loss_dict = {}
-        # # fig_dict = {}
-        # # for dim_ind in range(flat_target.shape[1]):
-        # #     row = dim_ind // num_rows + 1
-        # #     col = dim_ind % num_cols + 1
-        # #
-        # #     target = flat_target[:, dim_ind]
-        # #     prediction = flat_prediction[:, dim_ind]
-        # #     #name = f'{int(dim_ind)}_'
-        # #     #losses = ['abs_error', 'abs_normed_error', 'squared_error']
-        # #     #
-        # #     # for loss in losses:
-        # #     #     if loss == 'abs_error':
-        # #     #         loss_i = np.abs(target - prediction)
-        # #     #     elif loss == 'abs_normed_error':
-        # #     #         loss_i = np.abs((target - prediction) / np.abs(target))
-        # #     #     elif loss == 'squared_error':
-        # #     #         loss_i = (target - prediction) ** 2
-        # #     #     else:
-        # #     #         assert False, "Loss not implemented"
-        # #     #
-        # #     #     loss_dict[name + loss + '_mean'] = np.mean(loss_i)
-        # #     #     loss_dict[name + loss + '_std'] = np.std(loss_i)
-        # #     #
-        # #     #     linreg_result = linregress(target, prediction)
-        # #     #     loss_dict[name + 'regression_R_value'] = linreg_result.rvalue
-        # #     #     loss_dict[name + 'regression_slope'] = linreg_result.slope
-        # #
-        # #     # predictions vs target trace
-        # #     xline = np.linspace(max(min(target), min(prediction)),
-        # #                         min(max(target), max(prediction)), 2)
-        # #
-        # #     xy = np.vstack([target, prediction])
-        # #     try:
-        # #         z = get_point_density(xy)
-        # #     except:
-        # #         z = np.ones_like(target)
-        # #
-        # #     num_points = len(prediction)
-        # #     opacity = max(0.1, np.exp(-num_points / 10000))
-        # #     fig.add_trace(
-        # #         go.Scattergl(x=target, y=prediction,
-        # #                      mode='markers', marker=dict(color=z), opacity=opacity,
-        # #                      showlegend=False),
-        # #         row=row, col=col)
-        # #     fig.add_trace(
-        # #         go.Scattergl(x=xline, y=xline,
-        # #                      showlegend=False, marker_color='rgba(0,0,0,1)'),
-        # #         row=row, col=col)
-        # #
-        # #     target_name = name + dataDims['regression_target']
-        # #     fig.update_yaxes(title_text=f'Predicted {target_name}', row=1, col=1, tickformat=".2g")
-        # #
-        # #     fig.update_xaxes(title_text=f'True {target_name}', row=1, col=1, tickformat=".2g")
-        # #
-        # #     fig.update_xaxes(title_text=f'{target_name} Error', row=1, col=2, tickformat=".2g")
-        # #
-        # #     fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
-        # #     fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
-        # #     fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-        #
-        # fig.write_image('fig.png', width=1024,
-        #                 height=512)  # save the image rather than the fig, for size reasons
-        # fig_dict['Regression Results'] = wandb.Image('fig.png')
-        # wandb.log(fig_dict, commit=False)
-        # wandb.log(loss_dict, commit=False)
+    'single-variable regression analysis'
+    prediction = raw_prediction.flatten()
+    target = raw_target.flatten()
+    losses = ['abs_error', 'abs_normed_error', 'squared_error']
+    loss_dict = {}
+    fig_dict = {}
+    for loss in losses:
+        if loss == 'abs_error':
+            loss_i = np.abs(target - prediction)
+        elif loss == 'abs_normed_error':
+            loss_i = np.abs((target - prediction) / np.abs(target))
+        elif loss == 'squared_error':
+            loss_i = (target - prediction) ** 2
+        else:
+            assert False, "Loss not implemented"
 
+        loss_dict[loss + '_mean'] = np.mean(loss_i)
+        loss_dict[loss + '_std'] = np.std(loss_i)
 
-    else:
-        'single-variable regression analysis'
-        prediction = raw_prediction.flatten()
-        target = raw_target.flatten()
-        losses = ['abs_error', 'abs_normed_error', 'squared_error']
-        loss_dict = {}
-        fig_dict = {}
-        for loss in losses:
-            if loss == 'abs_error':
-                loss_i = np.abs(target - prediction)
-            elif loss == 'abs_normed_error':
-                loss_i = np.abs((target - prediction) / np.abs(target))
-            elif loss == 'squared_error':
-                loss_i = (target - prediction) ** 2
-            else:
-                assert False, "Loss not implemented"
+        linreg_result = linregress(target, prediction)
+        loss_dict['regression_R_value'] = linreg_result.rvalue
+        loss_dict['regression_slope'] = linreg_result.slope
 
-            loss_dict[loss + '_mean'] = np.mean(loss_i)
-            loss_dict[loss + '_std'] = np.std(loss_i)
+    # predictions vs target trace
+    xline = np.linspace(max(min(target), min(prediction)),
+                        min(max(target), max(prediction)), 2)
 
-            linreg_result = linregress(target, prediction)
-            loss_dict['regression_R_value'] = linreg_result.rvalue
-            loss_dict['regression_slope'] = linreg_result.slope
+    xy = np.vstack([target, prediction])
+    try:
+        z = get_point_density(xy)
+    except:
+        z = np.ones_like(target)
 
-        # predictions vs target trace
-        xline = np.linspace(max(min(target), min(prediction)),
-                            min(max(target), max(prediction)), 2)
+    fig = make_subplots(cols=2, rows=1)
 
-        xy = np.vstack([target, prediction])
-        try:
-            z = get_point_density(xy)
-        except:
-            z = np.ones_like(target)
+    num_points = len(prediction)
+    opacity = max(0.1, np.exp(-num_points / 10000))
+    fig.add_trace(go.Scattergl(x=target, y=prediction, mode='markers', marker=dict(color=z), opacity=opacity,
+                               showlegend=False),
+                  row=1, col=1)
+    fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
+                  row=1, col=1)
 
-        fig = make_subplots(cols=2, rows=1)
+    fig.add_trace(go.Histogram(x=prediction - target,
+                               histnorm='probability density',
+                               nbinsx=100,
+                               name="Error Distribution",
+                               showlegend=False,
+                               marker_color='rgba(0,0,100,1)'),
+                  row=1, col=2)  #
 
-        num_points = len(prediction)
-        opacity = max(0.1, np.exp(-num_points / 10000))
-        fig.add_trace(go.Scattergl(x=target, y=prediction, mode='markers', marker=dict(color=z), opacity=opacity,
-                                   showlegend=False),
-                      row=1, col=1)
-        fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
-                      row=1, col=1)
+    #
+    target_name = dataDims['regression_target']
+    fig.update_yaxes(title_text=f'Predicted {target_name}', row=1, col=1, tickformat=".2g")
 
-        fig.add_trace(go.Histogram(x=prediction - target,
-                                   histnorm='probability density',
-                                   nbinsx=100,
-                                   name="Error Distribution",
-                                   showlegend=False,
-                                   marker_color='rgba(0,0,100,1)'),
-                      row=1, col=2)  #
+    fig.update_xaxes(title_text=f'True {target_name}', row=1, col=1, tickformat=".2g")
 
-        #
-        target_name = dataDims['regression_target']
-        fig.update_yaxes(title_text=f'Predicted {target_name}', row=1, col=1, tickformat=".2g")
+    fig.update_xaxes(title_text=f'{target_name} Error', row=1, col=2, tickformat=".2g")
 
-        fig.update_xaxes(title_text=f'True {target_name}', row=1, col=1, tickformat=".2g")
+    fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
+    fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
 
-        fig.update_xaxes(title_text=f'{target_name} Error', row=1, col=2, tickformat=".2g")
-
-        fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
-        fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
-        fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-
-        fig.write_image('fig.png', width=1024, height=512)  # save the image rather than the fig, for size reasons
-        fig_dict['Regression Results'] = wandb.Image('fig.png')
-        wandb.log(fig_dict, commit=False)
-        wandb.log(loss_dict, commit=False)
+    fig.write_image('fig.png', width=1024, height=512)  # save the image rather than the fig, for size reasons
+    fig_dict['Regression Results'] = wandb.Image('fig.png')
+    wandb.log(fig_dict, commit=False)
+    wandb.log(loss_dict, commit=False)
 
     return None
 
@@ -1572,7 +1466,7 @@ def detailed_reporting(config, dataDims, train_epoch_stats_dict, test_epoch_stat
         elif config.mode == 'proxy_discriminator':
             proxy_discriminator_analysis(config, dataDims, test_epoch_stats_dict, extra_test_dict)
 
-        elif config.mode == 'regression' or config.mode == 'embedding_regression':
+        elif config.mode == 'regression' or config.mode == 'embedding_regression' or config.mode == 'crystal_regression':
             log_regression_accuracy(config, dataDims, test_epoch_stats_dict)
 
         elif config.mode == 'autoencoder':

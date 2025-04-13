@@ -49,7 +49,8 @@ if __name__ == '__main__':
                            'embedding_regression',
                            'polymorph_classification',
                            'generator',
-                           'proxy_discriminator']:
+                           'proxy_discriminator',
+                           'crystal_regression']:
             if config.max_epochs > 0:
                 predictor.fit_models()
             elif config.max_epochs == 0:

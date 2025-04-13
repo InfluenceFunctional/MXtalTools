@@ -37,13 +37,21 @@ def instantiate_models(config: Namespace,
             node_standardization_tensor=dataDims['node_standardization_vector'],
             graph_standardization_tensor=dataDims['graph_standardization_vector'])
     if config.mode == 'discriminator':
-        models_dict['generator'] = nn.Linear(1, 1)
         models_dict['discriminator'] = MolecularCrystalModel(
             config.seeds.model,
             config.discriminator.model,
             dataDims['atom_features'],
             dataDims['molecule_features'],
             output_dim=3,
+            node_standardization_tensor=dataDims['node_standardization_vector'],
+            graph_standardization_tensor=dataDims['graph_standardization_vector'])
+    if config.mode == 'crystal_regression':
+        models_dict['crystal_regressor'] = MolecularCrystalModel(
+            config.seeds.model,
+            config.crystal_regressor.model,
+            dataDims['atom_features'],
+            dataDims['molecule_features'],
+            output_dim=1,
             node_standardization_tensor=dataDims['node_standardization_vector'],
             graph_standardization_tensor=dataDims['graph_standardization_vector'])
     if config.mode == 'regression' or config.model_paths.regressor is not None:
