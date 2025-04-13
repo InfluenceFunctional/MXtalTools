@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 from torch_scatter import scatter
+from tqdm import tqdm
 
 from mxtaltools.common.geometry_utils import cell_vol_torch, components2angle, enforce_crystal_system, \
     batch_molecule_principal_axes_torch
@@ -438,15 +439,22 @@ def embed_crystal_list(
         embedding_type: str,
         encoder_checkpoint_path: Optional = None,
         device: Optional[str] = 'cpu',
+        redo_crystal_analysis: Optional[bool] = False
 ) -> list:
     if encoder_checkpoint_path is not None:
         encoder = load_encoder(encoder_checkpoint_path).to(device)
     embeddings = []
     num_chunks = len(crystal_list) // batch_size + int(len(crystal_list) % batch_size != 0)
+    lj_pots, scaled_lj_pots, es_pots, bh_pots = (torch.zeros(len(crystal_list), dtype=torch.float32, device=device) for _ in range(4))
     with torch.no_grad():
-        for ind in range(num_chunks):  # do it this way so to avoid shuffling
-            crystal_batch = collate_data_list(crystal_list[ind * batch_size:(ind + 1) * batch_size]
+        for ind in tqdm(range(num_chunks)):  # do it this way so to avoid shuffling
+            sample_inds = torch.arange(ind * batch_size, (ind + 1) * batch_size)
+            crystal_batch = collate_data_list([crystal_list[ind] for ind in sample_inds]
                                               ).to(device)
+            if redo_crystal_analysis:
+                lj_pots[sample_inds], es_pots[sample_inds], scaled_lj_pots[sample_inds], cluster_batch = crystal_batch.build_and_analyze(cutoff=10, return_cluster=True)
+                bh_pots[sample_inds] = cluster_batch.compute_buckingham_energy()
+
             embedding = crystal_batch.do_embedding(embedding_type,
                                                    encoder
                                                    ).cpu().detach()
@@ -460,6 +468,11 @@ def embed_crystal_list(
 
     for ind in range(len(crystal_list)):
         crystal_list[ind].embedding = embeddings[None, ind]
+        if redo_crystal_analysis:
+            crystal_list[ind].lj_pot = lj_pots[ind].cpu()
+            crystal_list[ind].es_pot = es_pots[ind].cpu()
+            crystal_list[ind].scaled_lj_pot = scaled_lj_pots[ind].cpu()
+            crystal_list[ind].bh_pot = bh_pots[ind].cpu()
 
     return crystal_list
 

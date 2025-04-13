@@ -127,6 +127,7 @@ proxy_discriminator:
   train_encoder: False
   electrostatic_scaling_factor: 100  # training energy is scaled_lj + factor * es_energy
   train_on_mace: False
+  train_on_bh: False  # alternatively, train on the Buckingham potential energy
   cutoff: 6
 
   model:

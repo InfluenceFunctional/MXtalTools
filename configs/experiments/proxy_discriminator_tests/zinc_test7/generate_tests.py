@@ -61,13 +61,16 @@ for hidden_dim in [512, 1024]:
 
 # production tests
 best_config = deepcopy(config_list[12])
-for embedding in ['autoencoder', 'principal_axes', 'mol_volume', None]:
-    for esf in ['mace']:
+for esf in ['mace', 'buckingham']:
+    for embedding in ['autoencoder', 'principal_axes', 'mol_volume', None]:
         config_i = deepcopy(best_config)
         config_i['proxy_discriminator']['embedding_type'] = embedding
         if esf == 'mace':
             config_i['proxy_discriminator']['electrostatic_scaling_factor'] = 0
             config_i['proxy_discriminator']['train_on_mace'] = True
+        elif esf == 'buckingham':
+            config_i['proxy_discriminator']['electrostatic_scaling_factor'] = 0
+            config_i['proxy_discriminator']['train_on_bh'] = True
         else:
             config_i['proxy_discriminator']['electrostatic_scaling_factor'] = esf
             config_i['proxy_discriminator']['train_on_mace'] = False

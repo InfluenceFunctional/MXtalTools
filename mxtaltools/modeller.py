@@ -1579,6 +1579,17 @@ class Modeller:
                 mace_pot[ind] = elem.mace_lattice_pot
                 ind += 1
             ens = mace_pot
+        elif self.config.proxy_discriminator.train_on_bh:
+            bh_pot = torch.zeros((
+                len(otf_dataset),
+            ))
+
+            ind = 0
+            for elem in otf_dataset:
+                embedding[ind] = elem.embedding.cpu().detach()
+                bh_pot[ind] = elem.bh_pot
+                ind += 1
+            ens = bh_pot
         else:
             lj_pot = torch.zeros((
                 len(otf_dataset),
@@ -1594,89 +1605,6 @@ class Modeller:
                 ind += 1
             ens = lj_pot + self.config.proxy_discriminator.electrostatic_scaling_factor * es_pot
         return embedding, ens
-
-    '''
-    def crystal_structure_prediction(self):
-        with (wandb.init(config=self.config,
-                         project=self.config.wandb.project_name,
-                         entity=self.config.wandb.username,
-                         tags=[self.config.logger.experiment_tag],
-                         # online=False,
-                         settings=wandb.Settings(code_dir="."))):
-            self.source_directory = os.getcwd()
-            self.prep_new_working_directory()
-            self.get_training_mode()
-            _, data_loader, _ = self.load_dataset_and_dataloaders(
-                override_test_fraction=1,
-                override_shuffle=False,
-            )
-            self.initialize_models_optimizers_schedulers()
-
-            print(self.separator_string)
-            print("Starting Evaluation")
-            self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
-            self.times = {}  # reset for iterative looping
-            self.logger.reset_for_new_epoch(0, data_loader.batch_size)
-
-            if not hasattr(self, 'packing_loss_coefficient'):  # first GAN epoch
-                self.init_gan_constants()
-
-            self.models_dict['generator'].eval()
-            self.models_dict['autoencoder'].eval()
-            self.models_dict['discriminator'].eval()
-
-            # test autoencoder performance on this sample
-            sample = collate_data_list(data_loader.dataset[0:200])
-            data, input_data = self.preprocess_ae_inputs(sample.to(self.device), no_noise=True,
-                                                         orientation_override=None)
-            loss, rmsd, max_dist, tot_overlap, matched = self.models_dict['autoencoder'].check_embedding_quality(
-                input_data.clone())
-            # topk_samples = collate_data_list([data_loader.dataset[ind] for ind in torch.argsort(loss)])
-            # sample = data_loader.dataset[torch.argmin(loss)]
-            # 131369 is a good molecule, good reconstruction loss and flat-ish double ring
-            ids = [data_loader.dataset[ind].identifier for ind in range(len(data_loader.dataset))]
-            sample = data_loader.dataset[ids.index(131369)]
-
-            # for use with QM9/CSD dataset
-            # ids = [data_loader.dataset[ind].identifier for ind in range(len(data_loader.dataset))]
-            #
-            # sample = data_loader.dataset[ids.index('DUNVEN01')]
-
-            # fairly rigid molecules: ampyrd, axosow, benzac, bepnit, bertoh, bzamid,
-            # nicoam, DUNVEN, dovcat, NECMUD,
-
-            sampler = Sampler(0,
-                              self.device,
-                              self.config.machine,
-                              self.generator_prior,
-                              self.models_dict['generator'],
-                              self.models_dict['autoencoder'],
-                              self.models_dict['discriminator'],
-                              show_tqdm=True,
-                              skip_rdf=True,
-                              gd_score_func='discriminator',
-                              )
-
-            batch_size = self.config.max_batch_size
-            num_samples = self.config.num_samples
-
-            sampling_dict = sampler.crystal_search(sample,
-                                                   'prior',
-                                                   num_samples,
-                                                   batch_size,
-                                                   torch.LongTensor([14 for _ in range(batch_size)]),
-                                                   packing_coeff_range=[0.5, 2.0],
-                                                   vdw_threshold=10000,
-                                                   rdf_cutoff=0.025,
-                                                   opt_eps=1e-2,
-                                                   cell_params_cutoff=0.05,
-                                                   chain_length=10,
-                                                   step_size=0.1,  # 0.1
-                                                   parallel=True,
-                                                   )
-            np.save(f'../sampling_results/{str(int(sample.identifier))}_{self.run_identifier}_sampling_results',
-                    sampling_dict)
-    '''
 
     def ae_annealing(self):
         # if we have learned the existing distribution AND there are no orphaned nodes
@@ -2016,7 +1944,8 @@ class Modeller:
             data_loader.dataset,
             self.config.proxy_discriminator.embedding_type,
             self.config.model_paths.autoencoder,
-            self.device
+            self.device,
+            redo_crystal_analysis=False if self.config.proxy_discriminator.train_on_mace else True,
         )
         # reset new dataset as simple tensors
         embedding, ens = self.extract_pd_data(data_list)

@@ -83,6 +83,7 @@ proxy_discriminator:
   train_encoder: False  # deprecated right now # option to train the encoder, if doing autoencoder training
   electrostatic_scaling_factor: 100  # training energy is scaled_lj + factor * es_energy
   train_on_mace: False  # alternately, train on the mace lattice energy
+  train_on_bh: True  # alternatively, train on the Buckingham potential energy
   cutoff: 6
   optimizer:
     beta1: 0.9

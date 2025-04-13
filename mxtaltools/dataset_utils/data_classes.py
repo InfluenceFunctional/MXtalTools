@@ -12,7 +12,8 @@ from torch_geometric.data.storage import (BaseStorage, EdgeStorage,
 from torch_geometric.typing import OptTensor
 from torch_sparse import SparseTensor
 
-from mxtaltools.analysis.vdw_analysis import vdw_analysis, electrostatic_analysis, get_intermolecular_dists_dict
+from mxtaltools.analysis.vdw_analysis import vdw_analysis, electrostatic_analysis, get_intermolecular_dists_dict, \
+    buckingham_energy
 from mxtaltools.common.geometry_utils import batch_compute_molecule_volume, \
     compute_mol_radius, batch_compute_mol_radius, batch_compute_mol_mass, compute_mol_mass, center_mol_batch, \
     apply_rotation_to_batch, enforce_crystal_system, batch_compute_fractional_transform
@@ -932,6 +933,20 @@ class MolCrystalData(MolData):
             assert False, "ES energies not implemented for single crystals"
 
         return molwise_estat_energy
+
+    def compute_buckingham_energy(self):
+        vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()), device=self.device)
+        if "Batch" in self.__class__.__name__:
+            molwise_buckingham_energy = buckingham_energy(
+                self.edges_dict,
+                self.num_graphs,
+                vdw_radii_tensor
+            )
+
+        else:
+            assert False, "BH energies not implemented for single crystals"
+
+        return molwise_buckingham_energy
 
     def clean_cell_parameters(self, mode: str = 'hard',
                               canonicalize_orientations: bool = True,

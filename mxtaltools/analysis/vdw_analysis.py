@@ -116,6 +116,57 @@ def electrostatic_analysis(dist_dict, num_graphs: int, cutoff: float = 0.92):
 
     return molwise_estat_energy
 
+def buckingham_energy(dist_dict,
+                      num_graphs,
+                      vdw_radii,
+                      A: float = -3.2619,
+                      B: float = 1.0,
+                      C: float = -0.2,
+                      ):
+    """
+    buckingham potential with distance normalized by interatomic distances
+    default ABC parameters fitted to very roughly match 12-6 LJ potential
+    """
+    dists = dist_dict['intermolecular_dist']
+    elements = dist_dict['intermolecular_dist_atoms']
+    batch = dist_dict['intermolecular_dist_batch']
+
+    atom_radii = [vdw_radii[elements[0]], vdw_radii[elements[1]]]
+    radii_sums = atom_radii[0] + atom_radii[1]
+    normed_dists = dists / radii_sums
+    bh = torch.nan_to_num(A * torch.exp(-B * normed_dists) - C / normed_dists ** 6,
+                          nan=0.0, posinf=1e20, neginf=-1e-20
+                          )
+    molwise_bh = scatter(bh, batch, reduce='sum', dim_size=num_graphs)
+
+    return molwise_bh
+
+    #
+    # def fit_buckingham_to_lj(r0=1.0, epsilon=1.0, B=1.2):
+    #     import numpy as np
+    #     from scipy.optimize import fsolve
+    #     def equations(vars):
+    #         A, C = vars
+    #         # Energy match at r0
+    #         V = A * np.exp(-B * r0) - C / r0**6 + epsilon
+    #         # Derivative match at r0 (minimum)
+    #         dV = -A * B * np.exp(-B * r0) + 6 * C / r0**7
+    #         return [V, dV]
+    #     # Initial guess
+    #     guess = [100.0, 1000.0]
+    #     A, C = fsolve(equations, guess)
+    #     return A, B, C
+    #     """
+    #     A, B, C = fit_buckingham_to_lj(r0=1.0, epsilon=1.0, B=1.2)
+    #     xx = torch.linspace(0, 10, 1001)
+    #     sigma = 3.0
+    #     epsilon = 1.0
+    #     lj = 4 * ((sigma/xx)**12 - (sigma/xx)**6)
+    #     B = 1
+    #     A, B, C = fit_buckingham_to_lj(sigma, epsilon, B)
+    #     """
+
+
 
 def old_new_hydrogen_bond_analysis(supercell_data, dist_dict, cutoff: float = 2.2):
     """
