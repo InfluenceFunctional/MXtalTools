@@ -1982,7 +1982,7 @@ class Modeller:
         )
         # reset new dataset as simple tensors
         embedding, ens = self.extract_pd_data(data_list)
-        ens = ens.clip(min=torch.quantile(ens, 0.02), max=torch.quantile(ens, 0.98))
+        ens = ens.clip(min=torch.quantile(ens, 0.005), max=torch.quantile(ens, 0.995))
         dataset = SimpleDataset(embedding, ens)
         embedding_data_loader = DataLoader(dataset,
                                  batch_size=data_loader.batch_size,
