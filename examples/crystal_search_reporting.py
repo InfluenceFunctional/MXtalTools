@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from torch.nn import functional as F
 import plotly.graph_objects as go
@@ -59,50 +60,20 @@ def csp_reporting(optimized_samples,
     """
 
     fig = go.Figure()
-    fig.add_scatter(x=packing_coeff.cpu(), y=model_score.cpu(), mode='markers', marker_color='blue',
+    fig.add_scatter(x=packing_coeff.cpu(), y=model_score.cpu(),
+                    mode='markers', marker_size=12,
+                    marker_color=rdf_dists.log10().cpu().detach(),#'blue',
+                    marker_colorbar=dict(title=dict(text="log RDF EMD")),
+                    marker_colorscale='bluered', opacity=0.75, marker_line_width=1,
+                    marker_line_color='white',
                     name='Optimized Samples')
-    fig.add_scatter(x=ref_packing_coeff.cpu(), y=ref_model_score.cpu(), mode='markers', marker_color='black',
-                    marker_size=20,
+    fig.add_scatter(x=ref_packing_coeff.cpu(), y=ref_model_score.cpu(), mode='markers', marker_color='yellow',
+                    marker_size=25, marker_line_color='black', marker_line_width=2,
                     name='Experimental Sample')
     fig.update_layout(xaxis_title='Packing Coefficient', yaxis_title='Model Score',
-                      xaxis_range=[0, 1])
-    fig.update_annotations(font=dict(size=18))
-    fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
-    fig.update_xaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
-    fig.update_yaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
-    fig.update_yaxes(linecolor='black', mirror=True,
-                     showgrid=True, zeroline=True)
-    fig.update_xaxes(linecolor='black', mirror=True,
-                     showgrid=True, zeroline=True)
-    fig.show()
-
-    fig = go.Figure()
-    fig.add_scatter(x=packing_coeff.cpu(), y=scaled_lj_pot.cpu(), mode='markers', marker_color='blue',
-                    name='Optimized Samples')
-    fig.add_scatter(x=ref_packing_coeff.cpu(), y=ref_scaled_lj_pot.cpu(), mode='markers', marker_color='black',
-                    marker_size=20,
-                    name='Experimental Sample')
-    fig.update_layout(xaxis_title='Packing Coefficient', yaxis_title='LJ Energy',
-                      xaxis_range=[0, 1])
-    fig.update_annotations(font=dict(size=18))
-    fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
-    fig.update_xaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
-    fig.update_yaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
-    fig.update_yaxes(linecolor='black', mirror=True,
-                     showgrid=True, zeroline=True)
-    fig.update_xaxes(linecolor='black', mirror=True,
-                     showgrid=True, zeroline=True)
-    fig.show()
-
-    fig = go.Figure()
-    fig.add_scatter(x=model_score.cpu(), y=scaled_lj_pot.cpu(), mode='markers', marker_color='blue',
-                    name='Optimized Samples')
-    fig.add_scatter(x=ref_model_score.cpu(), y=ref_scaled_lj_pot.cpu(), mode='markers', marker_color='black',
-                    marker_size=20,
-                    name='Experimental Sample')
-    fig.update_layout(xaxis_title='Model Score', yaxis_title='LJ Energy',
                       )
     fig.update_annotations(font=dict(size=18))
+    fig.update_layout(legend_orientation='h')
     fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
     fig.update_xaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
     fig.update_yaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
@@ -111,52 +82,40 @@ def csp_reporting(optimized_samples,
     fig.update_xaxes(linecolor='black', mirror=True,
                      showgrid=True, zeroline=True)
     fig.show()
+    fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\mxt_code\density_funnel.png', width=800, height=600)
 
     """
-    Distances Plots
+    Distances plot
     """
 
     fig = go.Figure()
-    fig.add_scatter(y=rdf_dist_pred.cpu().detach(), x=rdf_dists.cpu().detach(), mode='markers', marker_color='blue',
+    fig.add_scatter(x=rdf_dists.cpu().detach(), y=c_dists.cpu().detach(),
+                    mode='markers', marker_size=12,
+                    marker_color=model_score.cpu().detach(),  # 'blue',
+                    marker_colorbar=dict(title=dict(text="Model Score")),
+                    marker_colorscale='bluered_r', opacity=0.75, marker_line_width=1,
+                    marker_line_color='white',
                     name='Optimized Samples')
-    fig.add_scatter(y=ref_rdf_dist_pred.cpu().detach(), x=torch.zeros(1), mode='markers', marker_color='black',
-                    marker_size=20,
-                    name='Experimental Sample')
-    fig.update_layout(yaxis_title='Predicted RDF Distance', xaxis_title='True RDF Distance',
-                      yaxis_range=[0, min(0.5, torch.amax(rdf_dist_pred.cpu().detach()))],
-                      xaxis_range=[0, min(0.5, torch.amax(rdf_dists.cpu().detach()))])
+    # fig.add_scatter(x=torch.zeros(1), y=torch.zeros(1), mode='markers', marker_color='yellow',
+    #                 marker_size=25, marker_line_color='black', marker_line_width=2,
+    #                 name='Experimental Sample')
+    fig.update_layout(yaxis_range=[-np.inf, 1], xaxis_range=[-np.inf, 0])
+    fig.update_layout(xaxis_title='RDF EMD', yaxis_title='Lattice Distance')
     fig.update_annotations(font=dict(size=18))
     fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
     fig.update_xaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
     fig.update_yaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
     fig.update_yaxes(linecolor='black', mirror=True,
-                     showgrid=True, zeroline=True)
+                     showgrid=True, zeroline=True, type="log")
     fig.update_xaxes(linecolor='black', mirror=True,
-                     showgrid=True, zeroline=True)
+                     showgrid=True, zeroline=True, type="log")
     fig.show()
-
-
-    fig = go.Figure()
-    fig.add_scatter(y=model_score.cpu().detach(), x=c_dists.cpu().detach(), mode='markers', marker_color='blue',
-                    name='Optimized Samples')
-    fig.add_scatter(y=ref_model_score.cpu().detach(), x=torch.zeros(1), mode='markers', marker_color='black',
-                    marker_size=20,
-                    name='Experimental Sample')
-    fig.update_layout(yaxis_title='Model Score', xaxis_title='Lattice Parameters Distance', )
-    fig.update_annotations(font=dict(size=18))
-    fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
-    fig.update_xaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
-    fig.update_yaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
-    fig.update_yaxes(linecolor='black', mirror=True,
-                     showgrid=True, zeroline=True)
-    fig.update_xaxes(linecolor='black', mirror=True,
-                     showgrid=True, zeroline=True)
-    fig.show()
+    fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\mxt_code\distance_fig.png', width=800, height=600)
 
     """
     Visualize best clusters
     """
-    best_samples = torch.argsort(model_score, descending=True)
+    best_samples = torch.argsort(c_dists, descending=False)
     best_crystals_batch = collate_data_list([optimized_samples[ind] for ind in best_samples[:5]])
     _, _, _, best_cluster_batch = best_crystals_batch.to('cpu').build_and_analyze(return_cluster=True)
     best_cluster_batch.visualize(mode='unit cell')

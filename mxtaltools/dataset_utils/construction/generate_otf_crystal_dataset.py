@@ -8,10 +8,10 @@ from mxtaltools.dataset_utils.construction.parallel_synthesis import otf_synthes
 
 if __name__ == '__main__':
     # initialize
-    debug = True
+    debug = False
     space_group = 1
-    num_smiles = 100
-    num_processes = 1
+    num_smiles = 1000
+    num_processes = 3
     new_dataset_name = f'play_pd_dataset_sg{space_group}'
 
     num_chunks = max(num_processes, num_smiles // 15)

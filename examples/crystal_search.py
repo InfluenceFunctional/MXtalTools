@@ -60,8 +60,8 @@ if __name__ == '__main__':
             packing_coeff_mean = predictions.mean(0)
             packing_coeff_std = predictions.std(0)
 
-        print(f"True cp={float(original_crystal.packing_coeff):.2f} "
-              f"predicted cp = {float(target_packing_coeff):.2f} "
+        print(f"True cp={float(original_crystal.packing_coeff):.3f} "
+              f"predicted cp = {float(target_packing_coeff):.3f} "
               f"error {float(torch.abs(original_crystal.packing_coeff - target_packing_coeff) / torch.abs(original_crystal.packing_coeff)):.3f}")
 
         optimized_samples = []
@@ -161,7 +161,7 @@ if __name__ == '__main__':
                     sample.es_pot = p2.clone().cpu()
 
             optimized_samples.extend(opt1_trajectory[-1])
-            torch.save(optimized_samples, f'optimized_samples_{elem_index}.pt')
+            torch.save(optimized_samples, f'optimized_samples_{elem_index}_{batch_ind}.pt')
 
-        csp_reporting(optimized_samples,
-                      original_crystal)
+        # csp_reporting(optimized_samples,
+        #               original_crystal)
