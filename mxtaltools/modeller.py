@@ -222,12 +222,15 @@ class Modeller:
                                              )
             extra_data_manager.load_dataset_for_modelling(
                 dataset_name=self.config.extra_test_set_name,
-                override_length=int(1e7),
-                filter_conditions=blind_test_conditions,  # standard filtration conditions
-                filter_polymorphs=False,
-                # do not filter duplicates
-                filter_duplicate_molecules=False,
-                filter_protons=not self.models_dict['autoencoder'].protons_in_input,
+                filter_conditions=self.config.dataset.filter_conditions,
+                filter_polymorphs=self.config.dataset.filter_polymorphs,
+                filter_duplicate_molecules=self.config.dataset.filter_duplicate_molecules,
+                filter_protons=self.config.autoencoder.filter_protons if self.train_models_dict[
+                    'autoencoder'] else False,
+                conv_cutoff=conv_cutoff,
+                do_shuffle=True,
+                precompute_edges=False,  # self.config.mode not in ['gan', 'discriminator', 'generator'],
+                single_identifier=self.config.dataset.single_identifier,
             )
             self.times['extra_dataset_loading'] = data_manager.times
         else:
@@ -502,7 +505,9 @@ class Modeller:
                         mol_batch.z = mol_batch.z.flatten()
                         mol_batch, input_data = self.preprocess_ae_inputs(mol_batch,
                                                                           noise=0.01,
-                                                                          no_noise=False)
+                                                                          no_noise=False,
+                                                                          deprotonate=self.config.autoencoder.filter_protons
+                                                                          )
                         self.ae_step(input_data, mol_batch, update_weights, step=i, last_step=True)
 
                     # post epoch processing
@@ -517,7 +522,8 @@ class Modeller:
                     mol_batch = self.preprocess_ae_inputs(
                         mol_batch,
                         noise=0.01,
-                        affine_scale=None
+                        affine_scale=None,
+                        deprotonate = self.config.autoencoder.filter_protons,
                     )
                     self.ae_step(mol_batch,
                                  update_weights,
@@ -727,7 +733,11 @@ class Modeller:
             #     spoof_usage()
             if self.config.mode == 'proxy_discriminator':  # embed dataset for PD modelling
                 train_loader = self.embed_dataloader_dataset(train_loader)
-                test_loader = self.embed_dataloader_dataset(test_loader)
+                if extra_test_loader is not None:
+                    test_loader = self.embed_dataloader_dataset(extra_test_loader)
+                    extra_test_loader = None
+                else:
+                    test_loader = self.embed_dataloader_dataset(test_loader)
 
             with torch.autograd.set_detect_anomaly(self.config.anomaly_detection,
                                                    check_nan=self.config.anomaly_detection):
@@ -1643,6 +1653,7 @@ class Modeller:
         # optionally, deprotonate
         if deprotonate:
             mol_batch.deprotonate()
+            mol_batch.recenter_molecules()
 
         return mol_batch
 

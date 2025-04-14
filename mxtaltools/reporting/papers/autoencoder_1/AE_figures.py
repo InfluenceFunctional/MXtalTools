@@ -11,8 +11,7 @@ from model_paths import ae_results_paths, er_results_paths, targets, proxy_resul
 from mxtaltools.common.geometry_utils import scatter_compute_Ip
 
 stats_dict_names = ["With Hydrogen",
-                    "Without Hydrogen",
-                    "Inferred Hydrogen"]
+                    "Without Hydrogen"]
 
 colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', max(2, len(ae_results_paths)), colortype='rgb')
 
@@ -86,13 +85,14 @@ def RMSD_fig():
     """
     # load test stats
     stats_dicts = {}
-    for ind in range(len(ae_results_paths)):
+    for ind in range(2):
         d = np.load(ae_results_paths[ind], allow_pickle=True).item()
         stats_dicts[stats_dict_names[ind]] = d['test_stats']
 
     bandwidth = 0.005
-    fig = make_subplots(rows=1, cols=2, subplot_titles=['(a) Whole Molecule', '(b) Atomwise'], horizontal_spacing=0.2)
-    for ind, run_name in enumerate(['With Hydrogen', 'With Hydrogen']):
+    fig = make_subplots(rows=2, cols=2, subplot_titles=['(a) Whole Molecule', '(b) Atomwise'], horizontal_spacing=0.2, vertical_spacing=0.2)
+    for ind, run_name in enumerate(['Without Hydrogen', 'With Hydrogen']):
+        row = ind + 1
         stats_dict = stats_dicts[run_name]
 
         x = np.concatenate(stats_dict['RMSD_dist'])
@@ -103,16 +103,16 @@ def RMSD_fig():
         fig.add_annotation(x=0.6, y=ind + 0.3, showarrow=False,
                            text=f'Mean Distance: {finite_x.mean():.2f} <br> Unmatched Frac.: {unmatched * 100:.1f}%',
                            font_size=20,
-                           row=1, col=1)
+                           row=row, col=1)
         fig.add_trace(go.Violin(  # y=np.zeros_like(x),
             x=finite_x, side='positive', orientation='h',
-            bandwidth=bandwidth, width=4, showlegend=True, opacity=1,  # .5,
+            bandwidth=bandwidth, width=4, showlegend=False, opacity=1,  # .5,
             name=run_name,
             # scalegroup='',
             meanline_visible=True,
             line_color=colors[ind],
             points=False),
-            row=1, col=1
+            row=row, col=1
         )
 
         x = stats_dict['nodewise_dists_dist']
@@ -123,7 +123,7 @@ def RMSD_fig():
         fig.add_annotation(x=0.6, y=ind + 0.3, showarrow=False,
                            text=f'Mean Distance: {finite_x.mean():.2f} <br> Unmatched Frac.: {unmatched * 100:.2f}%',
                            font_size=20,
-                           row=1, col=2)
+                           row=row, col=2)
         fig.add_trace(go.Violin(  # y=np.zeros_like(x),
             x=finite_x, side='positive', orientation='h',
             bandwidth=bandwidth, width=4, showlegend=False, opacity=1,  # .5,
@@ -132,7 +132,7 @@ def RMSD_fig():
             meanline_visible=True,
             line_color=colors[ind],
             points=False),
-            row=1, col=2
+            row=row, col=2
         )
 
     fig.update_layout(barmode='group', plot_bgcolor='rgba(0,0,0,0)')
@@ -147,7 +147,7 @@ def RMSD_fig():
     fig.update_layout(
         xaxis1={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
     fig.update_layout(xaxis1_range=[0, .75])
-    fig.update_layout(xaxis1_title='RMSD (Angstrom)')
+    fig.update_layout(xaxis1_title='Mean Distance (Angstrom)')
     fig.update_layout(xaxis1_tick0=0, xaxis1_dtick=0.1)
     fig.update_layout(yaxis1={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
 
@@ -155,8 +155,22 @@ def RMSD_fig():
         xaxis2={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
     fig.update_layout(xaxis2_range=[0, .75])
     fig.update_layout(xaxis2_title='Mean Distance (Angstrom)')
-    fig.update_layout(xaxis2_tick0=0, xaxis1_dtick=0.1)
+    fig.update_layout(xaxis2_tick0=0, xaxis2_dtick=0.1)
     fig.update_layout(yaxis2={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
+
+    fig.update_layout(
+        xaxis3={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
+    fig.update_layout(xaxis3_range=[0, .75])
+    fig.update_layout(xaxis3_title='Mean Distance (Angstrom)')
+    fig.update_layout(xaxis3_tick0=0, xaxis3_dtick=0.1)
+    fig.update_layout(yaxis3={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
+
+    fig.update_layout(
+        xaxis4={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
+    fig.update_layout(xaxis4_range=[0, .75])
+    fig.update_layout(xaxis4_title='Mean Distance (Angstrom)')
+    fig.update_layout(xaxis4_tick0=0, xaxis4_dtick=0.1)
+    fig.update_layout(yaxis4={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
 
     fig.show(renderer='browser')
 
@@ -751,12 +765,12 @@ def proxy_discriminator_figure():
 
     fig3['layout']['annotations'] += tuple(annotations)
     fig3.update_annotations(font=dict(size=18))
-    fig3.update_layout(yaxis1_title=row_labels[0])
-    fig3.update_layout(yaxis5_title=row_labels[1])
-    fig3.update_layout(xaxis5_title=col_labels[0])
-    fig3.update_layout(xaxis6_title=col_labels[1])
-    fig3.update_layout(xaxis7_title=col_labels[2])
-    fig3.update_layout(xaxis8_title=col_labels[3])
+    # fig3.update_layout(yaxis1_title=row_labels[0])
+    # fig3.update_layout(yaxis5_title=row_labels[1])
+    # fig3.update_layout(xaxis5_title=col_labels[0])
+    # fig3.update_layout(xaxis6_title=col_labels[1])
+    # fig3.update_layout(xaxis7_title=col_labels[2])
+    # fig3.update_layout(xaxis8_title=col_labels[3])
 
     fig3.update_layout(plot_bgcolor='rgba(0,0,0,0)')
     fig3.update_xaxes(gridcolor='lightgrey')  # , zerolinecolor='black')

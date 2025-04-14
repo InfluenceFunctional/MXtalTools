@@ -236,6 +236,7 @@ def decoding2mol_batch(mol_batch, decoding, num_decoder_nodes, node_weight_tempe
     mol_batch.aux_ind = torch.ones(mol_batch.num_nodes, dtype=torch.float32, device=device)
     # get probability distribution over type dimensions
     decoded_mol_batch.x = F.softmax(decoding[:, 3:-1], dim=1)
+    decoded_mol_batch.num_nodes = len(decoded_mol_batch.x)
     return decoded_mol_batch, nodewise_graph_weights, graph_weighted_node_weights, node_weighted_node_weights
 
 
@@ -288,7 +289,9 @@ def ae_reconstruction_loss(mol_batch,
                                 reduce='min',
                                 dim_size=decoding_batch.num_nodes
                                 )
-    nearest_node_loss = scatter(nearest_node_dist, decoding_batch.batch, reduce='mean',
+    nearest_node_loss = scatter(nearest_node_dist,
+                                decoding_batch.batch,
+                                reduce='mean',
                                 dim_size=mol_batch.num_graphs)
     # 1a also identify reciprocal distance from each atom to nearest component
     nearest_component_dist = scatter(input2output_dists,

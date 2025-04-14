@@ -15,7 +15,7 @@ if __name__ == '__main__':
     #
     mxt_path = r'C:\\Users\\mikem\\PycharmProjects\\Python_Codes\\MXtalTools'
 
-    for path, filter, infer in zip(ae_paths, filter_protons, infer_protons):
+    for path, filter, infer in zip(ae_paths[1:], filter_protons[1:], infer_protons[1:]):
         os.chdir(mxt_path)
 
         config = load_yaml('configs/analyses/ae_analysis.yaml')

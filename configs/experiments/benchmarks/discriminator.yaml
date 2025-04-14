@@ -74,7 +74,7 @@ discriminator:
   train_on_distorted: True
   use_classification_loss: True
   use_rdf_distance_loss: True
-  distortion_magnitude: 0.05
+  distortion_magnitude: 0.5
 
   # discriminator optimizer and model
   optimizer:
@@ -96,12 +96,12 @@ discriminator:
     activation: 'gelu'
 
     graph:
-      node_dim: 256
+      node_dim: 512
       message_dim: 128
-      embedding_dim: 256
+      embedding_dim: 512
       num_convs: 4
       fcs_per_gc: 1
-      num_radial: 12
+      num_radial: 32
       num_input_classes: 101
       norm: 'graph layer'
       dropout: 0.25
@@ -113,7 +113,7 @@ discriminator:
       envelope_exponent: 5
 
     fc:
-      hidden_dim: 128
+      hidden_dim: 512
       num_layers: 4
       dropout: 0.25
       norm: 'layer'

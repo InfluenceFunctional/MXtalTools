@@ -2,7 +2,7 @@ anomaly_detection: false
 autoencoder:
   clumping_loss_coefficient: 1
   evaluation_sigma: 0.35
-  filter_protons: false
+  filter_protons: true
   infer_protons: false
   init_sigma: 1.05
   max_overlap_threshold: 0.25
@@ -66,14 +66,14 @@ autoencoder:
 batch_growth_increment: 0.05
 checkpointing_loss_type: test
 dataset:
-  filter_protons: false
+  filter_protons: true
   max_dataset_length: 1000000000
   regression_target: null
   test_fraction: 1
   type: molecule
 dataset_name: eval_qm9_dataset.pt
 dataset_yaml_path: /qm9_autoencoder.yaml
-device: cpu
+device: cuda
 early_epochs_step_override: 5
 extra_test_period: 1
 extra_test_set_name: null
@@ -97,7 +97,7 @@ mode: autoencoder
 model_names:
 - autoencoder
 model_paths:
-  autoencoder: C:\Users\mikem\crystals\CSP_runs\models\ae_draft2_models_and_artifacts\autoencoder\with_protons.pt
+  autoencoder: C:\Users\mikem\crystals\CSP_runs\models\ae_draft2_models_and_artifacts\autoencoder\without_protons.pt
   discriminator: null
   embedding_regressor: null
   generator: null

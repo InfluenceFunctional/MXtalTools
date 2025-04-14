@@ -24,13 +24,14 @@ dataset:
     space_group: 1
   regression_target: null
   single_identifier: null
-  test_fraction: 0.2
+  test_fraction: 0.01
   type: molecule
-dataset_name: test_pd_dataset_sg1_test.pt
+dataset_name: pd_dataset_sg1_test.pt
 dataset_yaml_path: /proxy_discriminator.yaml
 device: cuda
 early_epochs_step_override: 5
 extra_test_period: 1
+extra_test_set_name: eval_pd_dataset_sg1.pt
 generate_sgs:
 - 1
 gradient_norm_clip: 1
@@ -47,7 +48,7 @@ logger:
 machine: cluster
 max_batch_size: 10000
 max_epochs: 10000
-min_batch_size: 2000
+min_batch_size: 1000
 minimum_epochs: 100000
 mode: proxy_discriminator
 model_names:

@@ -2,8 +2,10 @@ machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: proxy_discriminator
-dataset_name: 'test_pd_dataset_sg1_test.pt' #'test_dataset.pt'
+dataset_name: 'pd_dataset_sg1_test.pt' #'test_dataset.pt'
 dataset_yaml_path: '/proxy_discriminator.yaml'
+extra_test_set_name: eval_pd_dataset_sg1.pt
+
 save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
 model_names: ['autoencoder', 'proxy_discriminator']
@@ -13,7 +15,7 @@ sweep_path: null
 dataset:
   type: 'molecule'
   max_dataset_length: 5000000
-  test_fraction: 0.2
+  test_fraction: 0.01
   filter_protons: False
   regression_target: null
   single_identifier: null
@@ -36,7 +38,7 @@ dataset:
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
-min_batch_size: 2000
+min_batch_size: 1000
 max_batch_size: 10000
 batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
