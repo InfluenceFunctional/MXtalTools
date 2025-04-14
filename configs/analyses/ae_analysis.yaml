@@ -1,5 +1,5 @@
 machine: "local"  # or "cluster"
-device: "cuda"  # or "cpu"
+device: "cpu"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: autoencoder
 dataset_name: 'eval_qm9_dataset.pt'

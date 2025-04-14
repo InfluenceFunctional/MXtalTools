@@ -101,7 +101,7 @@ def RMSD_fig():
         finite_x = x[matched]
 
         fig.add_annotation(x=0.6, y=ind + 0.3, showarrow=False,
-                           text=f'Matched RMSD: {finite_x.mean():.2f} <br> Unmatched Frac.: {unmatched * 100:.1f}%',
+                           text=f'Mean Distance: {finite_x.mean():.2f} <br> Unmatched Frac.: {unmatched * 100:.1f}%',
                            font_size=20,
                            row=1, col=1)
         fig.add_trace(go.Violin(  # y=np.zeros_like(x),
@@ -121,7 +121,7 @@ def RMSD_fig():
         finite_x = x[matched]
 
         fig.add_annotation(x=0.6, y=ind + 0.3, showarrow=False,
-                           text=f'Matched RMSD: {finite_x.mean():.2f} <br> Unmatched Frac.: {unmatched * 100:.2f}%',
+                           text=f'Mean Distance: {finite_x.mean():.2f} <br> Unmatched Frac.: {unmatched * 100:.2f}%',
                            font_size=20,
                            row=1, col=2)
         fig.add_trace(go.Violin(  # y=np.zeros_like(x),
@@ -154,7 +154,7 @@ def RMSD_fig():
     fig.update_layout(
         xaxis2={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
     fig.update_layout(xaxis2_range=[0, .75])
-    fig.update_layout(xaxis2_title='RMSD (Angstrom)')
+    fig.update_layout(xaxis2_title='Mean Distance (Angstrom)')
     fig.update_layout(xaxis2_tick0=0, xaxis1_dtick=0.1)
     fig.update_layout(yaxis2={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
 
@@ -776,8 +776,8 @@ def proxy_discriminator_figure():
 
 
 if __name__ == '__main__':
-    # fig = RMSD_fig()
-    # fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
+    fig = RMSD_fig()
+    fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
 
     #fig2 = UMAP_fig(max_entries=100000000)
     #fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)

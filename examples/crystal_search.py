@@ -24,7 +24,7 @@ if __name__ == '__main__':
         density_checkpoint = r"../checkpoints/cp_regressor.pt"
         visualize = True
 
-        batch_size = 25
+        batch_size = 5
         num_samples = 500
         num_batches = num_samples // batch_size
         sym_info = init_sym_info()
@@ -161,7 +161,10 @@ if __name__ == '__main__':
                     sample.es_pot = p2.clone().cpu()
 
             optimized_samples.extend(opt1_trajectory[-1])
-            torch.save(optimized_samples, f'optimized_samples_{elem_index}_{batch_ind}.pt')
+            chunks = os.listdir()
+            chunks = [elem for elem in chunks if f'optimized_samples_{elem_index}' in elem]
+            chunk_ind = len(chunks)
+            torch.save(optimized_samples, f'optimized_samples_{elem_index}_{chunk_ind}.pt')
 
         # csp_reporting(optimized_samples,
         #               original_crystal)
