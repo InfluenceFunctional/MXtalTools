@@ -6,6 +6,7 @@ import os
 
 sys.path.insert(0, os.path.abspath("../"))
 
+from datetime import datetime
 from mxtaltools.analysis.crystal_rdf import new_crystal_rdf
 from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.common.training_utils import load_crystal_score_model, load_molecule_scalar_regressor, enable_dropout
@@ -16,14 +17,15 @@ if __name__ == '__main__':
     with (wandb.init(
             project="MXtalTools",
             entity='mkilgour')):
+        wandb.run.name = 'crystal_search_' + datetime.today().strftime("%d-%m-%H-%M-%S")
         device = 'cuda'
         mini_dataset_path = '../mini_datasets/mini_CSD_dataset.pt'
         score_checkpoint = r"../checkpoints/crystal_score.pt"
         density_checkpoint = r"../checkpoints/cp_regressor.pt"
         visualize = True
 
-        batch_size = 500
-        num_samples = 500
+        batch_size = 100
+        num_samples = 100
         num_batches = num_samples // batch_size
         sym_info = init_sym_info()
 
@@ -40,6 +42,9 @@ if __name__ == '__main__':
         density_model = load_molecule_scalar_regressor(density_checkpoint, device)
         density_model.eval()
 
+        """
+        Density prediction
+        """
         num_density_predictions = 50
         with torch.no_grad():
             """predict crystal packing coefficient - single-point"""
@@ -62,6 +67,9 @@ if __name__ == '__main__':
               f"predicted cp = {float(target_packing_coeff):.3f} "
               f"error {float(torch.abs(original_crystal.packing_coeff - target_packing_coeff) / torch.abs(original_crystal.packing_coeff)):.3f}")
 
+        """
+        Crystal optimization
+        """
         optimized_samples = []
         for batch_ind in range(num_batches):
             """
@@ -79,8 +87,6 @@ if __name__ == '__main__':
                 tolerance=3,
                 max_attempts=500
             )
-
-            crystal_batch.to(device)
             opt1_trajectory = (
                 crystal_batch.optimize_crystal_parameters(
                     optim_target='LJ',

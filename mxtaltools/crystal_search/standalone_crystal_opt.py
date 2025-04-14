@@ -7,7 +7,7 @@ from torch import optim
 from torch_scatter import scatter
 from tqdm import tqdm
 
-from mxtaltools.common.geometry_utils import enforce_crystal_system, batch_cell_vol_torch
+from mxtaltools.common.geometry_utils import enforce_crystal_system
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.utils import enforce_1d_bound, softmax_and_score
 
@@ -17,7 +17,7 @@ def standalone_gradient_descent_optimization(
         crystal_batch,
         optimizer_func: Optional = torch.optim.Rprop,
         convergence_eps: Optional[float] = 1e-3,
-        lr: Optional[float]= 1e-4,
+        lr: Optional[float] = 1e-4,
         max_num_steps: Optional[int] = 500,
         show_tqdm: Optional[bool] = False,
         grad_norm_clip: Optional[float] = 0.1,
@@ -33,12 +33,6 @@ def standalone_gradient_descent_optimization(
     """
 
     params_to_optim = init_sample.clone().detach().requires_grad_(True)
-
-    # if score_model is not None:
-    #     print(f"Overriding cutoff of {cutoff} with score model convolutional range of {float(score_model.model.graph_net.cutoff)}")
-    #     cutoff = float(score_model.model.graph_net.cutoff)
-    # else:
-    #     cutoff = cutoff
 
     optimizer = optimizer_func([params_to_optim], lr=lr)
     max_lr_target_time = max_num_steps // 10
@@ -64,12 +58,6 @@ def standalone_gradient_descent_optimization(
                 lj_pot, es_pot, scaled_lj_pot, cluster_batch = crystal_batch.build_and_analyze(return_cluster=True,
                                                                                                cutoff=cutoff)
 
-                samples_list = crystal_batch.clone().cpu().detach().to_data_list()
-                for si, sample in enumerate(samples_list):
-                    sample.lj_pot = lj_pot[si].detach()
-                    sample.scaled_lj_pot = scaled_lj_pot[si].detach()
-                    sample.es_pot = es_pot[si].detach()
-                optimization_trajectory.append(samples_list)
                 params_record[s_ind] = cluster_batch.standardize_cell_parameters().detach().cpu()
 
                 if optim_target.lower() == 'lj':
@@ -88,13 +76,14 @@ def standalone_gradient_descent_optimization(
 
                 "auxiliary losses"
                 if target_packing_coeff is not None:
-                    cp_loss = (cluster_batch.packing_coeff - target_packing_coeff)**2
+                    cp_loss = (cluster_batch.packing_coeff - target_packing_coeff) ** 2
                     loss += cp_loss
 
                 if do_box_restriction:
                     # enforce box shape cannot become too long (3 mol radii) or narrow (3 angstroms) in any direction
                     aunit_lengths = cluster_batch.scale_lengths_to_aunit()
-                    box_loss = (80000/aunit_lengths**12).sum(dim=1)  # repulsive from about range 3 #(80000/aunit_lengths**12 + 10*aunit_lengths - 31.25).sum(dim=1)  # forces boxes to be larger than 3 angstroms, but squeezes them otherwise
+                    box_loss = (80000 / aunit_lengths ** 12).sum(
+                        dim=1)  # repulsive from about range 3 #(80000/aunit_lengths**12 + 10*aunit_lengths - 31.25).sum(dim=1)  # forces boxes to be larger than 3 angstroms, but squeezes them otherwise
                     loss += box_loss
 
                 if compression_factor != 0:
@@ -104,8 +93,20 @@ def standalone_gradient_descent_optimization(
                 torch.nn.utils.clip_grad_norm_(params_to_optim, grad_norm_clip)  # gradient clipping
                 optimizer.step()  # apply grad
                 lr = optimizer.param_groups[0]['lr']
+
+                """record keeping"""
+                samples_list = crystal_batch.clone().cpu().detach().to_data_list()
+                lj_pot = lj_pot.cpu().detach()
+                scaled_lj_pot = scaled_lj_pot.cpu().detach()
+                es_pot = es_pot.cpu().detach()
+                for si, sample in enumerate(samples_list):
+                    sample.lj_pot = lj_pot[si]
+                    sample.scaled_lj_pot = scaled_lj_pot[si]
+                    sample.es_pot = es_pot[si]
+                optimization_trajectory.append(samples_list)
                 lr_record[s_ind] = lr
                 loss_record[s_ind] = loss.detach().cpu()
+
                 if lr >= max_lr:
                     hit_max_lr = True
                 if hit_max_lr:
@@ -119,7 +120,7 @@ def standalone_gradient_descent_optimization(
                     pbar.update(25)
 
                 if s_ind > 50:
-                    diffs = params_record[s_ind-10:s_ind, :, :].diff(dim=0).abs()
+                    diffs = params_record[s_ind - 10:s_ind, :, :].diff(dim=0).abs()
                     flag1 = torch.all(diffs < convergence_eps)
                     flag2 = s_ind > (max_num_steps - 1)  # run out of time
                     if flag1 or flag2:
@@ -167,8 +168,6 @@ cluster_batch.visualize(mode='convolve with')
 """
 
 
-
-
 def inter_overlap_loss(cluster_batch, crystal_batch):
     # enforce molecules far enough away that they cannot possibly overlap
     # intermolecular centroid range repulsion
@@ -200,8 +199,6 @@ def inter_overlap_loss(cluster_batch, crystal_batch):
     return loss
 
 
-
-
 """ # viz sample distribution
 
 import plotly.graph_objects as go
@@ -224,7 +221,7 @@ def sample_about_crystal(opt_samples: list,
     for ind in range(num_samples):
         crystal_batch = collate_data_list(opt_samples)
         crystal_batch.noise_cell_parameters(noise_level)
-        lj_pot, es_pot, scaled_lj_pot = crystal_batch.build_and_analyze(cutoff = cutoff)
+        lj_pot, es_pot, scaled_lj_pot = crystal_batch.build_and_analyze(cutoff=cutoff)
         samples_list = crystal_batch.detach().cpu().to_data_list()
 
         for si, sample in enumerate(samples_list):

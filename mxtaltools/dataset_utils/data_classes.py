@@ -639,13 +639,18 @@ class MolCrystalData(MolData):
         else:
             return arr / self.radius[None]
 
-    def build_asym_unit_dict(self):  # todo add capability to only do this for the necessary keys
+    def build_asym_unit_dict(self, force_all_sgs: Optional[bool] = False):  # todo add capability to only do this for the necessary keys
         """
         NOTE this function is extremely slow
         Best used during batch operations
         """
         asym_unit_dict = ASYM_UNITS.copy()
-        for key in asym_unit_dict:
+        if force_all_sgs:
+            sgs_to_tensorize = asym_unit_dict.keys()
+        else:
+            relevant_sgs = self.sg_ind.unique()
+            sgs_to_tensorize = [str(int(sg)) for sg in relevant_sgs]
+        for key in sgs_to_tensorize:
             asym_unit_dict[key] = torch.Tensor(asym_unit_dict[key]).to(self.device)
         return asym_unit_dict
 
@@ -655,9 +660,10 @@ class MolCrystalData(MolData):
         asymmetric unit shape within the unit cell.
         """
         if 'Batch' in self.__class__.__name__:
-            asym_unit_dict = self.build_asym_unit_dict()
+            if not hasattr(self, 'asym_unit_dict'):
+                self.asym_unit_dict = self.build_asym_unit_dict()
 
-            return self.cell_lengths * torch.stack([asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
+            return self.cell_lengths * torch.stack([self.asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
         else:
             return self.cell_lengths * torch.Tensor(ASYM_UNITS[str(int(self.sg_ind))]).to(self.device)
 
@@ -677,8 +683,9 @@ class MolCrystalData(MolData):
         -------
         """
         if 'Batch' in self.__class__.__name__:
-            asym_unit_dict = self.build_asym_unit_dict()
-            return aunit_lengths / torch.stack([asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
+            if not hasattr(self, 'asym_unit_dict'):
+                self.asym_unit_dict = self.build_asym_unit_dict()
+            return aunit_lengths / torch.stack([self.asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
         else:
             return aunit_lengths / torch.Tensor(ASYM_UNITS[str(int(self.sg_ind))]).to(self.device)
 
@@ -699,8 +706,9 @@ class MolCrystalData(MolData):
         """
 
         if 'Batch' in self.__class__.__name__:
-            asym_unit_dict = self.build_asym_unit_dict()
-            return self.aunit_centroid / torch.stack([asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
+            if not hasattr(self, 'asym_unit_dict'):
+                self.asym_unit_dict = self.build_asym_unit_dict()
+            return self.aunit_centroid / torch.stack([self.asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
         else:
             return self.aunit_centroid / torch.Tensor(ASYM_UNITS[str(int(self.sg_ind))]).to(self.device)
 
@@ -720,8 +728,9 @@ class MolCrystalData(MolData):
         -------
         """
         if 'Batch' in self.__class__.__name__:
-            asym_unit_dict = self.build_asym_unit_dict()
-            return normed_centroid * torch.stack([asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
+            if not hasattr(self, 'asym_unit_dict'):
+                self.asym_unit_dict = self.build_asym_unit_dict()
+            return normed_centroid * torch.stack([self.asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
         else:
             return normed_centroid * torch.Tensor(ASYM_UNITS[str(int(self.sg_ind))]).to(self.device)
 
