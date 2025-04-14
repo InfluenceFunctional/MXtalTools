@@ -4,8 +4,6 @@ import wandb
 import sys
 import os
 
-from examples.crystal_search_reporting import csp_reporting
-
 sys.path.insert(0, os.path.abspath("../"))
 
 from mxtaltools.analysis.crystal_rdf import new_crystal_rdf
