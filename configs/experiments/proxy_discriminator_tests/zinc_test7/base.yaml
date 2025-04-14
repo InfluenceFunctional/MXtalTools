@@ -36,7 +36,7 @@ dataset:
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
-min_batch_size: 200
+min_batch_size: 1000
 max_batch_size: 10000
 batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
