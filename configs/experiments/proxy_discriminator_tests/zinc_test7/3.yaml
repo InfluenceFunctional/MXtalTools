@@ -26,7 +26,7 @@ dataset:
   single_identifier: null
   test_fraction: 0.2
   type: molecule
-dataset_name: pd_dataset_sg1_test.pt
+dataset_name: test_pd_dataset_sg1_test.pt
 dataset_yaml_path: /proxy_discriminator.yaml
 device: cuda
 early_epochs_step_override: 5
@@ -47,7 +47,7 @@ logger:
 machine: cluster
 max_batch_size: 10000
 max_epochs: 10000
-min_batch_size: 1000
+min_batch_size: 2000
 minimum_epochs: 100000
 mode: proxy_discriminator
 model_names:

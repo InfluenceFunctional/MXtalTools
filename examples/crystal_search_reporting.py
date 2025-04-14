@@ -53,8 +53,8 @@ def csp_reporting(optimized_samples,
                        optimized_crystal_batch.num_atoms[i]
     rdf_dists = rdf_dists.cpu()
 
-    c_dists = torch.cdist(original_crystal.standardize_cell_parameters().cpu(),
-                          optimized_crystal_batch.standardize_cell_parameters().cpu())[0]
+    c_dists = torch.cdist(original_crystal.standardize_cell_parameters().cpu()[:, :6],
+                          optimized_crystal_batch.standardize_cell_parameters().cpu()[:, :6])[0]
     """
     Density/score plot
     """
