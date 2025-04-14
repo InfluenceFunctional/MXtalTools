@@ -47,7 +47,7 @@ logger:
 machine: cluster
 max_batch_size: 10000
 max_epochs: 10000
-min_batch_size: 50
+min_batch_size: 200
 minimum_epochs: 100000
 mode: proxy_discriminator
 model_names:

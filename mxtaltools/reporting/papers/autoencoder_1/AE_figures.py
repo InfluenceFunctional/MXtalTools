@@ -695,16 +695,16 @@ def proxy_discriminator_figure():
         R_dict[target_name] = R_value
 
     good_inds = [ind for ind in range(len(proxy_results_paths)) if 'ES' not in list(R_dict.keys())[ind]]
-    inds_reorder = [0, 2, 4, 6, 1, 3, 5, 7]
+    inds_reorder = [0, 1, 2, 3]#[0, 2, 4, 6, 1, 3, 5, 7]
     good_inds = [good_inds[ind] for ind in inds_reorder]
     good_target_names = [target_names[ind] for ind in good_inds]
     good_proxy_paths = [proxy_results_paths[ind] for ind in good_inds]
 
     col_labels = ["Autoencoder", "Principal Vectors", "Molecule Volume", "No Embedding"]
-    row_labels = ["Lennard-Jones Energy", 'MACE Energy']
+    row_labels = ['MACE Energy (kJ/mol)']
 
-    num_rows = 2
-    num_cols = 4
+    num_rows = len(row_labels)
+    num_cols = len(col_labels)
     fig3 = make_subplots(cols=num_cols, rows=num_rows,
                          #subplot_titles=target_names,
                          horizontal_spacing=0.05,
@@ -782,13 +782,13 @@ if __name__ == '__main__':
     #fig2 = UMAP_fig(max_entries=100000000)
     #fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
     #
-    fig3 = embedding_regression_figure()
-    fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
+    #fig3 = embedding_regression_figure()
+    #fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
     #
     # fig4 = regression_training_curve()
     # fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=1200, height=800)
     #
-    # fig5 = proxy_discriminator_figure()
-    # fig5.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\proxy_discrim.png', width=600, height=600)
+    fig5 = proxy_discriminator_figure()
+    fig5.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\proxy_discrim.png', width=600, height=600)
 
 aa = 1

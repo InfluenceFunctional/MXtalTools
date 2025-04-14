@@ -448,7 +448,7 @@ def embed_crystal_list(
     lj_pots, scaled_lj_pots, es_pots, bh_pots = (torch.zeros(len(crystal_list), dtype=torch.float32, device=device) for _ in range(4))
     with torch.no_grad():
         for ind in tqdm(range(num_chunks)):  # do it this way so to avoid shuffling
-            sample_inds = torch.arange(ind * batch_size, (ind + 1) * batch_size)
+            sample_inds = torch.arange(ind * batch_size, min((ind + 1) * batch_size, len(crystal_list)))
             crystal_batch = collate_data_list([crystal_list[ind] for ind in sample_inds]
                                               ).to(device)
             if redo_crystal_analysis:

@@ -62,4 +62,4 @@ proxy_model_path = os.listdir(proxy_path)
 proxy_model_path.remove('autoencoder.pt')
 proxy_model_path.remove('results')
 proxy_model_path = [proxy_path.joinpath(path) for path in proxy_model_path]
-proxy_results_paths = [proxy_path.joinpath('results').joinpath(elem) for elem in os.listdir(proxy_path.joinpath('results'))]
+proxy_results_paths = [proxy_path.joinpath('results').joinpath(elem) for elem in os.listdir(proxy_path.joinpath('results')) if '.npy' in elem]
