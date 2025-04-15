@@ -1,10 +1,9 @@
 import argparse
+import os
+import sys
 
 import torch
 import wandb
-
-import sys
-import os
 
 sys.path.insert(0, os.path.abspath("../"))
 
@@ -24,13 +23,11 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(description='Process an integer.')
 
         # Add an argument for the integer
-        parser.add_argument('seed', type=int, default=0, help='An integer passed from the command line')
+        parser.add_argument('--seed', type=int, default=0, help='An integer passed from the command line')
 
         # Parse the arguments
         args = parser.parse_args()
         seed = args.seed
-
-        torch.manual_seed(seed)
 
         wandb.run.name = 'crystal_search_' + datetime.today().strftime("%d-%m-%H-%M-%S")
         device = 'cuda'
@@ -100,7 +97,8 @@ if __name__ == '__main__':
             crystal_batch.sample_reasonable_random_parameters(
                 target_packing_coeff=target_packing_coeff * 0.75,
                 tolerance=3,
-                max_attempts=500
+                max_attempts=500,
+                seed=seed,
             )
             opt1_trajectory = (
                 crystal_batch.optimize_crystal_parameters(
@@ -184,6 +182,3 @@ if __name__ == '__main__':
             chunks = [elem for elem in chunks if f'optimized_samples_{elem_index}' in elem]
             chunk_ind = len(chunks)
             torch.save(optimized_samples, f'optimized_samples_{elem_index}_{chunk_ind}.pt')
-
-        # csp_reporting(optimized_samples,
-        #               original_crystal)

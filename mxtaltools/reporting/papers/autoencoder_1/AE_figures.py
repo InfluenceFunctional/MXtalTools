@@ -677,27 +677,33 @@ def regression_training_curve():
 
 
 def proxy_discriminator_figure():
+
     target_names = []
     MAE_dict = {}
     NMAE_dict = {}
     R_dict = {}
+
     for ind, path in enumerate(proxy_results_paths):
         stats_dict = np.load(path, allow_pickle=True).item()
         is_mace = stats_dict['config']['proxy_discriminator']['train_on_mace']
+        is_bh = stats_dict['config']['proxy_discriminator']['train_on_bh']
         es_factor = stats_dict['config']['proxy_discriminator']['electrostatic_scaling_factor']
         embedding = stats_dict['config']['proxy_discriminator']['embedding_type']
 
         if is_mace:
             energy_func = 'MACE'
+        elif is_bh:
+            energy_func = "Buckingham"
         elif es_factor > 0:
             energy_func = f"LJ + {int(es_factor / 1000)}k ES"
         else:
             energy_func = "LJ"
+
         target_name = str(embedding) + ' ' + energy_func
         target_names.append(target_name)
         target = stats_dict['test_stats']['vdw_score']
         prediction = stats_dict['test_stats']['vdw_prediction']
-
+        print(target_name)
         MAE = np.abs(target - prediction).mean()
         NMAE = (np.abs((target - prediction) / np.abs(target))).mean()
 
@@ -708,14 +714,12 @@ def proxy_discriminator_figure():
         NMAE_dict[target_name] = NMAE
         R_dict[target_name] = R_value
 
-    good_inds = [ind for ind in range(len(proxy_results_paths)) if 'ES' not in list(R_dict.keys())[ind]]
-    inds_reorder = [0, 1, 2, 3]#[0, 2, 4, 6, 1, 3, 5, 7]
-    good_inds = [good_inds[ind] for ind in inds_reorder]
-    good_target_names = [target_names[ind] for ind in good_inds]
-    good_proxy_paths = [proxy_results_paths[ind] for ind in good_inds]
+    inds_reorder = [3, 2, 1, 0, 6, 5, 4]
+    good_target_names = [target_names[ind] for ind in inds_reorder]
+    good_proxy_paths = [proxy_results_paths[ind] for ind in inds_reorder]
 
     col_labels = ["Autoencoder", "Principal Vectors", "Molecule Volume", "No Embedding"]
-    row_labels = ['MACE Energy (kJ/mol)']
+    row_labels = ['MACE Potential (kJ/mol)', "Buckingham Potential (AU)"]
 
     num_rows = len(row_labels)
     num_cols = len(col_labels)

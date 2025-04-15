@@ -580,7 +580,10 @@ class MolCrystalData(MolData):
 
     def sample_random_crystal_parameters(self,
                                          target_packing_coeff: Optional = None,
+                                         seed: Optional[int] = None,
                                          ):
+        if seed is not None:
+            torch.manual_seed(seed)
         self.sample_random_cell_angles()  # must do this one before cell lengths !!!
         self.sample_random_cell_lengths(target_packing_coeff)
         self.sample_random_aunit_orientations()
@@ -590,7 +593,8 @@ class MolCrystalData(MolData):
     def sample_reasonable_random_parameters(self,
                                             tolerance: float = 1,
                                             target_packing_coeff: Optional = None,
-                                            max_attempts: int = 100):
+                                            max_attempts: int = 100,
+                                            seed: Optional[int] = None):
         """
         Sample random crystal parameters
         build the resulting crystals and check their vdW overlaps
@@ -603,7 +607,7 @@ class MolCrystalData(MolData):
         converged = False
         iter = 0
         while not converged and iter < max_attempts:
-            self.sample_random_crystal_parameters(target_packing_coeff)
+            self.sample_random_crystal_parameters(target_packing_coeff, seed=seed)
             _, _, scaled_lj = self.build_and_analyze(cutoff=4)
             improved_inds = torch.argwhere(scaled_lj < best_ljs)
             best_ljs[improved_inds] = scaled_lj[improved_inds]

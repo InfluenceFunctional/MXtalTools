@@ -20,14 +20,23 @@ def csp_reporting(optimized_samples,
     """
     Visualize results of crystal search
     """
-
+    original_crystal_batch = collate_data_list([original_crystal])
     """analyze original crystal"""
     ref_lj_pot, ref_es_pot, ref_scaled_lj_pot, original_cluster_batch = (
-        original_crystal.build_and_analyze(return_cluster=True))
+        original_crystal_batch.build_and_analyze(return_cluster=True))
     ref_model_output = score_model(original_cluster_batch.to(device), force_edges_rebuild=True).cpu()
     ref_model_score = softmax_and_score(ref_model_output[:, :2])
     ref_rdf_dist_pred = F.softplus(ref_model_output[:, 2])
     ref_packing_coeff = original_cluster_batch.packing_coeff
+
+    noisy_crystal_batch = collate_data_list([original_crystal for _ in range(25)])
+    noisy_crystal_batch.noise_cell_parameters(0.05)
+    noisy_lj_pot, noisy_es_pot, noisy_scaled_lj_pot, noisy_cluster_batch = (
+        noisy_crystal_batch.build_and_analyze(return_cluster=True))
+    noisy_model_output = score_model(noisy_cluster_batch.to(device), force_edges_rebuild=True).cpu()
+    noisy_model_score = softmax_and_score(noisy_model_output[:, :2])
+    noisy_rdf_dist_pred = F.softplus(noisy_model_output[:, 2])
+    noisy_packing_coeff = noisy_cluster_batch.packing_coeff
 
     """extract sampling results"""
     optimized_crystal_batch = collate_data_list(optimized_samples)
@@ -40,7 +49,7 @@ def csp_reporting(optimized_samples,
     """
     Compute true distances
     """
-    _, _, _, original_cluster_batch = original_crystal.to(device).build_and_analyze(
+    _, _, _, original_cluster_batch = original_crystal_batch.to(device).build_and_analyze(
         return_cluster=True, cutoff=6)
     real_rdf, rr, _ = new_crystal_rdf(original_cluster_batch.to(device),
                                       original_cluster_batch.edges_dict,
@@ -56,8 +65,27 @@ def csp_reporting(optimized_samples,
                        optimized_crystal_batch.num_atoms[i]
     rdf_dists = rdf_dists.cpu()
 
-    c_dists = torch.cdist(original_crystal.standardize_cell_parameters().cpu()[:, :6],
+    c_dists = torch.cdist(original_crystal_batch.standardize_cell_parameters().cpu()[:, :6],
                           optimized_crystal_batch.standardize_cell_parameters().cpu()[:, :6])[0]
+
+    """also to noisy crystals"""
+
+    noisy_rdfs, rr, _ = new_crystal_rdf(noisy_cluster_batch.to(device),
+                                      noisy_cluster_batch.edges_dict,
+                                      rrange=[0, 6], bins=2000,
+                                      mode='intermolecular',
+                                      elementwise=True,
+                                      raw_density=True,
+                                      cpu_detach=False)
+
+    noisy_rdf_dists = torch.zeros(len(noisy_rdfs), device=original_cluster_batch.device, dtype=torch.float32)
+    for i in range(len(noisy_rdfs)):
+        noisy_rdf_dists[i] = compute_rdf_distance(real_rdf[0], noisy_rdfs[i].to(device), rr) / \
+                       optimized_crystal_batch.num_atoms[i]
+    noisy_df_dists = noisy_rdf_dists.cpu()
+
+    noisy_c_dists = torch.cdist(original_crystal_batch.standardize_cell_parameters().cpu()[:, :6],
+                          noisy_crystal_batch.standardize_cell_parameters().cpu()[:, :6])[0]
     """
     Density/score plot
     """
@@ -70,6 +98,12 @@ def csp_reporting(optimized_samples,
                     marker_colorscale='bluered', opacity=0.75, marker_line_width=1,
                     marker_line_color='white',
                     name='Optimized Samples')
+
+    fig.add_scatter(x=noisy_packing_coeff.cpu(), y=noisy_model_score.cpu(),
+                    mode='markers', marker_size=12,
+                    marker_color='green',
+                    name='Noised Ground Truth')
+
     fig.add_scatter(x=ref_packing_coeff.cpu(), y=ref_model_score.cpu(), mode='markers', marker_color='yellow',
                     marker_size=25, marker_line_color='black', marker_line_width=2,
                     name='Experimental Sample')
@@ -99,10 +133,15 @@ def csp_reporting(optimized_samples,
                     marker_colorscale='bluered_r', opacity=0.75, marker_line_width=1,
                     marker_line_color='white',
                     name='Optimized Samples')
+    fig.add_scatter(x=noisy_rdf_dists.cpu().detach(), y=noisy_c_dists.cpu().detach(),
+                    mode='markers', marker_size=12,
+                    marker_color='green',
+                    name='Noised Ground Truth')
     # fig.add_scatter(x=torch.zeros(1), y=torch.zeros(1), mode='markers', marker_color='yellow',
     #                 marker_size=25, marker_line_color='black', marker_line_width=2,
     #                 name='Experimental Sample')
     fig.update_layout(yaxis_range=[-np.inf, 1], xaxis_range=[-np.inf, 0])
+    fig.update_layout(legend_orientation='h')
     fig.update_layout(xaxis_title='RDF EMD', yaxis_title='Lattice Distance')
     fig.update_annotations(font=dict(size=18))
     fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
@@ -141,7 +180,7 @@ if __name__ == '__main__':
     example_crystals = torch.load(mini_dataset_path)
     elem_index = [elem.identifier for elem in example_crystals].index(
         'DAFMUV')  # .index('ACRLAC06')  #.index('FEDGOK01')
-    original_crystal = collate_data_list([example_crystals[elem_index]]).to(device)
+    original_crystal = example_crystals[elem_index]
     optimized_samples = []
     for elem in chunk_paths:
         optimized_samples.extend(torch.load(elem))
