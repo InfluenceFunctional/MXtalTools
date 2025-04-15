@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 import numpy as np
 import torch
 from torch.nn import functional as F
@@ -127,7 +130,9 @@ if __name__ == '__main__':
     mini_dataset_path = '../mini_datasets/mini_CSD_dataset.pt'
     score_checkpoint = r"../checkpoints/crystal_score.pt"
     density_checkpoint = r"../checkpoints/cp_regressor.pt"
-    csp_path = r'D:\crystal_datasets\optimized_samples_42.pt'
+    csp_dir_path = Path(r'C:\Users\mikem\crystals\CSP_runs\searches\mxt_paper_search')
+    chunk_paths = os.listdir(csp_dir_path)
+    chunk_paths = [csp_dir_path.joinpath(elem) for elem in chunk_paths]
     score_model = load_crystal_score_model(score_checkpoint, device).to(device)
     score_model.eval()
 
@@ -137,5 +142,8 @@ if __name__ == '__main__':
     elem_index = [elem.identifier for elem in example_crystals].index(
         'DAFMUV')  # .index('ACRLAC06')  #.index('FEDGOK01')
     original_crystal = collate_data_list([example_crystals[elem_index]]).to(device)
-    optimized_samples = torch.load(csp_path)
+    optimized_samples = []
+    for elem in chunk_paths:
+        optimized_samples.extend(torch.load(elem))
+
     csp_reporting(optimized_samples, original_crystal, device, score_model)

@@ -1,3 +1,5 @@
+import argparse
+
 import torch
 import wandb
 
@@ -17,6 +19,19 @@ if __name__ == '__main__':
     with (wandb.init(
             project="MXtalTools",
             entity='mkilgour')):
+
+        # Create the parser
+        parser = argparse.ArgumentParser(description='Process an integer.')
+
+        # Add an argument for the integer
+        parser.add_argument('seed', type=int, default=0, help='An integer passed from the command line')
+
+        # Parse the arguments
+        args = parser.parse_args()
+        seed = args.seed
+
+        torch.manual_seed(seed)
+
         wandb.run.name = 'crystal_search_' + datetime.today().strftime("%d-%m-%H-%M-%S")
         device = 'cuda'
         mini_dataset_path = '../mini_datasets/mini_CSD_dataset.pt'

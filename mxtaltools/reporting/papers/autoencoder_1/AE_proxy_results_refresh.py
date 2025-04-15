@@ -14,7 +14,7 @@ mxt_path = r'C:\\Users\\mikem\\PycharmProjects\\Python_Codes\\MXtalTools'
 
 max_dataset_length = 10000000
 
-pd_checkpoint_dir = r"D:\crystal_datasets"
+pd_checkpoint_dir = r"D:\crystal_datasets\proxy_checkpoints"
 proxy_paths = os.listdir(pd_checkpoint_dir)
 proxy_paths = [elem for elem in proxy_paths if 'proxy_discriminator_tests_zinc_test7' in elem]
 proxy_paths = [str(Path(pd_checkpoint_dir).joinpath(Path(elem))) for elem in proxy_paths]
