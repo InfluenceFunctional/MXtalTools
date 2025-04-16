@@ -149,7 +149,6 @@ def ase_mol_from_crystaldata(crystal_batch,
     else:
         numbers = crystal_batch.z[atom_inds].cpu().detach().numpy()
 
-
     if hasattr(crystal_batch, "T_fc"):
         if index is not None:
             try:

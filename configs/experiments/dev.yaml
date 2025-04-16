@@ -1,8 +1,8 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/proxy_discriminator.yaml #/experiments/base/generator.yaml #/experiments/base/discriminator.yaml
-dataset_name: test_pd_dataset_sg1_test.pt #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
-extra_test_set_name: eval_pd_dataset_sg1.pt
+base_config_path: /experiments/base/generator.yaml #/experiments/base/generator.yaml #/experiments/base/discriminator.yaml
+dataset_name: test_qm9_dataset.pt #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
+extra_test_set_name: null
 save_checkpoints: True
 anomaly_detection: False
 
@@ -35,21 +35,20 @@ early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
 min_batch_size: 10
-max_batch_size: 15
+max_batch_size: 100
 batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 10000
 max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (WIP)
 history: 50 # for convergence checks
-gradient_norm_clip: 1
+gradient_norm_clip: 0.1
 extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
-  sample_reporting_frequency: 2  # how often to do detailed reporting with figures
-  stats_reporting_frequency: 5  # how many steps between which to move training stats to cpu
+  sample_reporting_frequency: 1  # how often to do detailed reporting with figures
+  stats_reporting_frequency: 1  # how many steps between which to move training stats to cpu
   experiment_tag: dev
   run_name: dev
-  dataset_reporting_time: 120 # seconds
 
 positional_noise:
   discriminator: 0

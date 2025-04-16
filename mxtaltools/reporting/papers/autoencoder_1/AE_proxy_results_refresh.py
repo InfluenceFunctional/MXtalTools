@@ -41,6 +41,6 @@ for er_path in proxy_paths:
     predictor.pd_evaluation()
     del predictor
 
-"""collect results and make fig"""
-fig5 = proxy_discriminator_figure()
-
+# """collect results and make fig"""
+# fig5 = proxy_discriminator_figure()
+#

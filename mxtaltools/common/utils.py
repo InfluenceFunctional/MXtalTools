@@ -1,7 +1,8 @@
+import numpy
 import numpy as np
 
 import torch
-from torch.nn import functional as F
+from torch.nn import functional as F, functional
 from torch_scatter import scatter
 from scipy.interpolate import interpn
 from typing import List, Optional, Union
@@ -307,3 +308,16 @@ def parse_to_torch(array: Union[torch.Tensor, np.ndarray, list],
 def softplus_shift(x: torch.Tensor,
                    beta: Optional[float] = 10) -> torch.Tensor:
     return F.softplus(x - 0.01, beta=beta) + 0.01
+
+
+def scale_bh_energy(bh_energy, beta: Optional[float] = 100):
+    scaled_en = bh_energy.clone()
+    scaled_en[scaled_en > 0] = torch.log(1 + scaled_en[scaled_en > 0] / beta) * beta
+    return scaled_en
+
+
+def smooth_constraint(value: torch.Tensor, threshold: float, mode: 'str', hardness: float):
+    if mode == 'greater than':
+        return F.softplus(-(value - threshold), beta=hardness) ** 2
+    elif mode == 'less than':
+        return F.softplus(value - threshold, beta=hardness) ** 2

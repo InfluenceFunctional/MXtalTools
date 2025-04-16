@@ -714,12 +714,12 @@ def proxy_discriminator_figure():
         NMAE_dict[target_name] = NMAE
         R_dict[target_name] = R_value
 
-    inds_reorder = [3, 2, 1, 0, 6, 5, 4]
+    inds_reorder = [7, 6, 5, 4, 3, 2, 1, 0,]
     good_target_names = [target_names[ind] for ind in inds_reorder]
     good_proxy_paths = [proxy_results_paths[ind] for ind in inds_reorder]
 
-    col_labels = ["Autoencoder", "Principal Vectors", "Molecule Volume", "No Embedding"]
-    row_labels = ['MACE Potential (kJ/mol)', "Buckingham Potential (AU)"]
+    col_labels = [ "No Embedding","Molecule Volume","Principal Vectors" , "Autoencoder"]
+    row_labels = ["Buckingham Potential (AU)", 'MACE Potential (kJ/mol)']
 
     num_rows = len(row_labels)
     num_cols = len(col_labels)
@@ -769,12 +769,12 @@ def proxy_discriminator_figure():
 
     fig3['layout']['annotations'] += tuple(annotations)
     fig3.update_annotations(font=dict(size=18))
-    # fig3.update_layout(yaxis1_title=row_labels[0])
-    # fig3.update_layout(yaxis5_title=row_labels[1])
-    # fig3.update_layout(xaxis5_title=col_labels[0])
-    # fig3.update_layout(xaxis6_title=col_labels[1])
-    # fig3.update_layout(xaxis7_title=col_labels[2])
-    # fig3.update_layout(xaxis8_title=col_labels[3])
+    fig3.update_layout(yaxis1_title=row_labels[0])
+    fig3.update_layout(yaxis5_title=row_labels[1])
+    fig3.update_layout(xaxis5_title=col_labels[0])
+    fig3.update_layout(xaxis6_title=col_labels[1])
+    fig3.update_layout(xaxis7_title=col_labels[2])
+    fig3.update_layout(xaxis8_title=col_labels[3])
 
     fig3.update_layout(plot_bgcolor='rgba(0,0,0,0)')
     fig3.update_xaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
@@ -794,8 +794,8 @@ def proxy_discriminator_figure():
 
 
 if __name__ == '__main__':
-    fig = RMSD_fig()
-    fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
+    #fig = RMSD_fig()
+    #fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
 
     #fig2 = UMAP_fig(max_entries=100000000)
     #fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
@@ -807,6 +807,6 @@ if __name__ == '__main__':
     # fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=1200, height=800)
     #
     fig5 = proxy_discriminator_figure()
-    fig5.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\proxy_discrim.png', width=600, height=600)
+    fig5.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\proxy_discrim_i.png', width=1920, height=840)
 
 aa = 1

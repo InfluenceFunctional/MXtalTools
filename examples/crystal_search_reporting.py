@@ -71,43 +71,45 @@ def csp_reporting(optimized_samples,
     """also to noisy crystals"""
 
     noisy_rdfs, rr, _ = new_crystal_rdf(noisy_cluster_batch.to(device),
-                                      noisy_cluster_batch.edges_dict,
-                                      rrange=[0, 6], bins=2000,
-                                      mode='intermolecular',
-                                      elementwise=True,
-                                      raw_density=True,
-                                      cpu_detach=False)
+                                        noisy_cluster_batch.edges_dict,
+                                        rrange=[0, 6], bins=2000,
+                                        mode='intermolecular',
+                                        elementwise=True,
+                                        raw_density=True,
+                                        cpu_detach=False)
 
     noisy_rdf_dists = torch.zeros(len(noisy_rdfs), device=original_cluster_batch.device, dtype=torch.float32)
     for i in range(len(noisy_rdfs)):
         noisy_rdf_dists[i] = compute_rdf_distance(real_rdf[0], noisy_rdfs[i].to(device), rr) / \
-                       optimized_crystal_batch.num_atoms[i]
+                             optimized_crystal_batch.num_atoms[i]
     noisy_df_dists = noisy_rdf_dists.cpu()
 
     noisy_c_dists = torch.cdist(original_crystal_batch.standardize_cell_parameters().cpu()[:, :6],
-                          noisy_crystal_batch.standardize_cell_parameters().cpu()[:, :6])[0]
+                                noisy_crystal_batch.standardize_cell_parameters().cpu()[:, :6])[0]
     """
     Density/score plot
     """
 
     fig = go.Figure()
     fig.add_scatter(x=packing_coeff.cpu(), y=model_score.cpu(),
-                    mode='markers', marker_size=12,
-                    marker_color=rdf_dists.log10().cpu().detach(),#'blue',
+                    mode='markers', marker_size=8,
+                    marker_color=rdf_dists.clip(max=torch.quantile(rdf_dists, 0.99)).log10().cpu().detach(),  #'blue',
                     marker_colorbar=dict(title=dict(text="log RDF EMD")),
                     marker_colorscale='bluered', opacity=0.75, marker_line_width=1,
                     marker_line_color='white',
                     name='Optimized Samples')
-
-    fig.add_scatter(x=noisy_packing_coeff.cpu(), y=noisy_model_score.cpu(),
-                    mode='markers', marker_size=12,
-                    marker_color='green',
-                    name='Noised Ground Truth')
+    #
+    # fig.add_scatter(x=noisy_packing_coeff.cpu(), y=noisy_model_score.cpu(),
+    #                 mode='markers', marker_size=12,
+    #                 opacity=0.75,
+    #                 marker_color='green',
+    #                 name='Noised Ground Truth')
 
     fig.add_scatter(x=ref_packing_coeff.cpu(), y=ref_model_score.cpu(), mode='markers', marker_color='yellow',
                     marker_size=25, marker_line_color='black', marker_line_width=2,
                     name='Experimental Sample')
     fig.update_layout(xaxis_title='Packing Coefficient', yaxis_title='Model Score',
+                      xaxis_range=[0, 1]
                       )
     fig.update_annotations(font=dict(size=18))
     fig.update_layout(legend_orientation='h')
@@ -127,7 +129,7 @@ def csp_reporting(optimized_samples,
 
     fig = go.Figure()
     fig.add_scatter(x=rdf_dists.cpu().detach(), y=c_dists.cpu().detach(),
-                    mode='markers', marker_size=12,
+                    mode='markers', marker_size=8,
                     marker_color=model_score.cpu().detach(),  # 'blue',
                     marker_colorbar=dict(title=dict(text="Model Score")),
                     marker_colorscale='bluered_r', opacity=0.75, marker_line_width=1,
@@ -136,11 +138,12 @@ def csp_reporting(optimized_samples,
     fig.add_scatter(x=noisy_rdf_dists.cpu().detach(), y=noisy_c_dists.cpu().detach(),
                     mode='markers', marker_size=12,
                     marker_color='green',
-                    name='Noised Ground Truth')
+                    opacity=0.75,
+                    name='Noised Experimental Sample')
     # fig.add_scatter(x=torch.zeros(1), y=torch.zeros(1), mode='markers', marker_color='yellow',
     #                 marker_size=25, marker_line_color='black', marker_line_width=2,
     #                 name='Experimental Sample')
-    fig.update_layout(yaxis_range=[-np.inf, 1], xaxis_range=[-np.inf, 0])
+    fig.update_layout(yaxis_range=[-np.inf, 1], xaxis_range=[np.log10(noisy_rdf_dists.cpu().detach().amin()), 0])
     fig.update_layout(legend_orientation='h')
     fig.update_layout(xaxis_title='RDF EMD', yaxis_title='Lattice Distance')
     fig.update_annotations(font=dict(size=18))
@@ -153,15 +156,92 @@ def csp_reporting(optimized_samples,
                      showgrid=True, zeroline=True, type="log")
     fig.show()
     fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\mxt_code\distance_fig.png', width=800, height=600)
+    #
+    # """
+    # 3D cell fig
+    # """
+    # quant = 50 / len(optimized_samples)
+    # good_inds = model_score >= torch.quantile(model_score, 1 - quant)
+    # fig = go.Figure()
+    # fig.add_scatter3d(
+    #     x=optimized_crystal_batch.cell_lengths[good_inds, 0].cpu().detach(),
+    #     y=optimized_crystal_batch.cell_lengths[good_inds, 1].cpu().detach(),
+    #     z=optimized_crystal_batch.cell_lengths[good_inds, 2].cpu().detach(),
+    #     marker_color=rdf_dists[good_inds].cpu().detach(),
+    #     mode='markers',
+    #     opacity=.5,
+    #     marker_size=8,
+    #     marker_colorscale='bluered_r',
+    #     marker_colorbar=dict(title=dict(text="Model Score")),
+    #
+    # )
+    # fig.add_scatter3d(
+    #     x=original_crystal_batch.cell_lengths[:, 0].cpu().detach(),
+    #     y=original_crystal_batch.cell_lengths[:, 1].cpu().detach(),
+    #     z=original_crystal_batch.cell_lengths[:, 2].cpu().detach(),
+    #     mode='markers',
+    #     opacity=1,
+    #     marker_color='yellow',
+    #     marker_size=16,
+    # )
+    # # fig.update_layout(
+    # #     scene=dict(
+    # #         xaxis=dict(range=[0, 50]),
+    # #         yaxis=dict(range=[0, 50]),
+    # #         zaxis=dict(range=[0, 50])
+    # #     )
+    # # )
+    # fig.show()
 
     """
     Visualize best clusters
     """
-    best_samples = torch.argsort(c_dists, descending=False)
+    best_samples = torch.argsort(model_score, descending=True)
     best_crystals_batch = collate_data_list([optimized_samples[ind] for ind in best_samples[:5]])
     _, _, _, best_cluster_batch = best_crystals_batch.to('cpu').build_and_analyze(return_cluster=True)
-    best_cluster_batch.visualize(mode='unit cell')
+    ase_mols = best_cluster_batch.visualize(mode='unit cell')
+    from ase.io import write
+    for ind, mol in enumerate(ase_mols):
+        write(f'samples{ind}.png', mol)
+
     original_cluster_batch.visualize([0], mode='unit cell')
+
+    from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
+    from ccdc.io import CrystalReader
+    from ase.spacegroup import Spacegroup
+    ref_crystal = CrystalReader('temp.cif')[0]
+
+    from ccdc.crystal import PackingSimilarity
+    similarity_engine = PackingSimilarity()
+
+    def cluster_batch_to_ccdc_crystals(cluster_batch, inds):
+        crystals = []
+        for ind in inds:
+            mol = ase_mol_from_crystaldata(cluster_batch, index=ind, mode='unit cell')
+            mol.info['spacegroup'] = Spacegroup(int(cluster_batch.sg_ind[ind]), setting=1)
+            mol.write('temp.cif')
+            crystal = CrystalReader('temp.cif')[0]
+            crystals.append(crystal)
+        return crystals
+
+    best_crystals = cluster_batch_to_ccdc_crystals(best_cluster_batch, np.arange(best_cluster_batch.num_graphs))
+    noised_crystals = cluster_batch_to_ccdc_crystals(noisy_cluster_batch, [0, 1, 2, 3, 4, 5])
+    mol = ase_mol_from_crystaldata(original_cluster_batch, index=0, mode='unit cell')
+    mol.info['spacegroup'] = Spacegroup(int(best_cluster_batch.sg_ind[ind]), setting=1)
+    mol.write('temp.cif')
+
+    similarity_engine.settings.distance_tolerance = 0.4
+    similarity_engine.settings.angle_tolerance = 40
+    similarity_engine.settings.allow_molecular_differences = True
+    similarity_engine.settings.packing_shell_size = 20
+
+    for crystal in best_crystals:
+        result = similarity_engine.compare(ref_crystal, crystal)
+        print(f"RMSD = {result.rmsd:.3f} Å, {result.nmatched_molecules} mols matched")
+
+    for crystal in noised_crystals:
+        result = similarity_engine.compare(ref_crystal, crystal)
+        print(f"RMSD = {result.rmsd:.3f} Å, {result.nmatched_molecules} mols matched")
 
 
 if __name__ == '__main__':

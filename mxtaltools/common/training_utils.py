@@ -40,7 +40,7 @@ def update_stats_dict(dictionary: dict, keys, values, mode='append'):
                 dictionary[key] = []
             if isinstance(value, int):
                 value = np.array(value)[None]
-            if (mode == 'append') or ('Batch' in str(type(value)).lower()):
+            if (mode == 'append') or ('batch' in str(type(value)).lower()):
                 dictionary[key].append(value)
             elif mode == 'extend':
                 dictionary[key].extend(value)

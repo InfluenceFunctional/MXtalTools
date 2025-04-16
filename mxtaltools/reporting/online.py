@@ -1,4 +1,5 @@
 import ase
+import ase.io
 import numpy as np
 import torch
 import wandb
@@ -227,8 +228,8 @@ def discriminator_scores_plots(scores_dict, vdw_penalty_dict, packing_coeff_dict
 
     'score vs vs vdw'
     bandwidth1, fig, viridis = score_vs_vdw_plot(all_scores, all_vdws, layout,
-                                                             plot_color_dict, sample_types, scores_dict,
-                                                             scores_range, vdw_penalty_dict)
+                                                 plot_color_dict, sample_types, scores_dict,
+                                                 scores_range, vdw_penalty_dict)
     fig_dict['Discriminator vs vdw scores'] = fig
 
     'score vs packing'
@@ -351,8 +352,8 @@ def combined_scores_plot(all_coeffs, all_scores, all_vdws, layout, sample_source
                      opacity=opacity,
                      )
     fig.layout.margin = layout.margin
-    fig.update_layout(#xaxis_range=[-vdw_cutoff, 0.1],
-                      yaxis_range=[np.quantile(all_coeffs, 0.001), np.quantile(all_coeffs, 0.999)])
+    fig.update_layout(  #xaxis_range=[-vdw_cutoff, 0.1],
+        yaxis_range=[np.quantile(all_coeffs, 0.001), np.quantile(all_coeffs, 0.999)])
     fig.update_layout(xaxis_title='Scaled LJ Potential', yaxis_title='Packing Coefficient')
     fig.update_layout(legend=dict(yanchor="top", y=0.99, xanchor="right", x=1))
     return fig
@@ -1057,9 +1058,9 @@ def log_cubic_defect(samples):
     cubic_distortion = np.abs(1 - np.nan_to_num(np.stack(
         [cell_vol_np(cleaned_samples[i, 0:3], cleaned_samples[i, 3:6]) / np.prod(cleaned_samples[i, 0:3], axis=-1) for
          i in range(len(cleaned_samples))])))
-    wandb.log(data={'Avg generated cubic distortion': np.average(cubic_distortion)}, commit=False)
-    hist = np.histogram(cubic_distortion, bins=256, range=(0, 1))
-    wandb.log(data={"Generated cubic distortions": wandb.Histogram(np_histogram=hist, num_bins=256)}, commit=False)
+    cubic_distortion_hist = np.histogram(cubic_distortion, bins=256, range=(0, 1))
+
+    return np.average(cubic_distortion), cubic_distortion_hist
 
 
 def process_generator_losses(config, epoch_stats_dict):
@@ -1094,27 +1095,25 @@ def cell_generation_analysis(config, dataDims, epoch_stats_dict):
     do analysis and plotting for cell generator
     """
     layout = plotly_setup(config)
-
+    fig_dict = {}
     if isinstance(epoch_stats_dict['generated_cell_parameters'], list):
         cell_parameters = np.stack(epoch_stats_dict['generated_cell_parameters'])
     else:
         cell_parameters = epoch_stats_dict['generated_cell_parameters']
 
-    log_cubic_defect(cell_parameters)
-    wandb.log(data={"Generated cell parameter variation": cell_parameters.std(0).mean()}, commit=False)
+    mean_cubic_distortion, cubic_distortion_hist = log_cubic_defect(cell_parameters)
     generator_losses, average_losses_dict = process_generator_losses(config, epoch_stats_dict)
+
+    fig_dict['Generator Samples'] = new_cell_scatter(epoch_stats_dict, layout)
+    samples_list = log_crystal_samples(epoch_stats_dict)
+
+    wandb.log(data={'Avg generated cubic distortion': mean_cubic_distortion}, commit=False)
+    wandb.log(data={"Generated cubic distortions": wandb.Histogram(np_histogram=cubic_distortion_hist, num_bins=256)},
+              commit=False)
+    wandb.log(data={"Generated cell parameter variation": cell_parameters.std(0).mean()}, commit=False)
     wandb.log(average_losses_dict, commit=False)
-
-    # cell_density_plot(config, wandb, epoch_stats_dict, layout)
-    # plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_losses, layout)
-    new_cell_scatter(epoch_stats_dict, wandb, layout)
-    log_crystal_samples(epoch_stats_dict)
-    log_generator_distributions(epoch_stats_dict)
-
-    vdw_vs_prior_dist(epoch_stats_dict)
-    vdw_vs_variation_dist(epoch_stats_dict)
-    variation_vs_prior_dist(epoch_stats_dict)
-    variation_vs_deviation_dist(epoch_stats_dict)
+    [wandb.log({f'crystal_sample_{ind}': samples_list[ind]}, commit=False) for ind in range(len(samples_list))]
+    wandb.log(fig_dict, commit=False)
 
     return None
 
@@ -1163,80 +1162,55 @@ def vdw_vs_prior_dist(epoch_stats_dict: dict):
     wandb.log({"vdW vs Prior Loss": fig}, commit=False)
 
 
-def log_generator_distributions(epoch_stats_dict):
-    for key in ['generated_space_group_numbers',
-                'generator_per_mol_vdw_loss',
-                'generator_per_mol_vdw_score',
-                'generator_prior_loss',
-                'generator_packing_prediction',
-                'generator_scaling_factor',
-                'generator_sample_vdw_energy',
-                'generator_variation_factor']:
-        wandb.log(
-            data={key + '_distribution': wandb.Histogram(
-                np.nan_to_num(epoch_stats_dict[key], neginf=0, posinf=0))},
-            commit=False)
-        wandb.log(
-            data={key + '_log_distribution': wandb.Histogram(
-                np.nan_to_num(np.log10(epoch_stats_dict[key]), neginf=0, posinf=0))},
-            commit=False)
-
-
 def log_crystal_samples(epoch_stats_dict):
-    sample_crystals = epoch_stats_dict['generator_samples'][0]
-    topk_samples = torch.argsort(sample_crystals.loss)[:6]
+    sample_crystals = epoch_stats_dict['generator_samples']
+    topk_samples = torch.arange(6)  #torch.argsort(sample_crystals.loss)[:6]
 
-    mols = [ase_mol_from_crystaldata(sample_crystals,
+    mols = [ase_mol_from_crystaldata(collate_data_list(sample_crystals),
                                      index=int(topk_samples[ind]),
                                      mode='distance',
                                      cutoff=8) for ind in range(min(6, len(topk_samples)))]
     [ase.io.write(f'sample_{i}.cif', mols[i]) for i in range(len(mols))]
+    samples_list = []
     for ind in range(len(mols)):
-        wandb.log(
-            {f'crystal_sample_{ind}': wandb.Molecule(open(f"sample_{ind}.cif"), caption=f"sample_{ind}.cif")},
-            commit=False)
+        samples_list.append(wandb.Molecule(open(f"sample_{ind}.cif"), caption=f"sample_{ind}"))
+
+    return samples_list
 
 
-def new_cell_scatter(epoch_stats_dict, wandb, layout):
-    scaled_vdw = epoch_stats_dict['generator_per_mol_vdw_loss']
-    vdw_cutoff = max(-10, min(epoch_stats_dict['generator_per_mol_vdw_score']))
-
-    scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'].clip(min=vdw_cutoff),
+def new_cell_scatter(epoch_stats_dict, layout):
+    scaled_vdw = epoch_stats_dict['generator_per_mol_raw_vdw_loss']
+    vdw_score = -epoch_stats_dict['generator_per_mol_vdw_score']
+    scatter_dict = {'vdw_score': vdw_score,
                     'packing_prediction': epoch_stats_dict['generator_packing_prediction'],
-                    'prior_loss': epoch_stats_dict['generator_prior_loss'],
                     'vdw_energy': scaled_vdw,
                     }
-    opacity = max(0.25, 1 - len(scatter_dict['vdw_score']) / 1e5)
+    opacity = max(0.25, 1 - len(scatter_dict['vdw_score']) / 1e4)
     df = pd.DataFrame.from_dict(scatter_dict)
-    maxval = min(10, scaled_vdw.max())
-    zeroval = max(0, (0 - scaled_vdw.min()) / (maxval - scaled_vdw.min()))
-    cscale = [[0, 'green'], [min(1, zeroval) * 0.99, 'blue'], [min(zeroval, 1), "yellow"], [1, 'red']]
-    if zeroval == 0:
-        cscale.pop(0)
-        cscale.pop(0)
-    elif zeroval >= 1:
-        cscale.pop(-1)
+    maxval = np.log(1 + vdw_score).max()
+    cscale = [[0, 'green'], [0.01, 'blue'], [1, 'red']]
     fig = go.Figure()
     fig.add_scatter(
-        x=-np.log10(-(df['vdw_score'] - 1e-3)),
-        y=np.clip(df['packing_prediction'], a_min=0, a_max=5),
+        x=df['vdw_energy'],
+        y=np.clip(df['packing_prediction'], a_min=0, a_max=2),
         mode='markers',
-        marker_color=df['vdw_energy'],
+        marker_color=np.log(1 + df['vdw_score']),
         opacity=opacity,
-        marker={"cmin": min(-1, np.amin(df['vdw_energy'])), "cmax": maxval,
-                "colorbar_title": "vdw Energy",
+        marker={"cmin": 0, "cmax": maxval,
+                "colorbar_title": "vdw Overlaps",
                 'colorscale': cscale},
     )
     fig.layout.margin = layout.margin
-    fig.update_layout(xaxis_title='vdw score', yaxis_title='Packing Coeff')
-    fig.update_layout(xaxis_range=[-1, np.inf],
-                      yaxis_range=[0, np.inf])
+    fig.update_layout(xaxis_title='vdw Energy', yaxis_title='Packing Coeff')
+    fig.update_layout(xaxis_range=[-np.inf, np.inf],
+                      yaxis_range=[0, 1],
+                      )
 
     if len(df['vdw_score']) > 1000:
         fig.write_image('fig.png', width=512, height=512)  # save the image rather than the fig, for size reasons
-        wandb.log({'Generator Samples': wandb.Image('fig.png')}, commit=False)
+        return wandb.Image('fig.png')
     else:
-        wandb.log({'Generator Samples': fig}, commit=False)
+        return fig
 
 
 def log_regression_accuracy(config, dataDims, epoch_stats_dict):
@@ -1440,16 +1414,12 @@ def detailed_reporting(config, dataDims, train_epoch_stats_dict, test_epoch_stat
                     cell_params_hist(wandb, test_epoch_stats_dict,
                                      ['generator_prior', 'generated_cell_parameters'])
                     wandb.log(data={'Iterwise vdW':
-                                        iter_wise_hist(test_epoch_stats_dict, 'generator_per_mol_vdw_loss')
-                                    }, commit=False)
-                    wandb.log(data={'Iterwise Prior Loss':
-                                        iter_wise_hist(test_epoch_stats_dict, 'generator_prior_loss', log=True)
+                                        iter_wise_hist(test_epoch_stats_dict, 'generator_per_mol_raw_vdw_loss')
                                     }, commit=False)
                     wandb.log(data={'Iterwise Packing Coeff':
                                         iter_wise_hist(test_epoch_stats_dict, 'generator_packing_prediction')
                                     }, commit=False)
 
-                    log_mean_deviations(test_epoch_stats_dict)
                 elif config.mode == 'discriminator':
                     cell_params_hist(wandb, test_epoch_stats_dict,
                                      ['real_cell_parameters', 'generated_cell_parameters'])
@@ -1516,7 +1486,6 @@ def log_mean_deviations(test_epoch_stats_dict):
     lattice_features = ['cell_a', 'cell_b', 'cell_c', 'cell_alpha', 'cell_beta', 'cell_gamma',
                         'aunit_x', 'aunit_y',
                         'aunit_z', 'aunit_theta', 'aunit_phi', 'aunit_r']
-    deviations = test_epoch_stats_dict['generator_scaled_deviation']
     if isinstance(deviations, list):
         deviations = np.stack(deviations)
     mean_deviations = np.abs(deviations).mean(0)

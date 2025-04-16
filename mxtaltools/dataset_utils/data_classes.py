@@ -341,7 +341,7 @@ class MolData(MXtalBase):  # todo add method for batch_molecule_compute_principa
                   sample_inds: Optional[list] = None,
                   **vis_kwargs):
         from mxtaltools.common.ase_interface import data_batch_to_ase_mols_list
-        data_batch_to_ase_mols_list(
+        return data_batch_to_ase_mols_list(
             self,
             specific_inds=sample_inds,
             show_mols=True,
@@ -486,7 +486,7 @@ class MolCrystalData(MolData):
                     assert False, "symmetry_operators must be given for nonstandard symmetry operations"
                 self.nonstandard_symmetry = True
             else:  # standard symmetry
-                self.symmetry_operators = np.stack(SYM_OPS[sg_ind])  # if saved as a tensor, we get collation issues
+                self.symmetry_operators = np.stack(SYM_OPS[int(sg_ind)])  # if saved as a tensor, we get collation issues
                 self.nonstandard_symmetry = False
 
             self.sym_mult = torch.ones(1, dtype=torch.long, device=self.device) * len(self.symmetry_operators)
@@ -581,6 +581,7 @@ class MolCrystalData(MolData):
     def sample_random_crystal_parameters(self,
                                          target_packing_coeff: Optional = None,
                                          seed: Optional[int] = None,
+                                         cleaning_mode: Optional[str] = 'hard'
                                          ):
         if seed is not None:
             torch.manual_seed(seed)
@@ -588,7 +589,7 @@ class MolCrystalData(MolData):
         self.sample_random_cell_lengths(target_packing_coeff)
         self.sample_random_aunit_orientations()
         self.sample_random_aunit_centroids()
-        self.clean_cell_parameters(mode='hard')
+        self.clean_cell_parameters(mode=cleaning_mode)
 
     def sample_reasonable_random_parameters(self,
                                             tolerance: float = 1,
@@ -778,17 +779,17 @@ class MolCrystalData(MolData):
             cell_lengths, cell_angles, aunit_positions, aunit_orientations
         ], dim=1)
 
-    def pose_aunit(self):
+    def pose_aunit(self, align_to_standardized_orientation: Optional[bool] = True):
         if 'Batch' in self.__class__.__name__:
             self.pos = get_aunit_positions(
                 self,
-                align_to_standardized_orientation=True,
+                align_to_standardized_orientation=align_to_standardized_orientation,
                 mol_handedness=self.aunit_handedness,
             )
         else:
             self.pos = get_aunit_positions(
                 collate_data_list([self]),
-                align_to_standardized_orientation=True,
+                align_to_standardized_orientation=align_to_standardized_orientation,
                 mol_handedness=self.aunit_handedness,
             )
 
@@ -921,7 +922,7 @@ class MolCrystalData(MolData):
             )
             #assert False, "Radial graph construction not implemented for single crystals"
 
-    def compute_LJ_energy(self):
+    def compute_LJ_energy(self, return_overlaps: Optional[bool] = False):
         vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()), device=self.device)
         if "Batch" in self.__class__.__name__:
             (molwise_overlap, molwise_normed_overlap,
@@ -933,8 +934,10 @@ class MolCrystalData(MolData):
                                )
         else:
             assert False, "LJ energies not implemented for single crystals"
-
-        return molwise_lj_pot, molwise_scaled_lj_pot
+        if return_overlaps:
+            return molwise_lj_pot, molwise_scaled_lj_pot, edgewise_lj_pot, molwise_overlap, molwise_normed_overlap
+        else:
+            return molwise_lj_pot, molwise_scaled_lj_pot
 
     def compute_ES_energy(self):
         if "Batch" in self.__class__.__name__:
@@ -1161,8 +1164,10 @@ class MolCrystalData(MolData):
         else:
             return self.lj_pot, self.es_pot, self.scaled_lj_pot
 
-    def mol2cluster(self, cutoff: float = 6, supercell_size: int = 10):
-        self.pose_aunit()
+    def mol2cluster(self, cutoff: float = 6,
+                    supercell_size: int = 10,
+                    align_to_standardized_orientation: Optional[bool] = True):
+        self.pose_aunit(align_to_standardized_orientation=align_to_standardized_orientation)
         self.build_unit_cell()
         return self.build_cluster(cutoff, supercell_size)
 

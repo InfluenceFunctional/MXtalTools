@@ -252,7 +252,7 @@ def dict_of_tensors_to_cpu_numpy(stats):
     for key, value in stats.items():
         if torch.is_tensor(value):
             stats[key] = value.cpu().numpy()
-        elif 'CrystalDataBatch' in str(type(value)):
+        elif 'DataBatch' in str(type(value)):
             stats[key] = value.cpu()
 
 

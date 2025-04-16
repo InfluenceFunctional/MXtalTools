@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 from torch_scatter import scatter
 
+from mxtaltools.common.utils import smooth_constraint
 from mxtaltools.models.functions.radial_graph import radius, build_radial_graph
 
 
@@ -64,7 +65,7 @@ def compute_lj_pot(dist_dict, vdw_radii):
     # only punish positives (meaning overlaps)
     overlap = F.relu(radii_sums - dists)
     # norm overlaps against internuclear distances
-    normed_overlap = F.relu((radii_sums - dists) / radii_sums)
+    normed_overlap = F.softplus((radii_sums - dists) / radii_sums, beta=10)
     # uniform lennard jones potential
     sigma_r6 = torch.pow(radii_sums / dists, 6)
     sigma_r12 = torch.pow(sigma_r6, 2)
