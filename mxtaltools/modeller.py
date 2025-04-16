@@ -2327,7 +2327,7 @@ class Modeller:
 
             box_loss = smooth_constraint(aunit_lengths, 3, 'greater than', 10).sum(1)
             packing_loss = F.relu(aunit_lengths).sum(1)
-            cubic_loss = smooth_constraint(100*(cluster_batch.cell_angles - torch.pi / 2).abs(), 0, 'less than', 10).sum(1)
+            cubic_loss = smooth_constraint(10*(generator_raw_samples[:, 3:6]).abs(), 0, 'less than', 10).sum(1)
 
             vdw_loss = lj_loss_factor*(molwise_normed_overlap / cluster_batch.num_atoms) + packing_loss + 10*box_loss + 10*cubic_loss
 
@@ -2346,7 +2346,7 @@ class Modeller:
                                                self.config.gradient_norm_clip)  # gradient clipping
                 self.optimizers_dict['generator'].step()  # update parameters
 
-                model = self.models_dict['generator']
+                # model = self.models_dict['generator']
                 # if not torch.stack([torch.isfinite(p).any() for p in model.parameters()]).all():
                 #
                 #     print("aaa!")
