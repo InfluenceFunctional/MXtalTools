@@ -1134,7 +1134,9 @@ class MolCrystalData(MolData):
         orientation_means = torch.tensor([[0, 0, torch.pi / 2]], dtype=torch.float32, device=self.device)
         return std_aunit_orientation * orientation_stds + orientation_means
 
-    def set_cell_parameters(self, cell_parameters, skip_box_analysis: bool=False):
+    def set_cell_parameters(self,
+                            cell_parameters,
+                            skip_box_analysis: bool=False):
         (self.cell_lengths, self.cell_angles,
          self.aunit_centroid, self.aunit_orientation) = (
             cell_parameters.split(3, dim=1))

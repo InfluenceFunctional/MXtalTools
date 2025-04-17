@@ -2308,7 +2308,8 @@ class Modeller:
                                                                                       )) for ind in
                                            range(mol_batch.num_graphs)])
 
-        crystal_batch.sample_random_crystal_parameters(cleaning_mode='soft', target_packing_coeff=0.25)
+        crystal_batch.sample_random_crystal_parameters(cleaning_mode='soft',
+                                                       target_packing_coeff=0.25)
         prior = crystal_batch.standardize_cell_parameters().clone().detach()
         destandardized_prior = crystal_batch.cell_parameters().clone().detach()
 
@@ -2316,10 +2317,9 @@ class Modeller:
             crystal_batch)
 
         for ind in range(self.config.generator.samples_per_iter):
-
             if ind == 0:
                 init_state = prior.detach().clone()
-                prev_vdw_loss = losses.detach().clone() / mol_batch.num_atoms
+                prev_vdw_loss = losses.detach().clone()
             else:
                 init_state = generator_raw_samples.detach().clone()
                 prev_vdw_loss = losses.detach().clone()
