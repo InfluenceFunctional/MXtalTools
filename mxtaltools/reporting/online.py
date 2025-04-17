@@ -87,7 +87,7 @@ def cell_params_hist(wandb, stats_dict, sample_sources_list):
 
 def iter_wise_hist(stats_dict, target_key, log=False):
     energy = stats_dict[target_key]
-    batch = stats_dict['generator_sample_iter']
+    batch = stats_dict['sample_iter']
     vdw_list = [energy[batch == int(ind)] for ind in range(int(np.max(batch)) + 1)]
     fig = stacked_property_distribution_lists(y=vdw_list,
                                               xaxis_title=target_key,
@@ -1410,12 +1410,12 @@ def detailed_reporting(config, dataDims, train_epoch_stats_dict, test_epoch_stat
             if config.logger.log_figures:
                 if config.mode == 'generator':
                     cell_params_hist(wandb, test_epoch_stats_dict,
-                                     ['generator_prior', 'cell_parameters'])
+                                     ['prior', 'cell_parameters'])
                     wandb.log(data={'Iterwise vdW':
-                                        iter_wise_hist(test_epoch_stats_dict, 'generator_per_mol_raw_vdw_loss')
+                                        iter_wise_hist(test_epoch_stats_dict, 'per_mol_scaled_LJ_energy')
                                     }, commit=False)
                     wandb.log(data={'Iterwise Packing Coeff':
-                                        iter_wise_hist(test_epoch_stats_dict, 'generator_packing_prediction')
+                                        iter_wise_hist(test_epoch_stats_dict, 'packing_coefficient')
                                     }, commit=False)
 
                 elif config.mode == 'discriminator':
