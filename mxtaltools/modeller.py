@@ -2249,6 +2249,37 @@ class Modeller:
 
         return discriminator_losses, stats
 
+    def get_generator_loss(self, crystal_batch):
+        # build and analyze crystal
+        cluster_batch = crystal_batch.mol2cluster(cutoff=6,
+                                                  supercell_size=10,
+                                                  align_to_standardized_orientation=False)
+        cluster_batch.construct_radial_graph(cutoff=6)
+        # get reference energy
+        (molwise_lj_pot, molwise_scaled_lj_pot, edgewise_lj_pot,
+         molwise_overlap, molwise_normed_overlap) = cluster_batch.compute_LJ_energy(return_overlaps=True)
+
+        # get generator loss - a SiLU fitted roughly to 12-6 LJ minimum
+        dist_dict = cluster_batch.edges_dict
+        dists = dist_dict['intermolecular_dist']
+        elements = dist_dict['intermolecular_dist_atoms']
+        atom_radii = [self.vdw_radii_tensor[elements[0]], self.vdw_radii_tensor[elements[1]]]
+        radii_sums = atom_radii[0] + atom_radii[1]
+        edgewise_potentials = (F.silu(-4 * (dists - radii_sums)) / 0.28)
+        molwise_potentials = scatter(edgewise_potentials, dist_dict['intermolecular_dist_batch'],
+                                     reduce='sum', dim_size=cluster_batch.num_graphs)
+        vdw_loss = (molwise_potentials / cluster_batch.num_atoms)
+
+        # losses related to box
+        aunit_lengths = cluster_batch.scale_lengths_to_aunit()
+        box_loss = smooth_constraint(aunit_lengths, 3, 'greater than', 10).sum(1)
+        packing_loss = smooth_constraint(aunit_lengths, 3, mode='less than', hardness=10).sum(1)
+
+        vdw_loss_factor = float((-F.relu(-(torch.ones(1) * self.logger.epoch - 10)) / 10 + 1) * 100)
+        loss = vdw_loss_factor * vdw_loss + packing_loss + 100 * box_loss
+
+        return loss, molwise_normed_overlap, molwise_scaled_lj_pot, box_loss, packing_loss, vdw_loss, cluster_batch
+
     def generator_step(self, mol_batch, step, update_weights, skip_stats):
         """
         execute a complete training step for the generator
@@ -2272,36 +2303,26 @@ class Modeller:
 
         crystal_batch = collate_data_list([MolCrystalData(molecule=mol_batch[ind],
                                                           sg_ind=sg_rand_inds[ind],
-                                                          aunit_handedness=torch.ones(1, device=self.device, dtype=torch.long
-                                                          )) for ind in
+                                                          aunit_handedness=torch.ones(1, device=self.device,
+                                                                                      dtype=torch.long
+                                                                                      )) for ind in
                                            range(mol_batch.num_graphs)])
 
         crystal_batch.sample_random_crystal_parameters(cleaning_mode='soft')
         prior = crystal_batch.standardize_cell_parameters().clone().detach()
         destandardized_prior = crystal_batch.cell_parameters().clone().detach()
-        cluster_batch = crystal_batch.mol2cluster(cutoff=6, supercell_size=10,
-                                                  align_to_standardized_orientation=False)
-        cluster_batch.construct_radial_graph(cutoff=6)
-        (molwise_lj_pot, molwise_scaled_lj_pot, edgewise_lj_pot,
-         molwise_overlap, molwise_normed_overlap) = cluster_batch.compute_LJ_energy(return_overlaps=True)
 
-        aunit_lengths = cluster_batch.scale_lengths_to_aunit()
-
-        box_loss = smooth_constraint(aunit_lengths, 3, 'greater than', 10).sum(1)
-        packing_loss = F.relu(aunit_lengths).sum(1)
-        cubic_loss = smooth_constraint((cluster_batch.cell_angles - torch.pi/2).abs(), 0, 'less than', 10).sum(1)
-
-        lj_loss_factor = float((-F.relu(-(torch.ones(1) * self.logger.epoch - 10))/10+1)*100)
-        vdw_loss = lj_loss_factor*(molwise_normed_overlap / cluster_batch.num_atoms) + packing_loss + 10 * box_loss + 10 * cubic_loss
+        losses, molwise_normed_overlap, molwise_scaled_lj_pot, box_loss, packing_loss, vdw_loss, cluster_batch = self.get_generator_loss(
+            crystal_batch)
 
         for ind in range(self.config.generator.samples_per_iter):
 
             if ind == 0:
                 init_state = prior.detach().clone()
-                prev_vdw_loss = vdw_loss.detach().clone() / mol_batch.num_atoms
+                prev_vdw_loss = losses.detach().clone() / mol_batch.num_atoms
             else:
                 init_state = generator_raw_samples.detach().clone()
-                prev_vdw_loss = vdw_loss.detach().clone()
+                prev_vdw_loss = losses.detach().clone()
 
             vector_embedding = self.models_dict['autoencoder'].encode(mol_batch)
             scalar_embedding = self.models_dict['autoencoder'].scalarizer(vector_embedding)
@@ -2317,22 +2338,10 @@ class Modeller:
                 crystal_batch.destandardize_cell_parameters(generator_raw_samples)
             )
             crystal_batch.clean_cell_parameters(mode='soft')
-            cluster_batch = crystal_batch.mol2cluster(cutoff=6, supercell_size=10,
-                                                      align_to_standardized_orientation=False)
-            cluster_batch.construct_radial_graph(cutoff=6)
-            (molwise_lj_pot, molwise_scaled_lj_pot, edgewise_lj_pot,
-             molwise_overlap, molwise_normed_overlap) = cluster_batch.compute_LJ_energy(return_overlaps=True)
+            losses, molwise_normed_overlap, molwise_scaled_lj_pot, box_loss, packing_loss, vdw_loss, cluster_batch = self.get_generator_loss(
+                crystal_batch)
 
-            aunit_lengths = cluster_batch.scale_lengths_to_aunit()
-
-            box_loss = smooth_constraint(aunit_lengths, 3, 'greater than', 10).sum(1)
-            packing_loss = F.relu(aunit_lengths).sum(1)
-            cubic_loss = smooth_constraint(10*(generator_raw_samples[:, 3:6]).abs(), 0, 'less than', 10).sum(1)
-
-            vdw_loss = lj_loss_factor*(molwise_normed_overlap / cluster_batch.num_atoms) + packing_loss + 10*box_loss + 10*cubic_loss
-
-            vdw_delta = vdw_loss - prev_vdw_loss
-            generator_losses = vdw_delta
+            generator_losses = losses - prev_vdw_loss
 
             if not torch.all(torch.isfinite(generator_losses)):
                 raise ValueError('Numerical Error: Model weights not all finite')
@@ -2346,29 +2355,22 @@ class Modeller:
                                                self.config.gradient_norm_clip)  # gradient clipping
                 self.optimizers_dict['generator'].step()  # update parameters
 
-                # model = self.models_dict['generator']
-                # if not torch.stack([torch.isfinite(p).any() for p in model.parameters()]).all():
-                #
-                #     print("aaa!")
-
             if not skip_stats:
                 self.logger.update_current_losses('generator', self.epoch_type,
                                                   generator_loss.data.detach().cpu().numpy(),
                                                   generator_losses.detach().cpu().numpy())
                 stats = {
-                    'generated_space_group_numbers': cluster_batch.sg_ind.detach(),
+                    'generated_space_group_numbers': crystal_batch.sg_ind.detach(),
                     'identifiers': mol_batch.identifier,
                     'smiles': mol_batch.smiles,
-                    'generator_box_loss': box_loss.detach(),
-                    'generator_cubic_loss': cubic_loss.detach(),
-                    'generator_vdw_delta': vdw_delta.detach(),
-                    'generator_per_mol_raw_vdw_loss': molwise_scaled_lj_pot.detach(),
-                    'generator_per_mol_vdw_score': -molwise_normed_overlap.detach(),
-                    'generator_packing_prediction': cluster_batch.packing_coeff.detach(),
-                    'generator_sample_iter': torch.ones(cluster_batch.num_graphs) * ind,
-                    'generator_prior': destandardized_prior.detach(),
-                    'generated_cell_parameters': cluster_batch.cell_parameters().detach(),
-                    'generator_sample_vdw_energy': molwise_scaled_lj_pot.detach(),
+                    'box_loss': box_loss.detach(),
+                    'generator_vdw_loss': vdw_loss.detach(),
+                    'per_mol_scaled_LJ_energy': molwise_scaled_lj_pot.detach(),
+                    'per_mol_normed_overlap': molwise_normed_overlap.detach(),
+                    'packing_coefficient': crystal_batch.packing_coeff.detach(),
+                    'sample_iter': torch.ones(crystal_batch.num_graphs) * ind,
+                    'prior': destandardized_prior.detach(),
+                    'cell_parameters': crystal_batch.cell_parameters().detach(),
                 }
                 if step == 0:
                     stats['generator_samples'] = cluster_batch.clone().detach()

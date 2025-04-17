@@ -1096,22 +1096,19 @@ def cell_generation_analysis(config, dataDims, epoch_stats_dict):
     """
     layout = plotly_setup(config)
     fig_dict = {}
-    if isinstance(epoch_stats_dict['generated_cell_parameters'], list):
-        cell_parameters = np.stack(epoch_stats_dict['generated_cell_parameters'])
+    if isinstance(epoch_stats_dict['cell_parameters'], list):
+        cell_parameters = np.stack(epoch_stats_dict['cell_parameters'])
     else:
-        cell_parameters = epoch_stats_dict['generated_cell_parameters']
+        cell_parameters = epoch_stats_dict['cell_parameters']
 
     mean_cubic_distortion, cubic_distortion_hist = log_cubic_defect(cell_parameters)
-    generator_losses, average_losses_dict = process_generator_losses(config, epoch_stats_dict)
-
-    fig_dict['Generator Samples'] = new_cell_scatter(epoch_stats_dict, layout)
+    fig_dict['Generator Samples'] = generated_cell_scatter_fig(epoch_stats_dict, layout)
     samples_list = log_crystal_samples(epoch_stats_dict)
 
     wandb.log(data={'Avg generated cubic distortion': mean_cubic_distortion}, commit=False)
     wandb.log(data={"Generated cubic distortions": wandb.Histogram(np_histogram=cubic_distortion_hist, num_bins=256)},
               commit=False)
     wandb.log(data={"Generated cell parameter variation": cell_parameters.std(0).mean()}, commit=False)
-    wandb.log(average_losses_dict, commit=False)
     [wandb.log({f'crystal_sample_{ind}': samples_list[ind]}, commit=False) for ind in range(len(samples_list))]
     wandb.log(fig_dict, commit=False)
 
@@ -1178,21 +1175,22 @@ def log_crystal_samples(epoch_stats_dict):
     return samples_list
 
 
-def new_cell_scatter(epoch_stats_dict, layout):
-    scaled_vdw = epoch_stats_dict['generator_per_mol_raw_vdw_loss']
-    vdw_score = -epoch_stats_dict['generator_per_mol_vdw_score']
-    scatter_dict = {'vdw_score': vdw_score,
-                    'packing_prediction': epoch_stats_dict['generator_packing_prediction'],
+def generated_cell_scatter_fig(epoch_stats_dict, layout):
+
+    scaled_vdw = epoch_stats_dict['per_mol_scaled_LJ_energy']
+    vdw_overlap = epoch_stats_dict['per_mol_normed_overlap']
+    scatter_dict = {'vdw_score': vdw_overlap,
+                    'packing_coefficient': epoch_stats_dict['packing_coefficient'],
                     'vdw_energy': scaled_vdw,
                     }
     opacity = max(0.25, 1 - len(scatter_dict['vdw_score']) / 1e4)
     df = pd.DataFrame.from_dict(scatter_dict)
-    maxval = np.log(1 + vdw_score).max()
+    maxval = np.log(1 + vdw_overlap).max()
     cscale = [[0, 'green'], [0.01, 'blue'], [1, 'red']]
     fig = go.Figure()
     fig.add_scatter(
         x=df['vdw_energy'],
-        y=np.clip(df['packing_prediction'], a_min=0, a_max=2),
+        y=np.clip(df['packing_coefficient'], a_min=0, a_max=2),
         mode='markers',
         marker_color=np.log(1 + df['vdw_score']),
         opacity=opacity,
@@ -1201,7 +1199,7 @@ def new_cell_scatter(epoch_stats_dict, layout):
                 'colorscale': cscale},
     )
     fig.layout.margin = layout.margin
-    fig.update_layout(xaxis_title='vdw Energy', yaxis_title='Packing Coeff')
+    fig.update_layout(xaxis_title='LJ Energy', yaxis_title='Packing Coeff')
     fig.update_layout(xaxis_range=[-np.inf, np.inf],
                       yaxis_range=[0, 1],
                       )
@@ -1408,11 +1406,11 @@ def detailed_reporting(config, dataDims, train_epoch_stats_dict, test_epoch_stat
     Do analysis and upload results to w&b
     """
     if test_epoch_stats_dict is not None:
-        if 'generated_cell_parameters' in test_epoch_stats_dict.keys():
+        if 'generated_cell_parameters' in test_epoch_stats_dict.keys() or 'cell_parameters' in test_epoch_stats_dict.keys():
             if config.logger.log_figures:
                 if config.mode == 'generator':
                     cell_params_hist(wandb, test_epoch_stats_dict,
-                                     ['generator_prior', 'generated_cell_parameters'])
+                                     ['generator_prior', 'cell_parameters'])
                     wandb.log(data={'Iterwise vdW':
                                         iter_wise_hist(test_epoch_stats_dict, 'generator_per_mol_raw_vdw_loss')
                                     }, commit=False)
