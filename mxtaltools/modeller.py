@@ -2272,11 +2272,11 @@ class Modeller:
 
         # losses related to box
         aunit_lengths = cluster_batch.scale_lengths_to_aunit()
-        box_loss = smooth_constraint(aunit_lengths, 3, 'greater than', 10).sum(1)
+        box_loss = F.softplus((aunit_lengths-3)).sum(1)
         packing_loss = smooth_constraint(aunit_lengths, 3, mode='less than', hardness=10).sum(1)
 
         vdw_loss_factor = 1 #float((-F.relu(-(torch.ones(1) * self.logger.epoch - 10)) / 10 + 1) * 100)
-        loss = vdw_loss_factor * vdw_loss #+ packing_loss + 100 * box_loss
+        loss = vdw_loss_factor * vdw_loss + packing_loss*0.1 #+ 100 * box_loss
 
         return loss, molwise_normed_overlap, molwise_scaled_lj_pot, box_loss, packing_loss, vdw_loss, cluster_batch
 
