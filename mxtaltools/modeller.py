@@ -2265,7 +2265,7 @@ class Modeller:
         elements = dist_dict['intermolecular_dist_atoms']
         atom_radii = [self.vdw_radii_tensor[elements[0]], self.vdw_radii_tensor[elements[1]]]
         radii_sums = atom_radii[0] + atom_radii[1]
-        edgewise_potentials = (F.silu(-4 * (dists - radii_sums)) / 0.28)
+        edgewise_potentials = (F.silu(-4 * (dists - radii_sums)) / 0.28) + torch.exp(-dists * 100)*100
         molwise_potentials = scatter(edgewise_potentials, dist_dict['intermolecular_dist_batch'],
                                      reduce='sum', dim_size=cluster_batch.num_graphs)
         vdw_loss = (molwise_potentials / cluster_batch.num_atoms)
@@ -2275,8 +2275,8 @@ class Modeller:
         box_loss = smooth_constraint(aunit_lengths, 3, 'greater than', 10).sum(1)
         packing_loss = smooth_constraint(aunit_lengths, 3, mode='less than', hardness=10).sum(1)
 
-        vdw_loss_factor = float((-F.relu(-(torch.ones(1) * self.logger.epoch - 10)) / 10 + 1) * 100)
-        loss = vdw_loss_factor * vdw_loss + packing_loss + 100 * box_loss
+        vdw_loss_factor = 1 #float((-F.relu(-(torch.ones(1) * self.logger.epoch - 10)) / 10 + 1) * 100)
+        loss = vdw_loss_factor * vdw_loss #+ packing_loss + 100 * box_loss
 
         return loss, molwise_normed_overlap, molwise_scaled_lj_pot, box_loss, packing_loss, vdw_loss, cluster_batch
 
@@ -2338,7 +2338,8 @@ class Modeller:
                 crystal_batch.destandardize_cell_parameters(generator_raw_samples)
             )
             crystal_batch.clean_cell_parameters(mode='soft')
-            losses, molwise_normed_overlap, molwise_scaled_lj_pot, box_loss, packing_loss, vdw_loss, cluster_batch = self.get_generator_loss(
+            (losses, molwise_normed_overlap, molwise_scaled_lj_pot,
+             box_loss, packing_loss, vdw_loss, cluster_batch) = self.get_generator_loss(
                 crystal_batch)
 
             generator_losses = losses - prev_vdw_loss
