@@ -2308,7 +2308,7 @@ class Modeller:
                                                                                       )) for ind in
                                            range(mol_batch.num_graphs)])
 
-        crystal_batch.sample_random_crystal_parameters(cleaning_mode='soft')
+        crystal_batch.sample_random_crystal_parameters(cleaning_mode='soft', target_packing_coeff=0.25)
         prior = crystal_batch.standardize_cell_parameters().clone().detach()
         destandardized_prior = crystal_batch.cell_parameters().clone().detach()
 
@@ -2324,7 +2324,7 @@ class Modeller:
                 init_state = generator_raw_samples.detach().clone()
                 prev_vdw_loss = losses.detach().clone()
 
-            vector_embedding = self.models_dict['autoencoder'].encode(mol_batch)
+            vector_embedding = self.models_dict['autoencoder'].encode(mol_batch.clone())
             scalar_embedding = self.models_dict['autoencoder'].scalarizer(vector_embedding)
 
             step_size = 1 * torch.abs(torch.randn(mol_batch.num_graphs, device=self.device))[:, None]
