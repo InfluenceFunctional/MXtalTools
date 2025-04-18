@@ -2265,18 +2265,18 @@ class Modeller:
         elements = dist_dict['intermolecular_dist_atoms']
         atom_radii = [self.vdw_radii_tensor[elements[0]], self.vdw_radii_tensor[elements[1]]]
         radii_sums = atom_radii[0] + atom_radii[1]
-        edgewise_potentials = (F.silu(-4 * (dists - radii_sums)) / 0.28) + torch.exp(-dists * 100)*100
-        molwise_potentials = scatter(edgewise_potentials, dist_dict['intermolecular_dist_batch'],
-                                     reduce='sum', dim_size=cluster_batch.num_graphs)
-        vdw_loss = (molwise_potentials / cluster_batch.num_atoms)
+        # edgewise_potentials = (F.silu(-4 * (dists - radii_sums)) / 0.28) + torch.exp(-dists * 100)*100
+        # molwise_potentials = scatter(edgewise_potentials, dist_dict['intermolecular_dist_batch'],
+        #                              reduce='sum', dim_size=cluster_batch.num_graphs)
+        vdw_loss = molwise_scaled_lj_pot / cluster_batch.num_atoms
 
         # losses related to box
         aunit_lengths = cluster_batch.scale_lengths_to_aunit()
-        box_loss = F.softplus((aunit_lengths-3)).sum(1)
+        box_loss = F.softplus(-(aunit_lengths-3)).sum(1)
         packing_loss = smooth_constraint(aunit_lengths, 3, mode='less than', hardness=10).sum(1)
 
         vdw_loss_factor = 1 #float((-F.relu(-(torch.ones(1) * self.logger.epoch - 10)) / 10 + 1) * 100)
-        loss = vdw_loss_factor * vdw_loss + packing_loss*0.1 #+ 100 * box_loss
+        loss = vdw_loss_factor * vdw_loss #+ packing_loss*0.1 #+ 100 * box_loss
 
         return loss, molwise_normed_overlap, molwise_scaled_lj_pot, box_loss, packing_loss, vdw_loss, cluster_batch
 
@@ -2308,8 +2308,7 @@ class Modeller:
                                                                                       )) for ind in
                                            range(mol_batch.num_graphs)])
 
-        crystal_batch.sample_random_crystal_parameters(cleaning_mode='soft',
-                                                       target_packing_coeff=0.25)
+        crystal_batch.sample_random_crystal_parameters(cleaning_mode='soft')
         prior = crystal_batch.standardize_cell_parameters().clone().detach()
         destandardized_prior = crystal_batch.cell_parameters().clone().detach()
 
