@@ -350,7 +350,7 @@ def align_mol_batch_to_standard_axes(mol_batch, handedness=None):
     )
 
     eye = torch.tile(torch.eye(3,
-                               device=mol_batch.x.device,
+                               device=mol_batch.pos.device,
                                dtype=torch.float32),
                      (mol_batch.num_graphs, 1, 1)
                      )  # set as right-handed by default

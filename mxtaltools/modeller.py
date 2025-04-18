@@ -2254,16 +2254,8 @@ class Modeller:
         (molwise_lj_pot, molwise_scaled_lj_pot, edgewise_lj_pot,
          molwise_overlap, molwise_normed_overlap) = cluster_batch.compute_LJ_energy(return_overlaps=True)
 
-        # get generator loss - a SiLU fitted roughly to 12-6 LJ minimum
-        dist_dict = cluster_batch.edges_dict
-        dists = dist_dict['intermolecular_dist']
-        elements = dist_dict['intermolecular_dist_atoms']
-        atom_radii = [self.vdw_radii_tensor[elements[0]], self.vdw_radii_tensor[elements[1]]]
-        radii_sums = atom_radii[0] + atom_radii[1]
-        edgewise_potentials = (F.silu(-4 * (dists - radii_sums)) / 0.28) + torch.exp(-dists * 100)*100
-        vdw_loss = scatter(edgewise_potentials, dist_dict['intermolecular_dist_batch'],
-                                     reduce='sum', dim_size=cluster_batch.num_graphs)
-        #vdw_loss = molwise_scaled_lj_pot / cluster_batch.num_atoms
+        # get generator loss - a SiLU fitted roughly to 12-6 LJ minimum, with shorter range and softer repulsion
+        vdw_loss = cluster_batch.compute_silu_energy()
 
         # losses related to box
         aunit_lengths = cluster_batch.scale_lengths_to_aunit()
@@ -2315,7 +2307,8 @@ class Modeller:
         prior = crystal_batch.standardize_cell_parameters().clone().detach()
         destandardized_prior = crystal_batch.cell_parameters().clone().detach()
 
-        vdw_losses, molwise_normed_overlap, molwise_scaled_lj_pot, box_loss, packing_loss, vdw_loss, cluster_batch = self.get_generator_loss(
+        (vdw_losses, molwise_normed_overlap, molwise_scaled_lj_pot,
+         box_loss, packing_loss, vdw_loss, cluster_batch) = self.get_generator_loss(
             crystal_batch)
 
         for ind in range(self.config.generator.samples_per_iter):
@@ -2330,7 +2323,7 @@ class Modeller:
                 vector_embedding = self.models_dict['autoencoder'].encode(mol_batch.clone())
                 scalar_embedding = self.models_dict['autoencoder'].scalarizer(vector_embedding)
 
-            step_size = 0.1 * torch.abs(torch.randn(mol_batch.num_graphs, device=self.device))[:, None]
+            step_size = 1 * torch.abs(torch.randn(mol_batch.num_graphs, device=self.device))[:, None]
             generator_raw_samples = self.models_dict['generator'](x=scalar_embedding,
                                                                   v=vector_embedding,
                                                                   sg_ind_list=crystal_batch.sg_ind,

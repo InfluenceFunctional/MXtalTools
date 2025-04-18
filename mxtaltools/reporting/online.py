@@ -1183,7 +1183,7 @@ def generated_cell_scatter_fig(epoch_stats_dict, layout):
                     'packing_coefficient': epoch_stats_dict['packing_coefficient'],
                     'vdw_energy': scaled_vdw,
                     }
-    opacity = max(0.25, 1 - len(scatter_dict['vdw_score']) / 1e4)
+    opacity = max(0.25, 1 - len(scatter_dict['vdw_score']) / 5e4)
     df = pd.DataFrame.from_dict(scatter_dict)
     maxval = np.log(1 + vdw_overlap).max()
     cscale = [[0, 'green'], [0.01, 'blue'], [1, 'red']]

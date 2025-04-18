@@ -13,7 +13,7 @@ from torch_geometric.typing import OptTensor
 from torch_sparse import SparseTensor
 
 from mxtaltools.analysis.vdw_analysis import vdw_analysis, electrostatic_analysis, get_intermolecular_dists_dict, \
-    buckingham_energy
+    buckingham_energy, silu_energy
 from mxtaltools.common.geometry_utils import batch_compute_molecule_volume, \
     compute_mol_radius, batch_compute_mol_radius, batch_compute_mol_mass, compute_mol_mass, center_mol_batch, \
     apply_rotation_to_batch, enforce_crystal_system, batch_compute_fractional_transform
@@ -963,16 +963,30 @@ class MolCrystalData(MolData):
 
         return molwise_buckingham_energy
 
+    def compute_silu_energy(self):
+        vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()), device=self.device)
+        if "Batch" in self.__class__.__name__:
+            molwise_silu_energy = silu_energy(
+                self.edges_dict,
+                self.num_graphs,
+                vdw_radii_tensor
+            )
+        else:
+            assert False, "BH energies not implemented for single crystals"
+
+        return molwise_silu_energy
+
     def clean_cell_parameters(self, mode: str = 'hard',
                               canonicalize_orientations: bool = True,
-                              angle_pad: float = 0.5):
+                              angle_pad: float = 0.5,
+                              length_pad: float = 3.0):
         # force outputs into physical ranges
 
         # cell lengths have to be positive nonzero
         if mode == 'hard':
-            self.cell_lengths = self.cell_lengths.clip(min=3)
+            self.cell_lengths = self.cell_lengths.clip(min=length_pad)
         elif mode == 'soft':
-            self.cell_lengths = softplus_shift(self.cell_lengths).clip(min=3)
+            self.cell_lengths = softplus_shift(self.cell_lengths - length_pad) + length_pad  # enforces a minimum value of 3
 
         # range from (0,pi) with 50% padding to prevent too-skinny cells
         self.cell_angles = enforce_1d_bound(self.cell_angles,

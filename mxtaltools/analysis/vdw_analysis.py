@@ -303,3 +303,19 @@ def get_intermolecular_dists_dict(cluster_batch,
                  cluster_batch.x[edges_dict['edge_index_inter'][1]]]
 
     return dist_dict
+
+
+def silu_energy(dist_dict,
+                      num_graphs,
+                      vdw_radii,):
+    """
+    a shorter range and softer LJ-type energy
+    """
+    dists = dist_dict['intermolecular_dist']
+    elements = dist_dict['intermolecular_dist_atoms']
+    atom_radii = [vdw_radii[elements[0]], vdw_radii[elements[1]]]
+    radii_sums = atom_radii[0] + atom_radii[1]
+    edgewise_potentials = (F.silu(-4 * (dists - radii_sums)) / 0.28) + torch.exp(-dists * 100) * 100
+    molwise_silu_energy = scatter(edgewise_potentials, dist_dict['intermolecular_dist_batch'],
+                       reduce='sum', dim_size=num_graphs)
+    return molwise_silu_energy
