@@ -103,7 +103,10 @@ class Logger:
         for k1 in self.current_losses.keys():
             for k2 in self.current_losses[k1].keys():
                 if isinstance(self.current_losses[k1][k2], list):
-                    self.current_losses[k1][k2] = np.asarray(self.current_losses[k1][k2])
+                    try:
+                        self.current_losses[k1][k2] = np.asarray(self.current_losses[k1][k2])
+                    except ValueError:
+                        self.current_losses[k1][k2] = np.concatenate(self.current_losses[k1][k2])
 
     def log_times(self, times: dict, commit=False):
         elapsed_times = {}
