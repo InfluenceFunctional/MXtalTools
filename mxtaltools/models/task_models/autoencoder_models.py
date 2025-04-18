@@ -120,33 +120,6 @@ class Mo3ENet(BaseGraphModel):
 
         return decoding
 
-    ''' equivariance testing
-    from scipy.spatial.transform import Rotation as R
-    import numpy as np
-    
-    v = encoding.clone()
-    
-    'initialize rotations'
-    rotations = torch.tensor(
-        R.random(len(v)).as_matrix() *
-        np.random.choice((-1, 1), replace=True, size=len(v))[:, None, None],
-        dtype=torch.float,
-        device=v.device)
-    'rotate input'
-    r_v = torch.einsum('ij, njk -> nik', rotations[0], v)
-    
-    'get output'
-    s1, out1 = self.decoder(self.scalarizer(v), v=v)
-    s2, out2 = self.decoder(self.scalarizer(r_v), v=r_v)
-    
-    'rotated output'
-    r_out1 = torch.einsum('ij, njk -> nik', rotations[0], out1)
-    
-    print(torch.mean(torch.abs(r_out1 - out2) / out2.abs()))
-    print(torch.mean(torch.abs(s1 - s2) / s2.abs()))
-
-    '''
-
     def compile_self(self, dynamic=True, fullgraph=False):
         self.encoder = torch.compile(self.encoder, dynamic=dynamic, fullgraph=fullgraph)
         self.decoder = torch.compile(self.decoder, dynamic=dynamic, fullgraph=fullgraph)
