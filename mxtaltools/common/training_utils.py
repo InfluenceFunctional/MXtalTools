@@ -38,7 +38,7 @@ def update_stats_dict(dictionary: dict, keys, values, mode='append'):
         for key, value in zip(keys, values):
             if key not in dictionary.keys():
                 dictionary[key] = []
-            if isinstance(value, int):
+            if isinstance(value, int) or isinstance(value, float):
                 value = np.array(value)[None]
             if (mode == 'append') or ('batch' in str(type(value)).lower()):
                 dictionary[key].append(value)

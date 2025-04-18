@@ -58,7 +58,7 @@ def cell_params_hist(wandb, stats_dict, sample_sources_list):
         if isinstance(samples_dict[key], list):
             samples_dict[key] = np.stack(samples_dict[key])
 
-    lattice_features = ['cell_normed_a', 'cell_normed_b', 'cell_normed_c',
+    lattice_features = ['cell_a', 'cell_b', 'cell_c',
                         'cell_alpha', 'cell_beta', 'cell_gamma',
                         'aunit_x', 'aunit_y', 'aunit_z',
                         'orientation_1', 'orientation_2', 'orientation_2']

@@ -972,7 +972,7 @@ class MolCrystalData(MolData):
         if mode == 'hard':
             self.cell_lengths = self.cell_lengths.clip(min=3)
         elif mode == 'soft':
-            self.cell_angles = softplus_shift(self.cell_angles).clip(min=3)
+            self.cell_lengths = softplus_shift(self.cell_lengths).clip(min=3)
 
         # range from (0,pi) with 50% padding to prevent too-skinny cells
         self.cell_angles = enforce_1d_bound(self.cell_angles,
