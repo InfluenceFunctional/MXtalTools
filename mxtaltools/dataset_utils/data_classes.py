@@ -930,7 +930,6 @@ class MolCrystalData(MolData):
                 = vdw_analysis(vdw_radii_tensor,
                                self.edges_dict,
                                self.num_graphs,
-                               self.num_atoms,
                                )
         else:
             assert False, "LJ energies not implemented for single crystals"

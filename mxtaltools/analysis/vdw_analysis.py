@@ -5,14 +5,12 @@ import torch
 import torch.nn.functional as F
 from torch_scatter import scatter
 
-from mxtaltools.common.utils import smooth_constraint
 from mxtaltools.models.functions.radial_graph import radius, build_radial_graph
 
 
 def vdw_analysis(vdw_radii: torch.Tensor,
                  dist_dict: dict,
                  num_graphs: int,
-                 num_atoms: torch.LongTensor,
                  ):
     """
     new version of the vdw_overlap function for analysis of intermolecular contacts
@@ -24,19 +22,18 @@ def vdw_analysis(vdw_radii: torch.Tensor,
     molwise_normed_overlap = scatter(normed_overlap, batch, reduce='sum', dim_size=num_graphs)
     molwise_lj_pot = scatter(lj_pot, batch, reduce='sum', dim_size=num_graphs)
 
-    molwise_loss = scale_molwise_lj_pot(molwise_lj_pot, num_atoms)
+    molwise_loss = scale_molwise_lj_pot(molwise_lj_pot).clip(max=50)
 
     return molwise_overlap, molwise_normed_overlap, molwise_lj_pot, molwise_loss, lj_pot
 
 
 def scale_molwise_lj_pot(vdw_potential: torch.Tensor,
-                         num_atoms: torch.LongTensor,
                          ):
 
     if vdw_potential.ndim > 1:
-        rescaled_vdw_loss = vdw_potential# / num_atoms[None, :]
+        rescaled_vdw_loss = vdw_potential
     else:
-        rescaled_vdw_loss = vdw_potential# / num_atoms
+        rescaled_vdw_loss = vdw_potential
 
     rescaled_vdw_loss[rescaled_vdw_loss > 0] = torch.log(rescaled_vdw_loss[rescaled_vdw_loss > 0] + 1)
 
