@@ -2381,7 +2381,7 @@ class Modeller:
                     'prior': destandardized_prior.detach(),
                     'cell_parameters': crystal_batch.cell_parameters().detach(),
                     'vdw_factor': self.vdw_loss_factor,
-                    'prior_loss': prior_loss.mean().cpu().detach(),
+                    'prior_loss': prior_loss.mean(-1).cpu().detach(),
                 }
                 if step == 0:
                     stats['generator_samples'] = cluster_batch.clone().detach()
