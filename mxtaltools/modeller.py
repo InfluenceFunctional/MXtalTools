@@ -2260,11 +2260,11 @@ class Modeller:
          molwise_overlap, molwise_normed_overlap) = cluster_batch.compute_LJ_energy(return_overlaps=True)
 
         # get generator loss - a SiLU fitted roughly to 12-6 LJ minimum
-        dist_dict = cluster_batch.edges_dict
-        dists = dist_dict['intermolecular_dist']
-        elements = dist_dict['intermolecular_dist_atoms']
-        atom_radii = [self.vdw_radii_tensor[elements[0]], self.vdw_radii_tensor[elements[1]]]
-        radii_sums = atom_radii[0] + atom_radii[1]
+        #dist_dict = cluster_batch.edges_dict
+        #dists = dist_dict['intermolecular_dist']
+        #elements = dist_dict['intermolecular_dist_atoms']
+        #atom_radii = [self.vdw_radii_tensor[elements[0]], self.vdw_radii_tensor[elements[1]]]
+        #radii_sums = atom_radii[0] + atom_radii[1]
         # edgewise_potentials = (F.silu(-4 * (dists - radii_sums)) / 0.28) + torch.exp(-dists * 100)*100
         # molwise_potentials = scatter(edgewise_potentials, dist_dict['intermolecular_dist_batch'],
         #                              reduce='sum', dim_size=cluster_batch.num_graphs)
