@@ -2304,7 +2304,7 @@ class Modeller:
                                            range(mol_batch.num_graphs)])
 
         crystal_batch.sample_random_crystal_parameters(cleaning_mode='soft')
-        prior = crystal_batch.standardize_cell_parameters().clone().detach()
+        cleaned_prior = crystal_batch.standardize_cell_parameters().clone().detach()
         destandardized_prior = crystal_batch.cell_parameters().clone().detach()
 
         (vdw_losses, molwise_normed_overlap, molwise_scaled_lj_pot,
@@ -2313,10 +2313,10 @@ class Modeller:
 
         for ind in range(self.config.generator.samples_per_iter):
             if ind == 0:
-                init_state = prior.detach().clone()
+                init_state = cleaned_prior.detach().clone()
                 prev_vdw_loss = vdw_losses.detach().clone()
             else:
-                init_state = generator_raw_samples.detach().clone()
+                init_state = std_generated_cell_params.detach().clone()
                 prev_vdw_loss = vdw_losses.detach().clone()
 
             with torch.no_grad():
@@ -2341,7 +2341,8 @@ class Modeller:
                 crystal_batch)
 
             # penalize the genrator for taking large steps
-            prior_loss = F.relu((crystal_batch.standardize_cell_parameters() - init_state).norm(dim=1) - step_size)**2
+            std_generated_cell_params = crystal_batch.standardize_cell_parameters()
+            prior_loss = F.relu((std_generated_cell_params - init_state).norm(dim=1) - step_size)**2
 
             generator_losses = vdw_losses - prev_vdw_loss + prior_loss
 
