@@ -54,7 +54,7 @@ positional_noise:
   discriminator: 0
   generator: 0
   regressor: 0
-  autoencoder: 0.1
+  autoencoder: 0.01
 
 model_paths:
   discriminator: null #best_discriminator_experiments_dev_27-09-19-24-55
