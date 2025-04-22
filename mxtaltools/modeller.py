@@ -2267,11 +2267,11 @@ class Modeller:
 
         if self.epoch_type == 'train':
             if vdw_loss.mean() < 1:
-                self.vdw_loss_factor *= 1.1
+                self.vdw_loss_factor *= 1.001
             elif vdw_loss.mean() > 10 and self.vdw_loss_factor > 1e-3:
-                self.vdw_loss_factor *= 0.9
+                self.vdw_loss_factor *= 0.999
 
-        loss = self.vdw_loss_factor * vdw_loss #+ packing_loss*0.1 #+ 100 * box_loss
+        loss = vdw_loss #+ packing_loss*0.1 #+ 100 * box_loss
 
         return loss, molwise_normed_overlap, molwise_scaled_lj_pot, box_loss, packing_loss, vdw_loss, cluster_batch
 
@@ -2367,7 +2367,7 @@ class Modeller:
             std_generated_cell_params = crystal_batch.standardize_cell_parameters()
             prior_loss = F.relu(generator_proposed_step.norm(dim=1) - step_size)**2
             vdw_step_loss = (vdw_losses - prev_vdw_loss)
-            generator_losses = prior_loss #+ vdw_step_loss
+            generator_losses = prior_loss + self.vdw_loss_factor * vdw_step_loss
 
             if not torch.all(torch.isfinite(generator_losses)):
                 raise ValueError('Numerical Error: Model weights not all finite')
