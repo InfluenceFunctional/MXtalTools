@@ -83,6 +83,8 @@ def RMSD_fig():
     RMSD violin for each model, with overlaid summary stats
     RMSD correlates bar plot
     """
+
+    fontsize = 28
     # load test stats
     stats_dicts = {}
     for ind in range(2):
@@ -90,24 +92,26 @@ def RMSD_fig():
         stats_dicts[stats_dict_names[ind]] = d['test_stats']
 
     bandwidth = 0.005
-    fig = make_subplots(rows=2, cols=2, subplot_titles=['(a) Whole Molecule', '(b) Atomwise'], horizontal_spacing=0.2, vertical_spacing=0.2)
-    for ind, run_name in enumerate(['Without Hydrogen', 'With Hydrogen']):
+    fig = make_subplots(rows=2, cols=2, subplot_titles=['(a) Whole Molecule', '(b) Atomwise'],
+                        horizontal_spacing=0.15, vertical_spacing=0.15)
+    for ind, run_name in enumerate([f'Without Hydrogen',
+                                    f'With Hydrogen']):
         row = ind + 1
         stats_dict = stats_dicts[run_name]
-
+        run_name = ' <br> '.join(run_name.split()) + '<br>'
         x = np.concatenate(stats_dict['RMSD_dist'])
         matched = np.concatenate(stats_dict['matched_graphs'])
         unmatched = np.mean(np.invert(matched))
         finite_x = x[matched]
 
-        fig.add_annotation(x=0.6, y=ind + 0.3, showarrow=False,
+        fig.add_annotation(x=0.6, y=0.5, showarrow=False,
                            text=f'Mean Distance: {finite_x.mean():.2f} <br> Unmatched Frac.: {unmatched * 100:.1f}%',
                            font_size=20,
                            row=row, col=1)
         fig.add_trace(go.Violin(  # y=np.zeros_like(x),
             x=finite_x, side='positive', orientation='h',
             bandwidth=bandwidth, width=4, showlegend=False, opacity=1,  # .5,
-            name=run_name,
+            name=f'{run_name}',
             # scalegroup='',
             meanline_visible=True,
             line_color=colors[ind],
@@ -120,7 +124,7 @@ def RMSD_fig():
         unmatched = np.mean(np.invert(matched))
         finite_x = x[matched]
 
-        fig.add_annotation(x=0.6, y=ind + 0.3, showarrow=False,
+        fig.add_annotation(x=0.6, y=0.5, showarrow=False,
                            text=f'Mean Distance: {finite_x.mean():.2f} <br> Unmatched Frac.: {unmatched * 100:.2f}%',
                            font_size=20,
                            row=row, col=2)
@@ -137,12 +141,12 @@ def RMSD_fig():
 
     fig.update_layout(barmode='group', plot_bgcolor='rgba(0,0,0,0)')
 
-    fig.update_layout(font=dict(size=20))
-    fig.update_xaxes(title_font=dict(size=20), tickfont=dict(size=20))
-    fig.update_yaxes(title_font=dict(size=20), tickfont=dict(size=20))
+    fig.update_layout(font=dict(size=fontsize))
+    fig.update_xaxes(title_font=dict(size=fontsize), tickfont=dict(size=fontsize))
+    fig.update_yaxes(title_font=dict(size=fontsize), tickfont=dict(size=fontsize))
     fig.update_layout(violingap=0, violinmode='overlay')
     fig.update_layout(legend_traceorder='reversed')  # , yaxis_showgrid=True)
-    fig.update_annotations(font_size=24)
+    fig.update_annotations(font_size=int(fontsize * 1.2))
 
     fig.update_layout(
         xaxis1={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
@@ -173,6 +177,7 @@ def RMSD_fig():
     fig.update_layout(yaxis4={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
 
     fig.show(renderer='browser')
+    fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
 
     return fig
 
@@ -365,6 +370,7 @@ def UMAP_fig(max_entries=10000000):
     embedding = reducer.fit_transform((scalar_encodings - scalar_encodings.mean()) / scalar_encodings.std())
 
     'embeddings'
+    fontsize = 40
     fig2 = make_subplots(rows=1, cols=2, horizontal_spacing=.01, vertical_spacing=0.05,
                          # specs=[[{'rowspan': 3}, {'rowspan': 3}, {'rowspan': 3}, None],
                          #       [None, None, None, {}],
@@ -385,9 +391,10 @@ def UMAP_fig(max_entries=10000000):
 
         embedding -= embedding.min(0)
         embedding /= embedding.max(0)
-        fig2.add_trace(go.Scattergl(x=embedding[:, 0], y=embedding[:, 1],
+        fig2.add_trace(go.Scattergl(x=embedding[:, 0],
+                                    y=embedding[:, 1],
                                     mode='markers',
-                                    opacity=.1,
+                                    opacity=.15,
                                     marker_size=8,
                                     showlegend=False,
                                     marker_color=point_colors
@@ -405,11 +412,11 @@ def UMAP_fig(max_entries=10000000):
         except:
             smiles = stats_dict['molecule_smiles']
 
-        for ix in np.linspace(0, 1, 6):
-            for iy in np.linspace(0, 1, 6):
+        for ix in np.linspace(0, 1, 5):
+            for iy in np.linspace(0, 1, 5):
                 if ix == 0 or ix == 1 or iy == 0 or iy == 1:
                     annotations_list.append(
-                        mol_point_callout(fig2, ix, iy, ex, ey, embedding, smiles, 0.15, row=1, col=ind2 + 1))
+                        mol_point_callout(fig2, ix, iy, ex, ey, embedding, smiles, 0.2, row=1, col=ind2 + 1))
         #
         # fig2.add_scattergl(x=np.zeros(1), y=np.zeros(1), marker_size=0.001, mode='markers',
         #                    marker_color=['rgb(255,0,0)'], name=legend_entries[0], showlegend=True,
@@ -424,7 +431,7 @@ def UMAP_fig(max_entries=10000000):
         #                    legendgroup=legend_groups[ind2], legendgrouptitle_text=legend_groups[ind2],
         #                    row=1, col=ind2 + 1)
 
-    fig2.update_annotations(font_size=30)
+    fig2.update_annotations(font_size=fontsize)
     fig2.update_yaxes(linecolor='black', mirror=True,
                       showgrid=True, zeroline=True)
     fig2.update_xaxes(linecolor='black', mirror=True,
@@ -434,8 +441,8 @@ def UMAP_fig(max_entries=10000000):
 
     fig2.update_layout(plot_bgcolor='rgb(255,255,255)')
 
-    xlim = -0.2
-    ylim = 1.2
+    xlim = -0.4
+    ylim = 1.4
     fig2.update_layout(xaxis1_range=[xlim, ylim], yaxis1_range=[xlim, ylim],
                        xaxis2_range=[xlim, ylim], yaxis2_range=[xlim, ylim],
                        # xaxis3_range=[xlim, ylim], yaxis3_range=[xlim, ylim],
@@ -454,7 +461,7 @@ def UMAP_fig(max_entries=10000000):
 
     fig2.update_xaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
     fig2.update_yaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
-    fig2.update_layout(font=dict(size=30))
+    fig2.update_layout(font=dict(size=fontsize))
 
     fig2.show(renderer='browser')
 
@@ -483,6 +490,7 @@ def UMAP_fig(max_entries=10000000):
                       xaxis_showticklabels=False, yaxis_showticklabels=False,
                       plot_bgcolor='rgba(0,0,0,0)')
     fig.show(renderer='browser')
+    fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
 
     return fig2
 
@@ -546,9 +554,10 @@ def embedding_regression_figure():
         NMAE_dict[target_name] = NMAE
         R_dict[target_name] = R_value
 
+    fontsize = 24
     fig3 = make_subplots(cols=5, rows=4,
                          subplot_titles=pretty_target_names,
-                         horizontal_spacing=0.06,
+                         horizontal_spacing=0.04,
                          vertical_spacing=0.125)
 
     annotations = []
@@ -584,14 +593,13 @@ def embedding_regression_figure():
         fig3.update_layout({f'xaxis{ind + 1}_range': [minval, maxval]})
 
         annotations.append(dict(xref="x" + str(ind + 1), yref="y" + str(ind + 1),
-                                x=minval + np.ptp(prediction) * 0.25,
-                                y=maxval - np.ptp(prediction) * 0.2,
+                                x=minval + np.ptp(prediction) * 0.3,
+                                y=maxval - np.ptp(prediction) * 0.175,
                                 showarrow=False,
-                                text=f"R={R_dict[target_name]:.4f} <br> MAE={MAE_dict[target_name]:.3g}"
+                                text=f"R={R_dict[target_name]:.4f}<br>MAE={MAE_dict[target_name]:.3g}"
                                 ))
 
     fig3['layout']['annotations'] += tuple(annotations)
-    fig3.update_annotations(font=dict(size=18))
     fig3.update_layout(plot_bgcolor='rgba(0,0,0,0)')
     fig3.update_xaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
     fig3.update_yaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
@@ -601,11 +609,12 @@ def embedding_regression_figure():
                       showgrid=True, zeroline=True)
     fig3.update_layout(yaxis6_title='Predicted Value')
     fig3.update_layout(xaxis18_title='Target Value')
-    fig3.update_layout(font=dict(size=20))
-    fig3.update_annotations(font_size=20)
+    fig3.update_layout(font=dict(size=fontsize))
+    fig3.update_annotations(font_size=fontsize)
     fig3.update_annotations(yshift=10)
     fig3.update_xaxes(tickangle=0)
     fig3.show(renderer='browser')
+    fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=1200)
 
     return fig3
 
@@ -795,17 +804,14 @@ def proxy_discriminator_figure():
 
 if __name__ == '__main__':
     #fig = RMSD_fig()
-    #fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
 
-    #fig2 = UMAP_fig(max_entries=100000000)
-    #fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
-    #
-    #fig3 = embedding_regression_figure()
-    #fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
-    #
+    # fig2 = UMAP_fig(max_entries=100000000)
+
+    fig3 = embedding_regression_figure()
+
     # fig4 = regression_training_curve()
     # fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=1200, height=800)
-    #
+
     fig5 = proxy_discriminator_figure()
     fig5.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\proxy_discrim_i.png', width=1920, height=840)
 

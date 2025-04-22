@@ -2244,7 +2244,7 @@ class Modeller:
 
         return discriminator_losses, stats
 
-    def get_generator_loss(self, crystal_batch):
+    def analyze_generator_sample(self, crystal_batch):
         # build and analyze crystal
         cluster_batch = crystal_batch.mol2cluster(cutoff=6,
                                                   supercell_size=10,
@@ -2303,12 +2303,12 @@ class Modeller:
                                                                                       )) for ind in
                                            range(mol_batch.num_graphs)])
 
-        crystal_batch.sample_random_crystal_parameters(cleaning_mode='soft')
+        crystal_batch.sample_random_crystal_parameters(cleaning_mode='hard')
         cleaned_prior = crystal_batch.standardize_cell_parameters().clone().detach()
         destandardized_prior = crystal_batch.cell_parameters().clone().detach()
 
         (vdw_losses, molwise_normed_overlap, molwise_scaled_lj_pot,
-         box_loss, packing_loss, vdw_loss, cluster_batch) = self.get_generator_loss(
+         box_loss, packing_loss, vdw_loss, cluster_batch) = self.analyze_generator_sample(
             crystal_batch)
 
         for ind in range(self.config.generator.samples_per_iter):
@@ -2323,28 +2323,51 @@ class Modeller:
                 vector_embedding = self.models_dict['autoencoder'].encode(mol_batch.clone())
                 scalar_embedding = self.models_dict['autoencoder'].scalarizer(vector_embedding)
 
-            step_size = 1 * torch.abs(torch.randn(mol_batch.num_graphs, device=self.device))[:, None]
-            generator_raw_samples = self.models_dict['generator'](x=scalar_embedding,
+            step_size = 1 * torch.rand(mol_batch.num_graphs, device=self.device)[:, None]
+            generator_proposed_step = self.models_dict['generator'](x=scalar_embedding,
                                                                   v=vector_embedding,
                                                                   sg_ind_list=crystal_batch.sg_ind,
                                                                   step_size=step_size,
                                                                   prior=init_state)
-
+            """
+            quick vis
+            
+            generator_raw_samples = init_state + generator_proposed_step
             crystal_batch.set_cell_parameters(
                 crystal_batch.destandardize_cell_parameters(generator_raw_samples)
             )
-            crystal_batch.clean_cell_parameters(mode='soft')
+            uncleaned = crystal_batch.cell_parameters().clone().cpu().detach()
+            crystal_batch.clean_cell_parameters(mode='hard')
+            cleaned = crystal_batch.cell_parameters().clone().cpu().detach()
+            
+            import plotly.graph_objects as go
+            from plotly.subplots import make_subplots
+            fig = make_subplots(rows=4,cols=3)
+            for ind in range(12):
+                row = ind // 3 + 1
+                col = ind % 3 + 1
+                fig.add_histogram(x=uncleaned[:, ind], name='unclean',legendgroup='unclean',showlegend=True if ind == 0 else False, row=row,col=col, marker_color='blue')
+                fig.add_histogram(x=cleaned[:, ind], name='clean', legendgroup='clean',
+                                  showlegend=True if ind == 0 else False, row=row, col=col, marker_color='red')
+            fig.show()
+            
+            """
+            generator_raw_samples = init_state + generator_proposed_step
+            crystal_batch.set_cell_parameters(
+                crystal_batch.destandardize_cell_parameters(generator_raw_samples)
+            )
+            crystal_batch.clean_cell_parameters(mode='hard')
 
             # analyze intermolecular characteristics
             (vdw_losses, molwise_normed_overlap, molwise_scaled_lj_pot,
-             box_loss, packing_loss, vdw_loss, cluster_batch) = self.get_generator_loss(
+             box_loss, packing_loss, vdw_loss, cluster_batch) = self.analyze_generator_sample(
                 crystal_batch)
 
             # penalize the genrator for taking large steps
             std_generated_cell_params = crystal_batch.standardize_cell_parameters()
-            prior_loss = F.relu((std_generated_cell_params - init_state).norm(dim=1) - step_size)**2
-
-            generator_losses = vdw_losses - prev_vdw_loss + prior_loss
+            prior_loss = F.relu(generator_proposed_step.norm(dim=1) - step_size)**2
+            vdw_step_loss = (vdw_losses - prev_vdw_loss)
+            generator_losses = prior_loss #+ vdw_step_loss
 
             if not torch.all(torch.isfinite(generator_losses)):
                 raise ValueError('Numerical Error: Model weights not all finite')
@@ -2367,6 +2390,7 @@ class Modeller:
                     'identifiers': mol_batch.identifier,
                     'smiles': mol_batch.smiles,
                     'box_loss': box_loss.detach(),
+                    'vdw_step_loss': vdw_step_loss.detach(),
                     'generator_vdw_loss': vdw_loss.detach(),
                     'per_mol_scaled_LJ_energy': molwise_scaled_lj_pot.detach(),
                     'per_mol_normed_overlap': molwise_normed_overlap.detach(),

@@ -44,8 +44,7 @@ class CrystalGenerator(nn.Module):
         x_w_sg = torch.cat([x, self.SG_FEATURE_TENSOR[sg_ind_list], prior, step_size], dim=1)
         x_w_v = torch.cat([x_w_sg, v.reshape(v.shape[0], v.shape[1] * v.shape[2])], dim=1)
         delta = self.model(x=x_w_v)
-        raw_sample = prior + delta
 
-        return raw_sample
+        return delta
 
 
