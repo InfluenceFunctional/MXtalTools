@@ -30,11 +30,7 @@ def vdw_analysis(vdw_radii: torch.Tensor,
 def scale_molwise_lj_pot(vdw_potential: torch.Tensor,
                          ):
 
-    if vdw_potential.ndim > 1:
-        rescaled_vdw_loss = vdw_potential
-    else:
-        rescaled_vdw_loss = vdw_potential
-
+    rescaled_vdw_loss = vdw_potential.clone()
     rescaled_vdw_loss[rescaled_vdw_loss > 0] = torch.log(rescaled_vdw_loss[rescaled_vdw_loss > 0] + 1)
 
     return rescaled_vdw_loss

@@ -2311,6 +2311,10 @@ class Modeller:
          box_loss, packing_loss, vdw_loss, cluster_batch) = self.analyze_generator_sample(
             crystal_batch)
 
+        with torch.no_grad():
+            vector_embedding = self.models_dict['autoencoder'].encode(mol_batch.clone())
+            scalar_embedding = self.models_dict['autoencoder'].scalarizer(vector_embedding)
+
         for ind in range(self.config.generator.samples_per_iter):
             if ind == 0:
                 init_state = cleaned_prior.detach().clone()
@@ -2318,10 +2322,6 @@ class Modeller:
             else:
                 init_state = std_generated_cell_params.detach().clone()
                 prev_vdw_loss = vdw_losses.detach().clone()
-
-            with torch.no_grad():
-                vector_embedding = self.models_dict['autoencoder'].encode(mol_batch.clone())
-                scalar_embedding = self.models_dict['autoencoder'].scalarizer(vector_embedding)
 
             step_size = 1 * torch.rand(mol_batch.num_graphs, device=self.device)[:, None]
             generator_proposed_step = self.models_dict['generator'](x=scalar_embedding,

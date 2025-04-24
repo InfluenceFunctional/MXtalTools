@@ -972,14 +972,15 @@ class MolCrystalData(MolData):
                 vdw_radii_tensor
             )
         else:
-            assert False, "BH energies not implemented for single crystals"
+            assert False, "SiLU energies not implemented for single crystals"
 
         return molwise_silu_energy
 
     def clean_cell_parameters(self, mode: str = 'hard',
                               canonicalize_orientations: bool = True,
                               angle_pad: float = 0.5,
-                              length_pad: float = 3.0):
+                              length_pad: float = 3.0,
+                              constrain_z: bool = False):
         # force outputs into physical ranges
 
         # cell lengths have to be positive nonzero
@@ -999,7 +1000,17 @@ class MolCrystalData(MolData):
         cleaned_aunit_scaled_pos = enforce_1d_bound(aunit_scaled_pos, x_span=0.5, x_center=0.5, mode=mode)
         self.aunit_centroid = self.scale_centroid_to_unit_cell(cleaned_aunit_scaled_pos)
 
-        # enforce range on vector norm  # todo decide how/where to enforce canonical z direction
+        # enforce range on vector norm
+        if constrain_z:  # enforce a priori only positive Z possible
+            assert not canonicalize_orientations, "Either enforce z positive, or post-canonicalize negative z's"
+            # forces Z within the range 0-2pi
+            fixed_z = enforce_1d_bound(
+                self.aunit_orientation[:, -1],
+                x_span=torch.pi,
+                x_center=torch.pi,
+                mode=mode
+            )
+            self.aunit_orientation = torch.cat([self.aunit_orientation[:, :2], fixed_z[:, None]], dim=1)
         norm = torch.linalg.norm(self.aunit_orientation, dim=1)
         new_norm = enforce_1d_bound(norm, x_span=0.999 * torch.pi, x_center=torch.pi, mode=mode)  # MUST be nonzero
         self.aunit_orientation = self.aunit_orientation / norm[:, None] * new_norm[:, None]
@@ -1011,7 +1022,7 @@ class MolCrystalData(MolData):
                                                                      )
 
         # enforce z component in the upper half-plane
-        if canonicalize_orientations:
+        if canonicalize_orientations:  # converts the vector to its duplicate in the upper half-plane
             self.aunit_orientation = canonicalize_rotvec(self.aunit_orientation)
 
         # update cell vectors

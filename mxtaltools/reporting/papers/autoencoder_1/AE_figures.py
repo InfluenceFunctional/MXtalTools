@@ -510,26 +510,26 @@ def normalize_colors(composition_coloration):
 def embedding_regression_figure():
     target_names = [t[0] for t in targets]
 
-    pretty_target_names = [r"$\large{(a)\ Rotational\ Constant\ A\ /GHz}$",
-                           r"$\large{(b)\ Rotational\ Constant\ B\ /GHz}$",
-                           r"$\large{(c)\ Rotational\ Constant\ C\ /GHz}$",
-                           r"$\large{(d)\ Dipole\ Moment\ /Deb}$",
-                           r"$\large{(e)\ Iso.\ Polarizability\ /Bohr^3}$",
-                           r"$\large{(f)\ HOMO\ Energy\ /E_h}$",
-                           r"$\large{(g)\ LUMO\ Energy\ /E_h}$",
-                           r"$\large{(h)\ Gap\ Energy\ /E_h}$",
-                           r"$\large{(i)\ Electronic\ Spatial\ Extent\ /Bohr^2}$",
-                           r"$\large{(j)\ ZPV\ Energy\ /E_h}$",
-                           r"$\large{(k)\ Internal\ Energy\ (T=0)\ /E_h}$",
-                           r"$\large{(l)\ Internal\ Energy\ 298K\ /E_h}$",
-                           r"$\large{(m)\ Enthalpy\ 298K\ /E_h}$",
-                           r"$\large{(n)\ Free\ Energy\ 298K\ /E_h}$",
-                           r"$\large{(o)\ Heat\ Capacity\ 298K\ /cal\ mol^{-1}\ K^{-1}}$",
-                           r"$\large{(p)\ Dipole\ Moment\ /D}$",
-                           r"$\large{(q)\ Polarizability\ Tensor\ /a_0^3}$",
-                           r"$\large{(r)\ Quadrupole\ Moment\ /D*A}$",
-                           r"$\large{(s)\ Octapole\ Moment\ /D*A^2}$",
-                           r"$\large{(t)\ Hyperpolarizability\ /a.u.}$",
+    pretty_target_names = [r"$\normalsize{(a)\ Rotational\ Constant\ A\ /GHz}$",
+                           r"$\normalsize{(b)\ Rotational\ Constant\ B\ /GHz}$",
+                           r"$\normalsize{(c)\ Rotational\ Constant\ C\ /GHz}$",
+                           r"$\normalsize{(d)\ Dipole\ Moment\ /Deb}$",
+                           r"$\normalsize{(e)\ Iso.\ Polarizability\ /Bohr^3}$",
+                           r"$\normalsize{(f)\ HOMO\ Energy\ /E_h}$",
+                           r"$\normalsize{(g)\ LUMO\ Energy\ /E_h}$",
+                           r"$\normalsize{(h)\ Gap\ Energy\ /E_h}$",
+                           r"$\normalsize{(i)\ Electronic\ Spatial\ Extent\ /Bohr^2}$",
+                           r"$\normalsize{(j)\ ZPV\ Energy\ /E_h}$",
+                           r"$\normalsize{(k)\ Internal\ Energy\ (T=0)\ /E_h}$",
+                           r"$\normalsize{(l)\ Internal\ Energy\ 298K\ /E_h}$",
+                           r"$\normalsize{(m)\ Enthalpy\ 298K\ /E_h}$",
+                           r"$\normalsize{(n)\ Free\ Energy\ 298K\ /E_h}$",
+                           r"$\normalsize{(o)\ Heat\ Capacity\ 298K\ /cal\ mol^{-1}\ K^{-1}}$",
+                           r"$\normalsize{(p)\ Dipole\ Moment\ /D}$",
+                           r"$\normalsize{(q)\ Polarizability\ Tensor\ /a_0^3}$",
+                           r"$\normalsize{(r)\ Quadrupole\ Moment\ /D*A}$",
+                           r"$\normalsize{(s)\ Octapole\ Moment\ /D*A^2}$",
+                           r"$\normalsize{(t)\ Hyperpolarizability\ /a.u.}$",
                            ]
 
     MAE_dict = {}
@@ -554,11 +554,11 @@ def embedding_regression_figure():
         NMAE_dict[target_name] = NMAE
         R_dict[target_name] = R_value
 
-    fontsize = 24
-    fig3 = make_subplots(cols=5, rows=4,
-                         subplot_titles=pretty_target_names,
+    fontsize = 32
+    fig3 = make_subplots(cols=4, rows=5,
+                         #subplot_titles=pretty_target_names,
                          horizontal_spacing=0.04,
-                         vertical_spacing=0.125)
+                         vertical_spacing=0.033)
 
     annotations = []
     for ind, (path, target_name) in enumerate(zip(er_results_paths, target_names)):
@@ -575,14 +575,15 @@ def embedding_regression_figure():
         except:
             z = np.ones_like(target)
 
-        row = ind // 5 + 1
-        col = ind % 5 + 1
-        opacity = 0.05  # np.exp(-num_points / 10000)
+        row = ind // 4 + 1
+        col = ind % 4 + 1
+        opacity = 0.1  # np.exp(-num_points / 10000)
         fig3.add_trace(go.Scattergl(x=target,
                                     y=prediction,
                                     mode='markers',
                                     marker=dict(color=z),
                                     opacity=opacity,
+                                    marker_size=8,
                                     showlegend=False),
                        row=row, col=col)
         fig3.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
@@ -607,16 +608,200 @@ def embedding_regression_figure():
                       showgrid=True, zeroline=True)
     fig3.update_xaxes(linecolor='black', mirror=True,
                       showgrid=True, zeroline=True)
-    fig3.update_layout(yaxis6_title='Predicted Value')
-    fig3.update_layout(xaxis18_title='Target Value')
+    #fig3.update_layout(yaxis6_title='Predicted Value')
+    #fig3.update_layout(xaxis18_title='Target Value')
     fig3.update_layout(font=dict(size=fontsize))
     fig3.update_annotations(font_size=fontsize)
     fig3.update_annotations(yshift=10)
     fig3.update_xaxes(tickangle=0)
+    fig3.update_xaxes(showticklabels=False)
+    fig3.update_yaxes(showticklabels=False)
+
     fig3.show(renderer='browser')
-    fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=1200)
+    fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=2800)
 
     return fig3
+
+
+def detailed_er_figure():
+    target_names = [t[0] for t in targets]
+
+    pretty_target_names = [r"$\large{(a)\ Rotational\ Constant\ A\ /GHz}$",
+                           r"$\large{(b)\ Rotational\ Constant\ B\ /GHz}$",
+                           r"$\large{(c)\ Rotational\ Constant\ C\ /GHz}$",
+                           r"$\large{(a)\ Dipole\ Moment\ /Deb}$",
+                           r"$\large{(b)\ Iso.\ Polarizability\ /Bohr^3}$",
+                           r"$\large{(a)\ HOMO\ Energy\ /E_h}$",
+                           r"$\large{(b)\ LUMO\ Energy\ /E_h}$",
+                           r"$\large{(c)\ Gap\ Energy\ /E_h}$",
+                           r"$\large{(c)\ Electronic\ Spatial\ Extent\ /Bohr^2}$",
+                           r"$\large{(a)\ ZPV\ Energy\ /E_h}$",
+                           r"$\large{(b)\ Internal\ Energy\ (T=0)\ /E_h}$",
+                           r"$\large{(c)\ Internal\ Energy\ 298K\ /E_h}$",
+                           r"$\large{(a)\ Enthalpy\ 298K\ /E_h}$",
+                           r"$\large{(b)\ Free\ Energy\ 298K\ /E_h}$",
+                           r"$\large{(c)\ Heat\ Capacity\ 298K\ /cal\ mol^{-1}\ K^{-1}}$",
+                           r"$\large{(a)\ Dipole\ Moment\ /D}$",
+                           r"$\large{(b)\ Polarizability\ Tensor\ /a_0^3}$",
+                           r"$\large{(c)\ Quadrupole\ Moment\ /D*A}$",
+                           r"$\large{(d)\ Octapole\ Moment\ /D*A^2}$",
+                           r"$\large{(e)\ Hyperpolarizability\ /a.u.}$",
+                           ]
+
+    MAE_dict = {}
+    NMAE_dict = {}
+    R_dict = {}
+    for ind, (path, target_name) in enumerate(zip(er_results_paths, target_names)):
+        stats_dict = np.load(path, allow_pickle=True).item()
+        target = np.concatenate(stats_dict['test_stats']['regressor_target']).flatten()
+        prediction = np.concatenate(stats_dict['test_stats']['regressor_prediction']).flatten()
+
+        MAE = np.abs(target - prediction).mean()
+        # NMAE_i = (np.abs((target - prediction) / np.abs(target)))
+        #         # NMAE_i[target == 0] = 0
+        #         # NMAE = NMAE_i.mean()
+        #NMAE = np.abs((target - prediction) / np.mean(target)).mean()
+        NMAE = MAE / np.abs(np.mean(target))
+
+        linreg_result = linregress(target, prediction)
+        R_value = linreg_result.rvalue
+        slope = linreg_result.slope
+        MAE_dict[target_name] = MAE
+        NMAE_dict[target_name] = NMAE
+        R_dict[target_name] = R_value
+
+
+    def er_subfigure(inds_to_plot):
+        cols = len(inds_to_plot)
+        fontsize = 26 if cols == 3 else 34
+        fig3 = make_subplots(cols=cols, rows=1,
+                             subplot_titles=[pretty_target_names[ind] for ind in inds_to_plot],
+                             horizontal_spacing=0.08 if cols == 3 else 0.065,
+                             )
+
+        annotations = []
+        for g_ind, ind in enumerate(inds_to_plot):
+            path = er_results_paths[ind]
+            target_name = target_names[ind]
+            stats_dict = np.load(path, allow_pickle=True).item()
+            target = np.concatenate(stats_dict['test_stats']['regressor_target']).flatten()
+            prediction = np.concatenate(stats_dict['test_stats']['regressor_prediction']).flatten()
+
+            xline = np.linspace(max(min(target), min(prediction)),
+                                min(max(target), max(prediction)), 2)
+
+            xy = np.vstack([target, prediction])
+            try:
+                z = get_point_density(xy, bins=50)
+            except:
+                z = np.ones_like(target)
+
+            row=1
+            col = g_ind + 1
+            opacity = 0.1  # np.exp(-num_points / 10000)
+            fig3.add_trace(go.Scattergl(x=target,
+                                        y=prediction,
+                                        mode='markers',
+                                        marker=dict(color=z),
+                                        opacity=opacity,
+                                        marker_size=8,
+                                        showlegend=False),
+                           row=row, col=col)
+            fig3.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
+                           row=row, col=col)
+
+            minval = max([np.amin(target), np.amin(prediction)])
+            maxval = min([np.amax(target), np.amax(prediction)])
+            fig3.update_layout({f'xaxis{g_ind + 1}_range': [minval, maxval]})
+
+            annotations.append(dict(xref="x" + str(g_ind + 1), yref="y" + str(g_ind + 1),
+                                    x=minval + np.ptp(prediction) * 0.37,
+                                    y=maxval - np.ptp(prediction) * 0.1,
+                                    showarrow=False,
+                                    text=f"R={R_dict[target_name]:.3f}<br>MAE={MAE_dict[target_name]:.3g}"
+                                    ))
+
+        fig3['layout']['annotations'] += tuple(annotations)
+        fig3.update_layout(plot_bgcolor='rgba(0,0,0,0)')
+        fig3.update_xaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
+        fig3.update_yaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
+        fig3.update_yaxes(linecolor='black', mirror=True,
+                          showgrid=True, zeroline=True, zerolinewidth=1)
+        fig3.update_xaxes(linecolor='black', mirror=True,
+                          showgrid=True, zeroline=True, zerolinewidth=1)
+        fig3.update_layout(yaxis1_title='Predicted Value')
+        if cols == 3:
+            fig3.update_layout(
+                xaxis=dict(linecolor='black', mirror=True, showgrid=True, zeroline=True, zerolinewidth=1,
+                           zerolinecolor='lightgrey'),
+                xaxis2=dict(linecolor='black', mirror=True, showgrid=True, zeroline=True, zerolinewidth=1,
+                            zerolinecolor='lightgrey'),
+                xaxis3=dict(linecolor='black', mirror=True, showgrid=True, zeroline=True, zerolinewidth=1,
+                            zerolinecolor='lightgrey'),
+
+                yaxis=dict(linecolor='black', mirror=True, showgrid=True, zeroline=True, zerolinewidth=1,
+                           zerolinecolor='lightgrey'),
+                yaxis2=dict(linecolor='black', mirror=True, showgrid=True, zeroline=True, zerolinewidth=1,
+                            zerolinecolor='lightgrey'),
+                yaxis3=dict(linecolor='black', mirror=True, showgrid=True, zeroline=True, zerolinewidth=1,
+                            zerolinecolor='lightgrey'),
+            )
+            fig3.update_layout(xaxis2_title='Target Value')
+        elif cols == 5:
+            fig3.update_layout(xaxis3_title='Target Value')
+
+            fig3.update_layout(
+
+                xaxis=dict(linecolor='black', mirror=True, showgrid=True, zeroline=True, zerolinewidth=1,
+                           zerolinecolor='lightgrey'),
+                xaxis2=dict(linecolor='black', mirror=True, showgrid=True, zeroline=True, zerolinewidth=1,
+                            zerolinecolor='lightgrey'),
+                xaxis3=dict(linecolor='black', mirror=True, showgrid=True, zeroline=True, zerolinewidth=1,
+                            zerolinecolor='lightgrey'),
+                xaxis4=dict(linecolor='black', mirror=True, showgrid=True, zeroline=True, zerolinewidth=1,
+                            zerolinecolor='lightgrey'),
+                xaxis5=dict(linecolor='black', mirror=True, showgrid=True, zeroline=True, zerolinewidth=1,
+                            zerolinecolor='lightgrey'),
+
+                yaxis=dict(linecolor='black', mirror=True, showgrid=True, zeroline=True, zerolinewidth=1,
+                           zerolinecolor='lightgrey'),
+                yaxis2=dict(linecolor='black', mirror=True, showgrid=True, zeroline=True, zerolinewidth=1,
+                            zerolinecolor='lightgrey'),
+                yaxis3=dict(linecolor='black', mirror=True, showgrid=True, zeroline=True, zerolinewidth=1,
+                            zerolinecolor='lightgrey'),
+                yaxis4=dict(linecolor='black', mirror=True, showgrid=True, zeroline=True, zerolinewidth=1,
+                            zerolinecolor='lightgrey'),
+                yaxis5=dict(linecolor='black', mirror=True, showgrid=True, zeroline=True, zerolinewidth=1,
+                            zerolinecolor='lightgrey'),
+            )
+        fig3.update_layout(font=dict(size=fontsize))
+        fig3.update_annotations(font_size=fontsize)
+        fig3.update_annotations(yshift=10)
+        fig3.update_xaxes(tickangle=-65)
+
+        return fig3
+
+    figs = []
+    for inds_list in [
+        [0, 1, 2],
+        [3, 4, 8],
+        [5, 6, 7],
+        [9, 10, 11],
+        [12, 13, 14],
+        [15, 16, 17, 18, 19]
+        ]:
+        figs.append(er_subfigure(inds_list))
+
+    for ind, fig in enumerate(figs):
+        if ind == 5:
+            fig.write_image(rf'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\detailed_er_{ind}.png', width=1920, height=600)
+        else:
+            fig.write_image(rf'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\detailed_er_{ind}.png', width=1200,
+                            height=600)
+
+    return None
+
+
 
 
 def regression_training_curve():
@@ -732,10 +917,11 @@ def proxy_discriminator_figure():
 
     num_rows = len(row_labels)
     num_cols = len(col_labels)
+    fontsize = 28
     fig3 = make_subplots(cols=num_cols, rows=num_rows,
                          #subplot_titles=target_names,
-                         horizontal_spacing=0.05,
-                         vertical_spacing=0.075)
+                         horizontal_spacing=0.075,
+                         vertical_spacing=0.085)
 
     annotations = []
     for ind, (path, target_name) in enumerate(zip(good_proxy_paths, good_target_names)):
@@ -761,7 +947,8 @@ def proxy_discriminator_figure():
                                     opacity=opacity,
                                     showlegend=False),
                        row=row, col=col)
-        fig3.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
+        fig3.add_trace(go.Scattergl(x=xline, y=xline,
+                                    showlegend=False, marker_color='rgba(0,0,0,1)'),
                        row=row, col=col)
 
         minval = np.quantile(target, 0.01)
@@ -770,20 +957,19 @@ def proxy_discriminator_figure():
         fig3.update_layout({f'yaxis{ind + 1}_range': [minval, maxval]})
 
         annotations.append(dict(xref="x" + str(ind + 1), yref="y" + str(ind + 1),
-                                x=minval + np.ptp(target) * 0.15,
-                                y=maxval - np.ptp(target) * 0.225,
+                                x=minval + np.ptp(target) * 0.2,
+                                y=maxval - np.ptp(target) * 0.15,
                                 showarrow=False,
-                                text=f"R={R_dict[target_name]:.2f} <br> MAE={MAE_dict[target_name]:.3g}"
+                                text=f"R={R_dict[target_name]:.2f}<br>MAE={MAE_dict[target_name]:.3g}"
                                 ))
 
     fig3['layout']['annotations'] += tuple(annotations)
-    fig3.update_annotations(font=dict(size=18))
-    fig3.update_layout(yaxis1_title=row_labels[0])
-    fig3.update_layout(yaxis5_title=row_labels[1])
-    fig3.update_layout(xaxis5_title=col_labels[0])
-    fig3.update_layout(xaxis6_title=col_labels[1])
-    fig3.update_layout(xaxis7_title=col_labels[2])
-    fig3.update_layout(xaxis8_title=col_labels[3])
+    # fig3.update_layout(yaxis1_title=row_labels[0])
+    # fig3.update_layout(yaxis5_title=row_labels[1])
+    # fig3.update_layout(xaxis5_title=col_labels[0])
+    # fig3.update_layout(xaxis6_title=col_labels[1])
+    # fig3.update_layout(xaxis7_title=col_labels[2])
+    # fig3.update_layout(xaxis8_title=col_labels[3])
 
     fig3.update_layout(plot_bgcolor='rgba(0,0,0,0)')
     fig3.update_xaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
@@ -792,12 +978,13 @@ def proxy_discriminator_figure():
                       showgrid=True, zeroline=True)
     fig3.update_xaxes(linecolor='black', mirror=True,
                       showgrid=True, zeroline=True)
-    fig3.update_layout(font=dict(size=20))
-    fig3.update_annotations(font_size=20)
+    fig3.update_layout(font=dict(size=int(fontsize * 0.75)))
+    fig3.update_annotations(font_size=fontsize)
     fig3.update_annotations(yshift=10)
     fig3.update_xaxes(tickangle=0)
 
     fig3.show(renderer='browser')
+    fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\proxy_discrim_i.png', width=1920, height=840)
 
     return fig3
 
@@ -807,12 +994,10 @@ if __name__ == '__main__':
 
     # fig2 = UMAP_fig(max_entries=100000000)
 
-    fig3 = embedding_regression_figure()
+    #fig3 = embedding_regression_figure()
 
-    # fig4 = regression_training_curve()
-    # fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=1200, height=800)
+    detailed_er_figure()
 
-    fig5 = proxy_discriminator_figure()
-    fig5.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\proxy_discrim_i.png', width=1920, height=840)
+    # fig5 = proxy_discriminator_figure()
 
 aa = 1

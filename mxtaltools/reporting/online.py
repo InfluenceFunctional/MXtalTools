@@ -1,3 +1,5 @@
+from typing import Optional
+
 import ase
 import ase.io
 import numpy as np
@@ -84,6 +86,35 @@ def cell_params_hist(wandb, stats_dict, sample_sources_list):
 
     wandb.log(data={'Lattice Features Distribution': fig}, commit=False)
 
+def simple_cell_hist(sample_batch):
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    import numpy as np
+    samples = sample_batch.cell_parameters().cpu().detach().numpy()
+
+    lattice_features = ['cell_a', 'cell_b', 'cell_c',
+                        'cell_alpha', 'cell_beta', 'cell_gamma',
+                        'aunit_x', 'aunit_y', 'aunit_z',
+                        'orientation_1', 'orientation_2', 'orientation_3']
+    # 1d Histograms
+    n_crystal_features = 12
+    colors = ['red', 'blue']
+    fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)
+    for i in range(n_crystal_features):
+        row = i // 3 + 1
+        col = i % 3 + 1
+        fig.add_trace(go.Violin(
+            x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
+            meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False,
+            showlegend=False,
+            line_color=colors[0],
+        ),
+            row=row, col=col
+        )
+
+    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
+    #fig.update_traces(opacity=0.5)
+    return fig
 
 def iter_wise_hist(stats_dict, target_key, log=False):
     energy = stats_dict[target_key]
@@ -1159,8 +1190,12 @@ def vdw_vs_prior_dist(epoch_stats_dict: dict):
     wandb.log({"vdW vs Prior Loss": fig}, commit=False)
 
 
-def log_crystal_samples(epoch_stats_dict):
-    sample_crystals = epoch_stats_dict['generator_samples']
+def log_crystal_samples(epoch_stats_dict: Optional[dict] = None, sample_batch: Optional=None):
+    if epoch_stats_dict is not None:
+        sample_crystals = epoch_stats_dict['generator_samples']
+    else:
+        sample_crystals = sample_batch
+
     topk_samples = torch.arange(6)  #torch.argsort(sample_crystals.loss)[:6]
 
     mols = [ase_mol_from_crystaldata(collate_data_list(sample_crystals),
@@ -1210,6 +1245,30 @@ def generated_cell_scatter_fig(epoch_stats_dict, layout):
     else:
         return fig
 
+def simple_generated_scatter(sample_batch):
+    scatter_dict = {'energy': sample_batch.silu_pot.cpu().detach(),
+                    'packing_coefficient': sample_batch.packing_coeff.cpu().detach(),
+                    }
+    opacity = max(0.25, 1 - sample_batch.num_graphs / 5e4)
+    df = pd.DataFrame.from_dict(scatter_dict)
+    # maxval = np.log(1 + vdw_overlap).max()
+    # cscale = [[0, 'green'], [0.01, 'blue'], [1, 'red']]
+    fig = go.Figure()
+    fig.add_scatter(
+        x=df['energy'],
+        y=np.clip(df['packing_coefficient'], a_min=0, a_max=2),
+        mode='markers',
+        # marker_color=np.log(1 + df['vdw_score']),
+        opacity=opacity,
+        # marker={"cmin": 0, "cmax": maxval,
+        #         "colorbar_title": "vdw Overlaps",
+        #         'colorscale': cscale},
+    )
+    fig.update_layout(xaxis_title='Energy', yaxis_title='Packing Coeff')
+    fig.update_layout(xaxis_range=[-np.inf, np.inf],
+                      yaxis_range=[max(0, np.amin(df['packing_coefficient'])), min(2, np.amax(df['packing_coefficient']))],
+                      )
+    return fig
 
 def log_regression_accuracy(config, dataDims, epoch_stats_dict):
     target_key = config.dataset.regression_target
