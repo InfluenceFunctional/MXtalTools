@@ -129,7 +129,7 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers):
                 """
                 extract pose information
                 """
-                crystal_batch = collate_data_list([crystal])
+                crystal_batch = collate_data_list([crystal], exclude_unit_cell=False)
                 aunit_centroid, aunit_orientation, aunit_handedness, is_well_defined, pos = crystal_batch.reparameterize_unit_cell()
 
                 crystal.aunit_centroid = aunit_centroid
@@ -141,7 +141,7 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers):
                 """
                 rebuild the crystal with these parameters to confirm correct reconstruction
                 """
-                crystal_batch = collate_data_list([crystal])
+                crystal_batch = collate_data_list([crystal], exclude_unit_cell=False)
                 crystal_batch.build_unit_cell()
                 aunit_centroid, aunit_orientation, aunit_handedness, is_well_defined, pos = crystal_batch.reparameterize_unit_cell()
                 rebuild_successful = crystal_rebuild_checks(aunit_centroid, aunit_handedness, aunit_orientation,

@@ -1383,3 +1383,5 @@ def fractional_transform_torch(coords, transform_matrix):
         return torch.einsum('nmj,ij->nmi', (coords, transform_matrix))
     elif coords.ndim == 2 and transform_matrix.ndim == 3:
         return torch.einsum('nj,nij->ni', (coords, transform_matrix))
+
+

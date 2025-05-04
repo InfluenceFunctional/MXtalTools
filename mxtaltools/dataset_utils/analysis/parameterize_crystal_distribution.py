@@ -14,11 +14,11 @@ from mxtaltools.constants.asymmetric_units import RAW_ASYM_UNITS
 from mxtaltools.constants.space_group_info import LATTICE_TYPE
 
 if __name__ == '__main__':
-    dataset_path = Path('D:/crystal_datasets/test_CSD_dataset.pt')
+    dataset_path = Path('D:/crystal_datasets/test_reduced_CSD_dataset.pt')
     dataset = torch.load(dataset_path)
     dataset = [elem for elem in dataset if 0.45 < elem.packing_coeff < 0.95]
     usable_aunits = list(RAW_ASYM_UNITS.keys())
-    dataset = [elem for elem in dataset if str(elem.sg_ind) in usable_aunits]
+    dataset = [elem for elem in dataset if str(int(elem.sg_ind)) in usable_aunits]
 
     'cell angles'  # todo evaluate these and make sure they make physical sense
     lattices = [LATTICE_TYPE[int(sample.sg_ind)] for sample in dataset]

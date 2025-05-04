@@ -86,6 +86,47 @@ def cell_params_hist(wandb, stats_dict, sample_sources_list):
 
     wandb.log(data={'Lattice Features Distribution': fig}, commit=False)
 
+
+def niggli_hist(wandb, stats_dict, sample_sources_list):
+    n_crystal_features = 6
+    samples_dict = {name: stats_dict[name] for name in sample_sources_list}
+
+    for key in samples_dict.keys():
+        if isinstance(samples_dict[key], list):
+            lattice_feats = np.stack(samples_dict[key])[:, :6]
+            niggli_feats = np.stack([
+                lattice_feats[:, 2] / stats_dict['mol_radius'] / 2,
+                lattice_feats[:, 1] / lattice_feats[:, 2],
+                lattice_feats[:, 0] / lattice_feats[:, 1],
+                np.cos(lattice_feats[:, 3]) / (lattice_feats[:, 1] / 2 / lattice_feats[:, 2]),
+                np.cos(lattice_feats[:, 4]) / (lattice_feats[:, 0] / 2 / lattice_feats[:, 2]),
+                np.cos(lattice_feats[:, 5]) / (lattice_feats[:, 0] / 2 / lattice_feats[:, 1]),
+            ]).T
+            samples_dict[key] = niggli_feats
+
+    lattice_features = ['normed_c', 'b/c', 'a/b', 'alpha scale','beta scale','gamma scale']
+    # 1d Histograms
+    colors = n_colors('rgb(255,0,0)', 'rgb(0, 0, 255)', len(samples_dict.keys()) + 1, colortype='rgb')
+    fig = make_subplots(rows=2, cols=3, subplot_titles=lattice_features)
+    for i in range(n_crystal_features):
+        row = i // 3 + 1
+        col = i % 3 + 1
+        for k_ind, key in enumerate(samples_dict.keys()):
+            samples = samples_dict[key]
+            fig.add_trace(go.Violin(
+                x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
+                name=key, legendgroup=key, showlegend=True if i == 0 else False,
+                meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False,
+                line_color=colors[k_ind],
+            ),
+                row=row, col=col
+            )
+
+    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
+    fig.update_traces(opacity=0.5)
+
+    wandb.log(data={'Niggli Features Distribution': fig}, commit=False)
+
 def simple_cell_hist(sample_batch):
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
@@ -1469,6 +1510,8 @@ def detailed_reporting(config, dataDims, train_epoch_stats_dict, test_epoch_stat
             if config.logger.log_figures:
                 if config.mode == 'generator':
                     cell_params_hist(wandb, test_epoch_stats_dict,
+                                     ['prior', 'cell_parameters'])
+                    niggli_hist(wandb, test_epoch_stats_dict,
                                      ['prior', 'cell_parameters'])
                     wandb.log(data={'Iterwise vdW':
                                         iter_wise_hist(test_epoch_stats_dict, 'per_mol_scaled_LJ_energy')

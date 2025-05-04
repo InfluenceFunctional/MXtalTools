@@ -1,6 +1,9 @@
 import numpy as np
 import torch
 from ase import Atoms
+from ase.build import niggli_reduce
+from ase.geometry import cell_to_cellpar
+from ase.io import read
 from ase.spacegroup import crystal as ase_crystal
 from ase.visualize import view
 from torch_scatter import scatter
@@ -168,3 +171,13 @@ def ase_mol_from_crystaldata(crystal_batch,
         return mol, cry
     else:
         return mol
+
+
+def get_niggli_cell(crystal_batch, index):
+
+    mol = ase_mol_from_crystaldata(crystal_batch, index=index, mode='unit cell')
+    #mol.info['spacegroup'] = Spacegroup(int(original_cluster_batch.sg_ind[ind]), setting=1)
+    mol.write('temp.cif')
+    atoms = read("temp.cif")
+    niggli_reduce(atoms)
+    return cell_to_cellpar(atoms.cell)

@@ -99,10 +99,10 @@ def extract_crystal_data(identifier, crystal, unit_cell):
     crystal_dict['space_group_number'], crystal_dict['space_group_setting'] = crystal.spacegroup_number_and_setting
     crystal_dict['space_group_symbol'] = crystal.spacegroup_symbol
     #crystal_dict['system'] = crystal.crystal_system
-    crystal_dict['lattice_a'], crystal_dict['lattice_b'], crystal_dict['lattice_c'] = np.asarray(crystal.cell_lengths,
+    crystal_dict['lattice_a'], crystal_dict['lattice_b'], crystal_dict['lattice_c'] = np.asarray(crystal.reduced_cell.cell_lengths,
                                                                                                  dtype=float)
     crystal_dict['lattice_alpha'], crystal_dict['lattice_beta'], crystal_dict['lattice_gamma'] = np.asarray(
-        crystal.cell_angles, dtype=float) / 180 * np.pi
+        crystal.reduced_cell.cell_angles, dtype=float) / 180 * np.pi
     # NOTE this calls a (probably mol volume) calculation which is by far the heaviest part of this function
     # it differs from the below method by usually less than 1% but sometimes up to 5%. Molecule volume in general is not straightforward to accurately estimate
     # crystal_dict['packing_coefficient'] = crystal.packing_coefficient

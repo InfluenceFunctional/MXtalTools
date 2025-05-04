@@ -321,3 +321,11 @@ def smooth_constraint(value: torch.Tensor, threshold: float, mode: 'str', hardne
         return F.softplus(-(value - threshold), beta=hardness) ** 2
     elif mode == 'less than':
         return F.softplus(value - threshold, beta=hardness) ** 2
+
+def sample_triangular_right(n_samples, start, stop, device='cpu'):
+    """
+    sample from the CDF of a uniform distribution
+    the right-aligned triangular distribution
+    """
+    U = torch.rand(n_samples, device=device)
+    return start + (stop - start) * torch.sqrt(U)

@@ -22,7 +22,7 @@ from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
 from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE
 from mxtaltools.crystal_building.random_crystal_sampling import sample_aunit_lengths, sample_cell_angles, \
-    sample_aunit_orientations, sample_aunit_centroids
+    sample_aunit_orientations, sample_aunit_centroids, sample_reduced_box_vectors
 from mxtaltools.crystal_building.utils import get_aunit_positions, aunit2unit_cell, parameterize_crystal_batch, \
     unit_cell_to_supercell_cluster, align_mol_batch_to_standard_axes, canonicalize_rotvec
 from mxtaltools.crystal_search.standalone_crystal_opt import standalone_gradient_descent_optimization
@@ -564,6 +564,7 @@ class MolCrystalData(MolData):
         else:
             self.cell_angles = sample_cell_angles(1).to(self.device)
 
+
     def sample_random_aunit_orientations(self):
         if 'Batch' in self.__class__.__name__:
             self.aunit_orientation = sample_aunit_orientations(self.num_graphs).to(self.device)
@@ -590,6 +591,45 @@ class MolCrystalData(MolData):
         self.sample_random_aunit_orientations()
         self.sample_random_aunit_centroids()
         self.clean_cell_parameters(mode=cleaning_mode)
+
+    def sample_random_reduced_crystal_parameters(self,
+                                                 target_packing_coeff: Optional = None,
+                                                 seed: Optional[int] = None,
+                                                 cleaning_mode: Optional[str] = 'hard',
+                                                 ):
+        if seed is not None:
+            torch.manual_seed(seed)
+
+        self.sample_reduced_box_vectors(target_packing_coeff=target_packing_coeff)
+        self.sample_random_aunit_orientations()
+        self.sample_random_aunit_centroids()
+        self.clean_cell_parameters(mode=cleaning_mode,
+                                   canonicalize_orientations=False,
+                                   angle_pad=1,
+                                   length_pad=3)
+
+    def sample_reduced_box_vectors(self, target_packing_coeff: Optional[float] = None):
+        if not hasattr(self, 'asym_unit_dict'):
+            self.asym_unit_dict = self.build_asym_unit_dict()
+
+        if 'Batch' in self.__class__.__name__:
+            self.cell_lengths, self.cell_angles = sample_reduced_box_vectors(self.num_graphs,
+                                                                             self.radius,
+                                                                             self.mol_volume,
+                                                                             self.sg_ind,
+                                                                             self.sym_mult,
+                                                                             self.asym_unit_dict,
+                                                                             target_packing_coeff=target_packing_coeff
+                                                                             )
+        else:
+            self.cell_lengths, self.cell_angles = sample_reduced_box_vectors(1,
+                                                                             self.radius,
+                                                                             self.mol_volume,
+                                                                             [self.sg_ind],
+                                                                             self.sym_mult,
+                                                                             self.asym_unit_dict,
+                                                                             target_packing_coeff=target_packing_coeff
+                                                                             )
 
     def sample_reasonable_random_parameters(self,
                                             tolerance: float = 1,
@@ -978,10 +1018,13 @@ class MolCrystalData(MolData):
 
     def clean_cell_parameters(self, mode: str = 'hard',
                               canonicalize_orientations: bool = True,
-                              angle_pad: float = 0.5,
+                              angle_pad: float = 0.9,
                               length_pad: float = 3.0,
-                              constrain_z: bool = False):
-        # force outputs into physical ranges
+                              constrain_z: bool = False,
+                              enforce_niggli: Optional[bool] = False):
+        """
+        force cell parameters into physical ranges
+        """
 
         # cell lengths have to be positive nonzero
         if mode == 'hard':
@@ -989,11 +1032,41 @@ class MolCrystalData(MolData):
         elif mode == 'soft':
             self.cell_lengths = softplus_shift(self.cell_lengths - length_pad) + length_pad  # enforces a minimum value of 3
 
-        # range from (0,pi) with 50% padding to prevent too-skinny cells
+        # range from (0,pi) with padding to prevent too-skinny cells
         self.cell_angles = enforce_1d_bound(self.cell_angles,
                                             x_span=torch.pi / 2 * angle_pad,
                                             x_center=torch.pi / 2,
                                             mode=mode)
+
+        if enforce_niggli:
+            # enforce the scaling factor b/c and a/b in the range [0, 1]
+            a, b, c = self.cell_lengths.split(1,1)
+            b_scale = enforce_1d_bound((b / c), 0.5, 0.5, mode=mode)
+            a_scale = enforce_1d_bound((a / b), 0.5, 0.5, mode=mode)
+            self.cell_lengths = torch.cat([
+                a_scale*b_scale*c,
+                b_scale*c,
+                c],
+                dim=1)
+
+            # enforce the scaling factor cos(alpha) / (b/2c) in the range [0, 1]
+            al_cos, be_cos, ga_cos = self.cell_angles.cos().split(1, 1)
+            a, b, c = self.cell_lengths.split(1,1)
+            al_cos_max = (b / 2 / c)
+            be_cos_max = (a / 2 / c)
+            ga_cos_max = (a / 2 / b)
+            al_cos_scale = enforce_1d_bound(al_cos / al_cos_max, 0.5, 0.5, mode=mode)
+            be_cos_scale = enforce_1d_bound(be_cos / be_cos_max, 0.5, 0.5, mode=mode)
+            ga_cos_scale = enforce_1d_bound(ga_cos / ga_cos_max, 0.5, 0.5, mode=mode)
+            al = torch.arccos(al_cos_max * al_cos_scale.clip(min=0.01, max=0.99))  # limit it here due to instability in arccos
+            be = torch.arccos(be_cos_max * be_cos_scale.clip(min=0.01, max=0.99))
+            ga = torch.arccos(ga_cos_max * ga_cos_scale.clip(min=0.01, max=0.99))
+            self.cell_angles = torch.cat([
+                al, be, ga],
+                dim=1)
+
+            # if True:  # test
+            #     assert torch.all((torch.zeros_like(self.cell_angles) <= self.cell_angles) * (self.cell_angles.cos() <= self.niggli_angle_limits()))
 
         # positions must be on 0-1 in the asymmetric unit
         aunit_scaled_pos = self.scale_centroid_to_aunit()
@@ -1027,6 +1100,13 @@ class MolCrystalData(MolData):
 
         # update cell vectors
         self.box_analysis()
+
+    def niggli_angle_limits(self):
+        a, b, c = self.cell_lengths.split(1, 1)
+        al_cos_max = (b / 2 / c)
+        be_cos_max = (a / 2 / c)
+        ga_cos_max = (a / 2 / b)
+        return torch.cat([al_cos_max, be_cos_max, ga_cos_max], dim=1)
 
     def aunit_volume(self):
         return self.cell_volume / self.sym_mult

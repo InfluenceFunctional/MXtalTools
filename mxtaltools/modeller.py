@@ -2303,7 +2303,10 @@ class Modeller:
                                                                                       )) for ind in
                                            range(mol_batch.num_graphs)])
 
-        crystal_batch.sample_random_crystal_parameters(cleaning_mode='hard')
+        target_cps = (torch.randn(mol_batch.num_graphs,device=self.device) * 0.0447 + 0.6226).clip(min=0.45, max=0.95)
+        crystal_batch.sample_random_reduced_crystal_parameters(cleaning_mode='hard',
+                                                               target_packing_coeff=target_cps)
+
         cleaned_prior = crystal_batch.standardize_cell_parameters().clone().detach()
         destandardized_prior = crystal_batch.cell_parameters().clone().detach()
 
@@ -2356,7 +2359,8 @@ class Modeller:
             crystal_batch.set_cell_parameters(
                 crystal_batch.destandardize_cell_parameters(generator_raw_samples)
             )
-            crystal_batch.clean_cell_parameters(mode='hard')
+            crystal_batch.clean_cell_parameters(mode='hard',
+                                                enforce_niggli=True)
 
             # analyze intermolecular characteristics
             (vdw_losses, molwise_normed_overlap, molwise_scaled_lj_pot,
@@ -2397,9 +2401,11 @@ class Modeller:
                     'packing_coefficient': crystal_batch.packing_coeff.detach(),
                     'sample_iter': torch.ones(crystal_batch.num_graphs) * ind,
                     'prior': destandardized_prior.detach(),
+                    'mol_radius': crystal_batch.radius.detach(),
                     'cell_parameters': crystal_batch.cell_parameters().detach(),
                     'vdw_factor': self.vdw_loss_factor,
                     'prior_loss': prior_loss.mean(-1).cpu().detach(),
+                    'cell_delta': generator_proposed_step.cpu().detach(),
                 }
                 if step == 0:
                     stats['generator_samples'] = cluster_batch.clone().detach()

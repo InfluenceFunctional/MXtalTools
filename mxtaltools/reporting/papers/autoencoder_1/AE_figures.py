@@ -618,7 +618,7 @@ def embedding_regression_figure():
     fig3.update_yaxes(showticklabels=False)
 
     fig3.show(renderer='browser')
-    fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=2800)
+    fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=2200)
 
     return fig3
 

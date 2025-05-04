@@ -30,11 +30,11 @@ seeds:
 
 # batching & convergence
 num_samples: 10000
-max_epoch_steps: 200
+max_epoch_steps: 50
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
-min_batch_size: 500
+min_batch_size: 25
 max_batch_size: 1000
 batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss

@@ -8,12 +8,15 @@ from torch_geometric.data import DataLoader, Batch
 from torch_geometric.loader.dataloader import DataLoader
 
 
-def collate_data_list(data_list):
+def collate_data_list(data_list, exclude_unit_cell: bool = True):
     if not isinstance(data_list, list):
         data_list = [data_list]
+    exclude_keys = ['edges_dict']
+
+    if exclude_unit_cell:
+        exclude_keys.append('unit_cell_pos')
     return Batch.from_data_list(data_list,
-                                exclude_keys=['edges_dict',
-                                              'unit_cell_pos'],
+                                exclude_keys=exclude_keys,
                                 )
 
 
