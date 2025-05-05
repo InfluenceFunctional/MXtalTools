@@ -2265,12 +2265,6 @@ class Modeller:
         if not hasattr(self, 'vdw_loss_factor'):
             self.vdw_loss_factor = 1e-3
 
-        if self.epoch_type == 'train':
-            if vdw_loss.mean() < 1:
-                self.vdw_loss_factor *= 1.001
-            elif vdw_loss.mean() > 10 and self.vdw_loss_factor > 1e-3:
-                self.vdw_loss_factor *= 0.999
-
         loss = vdw_loss #+ packing_loss*0.1 #+ 100 * box_loss
 
         return loss, molwise_normed_overlap, molwise_scaled_lj_pot, box_loss, packing_loss, vdw_loss, cluster_batch
@@ -2326,35 +2320,15 @@ class Modeller:
                 init_state = std_generated_cell_params.detach().clone()
                 prev_vdw_loss = vdw_losses.detach().clone()
 
-            step_size = 1 * torch.rand(mol_batch.num_graphs, device=self.device)[:, None]
+            step_size = 10 * torch.rand(mol_batch.num_graphs, device=self.device)[:, None]
             generator_proposed_step = self.models_dict['generator'](x=scalar_embedding,
                                                                   v=vector_embedding,
                                                                   sg_ind_list=crystal_batch.sg_ind,
                                                                   step_size=step_size,
                                                                   prior=init_state)
-            """
-            quick vis
-            
-            generator_raw_samples = init_state + generator_proposed_step
-            crystal_batch.set_cell_parameters(
-                crystal_batch.destandardize_cell_parameters(generator_raw_samples)
-            )
-            uncleaned = crystal_batch.cell_parameters().clone().cpu().detach()
-            crystal_batch.clean_cell_parameters(mode='hard')
-            cleaned = crystal_batch.cell_parameters().clone().cpu().detach()
-            
-            import plotly.graph_objects as go
-            from plotly.subplots import make_subplots
-            fig = make_subplots(rows=4,cols=3)
-            for ind in range(12):
-                row = ind // 3 + 1
-                col = ind % 3 + 1
-                fig.add_histogram(x=uncleaned[:, ind], name='unclean',legendgroup='unclean',showlegend=True if ind == 0 else False, row=row,col=col, marker_color='blue')
-                fig.add_histogram(x=cleaned[:, ind], name='clean', legendgroup='clean',
-                                  showlegend=True if ind == 0 else False, row=row, col=col, marker_color='red')
-            fig.show()
-            
-            """
+
+            generator_proposed_step[:, :6] = 0  # zero-out box DoF
+
             generator_raw_samples = init_state + generator_proposed_step
             crystal_batch.set_cell_parameters(
                 crystal_batch.destandardize_cell_parameters(generator_raw_samples)
@@ -2378,6 +2352,12 @@ class Modeller:
 
             generator_loss = generator_losses.mean()
 
+            if self.epoch_type == 'train':
+                if prior_loss.mean() < 0.01 and self.vdw_loss_factor < 1:
+                    self.vdw_loss_factor *= 1.001
+                elif prior_loss.mean() > 0.02 and self.vdw_loss_factor > 1e-3:
+                    self.vdw_loss_factor *= 0.999
+
             if update_weights:
                 self.optimizers_dict['generator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
                 generator_loss.backward()  # back-propagation
@@ -2391,6 +2371,7 @@ class Modeller:
                                                   generator_losses.detach().cpu().numpy())
                 stats = {
                     'generated_space_group_numbers': crystal_batch.sg_ind.detach(),
+                    'step_size': generator_proposed_step.norm(dim=1).detach(),
                     'identifiers': mol_batch.identifier,
                     'smiles': mol_batch.smiles,
                     'box_loss': box_loss.detach(),

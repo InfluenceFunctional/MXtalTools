@@ -897,6 +897,9 @@ def proxy_discriminator_figure():
         target_names.append(target_name)
         target = stats_dict['test_stats']['vdw_score']
         prediction = stats_dict['test_stats']['vdw_prediction']
+        if energy_func == "Buckingham":
+            target /= 1000
+            prediction /= 1000
         print(target_name)
         MAE = np.abs(target - prediction).mean()
         NMAE = (np.abs((target - prediction) / np.abs(target))).mean()
@@ -912,8 +915,8 @@ def proxy_discriminator_figure():
     good_target_names = [target_names[ind] for ind in inds_reorder]
     good_proxy_paths = [proxy_results_paths[ind] for ind in inds_reorder]
 
-    col_labels = [ "No Embedding","Molecule Volume","Principal Vectors" , "Autoencoder"]
-    row_labels = ["Buckingham Potential (AU)", 'MACE Potential (kJ/mol)']
+    col_labels = [ "No Embedding", "Molecule Volume", "Principal Vectors", "Autoencoder"]
+    row_labels = ["Buckingham Potential (Arb. Units)", 'MACE Potential (kJ/mol)']
 
     num_rows = len(row_labels)
     num_cols = len(col_labels)
@@ -928,6 +931,9 @@ def proxy_discriminator_figure():
         stats_dict = np.load(path, allow_pickle=True).item()
         target = stats_dict['test_stats']['vdw_score']
         prediction = stats_dict['test_stats']['vdw_prediction']
+        if 'Buckingham' in target_name:
+            target /= 1000
+            prediction /= 1000
 
         xline = np.linspace(min(target), max(target), 2)
 
@@ -939,7 +945,7 @@ def proxy_discriminator_figure():
 
         row = ind // num_cols + 1
         col = ind % num_cols + 1
-        opacity = 0.25  # np.exp(-num_points / 10000)
+        opacity = 0.25
         fig3.add_trace(go.Scattergl(x=target,
                                     y=prediction,
                                     mode='markers',
@@ -957,10 +963,10 @@ def proxy_discriminator_figure():
         fig3.update_layout({f'yaxis{ind + 1}_range': [minval, maxval]})
 
         annotations.append(dict(xref="x" + str(ind + 1), yref="y" + str(ind + 1),
-                                x=minval + np.ptp(target) * 0.2,
+                                x=minval + np.ptp(target) * 0.225,
                                 y=maxval - np.ptp(target) * 0.15,
                                 showarrow=False,
-                                text=f"R={R_dict[target_name]:.2f}<br>MAE={MAE_dict[target_name]:.3g}"
+                                text=f"R={R_dict[target_name]:.2f}<br>MAE={MAE_dict[target_name]:.3f}"
                                 ))
 
     fig3['layout']['annotations'] += tuple(annotations)
@@ -996,8 +1002,8 @@ if __name__ == '__main__':
 
     #fig3 = embedding_regression_figure()
 
-    detailed_er_figure()
+    #detailed_er_figure()
 
-    # fig5 = proxy_discriminator_figure()
+    fig5 = proxy_discriminator_figure()
 
 aa = 1
