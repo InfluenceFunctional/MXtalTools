@@ -2327,7 +2327,7 @@ class Modeller:
                                                                   step_size=step_size,
                                                                   prior=init_state)
 
-            #generator_proposed_step[:, :6] = 0  # zero-out box DoF
+            generator_proposed_step[:, :6] = 0  # zero-out box DoF
 
             generator_raw_samples = init_state + generator_proposed_step
             crystal_batch.set_cell_parameters(
