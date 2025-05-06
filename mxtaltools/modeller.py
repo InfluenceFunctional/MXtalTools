@@ -2262,9 +2262,6 @@ class Modeller:
         box_loss = F.softplus(-(aunit_lengths-3)).sum(1)
         packing_loss = smooth_constraint(aunit_lengths, 3, mode='less than', hardness=10).sum(1)
 
-        if not hasattr(self, 'vdw_loss_factor'):
-            self.vdw_loss_factor = 1e-3
-
         loss = vdw_loss #+ packing_loss*0.1 #+ 100 * box_loss
 
         return loss, molwise_normed_overlap, molwise_scaled_lj_pot, box_loss, packing_loss, vdw_loss, cluster_batch
@@ -2281,6 +2278,9 @@ class Modeller:
         - score crystal
         - backprop score
         """
+        if not hasattr(self, 'vdw_loss_factor'):
+            self.vdw_loss_factor = 1
+
         mol_batch.recenter_molecules()
         mol_batch.orient_molecule(self.config.generator.canonical_conformer_orientation,
                                   include_inversion=False)
@@ -2345,18 +2345,18 @@ class Modeller:
             std_generated_cell_params = crystal_batch.standardize_cell_parameters()
             prior_loss = F.relu(generator_proposed_step.norm(dim=1) - step_size)**2
             vdw_step_loss = (vdw_losses - prev_vdw_loss)
-            generator_losses = prior_loss + self.vdw_loss_factor * vdw_step_loss
+            generator_losses = self.vdw_loss_factor * vdw_step_loss# + prior_loss
 
             if not torch.all(torch.isfinite(generator_losses)):
                 raise ValueError('Numerical Error: Model weights not all finite')
 
             generator_loss = generator_losses.mean()
-
-            if self.epoch_type == 'train':
-                if prior_loss.mean() < 0.01 and self.vdw_loss_factor < 1:
-                    self.vdw_loss_factor *= 1.001
-                elif prior_loss.mean() > 0.02 and self.vdw_loss_factor > 1e-3:
-                    self.vdw_loss_factor *= 0.999
+            #
+            # if self.epoch_type == 'train':
+            #     if prior_loss.mean() < 0.01 and self.vdw_loss_factor < 1:
+            #         self.vdw_loss_factor *= 1.001
+            #     elif prior_loss.mean() > 0.02 and self.vdw_loss_factor > 1e-3:
+            #         self.vdw_loss_factor *= 0.999
 
             if update_weights:
                 self.optimizers_dict['generator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
