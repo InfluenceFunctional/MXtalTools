@@ -36,8 +36,8 @@ if __name__ == '__main__':
         density_checkpoint = r"../checkpoints/cp_regressor.pt"
         visualize = True
 
-        batch_size = 100
-        num_samples = 100
+        batch_size = 10
+        num_samples = 10
         num_batches = num_samples // batch_size
         sym_info = init_sym_info()
 

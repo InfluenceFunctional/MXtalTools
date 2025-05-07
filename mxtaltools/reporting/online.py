@@ -104,7 +104,7 @@ def niggli_hist(wandb, stats_dict, sample_sources_list):
             ]).T
             samples_dict[key] = niggli_feats
 
-    lattice_features = ['normed_c', 'b/c', 'a/b', 'alpha scale','beta scale','gamma scale']
+    lattice_features = ['normed_c', 'b/c', 'a/b', 'alpha scale', 'beta scale', 'gamma scale']
     # 1d Histograms
     colors = n_colors('rgb(255,0,0)', 'rgb(0, 0, 255)', len(samples_dict.keys()) + 1, colortype='rgb')
     fig = make_subplots(rows=2, cols=3, subplot_titles=lattice_features)
@@ -126,6 +126,7 @@ def niggli_hist(wandb, stats_dict, sample_sources_list):
     fig.update_traces(opacity=0.5)
 
     wandb.log(data={'Niggli Features Distribution': fig}, commit=False)
+
 
 def simple_cell_hist(sample_batch):
     import plotly.graph_objects as go
@@ -156,6 +157,7 @@ def simple_cell_hist(sample_batch):
     fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
     #fig.update_traces(opacity=0.5)
     return fig
+
 
 def iter_wise_hist(stats_dict, target_key, log=False):
     energy = stats_dict[target_key]
@@ -1231,7 +1233,7 @@ def vdw_vs_prior_dist(epoch_stats_dict: dict):
     wandb.log({"vdW vs Prior Loss": fig}, commit=False)
 
 
-def log_crystal_samples(epoch_stats_dict: Optional[dict] = None, sample_batch: Optional=None):
+def log_crystal_samples(epoch_stats_dict: Optional[dict] = None, sample_batch: Optional = None):
     if epoch_stats_dict is not None:
         sample_crystals = epoch_stats_dict['generator_samples']
     else:
@@ -1252,7 +1254,6 @@ def log_crystal_samples(epoch_stats_dict: Optional[dict] = None, sample_batch: O
 
 
 def generated_cell_scatter_fig(epoch_stats_dict, layout):
-
     scaled_vdw = epoch_stats_dict['per_mol_scaled_LJ_energy']
     vdw_overlap = epoch_stats_dict['per_mol_normed_overlap']
     scatter_dict = {'vdw_score': vdw_overlap,
@@ -1286,30 +1287,35 @@ def generated_cell_scatter_fig(epoch_stats_dict, layout):
     else:
         return fig
 
+
 def simple_generated_scatter(sample_batch):
+    xy = np.vstack([sample_batch.packing_coeff.cpu().detach(), sample_batch.silu_pot.cpu().detach()])
+    try:
+        z = get_point_density(xy, bins=25)
+    except:
+        z = np.ones(len(xy))
     scatter_dict = {'energy': sample_batch.silu_pot.cpu().detach(),
                     'packing_coefficient': sample_batch.packing_coeff.cpu().detach(),
+                    'point_density': z
                     }
     opacity = max(0.25, 1 - sample_batch.num_graphs / 5e4)
     df = pd.DataFrame.from_dict(scatter_dict)
-    # maxval = np.log(1 + vdw_overlap).max()
-    # cscale = [[0, 'green'], [0.01, 'blue'], [1, 'red']]
-    fig = go.Figure()
-    fig.add_scatter(
-        x=df['energy'],
-        y=np.clip(df['packing_coefficient'], a_min=0, a_max=2),
-        mode='markers',
-        # marker_color=np.log(1 + df['vdw_score']),
-        opacity=opacity,
-        # marker={"cmin": 0, "cmax": maxval,
-        #         "colorbar_title": "vdw Overlaps",
-        #         'colorscale': cscale},
-    )
-    fig.update_layout(xaxis_title='Energy', yaxis_title='Packing Coeff')
-    fig.update_layout(xaxis_range=[-np.inf, np.inf],
-                      yaxis_range=[max(0, np.amin(df['packing_coefficient'])), min(2, np.amax(df['packing_coefficient']))],
+
+    fig = px.scatter(scatter_dict,
+                     x='packing_coefficient', y='energy',
+                     color='point_density',
+                     marginal_x='violin', marginal_y='violin',
+                     opacity=opacity
+                     )
+
+    fig.update_layout(yaxis_title='Energy', xaxis_title='Packing Coeff')
+    fig.update_layout(yaxis_range=[np.amin(df['energy']) - np.ptp(df['energy']) * 0.1,
+                                   np.amax(df['energy']) + np.ptp(df['energy']) * 0.1],
+                      xaxis_range=[max(0, np.amin(df['packing_coefficient']) * 0.9),
+                                   min(2, np.amax(df['packing_coefficient']) * 1.1)],
                       )
     return fig
+
 
 def log_regression_accuracy(config, dataDims, epoch_stats_dict):
     target_key = config.dataset.regression_target
@@ -1512,7 +1518,7 @@ def detailed_reporting(config, dataDims, train_epoch_stats_dict, test_epoch_stat
                     cell_params_hist(wandb, test_epoch_stats_dict,
                                      ['prior', 'cell_parameters'])
                     niggli_hist(wandb, test_epoch_stats_dict,
-                                     ['prior', 'cell_parameters'])
+                                ['prior', 'cell_parameters'])
                     wandb.log(data={'Iterwise vdW':
                                         iter_wise_hist(test_epoch_stats_dict, 'per_mol_scaled_LJ_energy')
                                     }, commit=False)
