@@ -140,11 +140,8 @@ proxy_discriminator:
 # for GAN training
 generator:
   samples_per_iter: 5
-  prior_loss_coefficient: 1  # initial value for the prior loss coefficient
-  prior_coefficient_threshold: 0.05 #0.001
-  vdw_loss_coefficient: 1
-  vdw_turnover_potential: 10 # maximum value for LJ regularization
-  variation_scale: 1  # maximum of the uniform distribution of search scales
+  mean_step_size: 2
+  init_vdw_loss_factor: 0.001
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
 
   #generator optimizer and model

@@ -1040,7 +1040,7 @@ class MolCrystalData(MolData):
 
         if enforce_niggli:
             # enforce the scaling factor b/c and a/b in the range [0, 1]
-            a, b, c = self.cell_lengths.split(1,1)
+            a, b, c = self.cell_lengths.split(1, 1)
             b_scale = enforce_1d_bound((b / c), 0.5, 0.5, mode=mode)
             a_scale = enforce_1d_bound((a / b), 0.5, 0.5, mode=mode)
             self.cell_lengths = torch.cat([
