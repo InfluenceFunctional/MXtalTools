@@ -2330,19 +2330,20 @@ class Modeller:
             generator_proposed_step[:, :6] = 0  # zero-out box DoF
 
             generator_raw_samples = init_state + generator_proposed_step
-            crystal_batch.set_cell_parameters(
-                crystal_batch.destandardize_cell_parameters(generator_raw_samples)
+            new_crystal_batch = crystal_batch.clone().detach()
+            new_crystal_batch.set_cell_parameters(
+                new_crystal_batch.destandardize_cell_parameters(generator_raw_samples)
             )
-            crystal_batch.clean_cell_parameters(mode='hard',
+            new_crystal_batch.clean_cell_parameters(mode='hard',
                                                 enforce_niggli=True)
 
             # analyze intermolecular characteristics
             (vdw_losses, molwise_normed_overlap, molwise_scaled_lj_pot,
              box_loss, packing_loss, vdw_loss, cluster_batch) = self.analyze_generator_sample(
-                crystal_batch)
+                new_crystal_batch)
 
             # penalize the genrator for taking large steps
-            std_generated_cell_params = crystal_batch.standardize_cell_parameters()
+            std_generated_cell_params = new_crystal_batch.standardize_cell_parameters()
             prior_loss = F.relu(generator_proposed_step.norm(dim=1) - step_size)**2
             vdw_step_loss = (vdw_losses - prev_vdw_loss)
             generator_losses = self.vdw_loss_factor * vdw_step_loss# + prior_loss
@@ -2370,7 +2371,7 @@ class Modeller:
                                                   generator_loss.data.detach().cpu().numpy(),
                                                   generator_losses.detach().cpu().numpy())
                 stats = {
-                    'generated_space_group_numbers': crystal_batch.sg_ind.detach(),
+                    'generated_space_group_numbers': new_crystal_batch.sg_ind.detach(),
                     'step_size': generator_proposed_step.norm(dim=1).detach(),
                     'identifiers': mol_batch.identifier,
                     'smiles': mol_batch.smiles,
@@ -2379,11 +2380,11 @@ class Modeller:
                     'generator_vdw_loss': vdw_loss.detach(),
                     'per_mol_scaled_LJ_energy': molwise_scaled_lj_pot.detach(),
                     'per_mol_normed_overlap': molwise_normed_overlap.detach(),
-                    'packing_coefficient': crystal_batch.packing_coeff.detach(),
-                    'sample_iter': torch.ones(crystal_batch.num_graphs) * ind,
+                    'packing_coefficient': new_crystal_batch.packing_coeff.detach(),
+                    'sample_iter': torch.ones(new_crystal_batch.num_graphs) * ind,
                     'prior': destandardized_prior.detach(),
-                    'mol_radius': crystal_batch.radius.detach(),
-                    'cell_parameters': crystal_batch.cell_parameters().detach(),
+                    'mol_radius': new_crystal_batch.radius.detach(),
+                    'cell_parameters': new_crystal_batch.cell_parameters().detach(),
                     'vdw_factor': self.vdw_loss_factor,
                     'prior_loss': prior_loss.mean(-1).cpu().detach(),
                     'cell_delta': generator_proposed_step.cpu().detach(),

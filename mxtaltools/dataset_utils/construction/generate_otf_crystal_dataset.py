@@ -8,11 +8,11 @@ from mxtaltools.dataset_utils.construction.parallel_synthesis import otf_synthes
 
 if __name__ == '__main__':
     # initialize
-    debug = False
-    space_group = 1
-    num_smiles = 1000
-    num_processes = 3
-    new_dataset_name = f'play_pd_dataset_sg{space_group}'
+    debug = True
+    space_group = 2
+    num_smiles = 10
+    num_processes = 1
+    new_dataset_name = f'debug_play_pd_dataset_sg{space_group}'
 
     num_chunks = max(num_processes, num_smiles // 15)
     smiles_path = r'D:\crystal_datasets\zinc22'  #'/home/mkilgour/crystal_datasets/zinc22'#

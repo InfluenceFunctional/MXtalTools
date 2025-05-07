@@ -45,11 +45,7 @@ def unit_cell_to_supercell_cluster(crystal_batch, cutoff: float = 6, supercell_s
                                                                       supercell_size)
 
     ucell_num_atoms = crystal_batch.num_atoms * crystal_batch.sym_mult
-    unit_cell_pos = torch.cat([torch.tensor(poses.reshape(ucell_num_atoms[ind], 3),
-                                            dtype=torch.float32,
-                                            device=crystal_batch.device
-                                            )
-                               for ind, poses in enumerate(crystal_batch.unit_cell_pos)])
+    unit_cell_pos = torch.cat([poses.reshape(ucell_num_atoms[ind], 3) for ind, poses in enumerate(crystal_batch.unit_cell_pos)])
     unit_cell_batch = torch.arange(crystal_batch.num_graphs, device=crystal_batch.device
                                    ).repeat_interleave(crystal_batch.sym_mult * crystal_batch.num_atoms)
 
