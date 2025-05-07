@@ -206,7 +206,7 @@ def list_molecule_principal_axes_torch(coords_list: list = None,
     return Ip_fin, Ipm_fin, I
 
 
-def batch_molecule_principal_axes_torch(coords: torch.FloatTensor,
+def batch_molecule_principal_axes_torch(coords_i: torch.FloatTensor,
                                         batch: torch.LongTensor,
                                         num_graphs: int,
                                         nodes_per_graph: torch.LongTensor,
@@ -227,7 +227,9 @@ def batch_molecule_principal_axes_torch(coords: torch.FloatTensor,
     """
 
     if not skip_centring:
-        coords = center_mol_batch(coords, batch, num_graphs, nodes_per_graph)
+        coords = center_mol_batch(coords_i, batch, num_graphs, nodes_per_graph)
+    else:
+        coords = coords_i
 
     Ip, Ipm_fin, I = scatter_compute_Ip(coords, batch)
 
@@ -235,8 +237,7 @@ def batch_molecule_principal_axes_torch(coords: torch.FloatTensor,
     direction = batch_get_furthest_node_vector(coords, batch, num_graphs)
     normed_direction = direction / torch.linalg.norm(direction, dim=1)[:, None]
     overlaps, signs = get_overlaps(Ip, normed_direction)
-    Ip_fin = correct_Ip_directions(Ip, overlaps,
-                                   signs)  # somehow, fails for mirror planes, on top of symmetric and spherical tops
+    Ip_fin = correct_Ip_directions(Ip, overlaps, signs)  # fails for mirror planes, on top of symmetric and spherical tops
 
     return Ip_fin, Ipm_fin, I
 
@@ -276,10 +277,10 @@ def correct_Ip_directions(Ip, overlaps, signs, overlap_threshold: float = 1e-5):
     Ip_fin: torch.tensor(3,3)
         Inertial principal axes with positive overlaps to the given canonical direction
     """
-    Ip_fin = torch.zeros_like(Ip)
+    Ip_fixed_list = []
     for ii, Ip_i in enumerate(Ip):
         # if the vectors have negative overlap, flip the direction,
-        Ip_i = (Ip_i.T * signs[ii]).T
+        Ip_fixed = (Ip_i.T * signs[ii]).T
         # if any overlaps are vanishing (up to 32 bit precision),
         # happens if the cardinal direction is too close to an existing principal axis
         # determine the direction via the RHR (if two overlaps are vanishing, this will not work)
@@ -287,9 +288,10 @@ def correct_Ip_directions(Ip, overlaps, signs, overlap_threshold: float = 1e-5):
             # enforce right-handedness in the free vector (vanishing overlap)
             fix_ind = torch.argmin(torch.abs(overlaps[ii]))  # vector with vanishing overlap
             if compute_Ip_handedness(Ip_i) < 0:  # if result is not right-handed, swap it
-                Ip_i[fix_ind] = -Ip_i[fix_ind]
+                Ip_fixed[fix_ind] = -Ip_fixed[fix_ind]
 
-        Ip_fin[ii] = Ip_i
+        Ip_fixed_list.append(Ip_fixed)
+    Ip_fin = torch.stack(Ip_fixed_list)
     return Ip_fin
 
 
@@ -369,14 +371,14 @@ def scatter_compute_Ip(all_coords, batch):
          torch.vstack((Ixz, Iyz, Izz))[:, None, :].permute(2, 1, 0)
          ), dim=-2)  # inertial tensor
 
-    Ipm, Ip = torch.linalg.eig(inertial_tensor)  # principal inertial tensor
-    Ipm, Ip = torch.real(Ipm), torch.real(Ip)
+    Ipm_c, Ip_c = torch.linalg.eig(inertial_tensor)  # principal inertial tensor
+    Ipms, Ip_o = torch.real(Ipm_c), torch.real(Ip_c)
 
-    Ip = Ip.permute(0, 2, 1)  # switch to row-wise eigenvectors
+    Ips = Ip_o.permute(0, 2, 1)  # switch to row-wise eigenvectors
 
-    sort_inds = torch.argsort(Ipm, dim=1)
-    Ipm = torch.stack([Ipm[i, sort_inds[i]] for i in range(len(sort_inds))])
-    Ip = torch.stack([Ip[i][sort_inds[i]] for i in range(len(sort_inds))])  # sort also the eigenvectors
+    sort_inds = torch.argsort(Ipms, dim=1)
+    Ipm = torch.stack([Ipms[i, sort_inds[i]] for i in range(len(sort_inds))])
+    Ip = torch.stack([Ips[i][sort_inds[i]] for i in range(len(sort_inds))])  # sort also the eigenvectors
 
     return Ip, Ipm, inertial_tensor
 
@@ -1259,8 +1261,8 @@ def center_mol_batch(coords: torch.FloatTensor,
                      nodes_per_graph: torch.LongTensor,
                      ) -> Tensor:
     centroids = get_batch_centroids(coords, batch, num_graphs)
-    coords -= centroids.repeat_interleave(nodes_per_graph, 0)
-    return coords
+    coords_out = coords - centroids.repeat_interleave(nodes_per_graph, 0)
+    return coords_out
 
 
 def batch_compute_mol_mass(z: torch.LongTensor,

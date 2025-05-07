@@ -14,7 +14,7 @@ from mxtaltools.models.utils import enforce_1d_bound, softmax_and_score
 
 def standalone_gradient_descent_optimization(
         init_sample: torch.Tensor,
-        crystal_batch,
+        init_crystal_batch,
         optimizer_func: Optional = torch.optim.Rprop,
         convergence_eps: Optional[float] = 1e-3,
         lr: Optional[float] = 1e-4,
@@ -41,18 +41,20 @@ def standalone_gradient_descent_optimization(
     scheduler1 = optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: 0.985)
     scheduler2 = optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: grow_lambda)
     hit_max_lr = False
-    loss_record = torch.zeros((max_num_steps, crystal_batch.num_graphs))
+    loss_record = torch.zeros((max_num_steps, init_crystal_batch.num_graphs))
     lr_record = torch.zeros(max_num_steps)
-    params_record = torch.zeros((max_num_steps, crystal_batch.num_graphs, 12), dtype=torch.float32)
+    params_record = torch.zeros((max_num_steps, init_crystal_batch.num_graphs, 12), dtype=torch.float32)
 
     optimization_trajectory = []
 
     converged = False
+    #torch.autograd.set_detect_anomaly(True)
     with (torch.enable_grad()):
         with tqdm(total=max_num_steps, disable=not show_tqdm) as pbar:
             s_ind = 0
             while not converged:
                 optimizer.zero_grad()
+                crystal_batch = init_crystal_batch.clone().detach()
                 crystal_batch.set_cell_parameters(params_to_optim)
                 crystal_batch.clean_cell_parameters()
                 lj_pot, es_pot, scaled_lj_pot, cluster_batch = crystal_batch.build_and_analyze(return_cluster=True,
@@ -77,17 +79,17 @@ def standalone_gradient_descent_optimization(
                 "auxiliary losses"
                 if target_packing_coeff is not None:
                     cp_loss = (cluster_batch.packing_coeff - target_packing_coeff) ** 2
-                    loss += cp_loss
+                    loss = loss + cp_loss
 
                 if do_box_restriction:
                     # enforce box shape cannot become too long (3 mol radii) or narrow (3 angstroms) in any direction
                     aunit_lengths = cluster_batch.scale_lengths_to_aunit()
                     box_loss = (80000 / aunit_lengths ** 12).sum(
                         dim=1)  # repulsive from about range 3 #(80000/aunit_lengths**12 + 10*aunit_lengths - 31.25).sum(dim=1)  # forces boxes to be larger than 3 angstroms, but squeezes them otherwise
-                    loss += box_loss
+                    loss = loss + box_loss
 
                 if compression_factor != 0:
-                    loss += aunit_lengths.sum(dim=1) * compression_factor
+                    loss = loss + aunit_lengths.sum(dim=1) * compression_factor
 
                 loss.mean().backward()  # compute gradients
                 torch.nn.utils.clip_grad_norm_(params_to_optim, grad_norm_clip)  # gradient clipping
@@ -136,13 +138,24 @@ lj_pots = torch.stack(
     [torch.tensor([sample.scaled_lj_pot for sample in sample_list]) for sample_list in optimization_trajectory])
 coeffs = torch.stack(
     [torch.tensor([sample.packing_coeff for sample in sample_list]) for sample_list in optimization_trajectory])
-    
+params = torch.stack([torch.cat([sample.cell_parameters() for sample in sample_list]) for sample_list in optimization_trajectory])
+
 fig = go.Figure()
 fig.add_scatter(x=coeffs[0,:], y=lj_pots[0, :], mode='markers', marker_size=20, marker_color='grey', name='Initial State')
 fig.add_scatter(x=coeffs[-1,:], y=lj_pots[-1, :], mode='markers', marker_size=20, marker_color='black', name='Final State')
 for ind in range(coeffs.shape[1]):
     fig.add_scatter(x=coeffs[:, ind], y=lj_pots[:, ind], name=f"Run {ind}")
 fig.update_layout(xaxis_title='Packing Coeff', yaxis_title='Scaled LJ')
+fig.show()
+
+
+from plotly.subplots import make_subplots
+fig = make_subplots(rows=4, cols=3, subplot_titles = ['a','b','c','al','be','ga','x','y','z','u','v','w'])
+for ind in range(12):
+    row = ind // 3 + 1
+    col = ind % 3 + 1
+    for ind2 in range(params.shape[1]):
+        fig.add_scatter(y=params[:, ind2, ind], showlegend=False, row=row, col=col)
 fig.show()
 
 # import plotly.graph_objects as go
@@ -161,6 +174,10 @@ fig.show()
 #                     showlegend=True if ind == 0 else False)
 # fig.update_layout(yaxis_range=[0,1])
 # fig.show()
+
+fig = make_subplots(rows=4, cols=3)
+for ind in range(12):
+
 
 lj_pot, es_pot, scaled_lj_pot, cluster_batch = crystal_batch.build_and_analyze(return_cluster=True)
 cluster_batch.visualize(mode='convolve with')

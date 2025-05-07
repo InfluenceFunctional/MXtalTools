@@ -276,7 +276,7 @@ def process_smiles_to_crystal_opt(lines: list,
         crystal_batch.sample_reasonable_random_parameters(
             target_packing_coeff=0.5,  # diffuse target
             tolerance=3,
-            max_attempts=10  # TODO RESET TO 500
+            max_attempts=500
         )
 
         # print("doing opt")

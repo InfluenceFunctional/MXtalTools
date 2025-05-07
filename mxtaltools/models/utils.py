@@ -514,3 +514,16 @@ def get_model_sizes(models_dict: dict):
         f'{model_name} {num_params_dict[model_name] / 1e6:.3f} million or {int(num_params_dict[model_name])} parameters')
         for model_name in num_params_dict.keys()]
     return num_params_dict
+
+
+def test_gradient_flow(grad_params, operation):
+    grad_params.pos.requires_grad_(True)
+    output = operation(grad_params)
+    grad_params.pos.retain_grad()
+
+    loss = (output + 1).log().abs().sum()
+    loss.backward()
+    print(grad_params.pos.grad)
+    print(loss)
+    print(torch.count_nonzero(grad_params.pos.grad) / len(grad_params.pos.flatten()))
+    grad_params.pos.grad.zero_()
