@@ -2320,7 +2320,7 @@ class Modeller:
                 init_state = std_generated_cell_params.detach().clone()
                 prev_vdw_loss = vdw_losses.detach().clone()
 
-            step_size = 10 * torch.rand(mol_batch.num_graphs, device=self.device)[:, None]
+            step_size = 2 * torch.rand(mol_batch.num_graphs, device=self.device)[:, None]
             generator_proposed_step = self.models_dict['generator'](x=scalar_embedding,
                                                                   v=vector_embedding,
                                                                   sg_ind_list=crystal_batch.sg_ind,
@@ -2346,18 +2346,18 @@ class Modeller:
             std_generated_cell_params = new_crystal_batch.standardize_cell_parameters()
             prior_loss = F.relu(generator_proposed_step.norm(dim=1) - step_size)**2
             vdw_step_loss = (vdw_losses - prev_vdw_loss)
-            generator_losses = self.vdw_loss_factor * vdw_step_loss# + prior_loss
+            generator_losses = self.vdw_loss_factor * vdw_step_loss + prior_loss
 
             if not torch.all(torch.isfinite(generator_losses)):
                 raise ValueError('Numerical Error: Model weights not all finite')
 
             generator_loss = generator_losses.mean()
-            #
-            # if self.epoch_type == 'train':
-            #     if prior_loss.mean() < 0.01 and self.vdw_loss_factor < 1:
-            #         self.vdw_loss_factor *= 1.001
-            #     elif prior_loss.mean() > 0.02 and self.vdw_loss_factor > 1e-3:
-            #         self.vdw_loss_factor *= 0.999
+
+            if self.epoch_type == 'train':
+                if prior_loss.mean() < 0.01 and self.vdw_loss_factor < 1:
+                    self.vdw_loss_factor *= 1.001
+                elif prior_loss.mean() > 0.02 and self.vdw_loss_factor > 1e-3:
+                    self.vdw_loss_factor *= 0.999
 
             if update_weights:
                 self.optimizers_dict['generator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
