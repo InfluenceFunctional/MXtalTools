@@ -7,7 +7,7 @@ base_config = load_yaml('base.yaml')
 
 config_list = [
     {
-        'min_batch_size': 50,
+        'min_batch_size': 500,
         'max_batch_size': 1000,
         'generator': {
             'samples_per_iter': 5,
@@ -31,7 +31,7 @@ config_list = [
         }
     },  # 0 - baseline
     {
-        'min_batch_size': 50,
+        'min_batch_size': 500,
         'max_batch_size': 100000,
         'generator': {
             'samples_per_iter': 5,
@@ -55,7 +55,7 @@ config_list = [
         }
     },  # 1 - baseline, huge batch
     {
-        'min_batch_size': 50,
+        'min_batch_size': 500,
         'max_batch_size': 1000,
         'generator': {
             'samples_per_iter': 5,
@@ -79,7 +79,7 @@ config_list = [
         }
     },  # 2 - baseline, no norm
     {
-        'min_batch_size': 50,
+        'min_batch_size': 500,
         'max_batch_size': 1000,
         'generator': {
             'samples_per_iter': 5,
@@ -103,7 +103,7 @@ config_list = [
         }
     },  # 3 - baseline, big steps
     {
-        'min_batch_size': 50,
+        'min_batch_size': 500,
         'max_batch_size': 1000,
         'generator': {
             'samples_per_iter': 5,
@@ -127,7 +127,7 @@ config_list = [
         }
     },  # 4 - baseline, small steps
     {
-        'min_batch_size': 50,
+        'min_batch_size': 500,
         'max_batch_size': 1000,
         'generator': {
             'samples_per_iter': 5,
@@ -151,7 +151,7 @@ config_list = [
         }
     },  # 5 - baseline, smaller model
     {
-        'min_batch_size': 50,
+        'min_batch_size': 500,
         'max_batch_size': 1000,
         'generator': {
             'samples_per_iter': 10,
