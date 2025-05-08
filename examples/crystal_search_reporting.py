@@ -96,7 +96,7 @@ def csp_reporting(optimized_samples,
         reduced_opt_lengths = torch.zeros((optimized_crystal_batch.num_graphs, 3), dtype=torch.float32)
         for ind in tqdm(range(len(reduced_opt_lengths))):
             reduced_opt_lengths[ind] = torch.tensor(get_niggli_cell(optimized_crystal_batch, ind)[:3])
-            torch.save(reduced_opt_lengths, 'opt_lengths.pt')
+        torch.save(reduced_opt_lengths, 'opt_lengths.pt')
     else:
         reduced_opt_lengths = torch.load('opt_lengths.pt')
 
@@ -127,9 +127,9 @@ def csp_reporting(optimized_samples,
     #num_samples = 1000
     #best_sample_inds = torch.argsort(model_score, descending=True)[:num_samples]
     best_sample_inds = torch.argwhere((packing_coeff > 0.6) * (packing_coeff < 0.8) * (rdf_dist_pred < 0.01)).squeeze()
-    rmsds = list(np.load('rmsds_final.npy'))
-    matches = list(np.load('matches_final.npy'))
-    #matches, rmsds = batch_compack(best_sample_inds, optimized_samples, original_cluster_batch)
+    #rmsds = list(np.load('rmsds_final.npy'))
+    #matches = list(np.load('matches_final.npy'))
+    matches, rmsds = batch_compack(best_sample_inds, optimized_samples, original_cluster_batch)
     rmsds = np.array(rmsds)
     matches = np.array(matches)
 
@@ -139,7 +139,7 @@ def csp_reporting(optimized_samples,
     density_funnel(model_score, packing_coeff, rdf_dists, ref_model_score, ref_packing_coeff)
     distance_fig(c_dists, model_score, noisy_c_dists, noisy_model_score, noisy_rdf_dists, rdf_dists)
     compack_fig(matches, rmsds)
-
+    aa = 1
 
 def compack_fig(matches, rmsds):
     fontsize = 26
@@ -235,7 +235,6 @@ def batch_compack(best_sample_inds, optimized_samples, original_cluster_batch):
                 np.save('matches_1k', matches)
                 print("analysis failed")
     return matches, rmsds
-
 
 def cluster_batch_to_ccdc_crystals(cluster_batch, inds):
     crystals = []
@@ -422,7 +421,7 @@ if __name__ == '__main__':
     density_checkpoint = r"../checkpoints/cp_regressor.pt"
     csp_dir_path = Path(r'C:\Users\mikem\crystals\CSP_runs\searches\mxt_paper_search')
     chunk_paths = os.listdir(csp_dir_path)
-    chunk_paths = [csp_dir_path.joinpath(elem) for elem in chunk_paths]
+    chunk_paths = [csp_dir_path.joinpath(elem) for elem in chunk_paths if '.pt' in elem]
     score_model = load_crystal_score_model(score_checkpoint, device).to(device)
     score_model.eval()
 
