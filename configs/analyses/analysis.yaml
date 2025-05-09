@@ -39,7 +39,7 @@ model_paths:
   discriminator: null
   embedding_regressor: null
   generator: null
-  proxy_discriminator: D:\crystal_datasets\proxy_checkpoints\best_proxy_discriminator_experiments_proxy_discriminator_tests_zinc_test7_32_15-04-01-18-05
+  proxy_discriminator: D:\crystal_datasets\proxy_checkpoints\best_proxy_discriminator_experiments_proxy_discriminator_tests_zinc_test7_32_08-05-10-01-03
   regressor: null
 num_early_epochs: 0
 overfit_tolerance: 4

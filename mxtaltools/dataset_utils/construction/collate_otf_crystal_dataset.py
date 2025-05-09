@@ -9,8 +9,9 @@ if __name__ == '__main__':
     space_group = 1
     # new_dataset_name = f'pd_dataset_sg{space_group}'
     # chunks_path = Path(r'/scratch/mk8347/csd_runs/datasets')
-    new_dataset_name = f'pd_dataset_sg{space_group}_test'
-    chunks_path = Path(r'D:\crystal_datasets')
+    #new_dataset_name = f'pd_dataset_sg{space_group}_test'
+    new_dataset_name = f'eval_pd_dataset_sg{space_group}'
+    chunks_path = Path(r'D:\crystal_datasets\pd_chunks')
     os.chdir(chunks_path)
 
     '''process and save dataset'''

@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-
+import multiprocessing as mp
 import numpy as np
 import torch
 from ase.spacegroup import Spacegroup
@@ -129,17 +129,19 @@ def csp_reporting(optimized_samples,
     best_sample_inds = torch.argwhere((packing_coeff > 0.6) * (packing_coeff < 0.8) * (rdf_dist_pred < 0.01)).squeeze()
     #rmsds = list(np.load('rmsds_final.npy'))
     #matches = list(np.load('matches_final.npy'))
-    matches, rmsds = batch_compack(best_sample_inds, optimized_samples, original_cluster_batch)
-    rmsds = np.array(rmsds)
-    matches = np.array(matches)
-
-    all_matched = np.argwhere(matches == 20).flatten()
-    matched_rmsds = rmsds[all_matched]
 
     density_funnel(model_score, packing_coeff, rdf_dists, ref_model_score, ref_packing_coeff)
     distance_fig(c_dists, model_score, noisy_c_dists, noisy_model_score, noisy_rdf_dists, rdf_dists)
+
+    matches, rmsds = batch_compack(best_sample_inds, optimized_samples, original_cluster_batch)
+
+    all_matched = np.argwhere(matches == 20).flatten()
+    matched_rmsds = rmsds[all_matched]
     compack_fig(matches, rmsds)
+    print(all_matched)
+    print(rmsds[all_matched])
     aa = 1
+
 
 def compack_fig(matches, rmsds):
     fontsize = 26
@@ -194,47 +196,80 @@ def compack_fig(matches, rmsds):
 
 
 def batch_compack(best_sample_inds, optimized_samples, original_cluster_batch):
-    # best_samples = torch.argsort(model_score, descending=True)
-    best_crystals_batch = collate_data_list([optimized_samples[ind] for ind in best_sample_inds])
-    _, _, _, best_cluster_batch = best_crystals_batch.to('cpu').build_and_analyze(return_cluster=True)
-    # ase_mols = best_cluster_batch.visualize(mode='unit cell')
-    # from ase.io import write
-    # for ind, mol in enumerate(ase_mols):
-    #     write(f'samples{ind}.png', mol)
-    # original_cluster_batch.visualize([0], mode='unit cell')
-    similarity_engine = PackingSimilarity()
-    best_crystals = cluster_batch_to_ccdc_crystals(best_cluster_batch, np.arange(best_cluster_batch.num_graphs))
-    mol = ase_mol_from_crystaldata(original_cluster_batch, index=0, mode='unit cell')
-    mol.info['spacegroup'] = Spacegroup(int(best_cluster_batch.sg_ind[0]), setting=1)
-    mol.write('DAFMUV.cif')
+    # generate the crystals in ccdc format
+    if not os.path.exists('rmsds.npy'):
+        best_crystals_batch = collate_data_list([optimized_samples[ind] for ind in best_sample_inds])
+        _, _, _, best_cluster_batch = best_crystals_batch.to('cpu').build_and_analyze(return_cluster=True)
+        best_crystals = cluster_batch_to_ccdc_crystals(best_cluster_batch, np.arange(best_cluster_batch.num_graphs))
+        mol = ase_mol_from_crystaldata(original_cluster_batch, index=0, mode='unit cell')
+        mol.info['spacegroup'] = Spacegroup(int(best_cluster_batch.sg_ind[0]), setting=1)
+        mol.write('DAFMUV.cif')
+        #ref_crystal = CrystalReader('DAFMUV.cif')[0]
+
+        print("Computing RMSD20s")
+        pool = mp.Pool(8)
+        results = []
+        for ind in range(len(best_sample_inds)):
+            results.append(
+                pool.apply_async(
+                    single_compack_run,
+                    (ind,)
+                )
+            )
+        pool.close()
+        pool.join()
+        results = [res.get() for res in results]
+        matches = np.array([res[1] for res in results])
+        rmsds = np.array([res[0] for res in results])
+        np.save('rmsds', rmsds)
+        np.save('matches', matches)
+    else:
+        rmsds = np.load('rmsds.npy')
+        matches = np.load('matches.npy')
+    # similarity_engine = PackingSimilarity()
+    # similarity_engine.settings.distance_tolerance = 0.4
+    # similarity_engine.settings.angle_tolerance = 40
+    # similarity_engine.settings.allow_molecular_differences = True
+    # similarity_engine.settings.packing_shell_size = 20
+    # if os.path.exists('rmsds_1k.npy'):
+    #     rmsds = list(np.load('rmsds_1k.npy'))
+    #     matches = list(np.load('matches_1k.npy'))
+    # else:
+    #     rmsds = []
+    #     matches = []
+    # for ind, crystal in tqdm(enumerate(best_crystals)):
+    #     if ind >= len(rmsds):
+    #         try:
+    #             result = similarity_engine.compare(ref_crystal, crystal)
+    #             print(f"RMSD = {result.rmsd:.3f} Å, {result.nmatched_molecules} mols matched")
+    #             rmsds.append(result.rmsd)
+    #             matches.append(result.nmatched_molecules)
+    #             np.save('rmsds_1k', rmsds)
+    #             np.save('matches_1k', matches)
+    #         except AttributeError:
+    #             rmsds.append(0)
+    #             matches.append(0)
+    #             np.save('rmsds_1k', rmsds)
+    #             np.save('matches_1k', matches)
+    #             print("analysis failed")
+    return matches, rmsds
+
+
+def single_compack_run(ind):
     ref_crystal = CrystalReader('DAFMUV.cif')[0]
+    sample_crystal = CrystalReader(f'temp_{ind}.cif')[0]
+    similarity_engine = PackingSimilarity()
     similarity_engine.settings.distance_tolerance = 0.4
     similarity_engine.settings.angle_tolerance = 40
     similarity_engine.settings.allow_molecular_differences = True
     similarity_engine.settings.packing_shell_size = 20
-    print("Computing RMSD20s")
-    if os.path.exists('rmsds_1k.npy'):
-        rmsds = list(np.load('rmsds_1k.npy'))
-        matches = list(np.load('matches_1k.npy'))
-    else:
-        rmsds = []
-        matches = []
-    for ind, crystal in tqdm(enumerate(best_crystals)):
-        if ind >= len(rmsds):
-            try:
-                result = similarity_engine.compare(ref_crystal, crystal)
-                print(f"RMSD = {result.rmsd:.3f} Å, {result.nmatched_molecules} mols matched")
-                rmsds.append(result.rmsd)
-                matches.append(result.nmatched_molecules)
-                np.save('rmsds_1k', rmsds)
-                np.save('matches_1k', matches)
-            except AttributeError:
-                rmsds.append(0)
-                matches.append(0)
-                np.save('rmsds_1k', rmsds)
-                np.save('matches_1k', matches)
-                print("analysis failed")
-    return matches, rmsds
+    try:
+        result = similarity_engine.compare(ref_crystal, sample_crystal)
+        print(f"Crystal {ind} RMSD = {result.rmsd:.3f} Å, {result.nmatched_molecules} mols matched")
+        return result.rmsd, result.nmatched_molecules
+    except AttributeError:
+        print("Analysis failed")
+        return 0, 0
 
 def cluster_batch_to_ccdc_crystals(cluster_batch, inds):
     crystals = []
@@ -324,10 +359,9 @@ def distance_fig(c_dists, model_score, noisy_c_dists, noisy_model_score, noisy_r
     fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\mxt_code\distance_fig.png', width=1920, height=800)
 
 
-
 def density_funnel(model_score, packing_coeff, rdf_dists, ref_model_score, ref_packing_coeff):
     fontsize = 26
-    good_inds = torch.argwhere((packing_coeff > 0.55) * (model_score > 0)).squeeze()
+    good_inds = torch.argwhere((packing_coeff > 0.55) * (model_score > 0) * (packing_coeff < 0.9)).squeeze()
     fig = make_subplots(rows=1, cols=2, subplot_titles=["(a)", "(b)"],
                         horizontal_spacing=0.125)
     fig.add_scatter(x=packing_coeff.cpu(), y=model_score.cpu(),

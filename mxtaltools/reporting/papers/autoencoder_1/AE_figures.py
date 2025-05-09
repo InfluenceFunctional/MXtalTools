@@ -670,7 +670,6 @@ def detailed_er_figure():
         NMAE_dict[target_name] = NMAE
         R_dict[target_name] = R_value
 
-
     def er_subfigure(inds_to_plot):
         cols = len(inds_to_plot)
         fontsize = 26 if cols == 3 else 34
@@ -696,7 +695,7 @@ def detailed_er_figure():
             except:
                 z = np.ones_like(target)
 
-            row=1
+            row = 1
             col = g_ind + 1
             opacity = 0.1  # np.exp(-num_points / 10000)
             fig3.add_trace(go.Scattergl(x=target,
@@ -789,19 +788,18 @@ def detailed_er_figure():
         [9, 10, 11],
         [12, 13, 14],
         [15, 16, 17, 18, 19]
-        ]:
+    ]:
         figs.append(er_subfigure(inds_list))
 
     for ind, fig in enumerate(figs):
         if ind == 5:
-            fig.write_image(rf'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\detailed_er_{ind}.png', width=1920, height=600)
+            fig.write_image(rf'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\detailed_er_{ind}.png', width=1920,
+                            height=600)
         else:
             fig.write_image(rf'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\detailed_er_{ind}.png', width=1200,
                             height=600)
 
     return None
-
-
 
 
 def regression_training_curve():
@@ -871,7 +869,6 @@ def regression_training_curve():
 
 
 def proxy_discriminator_figure():
-
     target_names = []
     MAE_dict = {}
     NMAE_dict = {}
@@ -898,8 +895,9 @@ def proxy_discriminator_figure():
         target = stats_dict['test_stats']['vdw_score']
         prediction = stats_dict['test_stats']['vdw_prediction']
         if energy_func == "Buckingham":
-            target /= 1000
-            prediction /= 1000
+            maxval = target.max() * 1
+            target = (target - maxval) / 1500
+            prediction = (prediction - maxval) / 1500
         print(target_name)
         MAE = np.abs(target - prediction).mean()
         NMAE = (np.abs((target - prediction) / np.abs(target))).mean()
@@ -911,11 +909,11 @@ def proxy_discriminator_figure():
         NMAE_dict[target_name] = NMAE
         R_dict[target_name] = R_value
 
-    inds_reorder = [7, 6, 5, 4, 3, 2, 1, 0,]
+    inds_reorder = [7, 6, 5, 4, 3, 2, 1, 0, ]
     good_target_names = [target_names[ind] for ind in inds_reorder]
     good_proxy_paths = [proxy_results_paths[ind] for ind in inds_reorder]
 
-    col_labels = [ "No Embedding", "Molecule Volume", "Principal Vectors", "Autoencoder"]
+    col_labels = ["No Embedding", "Molecule Volume", "Principal Vectors", "Autoencoder"]
     row_labels = ["Buckingham Potential (Arb. Units)", 'MACE Potential (kJ/mol)']
 
     num_rows = len(row_labels)
@@ -932,8 +930,9 @@ def proxy_discriminator_figure():
         target = stats_dict['test_stats']['vdw_score']
         prediction = stats_dict['test_stats']['vdw_prediction']
         if 'Buckingham' in target_name:
-            target /= 1000
-            prediction /= 1000
+            maxval = target.max() * 1
+            target = (target - maxval) / 1500
+            prediction = (prediction - maxval) / 1500
 
         xline = np.linspace(min(target), max(target), 2)
 
@@ -945,7 +944,7 @@ def proxy_discriminator_figure():
 
         row = ind // num_cols + 1
         col = ind % num_cols + 1
-        opacity = 0.25
+        opacity = 0.15
         fig3.add_trace(go.Scattergl(x=target,
                                     y=prediction,
                                     mode='markers',
