@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union
 
 import torch
 import torch.nn.functional as F
@@ -27,6 +27,7 @@ def standalone_gradient_descent_optimization(
         do_box_restriction: Optional[bool] = False,
         cutoff: Optional[float] = 10,
         compression_factor: Optional[float] = 0,
+        enforce_niggli: Optional[bool] = False,
 ):
     """
     do a local optimization via gradient descent on some score function
@@ -56,7 +57,10 @@ def standalone_gradient_descent_optimization(
                 optimizer.zero_grad()
                 crystal_batch = init_crystal_batch.clone().detach()
                 crystal_batch.set_cell_parameters(params_to_optim)
-                crystal_batch.clean_cell_parameters()
+                crystal_batch.clean_cell_parameters(
+                    enforce_niggli=enforce_niggli,
+                    mode='hard',
+                )
                 lj_pot, es_pot, scaled_lj_pot, cluster_batch = crystal_batch.build_and_analyze(return_cluster=True,
                                                                                                cutoff=cutoff)
 
@@ -64,6 +68,10 @@ def standalone_gradient_descent_optimization(
 
                 if optim_target.lower() == 'lj':
                     loss = lj_pot
+
+                elif optim_target.lower() == 'silu':
+                    silu_energy = cluster_batch.compute_silu_energy()
+                    loss = silu_energy
 
                 elif optim_target.lower() == 'inter_overlaps':  # force molecules apart by separating their centroids
                     loss = inter_overlap_loss(cluster_batch, crystal_batch)
@@ -89,6 +97,7 @@ def standalone_gradient_descent_optimization(
                     loss = loss + box_loss
 
                 if compression_factor != 0:
+                    aunit_lengths = cluster_batch.scale_lengths_to_aunit()
                     loss = loss + aunit_lengths.sum(dim=1) * compression_factor
 
                 loss.mean().backward()  # compute gradients
@@ -101,10 +110,18 @@ def standalone_gradient_descent_optimization(
                 lj_pot = lj_pot.cpu().detach()
                 scaled_lj_pot = scaled_lj_pot.cpu().detach()
                 es_pot = es_pot.cpu().detach()
+                packing_coeffs = crystal_batch.packing_coeff.cpu().detach()
+                if optim_target.lower() == 'silu':
+                    silu_energy = silu_energy.cpu().detach()
+
                 for si, sample in enumerate(samples_list):
                     sample.lj_pot = lj_pot[si]
                     sample.scaled_lj_pot = scaled_lj_pot[si]
                     sample.es_pot = es_pot[si]
+                    sample.packing_coeff = packing_coeffs[si]
+                    if optim_target.lower() == 'silu':
+                        sample.silu_pot = silu_energy[si]
+
                 optimization_trajectory.append(samples_list)
                 lr_record[s_ind] = lr
                 loss_record[s_ind] = loss.detach().cpu()
@@ -121,7 +138,7 @@ def standalone_gradient_descent_optimization(
                 if s_ind % 25 == 0:
                     pbar.update(25)
 
-                if s_ind > 50:
+                if s_ind >= min(max_num_steps, 50):
                     diffs = params_record[s_ind - 10:s_ind, :, :].diff(dim=0).abs()
                     flag1 = torch.all(diffs < convergence_eps)
                     flag2 = s_ind > (max_num_steps - 1)  # run out of time
@@ -138,7 +155,6 @@ lj_pots = torch.stack(
     [torch.tensor([sample.scaled_lj_pot for sample in sample_list]) for sample_list in optimization_trajectory])
 coeffs = torch.stack(
     [torch.tensor([sample.packing_coeff for sample in sample_list]) for sample_list in optimization_trajectory])
-params = torch.stack([torch.cat([sample.cell_parameters() for sample in sample_list]) for sample_list in optimization_trajectory])
 
 fig = go.Figure()
 fig.add_scatter(x=coeffs[0,:], y=lj_pots[0, :], mode='markers', marker_size=20, marker_color='grey', name='Initial State')
@@ -148,7 +164,7 @@ for ind in range(coeffs.shape[1]):
 fig.update_layout(xaxis_title='Packing Coeff', yaxis_title='Scaled LJ')
 fig.show()
 
-
+params = torch.stack([torch.cat([sample.cell_parameters() for sample in sample_list]) for sample_list in optimization_trajectory])
 from plotly.subplots import make_subplots
 fig = make_subplots(rows=4, cols=3, subplot_titles = ['a','b','c','al','be','ga','x','y','z','u','v','w'])
 for ind in range(12):
@@ -174,10 +190,6 @@ fig.show()
 #                     showlegend=True if ind == 0 else False)
 # fig.update_layout(yaxis_range=[0,1])
 # fig.show()
-
-fig = make_subplots(rows=4, cols=3)
-for ind in range(12):
-
 
 lj_pot, es_pot, scaled_lj_pot, cluster_batch = crystal_batch.build_and_analyze(return_cluster=True)
 cluster_batch.visualize(mode='convolve with')
@@ -229,22 +241,38 @@ fig.show()
 """
 
 
-def sample_about_crystal(opt_samples: list,
+def sample_about_crystal(opt_samples: Union[list],
                          noise_level: float,
                          num_samples: int,
-                         cutoff: Optional[float] = 10
+                         cutoff: Optional[float] = 10,
+                         enforce_niggli: Optional[bool] = False,
+                         do_silu_pot: Optional[bool] = False
                          ):
     samples_record = []
     for ind in range(num_samples):
-        crystal_batch = collate_data_list(opt_samples)
+        if isinstance(opt_samples, list):
+            crystal_batch = collate_data_list(opt_samples)
+        else:
+            crystal_batch = opt_samples.clone()
+
         crystal_batch.noise_cell_parameters(noise_level)
-        lj_pot, es_pot, scaled_lj_pot = crystal_batch.build_and_analyze(cutoff=cutoff)
+        crystal_batch.clean_cell_parameters(
+            enforce_niggli=enforce_niggli,
+            mode='hard',
+        )
+        lj_pot, es_pot, scaled_lj_pot, cluster_batch = crystal_batch.build_and_analyze(
+            cutoff=cutoff, return_cluster=True)
         samples_list = crystal_batch.detach().cpu().to_data_list()
+
+        if do_silu_pot:
+            silu_energy = cluster_batch.compute_silu_energy()
 
         for si, sample in enumerate(samples_list):
             sample.lj_pot = lj_pot[si]
             sample.scaled_lj_pot = scaled_lj_pot[si]
             sample.es_pot = es_pot[si]
+            if do_silu_pot:
+                sample.silu_pot = silu_energy[si]
 
         samples_record.append(samples_list)
 

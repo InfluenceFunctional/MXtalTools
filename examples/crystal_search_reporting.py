@@ -321,7 +321,7 @@ def distance_fig(c_dists, model_score, noisy_c_dists, noisy_model_score, noisy_r
     # fig.add_scatter(x=torch.zeros(1), y=torch.zeros(1), mode='markers', marker_color='yellow',
     #                 marker_size=25, marker_line_color='black', marker_line_width=2,
     #                 name='Experimental Sample')
-    fig.update_layout(yaxis1_range=[0, 40], xaxis1_range=[-1.75, 1.5])
+    fig.update_layout(yaxis1_range=[0, 40], xaxis1_range=[-1.75,-0.75])# 1.5])
     fig.update_layout(yaxis2_range=[0, 5], xaxis2_range=[-1.75, -.75])
     fig.update_layout(legend_orientation='h')
     fig.update_layout(xaxis1_title='log RDF EMD', yaxis1_title='Lattice Distance (Angstrom)')
@@ -360,22 +360,25 @@ def distance_fig(c_dists, model_score, noisy_c_dists, noisy_model_score, noisy_r
 
 
 def density_funnel(model_score, packing_coeff, rdf_dists, ref_model_score, ref_packing_coeff):
+
+
     fontsize = 26
     good_inds = torch.argwhere((packing_coeff > 0.55) * (model_score > 0) * (packing_coeff < 0.9)).squeeze()
-    fig = make_subplots(rows=1, cols=2, subplot_titles=["(a)", "(b)"],
-                        horizontal_spacing=0.125)
-    fig.add_scatter(x=packing_coeff.cpu(), y=model_score.cpu(),
-                    mode='markers', marker_size=12,
-                    marker_color=rdf_dists.clip(max=torch.quantile(rdf_dists, 0.99)).log10().cpu().detach(),  # 'blue',
-                    marker_colorbar=dict(title=dict(text="log RDF EMD")),
-                    marker_colorscale='bluered', opacity=0.6, marker_line_width=1,
-                    marker_line_color='white',
-                    name='Optimized Samples',
-                    marker_coloraxis='coloraxis1',
-                    row=1, col=1)
+    # fig = make_subplots(rows=1, cols=2, subplot_titles=["(a)", "(b)"],
+    #                     horizontal_spacing=0.125)
+    fig = go.Figure()
+    # fig.add_scatter(x=packing_coeff.cpu(), y=model_score.cpu(),
+    #                 mode='markers', marker_size=12,
+    #                 marker_color=rdf_dists.clip(max=torch.quantile(rdf_dists, 0.99)).log10().cpu().detach(),  # 'blue',
+    #                 marker_colorbar=dict(title=dict(text="log RDF EMD")),
+    #                 marker_colorscale='bluered', opacity=0.6, marker_line_width=1,
+    #                 marker_line_color='white',
+    #                 name='Optimized Samples',
+    #                 marker_coloraxis='coloraxis2',
+    #                 row=1, col=1)
     fig.add_scatter(x=packing_coeff[good_inds].cpu(), y=model_score[good_inds].cpu(),
                     mode='markers', marker_size=12,
-                    showlegend=False,
+                    showlegend=True,
                     marker_color=rdf_dists[good_inds].clip(max=torch.quantile(rdf_dists, 0.99)).log10().cpu().detach(),
                     # 'blue',
                     marker_colorbar=dict(title=dict(text="log RDF EMD")),
@@ -383,7 +386,8 @@ def density_funnel(model_score, packing_coeff, rdf_dists, ref_model_score, ref_p
                     marker_line_color='white',
                     name='Optimized Samples',
                     marker_coloraxis='coloraxis2',
-                    row=1, col=2)
+                    #row=1, col=2
+                    )
     # fig.add_scatter(x=noisy_packing_coeff.cpu(), y=noisy_model_score.cpu(),
     #                 mode='markers', marker_size=12,
     #                 opacity=0.75,
@@ -396,25 +400,25 @@ def density_funnel(model_score, packing_coeff, rdf_dists, ref_model_score, ref_p
     fig.add_scatter(x=ref_packing_coeff.cpu(), y=ref_model_score.cpu(), mode='markers', marker_color='yellow',
                     marker_size=25, marker_line_color='black', marker_line_width=2,
                     showlegend=False,
-                    row=1, col=2,
+                    #row=1, col=2,
                     name='Experimental Sample')
+    # fig.update_layout(xaxis1_title='Packing Coefficient', yaxis1_title='Model Score',
+    #                   xaxis1_range=[0, 1]
+    #                   )
     fig.update_layout(xaxis1_title='Packing Coefficient', yaxis1_title='Model Score',
-                      xaxis1_range=[0, 1]
-                      )
-    fig.update_layout(xaxis2_title='Packing Coefficient', yaxis2_title='Model Score',
                       )
     fig.update_annotations(font=dict(size=fontsize))
     fig.update_layout(font_size=fontsize)
     fig.update_layout(
-        coloraxis1=dict(
-            colorscale='bluered',
-            colorbar=dict(
-                title='log RDF EMD',
-                titlefont_size=18,
-                tickfont_size=18,
-                x=0.45  # default position
-            )
-        ),
+        # coloraxis1=dict(
+        #     colorscale='bluered',
+        #     colorbar=dict(
+        #         title='log RDF EMD',
+        #         titlefont_size=18,
+        #         tickfont_size=18,
+        #         x=0.45  # default position
+        #     )
+        # ),
         coloraxis2=dict(
             colorscale='bluered',
             colorbar=dict(
@@ -443,9 +447,10 @@ def density_funnel(model_score, packing_coeff, rdf_dists, ref_model_score, ref_p
         ),
         margin=dict(t=100)  # Increase top margin to make space
     )
+
     fig.show()
 
-    fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\mxt_code\density_funnel.png', width=1920, height=800)
+    fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\mxt_code\density_funnel.png', width=1000, height=800)
 
 
 if __name__ == '__main__':

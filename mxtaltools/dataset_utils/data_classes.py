@@ -505,6 +505,7 @@ class MolCrystalData(MolData):
 
         # cell parameters
         if cell_lengths is not None:
+            # todo add a check here in case the leading dim is already there
             self.cell_lengths = cell_lengths[None, ...]
             self.cell_angles = cell_angles[None, ...]
 
@@ -635,7 +636,8 @@ class MolCrystalData(MolData):
                                             tolerance: float = 1,
                                             target_packing_coeff: Optional = None,
                                             max_attempts: int = 100,
-                                            seed: Optional[int] = None):
+                                            seed: Optional[int] = None,
+                                            sample_niggli: Optional[bool] = True):
         """
         Sample random crystal parameters
         build the resulting crystals and check their vdW overlaps
@@ -648,8 +650,12 @@ class MolCrystalData(MolData):
         converged = False
         iter = 0
         while not converged and iter < max_attempts:
-            self.sample_random_crystal_parameters(target_packing_coeff, seed=seed)
-            _, _, scaled_lj = self.build_and_analyze(cutoff=4)
+            if sample_niggli:
+                self.sample_random_reduced_crystal_parameters(cleaning_mode='hard',
+                                                              target_packing_coeff=target_packing_coeff)
+            else:
+                self.sample_random_crystal_parameters(target_packing_coeff, seed=seed)
+            _, _, scaled_lj = self.build_and_analyze(cutoff=3)
             improved_inds = torch.argwhere(scaled_lj < best_ljs)
             best_ljs[improved_inds] = scaled_lj[improved_inds]
             good_inds = torch.argwhere(scaled_lj < tolerance)
@@ -1306,13 +1312,15 @@ class MolCrystalData(MolData):
         else:
             assert False, "Crystal embedding not implemented for single samples"
 
-    def optimize_crystal_parameters(self, **opt_kwargs):
+    def optimize_crystal_parameters(self,
+                                    mol_orientation: Optional[str] = 'standardized',
+                                    **opt_kwargs):
         if self.is_batch:
             batch_to_optim = self.clone().to(self.device)
         else:
             batch_to_optim = collate_data_list([self]).clone().to(self.device)
 
-        batch_to_optim.orient_molecule(mode='standardized')
+        batch_to_optim.orient_molecule(mode=mol_orientation)
         optimization_record = standalone_gradient_descent_optimization(
             batch_to_optim.cell_parameters(),
             batch_to_optim,
