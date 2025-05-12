@@ -49,7 +49,7 @@ def standalone_gradient_descent_optimization(
     optimization_trajectory = []
 
     converged = False
-    #torch.autograd.set_detect_anomaly(True)
+    # torch.autograd.set_detect_anomaly(True)  # for debugging
     with (torch.enable_grad()):
         with tqdm(total=max_num_steps, disable=not show_tqdm) as pbar:
             s_ind = 0
