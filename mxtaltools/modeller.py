@@ -2260,9 +2260,10 @@ class Modeller:
         # losses related to box
         aunit_lengths = cluster_batch.scale_lengths_to_aunit()
         box_loss = F.softplus(-(aunit_lengths-3)).sum(1)
-        packing_loss = smooth_constraint(aunit_lengths, 3, mode='less than', hardness=10).sum(1)
+        #packing_loss = smooth_constraint(aunit_lengths, 3, mode='less than', hardness=10).sum(1)
+        packing_loss = F.relu((-torch.log(crystal_batch.packing_coeff.clip(min=0.001))) - 0.5)
 
-        loss = vdw_loss #+ packing_loss*0.1 #+ 100 * box_loss
+        loss = vdw_loss + packing_loss #+ 100 * box_loss
 
         return loss, molwise_normed_overlap, molwise_scaled_lj_pot, box_loss, packing_loss, vdw_loss, cluster_batch
 

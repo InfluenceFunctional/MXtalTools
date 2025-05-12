@@ -4,10 +4,11 @@ from copy import copy
 import os
 
 base_config = load_yaml('base.yaml')
-'''
-tests_1/dev_test2
+
+config_list = [
+    {
         'min_batch_size': 500,
-        'max_batch_size': 1000,
+        'max_batch_size': 10000,
         'generator': {
             'samples_per_iter': 5,
             'mean_step_size': 2,
@@ -28,11 +29,10 @@ tests_1/dev_test2
                 'vector_norm': None,
             }
         }
-'''  # simple 1024x4, best and fastest training
-config_list = [
+    },  # 0 - baseline
     {
         'min_batch_size': 500,
-        'max_batch_size': 1000,
+        'max_batch_size': 10000,
         'generator': {
             'samples_per_iter': 5,
             'mean_step_size': 2,
@@ -46,17 +46,17 @@ config_list = [
                 'lr_shrink_lambda': 0.995,
             },
             'model': {
-                'hidden_dim': 512,
-                'dropout': 0.5,
+                'hidden_dim': 1024,
+                'dropout': 0,
                 'norm': 'layer',
-                'num_layers': 40,
+                'num_layers': 4,
                 'vector_norm': None,
             }
         }
-    },  # 0 - baseline  # didn't learn anything, then singular T_fc
+    },  # 1- baseline with norm
     {
         'min_batch_size': 500,
-        'max_batch_size': 100000,
+        'max_batch_size': 10000,
         'generator': {
             'samples_per_iter': 5,
             'mean_step_size': 2,
@@ -70,17 +70,17 @@ config_list = [
                 'lr_shrink_lambda': 0.995,
             },
             'model': {
-                'hidden_dim': 512,
-                'dropout': 0.5,
-                'norm': 'layer',
-                'num_layers': 40,
+                'hidden_dim': 1024,
+                'dropout': 0,
+                'norm': None,
+                'num_layers': 8,
                 'vector_norm': None,
             }
         }
-    },  # 1 - baseline, huge batch # didn't learn much, low usage timeout
+    },  # 2 - baseline double length
     {
         'min_batch_size': 500,
-        'max_batch_size': 1000,
+        'max_batch_size': 10000,
         'generator': {
             'samples_per_iter': 5,
             'mean_step_size': 2,
@@ -97,38 +97,14 @@ config_list = [
                 'hidden_dim': 512,
                 'dropout': 0,
                 'norm': None,
-                'num_layers': 40,
+                'num_layers': 4,
                 'vector_norm': None,
             }
         }
-    },  # 2 - baseline, no norm # didn't learn anything in 2 days
+    },  # 3 - baseline half depth
     {
         'min_batch_size': 500,
-        'max_batch_size': 1000,
-        'generator': {
-            'samples_per_iter': 5,
-            'mean_step_size': 10,
-            'init_vdw_loss_factor': 0.001,
-            'optimizer': {
-                'init_lr': 5e-5,
-                'max_lr': 1e-3,
-                'min_lr': 1e-6,
-                'weight_decay': 0.005,
-                'lr_growth_lambda': 1.1,
-                'lr_shrink_lambda': 0.995,
-            },
-            'model': {
-                'hidden_dim': 512,
-                'dropout': 0,
-                'norm': None,
-                'num_layers': 40,
-                'vector_norm': None,
-            }
-        }
-    },  # 3 - baseline, big steps # very bad, eventual singular matrix
-    {
-        'min_batch_size': 500,
-        'max_batch_size': 1000,
+        'max_batch_size': 10000,
         'generator': {
             'samples_per_iter': 5,
             'mean_step_size': 0.5,
@@ -142,44 +118,20 @@ config_list = [
                 'lr_shrink_lambda': 0.995,
             },
             'model': {
-                'hidden_dim': 512,
-                'dropout': 0.5,
-                'norm': 'layer',
-                'num_layers': 40,
-                'vector_norm': None,
-            }
-        }
-    },  # 4 - baseline, small steps, # didn't learn anything then OOMed out very suddenly
-    {
-        'min_batch_size': 500,
-        'max_batch_size': 1000,
-        'generator': {
-            'samples_per_iter': 5,
-            'mean_step_size': 2,
-            'init_vdw_loss_factor': 0.001,
-            'optimizer': {
-                'init_lr': 5e-5,
-                'max_lr': 1e-3,
-                'min_lr': 1e-6,
-                'weight_decay': 0.005,
-                'lr_growth_lambda': 1.1,
-                'lr_shrink_lambda': 0.995,
-            },
-            'model': {
-                'hidden_dim': 256,
+                'hidden_dim': 1024,
                 'dropout': 0,
                 'norm': None,
-                'num_layers': 10,
+                'num_layers': 4,
                 'vector_norm': None,
             }
         }
-    },  # 5 - baseline, smaller model, only model to learn, about as good as prior best,
+    },  # 4 - baseline small steps
     {
         'min_batch_size': 500,
-        'max_batch_size': 1000,
+        'max_batch_size': 10000,
         'generator': {
-            'samples_per_iter': 10,
-            'mean_step_size': 2,
+            'samples_per_iter': 5,
+            'mean_step_size': 4,
             'init_vdw_loss_factor': 0.001,
             'optimizer': {
                 'init_lr': 5e-5,
@@ -190,15 +142,14 @@ config_list = [
                 'lr_shrink_lambda': 0.995,
             },
             'model': {
-                'hidden_dim': 512,
-                'dropout': 0.5,
-                'norm': 'layer',
-                'num_layers': 40,
+                'hidden_dim': 1024,
+                'dropout': 0,
+                'norm': None,
+                'num_layers': 4,
                 'vector_norm': None,
             }
         }
-    },  # 6 - baseline, many steps, very bad, OOM kill
-
+    },  # 5 - baseline big steps
 ]
 
 
