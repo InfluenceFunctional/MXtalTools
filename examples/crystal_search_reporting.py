@@ -131,7 +131,7 @@ def csp_reporting(optimized_samples,
     #matches = list(np.load('matches_final.npy'))
 
     density_funnel(model_score, packing_coeff, rdf_dists, ref_model_score, ref_packing_coeff)
-    distance_fig(c_dists, model_score, noisy_c_dists, noisy_model_score, noisy_rdf_dists, rdf_dists)
+    distance_fig(c_dists, model_score, noisy_c_dists, noisy_model_score, noisy_rdf_dists, rdf_dists, packing_coeff)
 
     matches, rmsds = batch_compack(best_sample_inds, optimized_samples, original_cluster_batch)
 
@@ -282,37 +282,39 @@ def cluster_batch_to_ccdc_crystals(cluster_batch, inds):
     return crystals
 
 
-def distance_fig(c_dists, model_score, noisy_c_dists, noisy_model_score, noisy_rdf_dists, rdf_dists):
+def distance_fig(c_dists, model_score, noisy_c_dists, noisy_model_score, noisy_rdf_dists, rdf_dists, packing_coeff):
     fontsize = 26
+    good_inds = torch.argwhere((packing_coeff > 0.55) * (model_score > 0) * (packing_coeff < 0.9)).squeeze()
+    good_noisy_inds = torch.argwhere(noisy_model_score > 0).squeeze()
     fig = make_subplots(rows=1, cols=2, subplot_titles=['(a)', '(b)'])
-    fig.add_scatter(x=rdf_dists.log10().cpu().detach(), y=c_dists.cpu().detach(),
+    fig.add_scatter(x=rdf_dists[good_inds].log10().cpu().detach(), y=c_dists[good_inds].cpu().detach(),
                     mode='markers', marker_size=12,
-                    marker_color=model_score.cpu().detach(),  # 'blue',
+                    marker_color=model_score[good_inds].cpu().detach(),  # 'blue',
                     marker_coloraxis='coloraxis',
                     opacity=0.6, marker_line_width=1,
                     marker_line_color='white',
                     name='Optimized Samples', row=1, col=1)
-    fig.add_scatter(x=noisy_rdf_dists.log10().cpu().detach(), y=noisy_c_dists.cpu().detach(),
+    fig.add_scatter(x=noisy_rdf_dists[good_noisy_inds].log10().cpu().detach(), y=noisy_c_dists[good_noisy_inds].cpu().detach(),
                     mode='markers', marker_size=12,
-                    marker_color=noisy_model_score,  # 'black',
+                    marker_color=noisy_model_score[good_noisy_inds],  # 'black',
                     marker_line_width=2,
                     marker_line_color='black',
                     marker_coloraxis='coloraxis',
                     #marker_colorscale='turbo_r',
                     opacity=0.75,
                     name='Noised Experimental Samples', row=1, col=1)
-    fig.add_scatter(x=rdf_dists.log10().cpu().detach(), y=c_dists.cpu().detach(),
+    fig.add_scatter(x=rdf_dists[good_inds].log10().cpu().detach(), y=c_dists[good_inds].cpu().detach(),
                     mode='markers', marker_size=12,
-                    marker_color=model_score.cpu().detach(),  # 'blue',
+                    marker_color=model_score[good_inds].cpu().detach(),  # 'blue',
                     marker_colorbar=dict(title=dict(text="Model Score")),
                     #marker_colorscale='turbo_r',
                     opacity=0.6, marker_line_width=1,
                     marker_coloraxis='coloraxis',
                     marker_line_color='white',
                     name='Optimized Samples', row=1, col=2, showlegend=False)
-    fig.add_scatter(x=noisy_rdf_dists.log10().cpu().detach(), y=noisy_c_dists.cpu().detach(),
+    fig.add_scatter(x=noisy_rdf_dists[good_noisy_inds].log10().cpu().detach(), y=noisy_c_dists[good_noisy_inds].cpu().detach(),
                     mode='markers', marker_size=12,
-                    marker_color=noisy_model_score,  # 'black',
+                    marker_color=noisy_model_score[good_noisy_inds],  # 'black',
                     marker_line_width=2,
                     marker_line_color='black',
                     marker_coloraxis='coloraxis',

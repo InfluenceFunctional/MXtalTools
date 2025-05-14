@@ -150,8 +150,31 @@ config_list = [
             }
         }
     },  # 5 - baseline big steps
+    {
+        'min_batch_size': 500,
+        'max_batch_size': 10000,
+        'generator': {
+            'samples_per_iter': 5,
+            'mean_step_size': 4,
+            'init_vdw_loss_factor': 0.001,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.005,
+                'lr_growth_lambda': 1.25,
+                'lr_shrink_lambda': 0.95,
+            },
+            'model': {
+                'hidden_dim': 1024,
+                'dropout': 0,
+                'norm': None,
+                'num_layers': 4,
+                'vector_norm': None,
+            }
+        }
+    },  # 6 - 5 with faster LR schedule
 ]
-
 
 def overwrite_nested_dict(d1, d2):
     for k, v in d2.items():
