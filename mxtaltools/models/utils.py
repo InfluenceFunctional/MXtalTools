@@ -107,7 +107,8 @@ def undo_1d_bound(x: torch.tensor, x_span, x_center, mode='soft'):
     # todo: write a version for hard bounds
 
     if mode == 'soft':
-        return x_span * torch.atanh((x - x_center) / x_span) + x_center
+        out = x_span * torch.atanh((x - x_center) / x_span) + x_center
+        return out
     elif mode == 'hard':  # linear scaling to hard stop at [center-span, center+span]
         raise ValueError("'hard' bound not yet implemented")
     else:

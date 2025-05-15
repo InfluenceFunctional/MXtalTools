@@ -306,8 +306,15 @@ def parse_to_torch(array: Union[torch.Tensor, np.ndarray, list],
 
 
 def softplus_shift(x: torch.Tensor,
+                   min_val: Optional[Union[float, torch.Tensor]] = 0.01,
                    beta: Optional[float] = 10) -> torch.Tensor:
-    return F.softplus(x - 0.01, beta=beta) + 0.01
+    return F.softplus(x - min_val, beta=beta) + min_val
+
+
+def invert_softplus_shift(y: torch.Tensor,
+                          min_val: Optional[Union[float, torch.Tensor]] = 0.01,
+                          beta: Optional[float] = 10) -> torch.Tensor:
+    return (1.0 / beta) * torch.log(torch.exp(beta * (y - min_val)) - 1.0) + min_val
 
 
 def scale_bh_energy(bh_energy, beta: Optional[float] = 100):
@@ -321,6 +328,7 @@ def smooth_constraint(value: torch.Tensor, threshold: float, mode: 'str', hardne
         return F.softplus(-(value - threshold), beta=hardness) ** 2
     elif mode == 'less than':
         return F.softplus(value - threshold, beta=hardness) ** 2
+
 
 def sample_triangular_right(n_samples, start, stop, device='cpu'):
     """

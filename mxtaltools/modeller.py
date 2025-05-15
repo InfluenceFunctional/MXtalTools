@@ -1981,6 +1981,8 @@ class Modeller:
                         data_loader=None,
                         update_weights=True,
                         iteration_override=None):
+        if not hasattr(self, 'vdw_loss_factor'):
+            self.vdw_loss_factor = self.config.generator.init_vdw_loss_factor
 
         if update_weights:
             self.models_dict['generator'].train(True)
@@ -2244,7 +2246,7 @@ class Modeller:
 
         return discriminator_losses, stats
 
-    def analyze_generator_sample(self, crystal_batch):
+    def analyze_generator_sample(self, crystal_batch, last_iter: Optional[bool] = False):
         # build and analyze crystal
         cluster_batch = crystal_batch.mol2cluster(cutoff=6,
                                                   supercell_size=10,
@@ -2257,13 +2259,19 @@ class Modeller:
         # get generator loss - a SiLU fitted roughly to 12-6 LJ minimum, with shorter range and softer repulsion
         vdw_loss = cluster_batch.compute_silu_energy()
 
-        # losses related to box
+        # losses related to box - not too big, not too small
         aunit_lengths = cluster_batch.scale_lengths_to_aunit()
-        box_loss = F.softplus(-(aunit_lengths-3)).sum(1)
-        #packing_loss = smooth_constraint(aunit_lengths, 3, mode='less than', hardness=10).sum(1)
-        packing_loss = F.relu((-torch.log(crystal_batch.packing_coeff.clip(min=0.001))) - 0.5)
+        box_loss = F.softplus(-(aunit_lengths - 3)).sum(1) + F.softplus(
+            aunit_lengths - (4 * 2 * crystal_batch.radius[:, None])).sum(1)
+        packing_loss = F.relu((-torch.log(crystal_batch.packing_coeff.clip(min=0.00001))) - 0.5)
 
-        loss = vdw_loss + packing_loss #+ 100 * box_loss
+        if self.epoch_type == 'train' and last_iter:
+            if (box_loss).mean() < 0.01 and self.vdw_loss_factor < 1:
+                self.vdw_loss_factor *= 1.001
+            elif (box_loss).mean() > 0.02 and self.vdw_loss_factor > 1e-3:
+                self.vdw_loss_factor *= 0.999
+
+        loss = self.vdw_loss_factor * vdw_loss + packing_loss + box_loss
 
         return loss, molwise_normed_overlap, molwise_scaled_lj_pot, box_loss, packing_loss, vdw_loss, cluster_batch
 
@@ -2279,9 +2287,7 @@ class Modeller:
         - score crystal
         - backprop score
         """
-        if not hasattr(self, 'vdw_loss_factor'):
-            self.vdw_loss_factor = self.config.generator.init_vdw_loss_factor
-
+        """Initialize random crystal batch"""
         mol_batch.recenter_molecules()
         mol_batch.orient_molecule(self.config.generator.canonical_conformer_orientation,
                                   include_inversion=False)
@@ -2299,12 +2305,11 @@ class Modeller:
                                            range(mol_batch.num_graphs)])
 
         target_cps = (torch.randn(mol_batch.num_graphs, device=self.device) * 0.0447 + 0.6226).clip(min=0.45, max=0.95)
-        crystal_batch.sample_random_reduced_crystal_parameters(cleaning_mode='hard',
-                                                               target_packing_coeff=target_cps)
+        crystal_batch.sample_random_reduced_crystal_parameters(target_packing_coeff=target_cps)
 
-        cleaned_prior = crystal_batch.standardize_cell_parameters().clone().detach()
+        """analyze random prior sample"""
+        prior_in_gen_basis = crystal_batch.cell_params_to_gen_basis().clone().detach()
         destandardized_prior = crystal_batch.cell_parameters().clone().detach()
-
         (vdw_losses, molwise_normed_overlap, molwise_scaled_lj_pot,
          box_loss, packing_loss, vdw_loss, cluster_batch) = self.analyze_generator_sample(
             crystal_batch)
@@ -2313,50 +2318,49 @@ class Modeller:
             vector_embedding = self.models_dict['autoencoder'].encode(mol_batch.clone())
             scalar_embedding = self.models_dict['autoencoder'].scalarizer(vector_embedding)
 
+        stats = {
+            'prior': destandardized_prior.detach(),
+            'mol_radius': crystal_batch.radius.detach(),
+            'generated_space_group_numbers': crystal_batch.sg_ind.detach(),
+            'vdw_factor': self.vdw_loss_factor,
+        }
+        dict_of_tensors_to_cpu_numpy(stats)
+
         for ind in range(self.config.generator.samples_per_iter):
             if ind == 0:
-                init_state = cleaned_prior.detach().clone()
+                init_state = prior_in_gen_basis.detach().clone()
                 prev_vdw_loss = vdw_losses.detach().clone()
             else:
-                init_state = std_generated_cell_params.detach().clone()
+                init_state = gen_basis_sample.detach().clone()
                 prev_vdw_loss = vdw_losses.detach().clone()
 
             # get proposed step
-            step_size = 2 * self.config.generator.mean_step_size * torch.rand(mol_batch.num_graphs, device=self.device)[:, None]
+            step_size = 2 * self.config.generator.mean_step_size * torch.rand(mol_batch.num_graphs, device=self.device)[
+                                                                   :, None]
             generator_proposed_step = self.models_dict['generator'](x=scalar_embedding,
-                                                                  v=vector_embedding,
-                                                                  sg_ind_list=crystal_batch.sg_ind,
-                                                                  step_size=step_size,
-                                                                  prior=init_state)
+                                                                    v=vector_embedding,
+                                                                    sg_ind_list=crystal_batch.sg_ind,
+                                                                    max_step_size=step_size,
+                                                                    prior=init_state)
+
             generator_raw_samples = init_state + generator_proposed_step
 
             # build proposed crystal
             new_crystal_batch = crystal_batch.clone().detach()
-            new_crystal_batch.set_cell_parameters(
-                new_crystal_batch.destandardize_cell_parameters(generator_raw_samples)
-            )
-            new_crystal_batch.clean_cell_parameters(mode='hard',
-                                                    enforce_niggli=True)
+            new_crystal_batch.gen_basis_to_cell_params(generator_raw_samples)  # cleaning implicit in this function
 
             # analyze cell
             (vdw_losses, molwise_normed_overlap, molwise_scaled_lj_pot,
              box_loss, packing_loss, vdw_loss, cluster_batch) = self.analyze_generator_sample(
-                new_crystal_batch)
+                new_crystal_batch, ind == (self.config.generator.samples_per_iter - 1))
 
             # penalize the genrator for taking large steps
-            std_generated_cell_params = new_crystal_batch.standardize_cell_parameters()
-            prior_loss = F.relu(generator_proposed_step.norm(dim=1) - step_size)**2
+            gen_basis_sample = new_crystal_batch.cell_params_to_gen_basis()
 
             # get total loss
             vdw_step_loss = (vdw_losses - prev_vdw_loss)
-            generator_losses = self.vdw_loss_factor * vdw_step_loss + prior_loss
+            generator_losses = vdw_step_loss
             generator_loss = generator_losses.mean()
-
-            if self.epoch_type == 'train':
-                if prior_loss.mean() < 0.01 and self.vdw_loss_factor < 1:
-                    self.vdw_loss_factor *= 1.001
-                elif prior_loss.mean() > 0.02 and self.vdw_loss_factor > 1e-3:
-                    self.vdw_loss_factor *= 0.999
 
             if update_weights:
                 self.optimizers_dict['generator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
@@ -2369,25 +2373,18 @@ class Modeller:
                 self.logger.update_current_losses('generator', self.epoch_type,
                                                   generator_loss.data.detach().cpu().numpy(),
                                                   generator_losses.detach().cpu().numpy())
-                stats = {
-                    'generated_space_group_numbers': new_crystal_batch.sg_ind.detach(),
+                stats.update({
                     'step_size': generator_proposed_step.norm(dim=1).detach(),
-                    'identifiers': mol_batch.identifier,
-                    'smiles': mol_batch.smiles,
                     'box_loss': box_loss.detach(),
                     'vdw_step_loss': vdw_step_loss.detach(),
                     'generator_vdw_loss': vdw_loss.detach(),
                     'per_mol_scaled_LJ_energy': molwise_scaled_lj_pot.detach(),
                     'per_mol_normed_overlap': molwise_normed_overlap.detach(),
                     'packing_coefficient': new_crystal_batch.packing_coeff.detach(),
-                    'sample_iter': torch.ones(new_crystal_batch.num_graphs) * ind,
-                    'prior': destandardized_prior.detach(),
-                    'mol_radius': new_crystal_batch.radius.detach(),
+                    'sample_iter': torch.ones(new_crystal_batch.num_graphs) * ind + 1,
                     'cell_parameters': new_crystal_batch.cell_parameters().detach(),
-                    'vdw_factor': self.vdw_loss_factor,
-                    'prior_loss': prior_loss.mean(-1).cpu().detach(),
                     'cell_delta': generator_proposed_step.cpu().detach(),
-                }
+                })
                 if step == 0:
                     stats['generator_samples'] = cluster_batch.clone().detach()
 

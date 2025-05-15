@@ -1256,32 +1256,27 @@ def log_crystal_samples(epoch_stats_dict: Optional[dict] = None, sample_batch: O
 def generated_cell_scatter_fig(epoch_stats_dict, layout):
     scaled_vdw = epoch_stats_dict['per_mol_scaled_LJ_energy']
     vdw_overlap = epoch_stats_dict['per_mol_normed_overlap']
-    scatter_dict = {'vdw_score': vdw_overlap,
+    scatter_dict = {'vdw_overlap': vdw_overlap,
                     'packing_coefficient': epoch_stats_dict['packing_coefficient'],
-                    'vdw_energy': scaled_vdw,
+                    'energy': scaled_vdw,
                     }
-    opacity = max(0.25, 1 - len(scatter_dict['vdw_score']) / 5e4)
+    opacity = max(0.25, 1 - len(scatter_dict['energy']) / 5e4)
     df = pd.DataFrame.from_dict(scatter_dict)
-    maxval = np.log(1 + vdw_overlap).max()
-    cscale = [[0, 'green'], [0.01, 'blue'], [1, 'red']]
-    fig = go.Figure()
-    fig.add_scatter(
-        x=df['vdw_energy'],
-        y=np.clip(df['packing_coefficient'], a_min=0, a_max=2),
-        mode='markers',
-        marker_color=np.log(1 + df['vdw_score']),
-        opacity=opacity,
-        marker={"cmin": 0, "cmax": maxval,
-                "colorbar_title": "vdw Overlaps",
-                'colorscale': cscale},
-    )
-    fig.layout.margin = layout.margin
-    fig.update_layout(xaxis_title='LJ Energy', yaxis_title='Packing Coeff')
-    fig.update_layout(xaxis_range=[-np.inf, np.inf],
-                      yaxis_range=[0, 1],
+    fig = px.scatter(scatter_dict,
+                     x='packing_coefficient', y='energy',
+                     color='vdw_overlap',
+                     marginal_x='violin', marginal_y='violin',
+                     opacity=opacity
+                     )
+
+    fig.update_layout(yaxis_title='Energy', xaxis_title='Packing Coeff')
+    fig.update_layout(yaxis_range=[np.amin(df['energy']) - np.ptp(df['energy']) * 0.1,
+                                   np.amax(df['energy']) + np.ptp(df['energy']) * 0.1],
+                      xaxis_range=[max(0, np.amin(df['packing_coefficient']) * 0.9),
+                                   min(2, np.amax(df['packing_coefficient']) * 1.1)],
                       )
 
-    if len(df['vdw_score']) > 1000:
+    if len(df['vdw_overlap']) > 1000:
         fig.write_image('fig.png', width=512, height=512)  # save the image rather than the fig, for size reasons
         return wandb.Image('fig.png')
     else:

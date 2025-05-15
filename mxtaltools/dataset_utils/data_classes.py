@@ -22,7 +22,8 @@ from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
 from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE
 from mxtaltools.crystal_building.random_crystal_sampling import sample_aunit_lengths, sample_cell_angles, \
-    sample_aunit_orientations, sample_aunit_centroids, sample_reduced_box_vectors
+    sample_aunit_orientations, sample_aunit_centroids, sample_reduced_box_vectors, randn_to_niggli_box_vectors, \
+    std_normal_to_aunit_orientations, aunit_orientations_to_std_normal, niggli_box_vectors_to_randn
 from mxtaltools.crystal_building.utils import get_aunit_positions, aunit2unit_cell, parameterize_crystal_batch, \
     unit_cell_to_supercell_cluster, align_mol_batch_to_standard_axes, canonicalize_rotvec
 from mxtaltools.crystal_search.standalone_crystal_opt import standalone_gradient_descent_optimization
@@ -444,12 +445,12 @@ class MolCrystalData(MolData):
 
     def __init__(self,
                  molecule: Optional[MolData] = None,
-                 sg_ind: Optional[Union[int, torch.LongTensor]] = None,
+                 sg_ind: Optional[Union[int, torch.Tensor]] = None,
                  cell_lengths: Optional[torch.Tensor] = None,
                  cell_angles: Optional[torch.Tensor] = None,
                  aunit_centroid: Optional[torch.Tensor] = None,
                  aunit_orientation: Optional[torch.Tensor] = None,
-                 aunit_handedness: Optional[int] = None,
+                 aunit_handedness: Optional[Union[torch.Tensor, int]] = None,
                  identifier: Optional[str] = None,
                  unit_cell_pos: Optional[np.ndarray] = None,
                  nonstandard_symmetry: Optional[bool] = False,
@@ -486,7 +487,8 @@ class MolCrystalData(MolData):
                     assert False, "symmetry_operators must be given for nonstandard symmetry operations"
                 self.nonstandard_symmetry = True
             else:  # standard symmetry
-                self.symmetry_operators = np.stack(SYM_OPS[int(sg_ind)])  # if saved as a tensor, we get collation issues
+                self.symmetry_operators = np.stack(
+                    SYM_OPS[int(sg_ind)])  # if saved as a tensor, we get collation issues
                 self.nonstandard_symmetry = False
 
             self.sym_mult = torch.ones(1, dtype=torch.long, device=self.device) * len(self.symmetry_operators)
@@ -565,7 +567,6 @@ class MolCrystalData(MolData):
         else:
             self.cell_angles = sample_cell_angles(1).to(self.device)
 
-
     def sample_random_aunit_orientations(self):
         if 'Batch' in self.__class__.__name__:
             self.aunit_orientation = sample_aunit_orientations(self.num_graphs).to(self.device)
@@ -579,6 +580,12 @@ class MolCrystalData(MolData):
             aunit_centroid = sample_aunit_centroids(1).to(self.device)
 
         self.aunit_centroid = self.scale_centroid_to_unit_cell(aunit_centroid)
+
+    def uniform_to_std_normal(self, uniform):
+        return torch.distributions.Normal(0, 1).icdf(uniform.clip(min=1e-5, max=1-1e-5))  # prevent exploding values
+
+    def std_normal_to_uniform(self, rands):
+        return torch.distributions.Normal(0, 1).cdf(rands)
 
     def sample_random_crystal_parameters(self,
                                          target_packing_coeff: Optional = None,
@@ -596,18 +603,69 @@ class MolCrystalData(MolData):
     def sample_random_reduced_crystal_parameters(self,
                                                  target_packing_coeff: Optional = None,
                                                  seed: Optional[int] = None,
-                                                 cleaning_mode: Optional[str] = 'hard',
                                                  ):
+        """
+        Sample random crystal parameters that are automatically Niggli-reduced
+        """
         if seed is not None:
             torch.manual_seed(seed)
 
         self.sample_reduced_box_vectors(target_packing_coeff=target_packing_coeff)
         self.sample_random_aunit_orientations()
         self.sample_random_aunit_centroids()
-        self.clean_cell_parameters(mode=cleaning_mode,
-                                   canonicalize_orientations=False,
-                                   angle_pad=1,
-                                   length_pad=3)
+        # enforce agreement with crystal system
+        # other cell parameters are valid by explicit construction
+        # todo add crystal system conditions to samplng workflow, rather than cleaning up here
+        self.cell_lengths, self.cell_angles = enforce_crystal_system(
+            self.cell_lengths,
+            self.cell_angles,
+            self.sg_ind
+        )
+        self.box_analysis()
+
+    def gen_basis_to_cell_params(self, std_normal: torch.tensor):
+        if not hasattr(self, 'asym_unit_dict'):
+            self.asym_unit_dict = self.build_asym_unit_dict()
+
+        assert std_normal.isfinite().all()
+
+        a_out, al_out, b_out, be_out, c_out, ga_out = (
+            randn_to_niggli_box_vectors(self.asym_unit_dict,
+                                        self.radius,
+                                        std_normal[:, :6],
+                                        self.sg_ind))
+        self.cell_lengths = torch.vstack([a_out, b_out, c_out]).T
+        self.cell_angles = torch.vstack([al_out, be_out, ga_out]).T
+
+        self.aunit_orientation = std_normal_to_aunit_orientations(std_normal[:, 9:])
+        aunit_scaled_centroids = self.std_normal_to_uniform(std_normal[:, 6:9])
+        self.aunit_centroid = aunit_scaled_centroids * torch.stack([self.asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
+
+        self.cell_lengths, self.cell_angles = enforce_crystal_system(
+            self.cell_lengths,
+            self.cell_angles,
+            self.sg_ind
+        )
+        self.box_analysis()
+
+    def cell_params_to_gen_basis(self):
+        if not hasattr(self, 'asym_unit_dict'):
+            self.asym_unit_dict = self.build_asym_unit_dict()
+
+        aunit_scaled_centroids = self.aunit_centroid / torch.stack([self.asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
+        std_aunit = self.uniform_to_std_normal(aunit_scaled_centroids)
+        std_orientation = aunit_orientations_to_std_normal(self.aunit_orientation)
+        a, b, c = self.cell_lengths.split(1, dim=1)
+        al, be, ga = self.cell_angles.split(1, dim=1)
+        a_out, al_out, b_out, be_out, c_out, ga_out = (
+            niggli_box_vectors_to_randn(self.asym_unit_dict,
+                                        self.radius,
+                                        a.flatten(), b.flatten(), c.flatten(), al.flatten(), be.flatten(), ga.flatten(),
+                                        self.sg_ind))
+        std_cell_lengths = torch.vstack([a_out, b_out, c_out]).T
+        std_cell_angles = torch.vstack([al_out, be_out, ga_out]).T
+        std_cell_params = torch.cat([std_cell_lengths, std_cell_angles, std_aunit, std_orientation], dim=1)
+        return std_cell_params
 
     def sample_reduced_box_vectors(self, target_packing_coeff: Optional[float] = None):
         if not hasattr(self, 'asym_unit_dict'):
@@ -690,7 +748,8 @@ class MolCrystalData(MolData):
         else:
             return arr / self.radius[None]
 
-    def build_asym_unit_dict(self, force_all_sgs: Optional[bool] = False):  # todo add capability to only do this for the necessary keys
+    def build_asym_unit_dict(self, force_all_sgs: Optional[
+        bool] = False):  # todo add capability to only do this for the necessary keys
         """
         NOTE this function is extremely slow
         Best used during batch operations
@@ -1036,7 +1095,8 @@ class MolCrystalData(MolData):
         if mode == 'hard':
             self.cell_lengths = self.cell_lengths.clip(min=length_pad)
         elif mode == 'soft':
-            self.cell_lengths = softplus_shift(self.cell_lengths - length_pad) + length_pad  # enforces a minimum value of 3
+            self.cell_lengths = softplus_shift(
+                self.cell_lengths - length_pad) + length_pad  # enforces a minimum value of 3
 
         # range from (0,pi) with padding to prevent too-skinny cells
         self.cell_angles = enforce_1d_bound(self.cell_angles,
@@ -1050,21 +1110,22 @@ class MolCrystalData(MolData):
             b_scale = enforce_1d_bound((b / c), 0.5, 0.5, mode=mode)
             a_scale = enforce_1d_bound((a / b), 0.5, 0.5, mode=mode)
             self.cell_lengths = torch.cat([
-                a_scale*b_scale*c,
-                b_scale*c,
+                a_scale * b_scale * c,
+                b_scale * c,
                 c],
                 dim=1)
 
             # enforce the scaling factor cos(alpha) / (b/2c) in the range [0, 1]
             al_cos, be_cos, ga_cos = self.cell_angles.cos().split(1, 1)
-            a, b, c = self.cell_lengths.split(1,1)
+            a, b, c = self.cell_lengths.split(1, 1)
             al_cos_max = (b / 2 / c)
             be_cos_max = (a / 2 / c)
             ga_cos_max = (a / 2 / b)
             al_cos_scale = enforce_1d_bound(al_cos / al_cos_max, 0.5, 0.5, mode=mode)
             be_cos_scale = enforce_1d_bound(be_cos / be_cos_max, 0.5, 0.5, mode=mode)
             ga_cos_scale = enforce_1d_bound(ga_cos / ga_cos_max, 0.5, 0.5, mode=mode)
-            al = torch.arccos(al_cos_max * al_cos_scale.clip(min=0.01, max=0.99))  # limit it here due to instability in arccos
+            al = torch.arccos(
+                al_cos_max * al_cos_scale.clip(min=0.01, max=0.99))  # limit it here due to instability in arccos
             be = torch.arccos(be_cos_max * be_cos_scale.clip(min=0.01, max=0.99))
             ga = torch.arccos(ga_cos_max * ga_cos_scale.clip(min=0.01, max=0.99))
             self.cell_angles = torch.cat([
@@ -1246,7 +1307,7 @@ class MolCrystalData(MolData):
 
     def set_cell_parameters(self,
                             cell_parameters,
-                            skip_box_analysis: bool=False):
+                            skip_box_analysis: bool = False):
         (self.cell_lengths, self.cell_angles,
          self.aunit_centroid, self.aunit_orientation) = (
             cell_parameters.split(3, dim=1))
