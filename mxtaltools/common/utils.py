@@ -337,3 +337,16 @@ def sample_triangular_right(n_samples, start, stop, device='cpu'):
     """
     U = torch.rand(n_samples, device=device)
     return start + (stop - start) * torch.sqrt(U)
+
+
+def siginv(x):
+    """inverts the sigmoid function"""
+    return torch.log(x/(1-x))
+
+
+def std_normal_to_uniform(rands):
+    return torch.distributions.Normal(0, 1).cdf(rands)
+
+
+def uniform_to_std_normal(uniform):
+    return torch.distributions.Normal(0, 1).icdf(uniform.clip(min=1e-5, max=1-1e-5))  # prevent exploding values

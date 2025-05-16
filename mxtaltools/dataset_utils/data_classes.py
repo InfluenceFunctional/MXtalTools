@@ -17,7 +17,7 @@ from mxtaltools.analysis.vdw_analysis import vdw_analysis, electrostatic_analysi
 from mxtaltools.common.geometry_utils import batch_compute_molecule_volume, \
     compute_mol_radius, batch_compute_mol_radius, batch_compute_mol_mass, compute_mol_mass, center_mol_batch, \
     apply_rotation_to_batch, enforce_crystal_system, batch_compute_fractional_transform
-from mxtaltools.common.utils import softplus_shift
+from mxtaltools.common.utils import softplus_shift, std_normal_to_uniform, uniform_to_std_normal
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
 from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE
@@ -438,6 +438,8 @@ class MolData(MXtalBase):  # todo add method for batch_molecule_compute_principa
 
 
 # noinspection PyPropertyAccess
+
+
 class MolCrystalData(MolData):
     r"""
     A data object representing a molecular crystal with Z prime = 1 (exactly one molecule in asymmetric unit)
@@ -581,12 +583,6 @@ class MolCrystalData(MolData):
 
         self.aunit_centroid = self.scale_centroid_to_unit_cell(aunit_centroid)
 
-    def uniform_to_std_normal(self, uniform):
-        return torch.distributions.Normal(0, 1).icdf(uniform.clip(min=1e-5, max=1-1e-5))  # prevent exploding values
-
-    def std_normal_to_uniform(self, rands):
-        return torch.distributions.Normal(0, 1).cdf(rands)
-
     def sample_random_crystal_parameters(self,
                                          target_packing_coeff: Optional = None,
                                          seed: Optional[int] = None,
@@ -638,7 +634,7 @@ class MolCrystalData(MolData):
         self.cell_angles = torch.vstack([al_out, be_out, ga_out]).T
 
         self.aunit_orientation = std_normal_to_aunit_orientations(std_normal[:, 9:])
-        aunit_scaled_centroids = self.std_normal_to_uniform(std_normal[:, 6:9])
+        aunit_scaled_centroids = std_normal_to_uniform(std_normal[:, 6:9])
         self.aunit_centroid = aunit_scaled_centroids * torch.stack([self.asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
 
         self.cell_lengths, self.cell_angles = enforce_crystal_system(
@@ -653,7 +649,7 @@ class MolCrystalData(MolData):
             self.asym_unit_dict = self.build_asym_unit_dict()
 
         aunit_scaled_centroids = self.aunit_centroid / torch.stack([self.asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
-        std_aunit = self.uniform_to_std_normal(aunit_scaled_centroids)
+        std_aunit = uniform_to_std_normal(aunit_scaled_centroids)
         std_orientation = aunit_orientations_to_std_normal(self.aunit_orientation)
         a, b, c = self.cell_lengths.split(1, dim=1)
         al, be, ga = self.cell_angles.split(1, dim=1)
@@ -665,6 +661,8 @@ class MolCrystalData(MolData):
         std_cell_lengths = torch.vstack([a_out, b_out, c_out]).T
         std_cell_angles = torch.vstack([al_out, be_out, ga_out]).T
         std_cell_params = torch.cat([std_cell_lengths, std_cell_angles, std_aunit, std_orientation], dim=1)
+        assert std_cell_params.isfinite().all()
+
         return std_cell_params
 
     def sample_reduced_box_vectors(self, target_packing_coeff: Optional[float] = None):
@@ -750,7 +748,7 @@ class MolCrystalData(MolData):
 
     def build_asym_unit_dict(self, force_all_sgs: Optional[
         bool] = False):  # todo add capability to only do this for the necessary keys
-        """
+        """  # todo unify this throughout this file
         NOTE this function is extremely slow
         Best used during batch operations
         """

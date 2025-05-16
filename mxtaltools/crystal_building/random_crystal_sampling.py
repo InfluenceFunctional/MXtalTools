@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch.distributions import MultivariateNormal
 
 from mxtaltools.common.geometry_utils import cell_vol_angle_factor, batch_cell_vol_torch
-from mxtaltools.common.utils import softplus_shift, invert_softplus_shift
+from mxtaltools.common.utils import softplus_shift, invert_softplus_shift, siginv
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.models.utils import enforce_1d_bound, undo_1d_bound
 
@@ -101,7 +101,8 @@ def aunit_orientations_to_std_normal(rotvecs):
     """
     inverts the above std_normal to aunit orientations
     """
-    recovered_norms = rotvecs.norm(dim=1)
+    eps = 1e-5
+    recovered_norms = rotvecs.norm(dim=1).clip(min=eps, max=torch.pi*2-eps)
     original_norms = undo_1d_bound(recovered_norms, torch.pi, torch.pi, mode='soft')
 
     # Undo the rescaling
@@ -207,16 +208,20 @@ def randn_to_niggli_box_vectors(asym_unit_dict, mol_radii, rands,
     # we can help the representation by manually applying that here
     # clip at 4x the diameter, applied before exp for stability
     destd_log = log_mean + log_std * rands[:, 2]
-    log_auc = softplus_shift(destd_log, min_val=np.log(0.1))
+    min_val = 0.1
+    max_val = 4
+    log_auc = sigmoid_shift(destd_log, np.log(min_val), np.log(max_val))
     auc_normed = torch.exp(log_auc)
     # then, convert to the absolute unit cell c, still normalized
     c_normed = auc_normed / torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_inds])[:, 2]
     # then, denormalize
     c_denormed = c_normed * 2 * mol_radii
     # a and b are simple fractions of c, right-triangle distributed
+    # set a hard limit at 0.1 for practical purposes
     # sigmoid of N+1 looks kindof similar
-    b_scale = F.sigmoid(rands[:, 1] + 1)
-    a_scale = F.sigmoid(rands[:, 0] + 1)
+    min_scale = 0.1
+    b_scale = min_scale + (1-min_scale) * F.sigmoid(rands[:, 1] + 1)
+    a_scale = min_scale + (1-min_scale) * F.sigmoid(rands[:, 0] + 1)
     c_out = c_denormed
     b_out = b_scale * c_out
     a_out = a_scale * b_out
@@ -245,14 +250,19 @@ def niggli_box_vectors_to_randn(asym_unit_dict, mol_radii, a, b, c, al, be, ga, 
     c_normed = c / 2 / mol_radii
     auc_normed = c_normed * torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_inds])[:, 2]
     log_auc = torch.log(auc_normed)
-    c_lognorm = invert_softplus_shift(log_auc, np.log(0.1))
+    min_val = 0.1
+    max_val = 4
+    eps = 1e-4
+    c_lognorm = inverse_sigmoid_shift(log_auc.clip(min=np.log(min_val + eps), max=np.log(max_val - eps)), np.log(min_val), np.log(max_val))
     c_std = (c_lognorm - log_mean) / log_std
 
     # recover a and b
-    a_scale = a / b
-    b_scale = b / c
-    a_std = torch.log(a_scale / (1 - a_scale)) - 1
-    b_std = torch.log(b_scale / (1 - b_scale)) - 1
+    min_scale = 0.1
+    eps = 1e-3
+    a_scale = (a / b).clip(min=min_scale+eps, max=1-eps)
+    b_scale = (b / c).clip(min=min_scale+eps, max=1-eps)
+    a_std = siginv((a_scale - min_scale)/(1-min_scale)) - 1
+    b_std = siginv((b_scale - min_scale)/(1-min_scale)) - 1
 
     # recover angles
     cos_al_out_max = (b / 2 / c)
@@ -262,16 +272,28 @@ def niggli_box_vectors_to_randn(asym_unit_dict, mol_radii, a, b, c, al, be, ga, 
     al_cos_out = torch.cos(al)
     be_cos_out = torch.cos(be)
     ga_cos_out = torch.cos(ga)
-    sigmoid_al_scaled = al_cos_out / cos_al_out_max
-    sigmoid_be_scaled = be_cos_out / cos_be_out_max
-    sigmoid_ga_scaled = ga_cos_out / cos_ga_out_max
-    al_std = 0.5 * torch.log(sigmoid_al_scaled / (1 - sigmoid_al_scaled))
-    be_std = 0.5 * torch.log(sigmoid_be_scaled / (1 - sigmoid_be_scaled))
-    ga_std = 0.5 * torch.log(sigmoid_ga_scaled / (1 - sigmoid_ga_scaled))
+    sigmoid_al_scaled = (al_cos_out / cos_al_out_max).clip(min=eps, max=1-eps)
+    sigmoid_be_scaled = (be_cos_out / cos_be_out_max).clip(min=eps, max=1-eps)
+    sigmoid_ga_scaled = (ga_cos_out / cos_ga_out_max).clip(min=eps, max=1-eps)
+    al_std = 0.5 * siginv(sigmoid_al_scaled)
+    be_std = 0.5 * siginv(sigmoid_be_scaled)
+    ga_std = 0.5 * siginv(sigmoid_ga_scaled)
 
-    assert torch.sum(torch.isnan(c_std)) == 0
+    assert a_std.isfinite().all()
+    assert b_std.isfinite().all()
+    assert c_std.isfinite().all()
+    assert al_std.isfinite().all()
+    assert be_std.isfinite().all()
+    assert ga_std.isfinite().all()
 
     return a_std, al_std, b_std, be_std, c_std, ga_std
+
+
+def sigmoid_shift(x, x_min, x_max):
+    return x_min + (x_max - x_min) * torch.sigmoid(x)
+
+def inverse_sigmoid_shift(x, x_min, x_max):
+    return siginv((x - x_min) / (x_max - x_min))
 
     """
     # test inverse performance
