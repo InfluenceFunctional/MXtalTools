@@ -707,8 +707,7 @@ class MolCrystalData(MolData):
         iter = 0
         while not converged and iter < max_attempts:
             if sample_niggli:
-                self.sample_random_reduced_crystal_parameters(cleaning_mode='hard',
-                                                              target_packing_coeff=target_packing_coeff)
+                self.sample_random_reduced_crystal_parameters(target_packing_coeff=target_packing_coeff)
             else:
                 self.sample_random_crystal_parameters(target_packing_coeff, seed=seed)
             _, _, scaled_lj = self.build_and_analyze(cutoff=3)
