@@ -62,7 +62,7 @@ generate_sgs:
 generator:
   canonical_conformer_orientation: random
   init_vdw_loss_factor: 0.001
-  mean_step_size: 4
+  mean_step_size: 2
   model:
     dropout: 0
     hidden_dim: 1024
@@ -94,10 +94,10 @@ logger:
   sample_reporting_frequency: 10
   stats_reporting_frequency: 10
 machine: cluster
-max_batch_size: 2500
+max_batch_size: 10000
 max_epoch_steps: 200
 max_epochs: 10000
-min_batch_size: 250
+min_batch_size: 500
 minimum_epochs: 50
 misc_dataset_name: misc_data_for_qm9_dataset.npy
 mode: generator

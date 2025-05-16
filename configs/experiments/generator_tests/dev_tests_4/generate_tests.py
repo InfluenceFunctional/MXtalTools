@@ -31,8 +31,8 @@ config_list = [
         }
     },  # 0 - baseline: 6 from last battery
     {
-        'min_batch_size': 25,
-        'max_batch_size': 1000,
+        'min_batch_size': 250,
+        'max_batch_size': 2500,
         'generator': {
             'samples_per_iter': 5,
             'mean_step_size': 4,
@@ -78,6 +78,150 @@ config_list = [
             }
         }
     },  # 2 - smaller model
+    {
+        'min_batch_size': 500,
+        'max_batch_size': 10000,
+        'generator': {
+            'samples_per_iter': 5,
+            'mean_step_size': 4,
+            'init_vdw_loss_factor': 0.001,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.005,
+                'lr_growth_lambda': 1.25,
+                'lr_shrink_lambda': 0.95,
+            },
+            'model': {
+                'hidden_dim': 512,
+                'dropout': 0,
+                'norm': None,
+                'num_layers': 20,
+                'vector_norm': None,
+            }
+        }
+    },  # 3 - deep model
+    {
+        'min_batch_size': 500,
+        'max_batch_size': 10000,
+        'generator': {
+            'samples_per_iter': 5,
+            'mean_step_size': 4,
+            'init_vdw_loss_factor': 0.001,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.005,
+                'lr_growth_lambda': 1.25,
+                'lr_shrink_lambda': 0.95,
+            },
+            'model': {
+                'hidden_dim': 512,
+                'dropout': 0,
+                'norm': 'layer',
+                'num_layers': 20,
+                'vector_norm': None,
+            }
+        }
+    },  # 4 - deep model with norm
+    {
+        'min_batch_size': 500,
+        'max_batch_size': 10000,
+        'generator': {
+            'samples_per_iter': 2,
+            'mean_step_size': 4,
+            'init_vdw_loss_factor': 0.001,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.005,
+                'lr_growth_lambda': 1.25,
+                'lr_shrink_lambda': 0.95,
+            },
+            'model': {
+                'hidden_dim': 1024,
+                'dropout': 0,
+                'norm': None,
+                'num_layers': 4,
+                'vector_norm': None,
+            }
+        }
+    },  # 5 - few steps
+    {
+        'min_batch_size': 500,
+        'max_batch_size': 10000,
+        'generator': {
+            'samples_per_iter': 5,
+            'mean_step_size': 2,
+            'init_vdw_loss_factor': 0.001,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.005,
+                'lr_growth_lambda': 1.25,
+                'lr_shrink_lambda': 0.95,
+            },
+            'model': {
+                'hidden_dim': 1024,
+                'dropout': 0,
+                'norm': None,
+                'num_layers': 4,
+                'vector_norm': None,
+            }
+        }
+    },  # 6 - small steps
+    {
+        'min_batch_size': 500,
+        'max_batch_size': 10000,
+        'generator': {
+            'samples_per_iter': 2,
+            'mean_step_size': 2,
+            'init_vdw_loss_factor': 0.001,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.005,
+                'lr_growth_lambda': 1.25,
+                'lr_shrink_lambda': 0.95,
+            },
+            'model': {
+                'hidden_dim': 1024,
+                'dropout': 0,
+                'norm': None,
+                'num_layers': 4,
+                'vector_norm': None,
+            }
+        }
+    },  # 7 - few and small steps
+    {
+        'min_batch_size': 500,
+        'max_batch_size': 10000,
+        'generator': {
+            'samples_per_iter': 2,
+            'mean_step_size': 10,
+            'init_vdw_loss_factor': 0.001,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.005,
+                'lr_growth_lambda': 1.25,
+                'lr_shrink_lambda': 0.95,
+            },
+            'model': {
+                'hidden_dim': 1024,
+                'dropout': 0,
+                'norm': None,
+                'num_layers': 4,
+                'vector_norm': None,
+            }
+        }
+    },  # 8 - few and huge steps
 ]
 
 

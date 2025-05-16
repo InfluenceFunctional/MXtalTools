@@ -1256,15 +1256,22 @@ def log_crystal_samples(epoch_stats_dict: Optional[dict] = None, sample_batch: O
 def generated_cell_scatter_fig(epoch_stats_dict, layout):
     scaled_vdw = epoch_stats_dict['per_mol_scaled_LJ_energy']
     vdw_overlap = epoch_stats_dict['per_mol_normed_overlap']
+    packing_coeff = epoch_stats_dict['packing_coefficient']
+    xy = np.vstack([packing_coeff, scaled_vdw])
+    try:
+        z = get_point_density(xy, bins=25)
+    except:
+        z = np.ones(len(xy))
     scatter_dict = {'vdw_overlap': vdw_overlap,
-                    'packing_coefficient': epoch_stats_dict['packing_coefficient'],
+                    'packing_coefficient': packing_coeff,
                     'energy': scaled_vdw,
+                    'point_density': z,
                     }
     opacity = max(0.25, 1 - len(scatter_dict['energy']) / 5e4)
     df = pd.DataFrame.from_dict(scatter_dict)
     fig = px.scatter(scatter_dict,
                      x='packing_coefficient', y='energy',
-                     color='vdw_overlap',
+                     color='point_density',
                      marginal_x='violin', marginal_y='violin',
                      opacity=opacity
                      )
@@ -1283,7 +1290,7 @@ def generated_cell_scatter_fig(epoch_stats_dict, layout):
         return fig
 
 
-def simple_generated_scatter(sample_batch):
+def simple_cell_scatter_fig(sample_batch):
     xy = np.vstack([sample_batch.packing_coeff.cpu().detach(), sample_batch.silu_pot.cpu().detach()])
     try:
         z = get_point_density(xy, bins=25)

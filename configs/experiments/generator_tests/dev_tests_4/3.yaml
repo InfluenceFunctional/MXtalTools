@@ -65,9 +65,9 @@ generator:
   mean_step_size: 4
   model:
     dropout: 0
-    hidden_dim: 1024
+    hidden_dim: 512
     norm: null
-    num_layers: 4
+    num_layers: 20
     vector_norm: null
   optimizer:
     beta1: 0.9
@@ -94,10 +94,10 @@ logger:
   sample_reporting_frequency: 10
   stats_reporting_frequency: 10
 machine: cluster
-max_batch_size: 2500
+max_batch_size: 10000
 max_epoch_steps: 200
 max_epochs: 10000
-min_batch_size: 250
+min_batch_size: 500
 minimum_epochs: 50
 misc_dataset_name: misc_data_for_qm9_dataset.npy
 mode: generator

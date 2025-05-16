@@ -2262,16 +2262,16 @@ class Modeller:
         # losses related to box - not too big, not too small
         aunit_lengths = cluster_batch.scale_lengths_to_aunit()
         box_loss = softplus_shift(-(aunit_lengths - 3)).sum(1) + softplus_shift(
-            aunit_lengths - (4 * 2 * crystal_batch.radius[:, None])).sum(1)
+            aunit_lengths - (3 * 2 * crystal_batch.radius[:, None])).sum(1)
         packing_loss = F.relu((-torch.log(crystal_batch.packing_coeff.clip(min=0.00001))) - 0.25)
 
         if self.epoch_type == 'train' and last_iter:
-            if box_loss.mean() < 0.1 and self.vdw_loss_factor < 1:
+            if box_loss.mean() < 0.25 and self.vdw_loss_factor < 1:
                 self.vdw_loss_factor *= 1.001
-            elif box_loss.mean() > 0.1 and self.vdw_loss_factor > 1e-3:
+            elif box_loss.mean() > 0.25 and self.vdw_loss_factor > 1e-3:
                 self.vdw_loss_factor *= 0.999
 
-        loss = self.vdw_loss_factor * vdw_loss + packing_loss + box_loss
+        loss = self.vdw_loss_factor * vdw_loss + box_loss
 
         return loss, molwise_normed_overlap, molwise_scaled_lj_pot, box_loss, packing_loss, vdw_loss, cluster_batch
 
