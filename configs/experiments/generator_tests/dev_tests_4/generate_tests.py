@@ -7,7 +7,7 @@ base_config = load_yaml('base.yaml')
 
 config_list = [
     {
-        'min_batch_size': 500,
+        'min_batch_size': 1000,
         'max_batch_size': 10000,
         'generator': {
             'samples_per_iter': 5,
@@ -55,7 +55,7 @@ config_list = [
         }
     },  # 1 - smaller batching
     {
-        'min_batch_size': 500,
+        'min_batch_size': 1000,
         'max_batch_size': 10000,
         'generator': {
             'samples_per_iter': 5,
@@ -79,7 +79,7 @@ config_list = [
         }
     },  # 2 - smaller model
     {
-        'min_batch_size': 500,
+        'min_batch_size': 1000,
         'max_batch_size': 10000,
         'generator': {
             'samples_per_iter': 5,
@@ -103,7 +103,7 @@ config_list = [
         }
     },  # 3 - deep model
     {
-        'min_batch_size': 500,
+        'min_batch_size': 1000,
         'max_batch_size': 10000,
         'generator': {
             'samples_per_iter': 5,
@@ -127,7 +127,7 @@ config_list = [
         }
     },  # 4 - deep model with norm
     {
-        'min_batch_size': 500,
+        'min_batch_size': 1000,
         'max_batch_size': 10000,
         'generator': {
             'samples_per_iter': 2,
@@ -151,7 +151,7 @@ config_list = [
         }
     },  # 5 - few steps
     {
-        'min_batch_size': 500,
+        'min_batch_size': 1000,
         'max_batch_size': 10000,
         'generator': {
             'samples_per_iter': 5,
@@ -175,7 +175,7 @@ config_list = [
         }
     },  # 6 - small steps
     {
-        'min_batch_size': 500,
+        'min_batch_size': 1000,
         'max_batch_size': 10000,
         'generator': {
             'samples_per_iter': 2,
@@ -199,7 +199,7 @@ config_list = [
         }
     },  # 7 - few and small steps
     {
-        'min_batch_size': 500,
+        'min_batch_size': 1000,
         'max_batch_size': 10000,
         'generator': {
             'samples_per_iter': 2,
