@@ -25,7 +25,7 @@ from mxtaltools.common.instantiate_models import instantiate_models
 from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.common.training_utils import flatten_wandb_params, set_lr, \
     init_optimizer, init_scheduler, reload_model, save_checkpoint, slash_batch, make_sequential_directory
-from mxtaltools.common.utils import namespace2dict, smooth_constraint
+from mxtaltools.common.utils import namespace2dict, smooth_constraint, softplus_shift
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
 from mxtaltools.dataset_utils.construction.parallel_synthesis import otf_synthesize_molecules, otf_synthesize_crystals
@@ -2261,14 +2261,14 @@ class Modeller:
 
         # losses related to box - not too big, not too small
         aunit_lengths = cluster_batch.scale_lengths_to_aunit()
-        box_loss = F.softplus(-(aunit_lengths - 3)).sum(1) + F.softplus(
+        box_loss = softplus_shift(-(aunit_lengths - 3)).sum(1) + softplus_shift(
             aunit_lengths - (4 * 2 * crystal_batch.radius[:, None])).sum(1)
-        packing_loss = F.relu((-torch.log(crystal_batch.packing_coeff.clip(min=0.00001))) - 0.5)
+        packing_loss = F.relu((-torch.log(crystal_batch.packing_coeff.clip(min=0.00001))) - 0.25)
 
         if self.epoch_type == 'train' and last_iter:
-            if (box_loss).mean() < 0.01 and self.vdw_loss_factor < 1:
+            if box_loss.mean() < 0.1 and self.vdw_loss_factor < 1:
                 self.vdw_loss_factor *= 1.001
-            elif (box_loss).mean() > 0.02 and self.vdw_loss_factor > 1e-3:
+            elif box_loss.mean() > 0.1 and self.vdw_loss_factor > 1e-3:
                 self.vdw_loss_factor *= 0.999
 
         loss = self.vdw_loss_factor * vdw_loss + packing_loss + box_loss
