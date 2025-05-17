@@ -2305,7 +2305,13 @@ class Modeller:
                                            range(mol_batch.num_graphs)])
 
         target_cps = (torch.randn(mol_batch.num_graphs, device=self.device) * 0.0447 + 0.6226).clip(min=0.45, max=0.95)
-        crystal_batch.sample_random_reduced_crystal_parameters(target_packing_coeff=target_cps)
+        #crystal_batch.sample_random_reduced_crystal_parameters(target_packing_coeff=target_cps)
+        crystal_batch.sample_reasonable_random_parameters(
+            tolerance=5,
+            target_packing_coeff=target_cps * 0.5,
+            max_attempts=25,
+            sample_niggli=True
+        )
 
         """analyze random prior sample"""
         prior_in_gen_basis = crystal_batch.cell_params_to_gen_basis().clone().detach()

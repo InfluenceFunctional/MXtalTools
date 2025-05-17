@@ -721,9 +721,9 @@ class MolCrystalData(MolData):
                 converged = True
 
         self.set_cell_parameters(good_params_tensor)
-
-        if not converged:
-            print(f"Failed to converge {torch.sum(~found_params_flags)} out of {self.num_graphs} crystals")
+        #
+        # if not converged:
+        #     print(f"Failed to converge {torch.sum(~found_params_flags)} out of {self.num_graphs} crystals")
 
     def denorm_by_radius(self, arr):
         """
