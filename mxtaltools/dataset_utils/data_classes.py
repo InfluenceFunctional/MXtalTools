@@ -509,22 +509,23 @@ class MolCrystalData(MolData):
                 self.unit_cell_pos = np.zeros((self.sym_mult, self.num_nodes, 3))
 
         # cell parameters
-        if cell_lengths is not None and not skip_box_analysis:
+        if cell_lengths is not None:
             # todo add a check here in case the leading dim is already there
             self.cell_lengths = cell_lengths[None, ...]
             self.cell_angles = cell_angles[None, ...]
 
-            if any([
-                self.T_fc is None,
-                self.T_cf is None,
-                self.cell_volume is None,
-                self.packing_coeff is None,
-                self.density is None
-            ]):  # better to do this in batches and feed it as kwargs # todo add a log/warning for this
-                self.box_analysis()
-            else:
-                assert (self.T_cf is not None and self.cell_volume is not None), \
-                    "T_fc, T_cf, and cell volume must all be provided all together or not at all"
+            if not skip_box_analysis:
+                if any([
+                    self.T_fc is None,
+                    self.T_cf is None,
+                    self.cell_volume is None,
+                    self.packing_coeff is None,
+                    self.density is None
+                ]):  # better to do this in batches and feed it as kwargs # todo add a log/warning for this
+                    self.box_analysis()
+                else:
+                    assert (self.T_cf is not None and self.cell_volume is not None), \
+                        "T_fc, T_cf, and cell volume must all be provided all together or not at all"
 
         if aunit_centroid is not None:
             self.aunit_centroid = aunit_centroid[None, ...]
