@@ -78,7 +78,56 @@ config_list = [
             }
         }
     },  # 2 - big initial batch
-
+    {
+        'min_batch_size': 25,
+        'max_batch_size': 1000,
+        'batch_growth_increment': 0.05,
+        'generator': {
+            'samples_per_iter': 5,
+            'mean_step_size': 0.5,
+            'init_vdw_loss_factor': 0.001,
+            'optimizer': {
+                'init_lr': 1e-5,
+                'max_lr': 5e-4,
+                'min_lr': 1e-6,
+                'weight_decay': 0.005,
+                'lr_growth_lambda': 1.3,
+                'lr_shrink_lambda': 0.94,
+            },
+            'model': {
+                'hidden_dim': 1024,
+                'dropout': 0,
+                'norm': None,
+                'num_layers': 4,
+                'vector_norm': None,
+            }
+        }
+    },  # 3 - baseline: trying to capture the lightning in a bottle from last year
+    {
+        'min_batch_size': 500,
+        'max_batch_size': 10000,
+        'batch_growth_increment': 0.05,
+        'generator': {
+            'samples_per_iter': 5,
+            'mean_step_size': 0.5,
+            'init_vdw_loss_factor': 0.001,
+            'optimizer': {
+                'init_lr': 1e-5,
+                'max_lr': 5e-4,
+                'min_lr': 1e-6,
+                'weight_decay': 0.005,
+                'lr_growth_lambda': 1.3,
+                'lr_shrink_lambda': 0.94,
+            },
+            'model': {
+                'hidden_dim': 1024,
+                'dropout': 0,
+                'norm': None,
+                'num_layers': 4,
+                'vector_norm': None,
+            }
+        }
+    },  # 4 - big initial batch
 ]
 
 
