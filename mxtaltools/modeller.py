@@ -2272,6 +2272,13 @@ class Modeller:
             aunit_lengths - (3 * 2 * crystal_batch.radius[:, None])).sum(1)
         packing_loss = F.relu((-torch.log(crystal_batch.packing_coeff.clip(min=0.00001))) - 0.25)
 
+        self.generator_annealing(last_iter, vdw_loss)
+
+        loss = vdw_loss  # self.vdw_loss_factor * vdw_loss + box_loss
+
+        return loss, molwise_normed_overlap, molwise_scaled_lj_pot, box_loss, packing_loss, vdw_loss, cluster_batch
+
+    def generator_annealing(self, last_iter, vdw_loss):
         if self.epoch_type == 'train' and last_iter:
             # if box_loss.mean() < 0.25 and self.vdw_loss_factor < 1:
             #     self.vdw_loss_factor *= 1.001
@@ -2284,11 +2291,7 @@ class Modeller:
 
             # dynamically increase from small steps to large
             if self.prior_variation_scale < self.config.generator.mean_step_size:
-                self.prior_variation_scale += 0.0005
-
-        loss = vdw_loss  # self.vdw_loss_factor * vdw_loss + box_loss
-
-        return loss, molwise_normed_overlap, molwise_scaled_lj_pot, box_loss, packing_loss, vdw_loss, cluster_batch
+                self.prior_variation_scale += self.config.generator.prior_variation_growth_step
 
     def generator_step(self, mol_batch, step, update_weights, skip_stats):
         """

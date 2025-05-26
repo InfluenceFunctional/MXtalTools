@@ -69,6 +69,7 @@ generator:
   samples_per_iter: 5
   mean_step_size: 1
   init_vdw_loss_factor: 0.00001
+  prior_variation_growth_step: 0.0001
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
 
   #generator optimizer and model

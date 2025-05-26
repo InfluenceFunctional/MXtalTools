@@ -83,6 +83,7 @@ generator:
     overwrite_on_reload: false
     use_plateau_scheduler: false
     weight_decay: 0.005
+  prior_variation_growth_step: 0.0001
   samples_per_iter: 5
 gradient_norm_clip: 1
 grow_batch_size: true
