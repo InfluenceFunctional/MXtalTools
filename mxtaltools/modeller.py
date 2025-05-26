@@ -1983,6 +1983,8 @@ class Modeller:
                         iteration_override=None):
         if not hasattr(self, 'vdw_loss_factor'):
             self.vdw_loss_factor = self.config.generator.init_vdw_loss_factor
+            self.vdw_turnover_pot = 0.01
+            self.prior_variation_scale = 0.05  # start with small steps
 
         if update_weights:
             self.models_dict['generator'].train(True)
@@ -2257,7 +2259,12 @@ class Modeller:
          molwise_overlap, molwise_normed_overlap) = cluster_batch.compute_LJ_energy(return_overlaps=True)
 
         # get generator loss - a SiLU fitted roughly to 12-6 LJ minimum, with shorter range and softer repulsion
-        vdw_loss = cluster_batch.compute_silu_energy()
+        silu_pot = cluster_batch.compute_silu_energy() / cluster_batch.num_atoms
+        # soften this loss dynamically
+        high_bools = silu_pot > self.vdw_turnover_pot
+        vdw_loss = silu_pot.clone()
+        vdw_loss[high_bools] = self.vdw_turnover_pot + torch.log10(silu_pot[high_bools] + 1 - self.vdw_turnover_pot)
+        vdw_loss = vdw_loss.clip(max=50)
 
         # losses related to box - not too big, not too small
         aunit_lengths = cluster_batch.scale_lengths_to_aunit()
@@ -2266,12 +2273,20 @@ class Modeller:
         packing_loss = F.relu((-torch.log(crystal_batch.packing_coeff.clip(min=0.00001))) - 0.25)
 
         if self.epoch_type == 'train' and last_iter:
-            if box_loss.mean() < 0.25 and self.vdw_loss_factor < 1:
-                self.vdw_loss_factor *= 1.001
-            elif box_loss.mean() > 0.25 and self.vdw_loss_factor > 1e-3:
-                self.vdw_loss_factor *= 0.999
+            # if box_loss.mean() < 0.25 and self.vdw_loss_factor < 1:
+            #     self.vdw_loss_factor *= 1.001
+            # elif box_loss.mean() > 0.25 and self.vdw_loss_factor > 1e-3:
+            #     self.vdw_loss_factor *= 0.999
+            if vdw_loss.mean() < 0 and self.vdw_turnover_pot < 10:
+                self.vdw_turnover_pot *= 1.001
+            elif vdw_loss.mean() >= 0 and self.vdw_turnover_pot > 0.01:
+                self.vdw_turnover_pot *= 0.999
 
-        loss = self.vdw_loss_factor * vdw_loss + box_loss
+            # dynamically increase from small steps to large
+            if self.prior_variation_scale < self.config.generator.mean_step_size:
+                self.prior_variation_scale += 0.0005
+
+        loss = vdw_loss  # self.vdw_loss_factor * vdw_loss + box_loss
 
         return loss, molwise_normed_overlap, molwise_scaled_lj_pot, box_loss, packing_loss, vdw_loss, cluster_batch
 
@@ -2305,13 +2320,7 @@ class Modeller:
                                            range(mol_batch.num_graphs)])
 
         target_cps = (torch.randn(mol_batch.num_graphs, device=self.device) * 0.0447 + 0.6226).clip(min=0.45, max=0.95)
-        #crystal_batch.sample_random_reduced_crystal_parameters(target_packing_coeff=target_cps)
-        crystal_batch.sample_reasonable_random_parameters(
-            tolerance=5,
-            target_packing_coeff=target_cps * 0.5,
-            max_attempts=25,
-            sample_niggli=True
-        )
+        crystal_batch.sample_random_reduced_crystal_parameters(target_packing_coeff=target_cps)
 
         """analyze random prior sample"""
         prior_in_gen_basis = crystal_batch.cell_params_to_gen_basis().clone().detach()
@@ -2329,6 +2338,7 @@ class Modeller:
             'mol_radius': crystal_batch.radius.detach(),
             'generated_space_group_numbers': crystal_batch.sg_ind.detach(),
             'vdw_factor': self.vdw_loss_factor,
+            'vdw_turnover': self.vdw_turnover_pot,
         }
         dict_of_tensors_to_cpu_numpy(stats)
 
@@ -2341,7 +2351,7 @@ class Modeller:
                 prev_vdw_loss = vdw_losses.detach().clone()
 
             # get proposed step
-            step_size = 2 * self.config.generator.mean_step_size * torch.rand(mol_batch.num_graphs, device=self.device)[
+            step_size = 2 * self.prior_variation_scale * torch.rand(mol_batch.num_graphs, device=self.device)[
                                                                    :, None]
             generator_proposed_step = self.models_dict['generator'](x=scalar_embedding,
                                                                     v=vector_embedding,
@@ -2390,6 +2400,7 @@ class Modeller:
                     'sample_iter': torch.ones(new_crystal_batch.num_graphs) * ind + 1,
                     'cell_parameters': new_crystal_batch.cell_parameters().detach(),
                     'cell_delta': generator_proposed_step.cpu().detach(),
+                    'prior_variation_scale': self.prior_variation_scale,
                 })
                 if step == 0:
                     stats['generator_samples'] = cluster_batch.clone().detach()

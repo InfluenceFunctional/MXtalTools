@@ -1,8 +1,8 @@
-machine: "local"  # or "cluster"
+machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: generator  #  or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' 'mol_generation' WIP
-dataset_name: 'test_qm9_dataset.pt' #
+dataset_name: 'qm9_dataset.pt' #
 misc_dataset_name: 'misc_data_for_qm9_dataset.npy' #
 dataset_yaml_path: '/skinny_generator.yaml' #
 extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
@@ -20,13 +20,13 @@ dataset:
   refresh_interval: -1
 
 # batching & convergence
-max_epoch_steps: 100000
+max_epoch_steps: 200
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
-min_batch_size: 50
-max_batch_size: 1000
-batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
+min_batch_size: 25
+max_batch_size: 10000
+batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 50
 max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
@@ -35,10 +35,10 @@ gradient_norm_clip: 1
 extra_test_period: 4 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
-  run_name: dev
-  experiment_tag: dev
-  sample_reporting_frequency: 1  # how often to do detailed reporting with figures
-  stats_reporting_frequency: 1
+  run_name: gen_dev5
+  experiment_tag: gen_dev5
+  sample_reporting_frequency: 10  # how often to do detailed reporting with figures
+  stats_reporting_frequency: 10
   log_figures: True
 
 sample_steps: 100
@@ -52,7 +52,7 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: null
+  autoencoder: best_autoencoder_experiments_autoencoder_tests_otf_zinc_test9_2_24-01-09-15-05
   embedding_regressor: null
 
 positional_noise:
@@ -88,12 +88,11 @@ generator:
     overwrite_on_reload: False
 
   model:
-    hidden_dim: 512
+    hidden_dim: 1024
     dropout: 0
     norm: null
     num_layers: 4
     vector_norm: null #'vector layer'
-
 
 
 discriminator:
