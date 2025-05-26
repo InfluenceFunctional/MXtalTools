@@ -460,6 +460,7 @@ class MolCrystalData(MolData):
                  is_well_defined: Optional[bool] = True,
                  aux_ind: Optional[torch.LongTensor] = None,
                  mol_ind: Optional[torch.LongTensor] = None,
+                 skip_box_analysis: Optional[bool] = False,
                  **kwargs):
         super().__init__()
         self.__dict__['_store'] = GlobalStorage(_parent=self)
@@ -508,7 +509,7 @@ class MolCrystalData(MolData):
                 self.unit_cell_pos = np.zeros((self.sym_mult, self.num_nodes, 3))
 
         # cell parameters
-        if cell_lengths is not None:
+        if cell_lengths is not None and not skip_box_analysis:
             # todo add a check here in case the leading dim is already there
             self.cell_lengths = cell_lengths[None, ...]
             self.cell_angles = cell_angles[None, ...]

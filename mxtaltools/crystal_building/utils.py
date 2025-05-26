@@ -37,6 +37,9 @@ def generate_sorted_fractional_translations(supercell_size):
 
 
 def unit_cell_to_supercell_cluster(crystal_batch, cutoff: float = 6, supercell_size: int = 10):
+    """ # TODO this is a key bottleneck. It would be great if we could speed it up or obviate it.
+
+    """
     cc_centroids = fractional_transform(crystal_batch.aunit_centroid, crystal_batch.T_fc)
     good_translations, good_translations_bool = get_cart_translations(cc_centroids,
                                                                       crystal_batch.T_fc,
