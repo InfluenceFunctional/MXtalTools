@@ -14,14 +14,16 @@ Alternate version of this script, for generating just structures of urea
 if __name__ == '__main__':
     device = 'cuda'
     # Create the parser
-    parser = argparse.ArgumentParser(description='Process an integer.')
-
-    # Add an argument for the integer
-    parser.add_argument('chunk_ind', type=int, help='An integer passed from the command line')
-
-    # Parse the arguments
-    args = parser.parse_args()
-    chunk_ind = args.chunk_ind
+    # parser = argparse.ArgumentParser(description='Process an integer.')
+    #
+    # # Add an argument for the integer
+    # parser.add_argument('chunk_ind', type=int,
+    #                     help='An integer passed from the command line', default=0)
+    #
+    # # Parse the arguments
+    # args = parser.parse_args()
+    # chunk_ind = args.chunk_ind
+    chunk_ind = 0
 
     # initialize
     space_group = 2
@@ -86,7 +88,7 @@ if __name__ == '__main__':
     crystal_batch = collate_data_list(opt1_trajectory[-1]).to(device)
     crystal_batch.box_analysis()
     crystal_batch.to('cpu')
-    torch.save(crystal_batch, chunk_path)
+    torch.save(crystal_batch.to_data_list(), chunk_path)
 
     if True:  # visualize
         crystal_batch.plot_batch_cell_params()

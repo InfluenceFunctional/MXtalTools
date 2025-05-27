@@ -621,7 +621,8 @@ class MolCrystalData(MolData):
         )
         self.box_analysis()
 
-    def gen_basis_to_cell_params(self, std_normal: torch.tensor):
+    def gen_basis_to_cell_params(self, std_normal: torch.tensor,
+                                 clip_min_length: Optional[float] = 0):
         if not hasattr(self, 'asym_unit_dict'):
             self.asym_unit_dict = self.build_asym_unit_dict()
 
@@ -633,6 +634,8 @@ class MolCrystalData(MolData):
                                         std_normal[:, :6],
                                         self.sg_ind))
         self.cell_lengths = torch.vstack([a_out, b_out, c_out]).T
+        if clip_min_length > 0:
+            self.cell_lengths = self.cell_lengths.clip(min=clip_min_length)
         self.cell_angles = torch.vstack([al_out, be_out, ga_out]).T
 
         self.aunit_orientation = std_normal_to_aunit_orientations(std_normal[:, 9:])
