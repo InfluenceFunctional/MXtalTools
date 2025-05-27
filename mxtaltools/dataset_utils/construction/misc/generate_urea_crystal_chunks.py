@@ -12,22 +12,21 @@ Alternate version of this script, for generating just structures of urea
 """
 
 if __name__ == '__main__':
-    device = 'cpu'
-    # # Create the parser
-    # parser = argparse.ArgumentParser(description='Process an integer.')
-    #
-    # # Add an argument for the integer
-    # parser.add_argument('chunk_ind', type=int, help='An integer passed from the command line')
-    #
-    # # Parse the arguments
-    # args = parser.parse_args()
-    # chunk_ind = args.chunk_ind
-    chunk_ind = 0
+    device = 'cuda'
+    # Create the parser
+    parser = argparse.ArgumentParser(description='Process an integer.')
+
+    # Add an argument for the integer
+    parser.add_argument('chunk_ind', type=int, help='An integer passed from the command line')
+
+    # Parse the arguments
+    args = parser.parse_args()
+    chunk_ind = args.chunk_ind
 
     # initialize
     space_group = 2
     num_chunks = 1
-    batch_size = 10
+    batch_size = 100
     chunks_path = os.getcwd()  #Path(r'/scratch/mk8347/csd_runs/datasets')
 
     atom_coords = torch.tensor([
@@ -85,3 +84,41 @@ if __name__ == '__main__':
             cutoff=6,
         ))
     crystal_batch = collate_data_list(opt1_trajectory[-1]).to(device)
+    crystal_batch.box_analysis()
+    crystal_batch.to('cpu')
+    torch.save(crystal_batch, chunk_path)
+
+    if True:  # visualize
+        crystal_batch.plot_batch_cell_params()
+        import plotly.graph_objects as go
+
+        lj_pots = torch.stack(
+            [torch.tensor([sample.scaled_lj_pot for sample in sample_list]) for sample_list in opt1_trajectory])
+        coeffs = torch.stack(
+            [torch.tensor([sample.packing_coeff for sample in sample_list]) for sample_list in opt1_trajectory])
+
+        fig = go.Figure()
+        fig.add_scatter(x=coeffs[0, :], y=lj_pots[0, :], mode='markers', marker_size=20, marker_color='grey',
+                        name='Initial State')
+        fig.add_scatter(x=coeffs[-1, :], y=lj_pots[-1, :], mode='markers', marker_size=20, marker_color='black',
+                        name='Final State')
+        for ind in range(coeffs.shape[1]):
+            fig.add_scatter(x=coeffs[:, ind], y=lj_pots[:, ind], name=f"Run {ind}")
+        fig.update_layout(xaxis_title='Packing Coeff', yaxis_title='Scaled LJ')
+        fig.show()
+
+        fig = go.Figure()
+        for ind in range(lj_pots.shape[-1]):
+            fig.add_scatter(y=lj_pots[..., ind], marker_color='blue', name='lj', legendgroup='lg',
+                            showlegend=True if ind == 0 else False)
+        fig.show()
+
+        fig = go.Figure()
+        for ind in range(lj_pots.shape[-1]):
+            fig.add_scatter(y=coeffs[..., ind], marker_color='blue', name='packing coeff', legendgroup='lg',
+                            showlegend=True if ind == 0 else False)
+        fig.update_layout(yaxis_range=[0, 1])
+        fig.show()
+
+    aa = 0
+

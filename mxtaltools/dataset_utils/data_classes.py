@@ -1304,6 +1304,38 @@ class MolCrystalData(MolData):
         orientation_means = torch.tensor([[0, 0, torch.pi / 2]], dtype=torch.float32, device=self.device)
         return std_aunit_orientation * orientation_stds + orientation_means
 
+    def plot_batch_cell_params(self):
+        if not self.is_batch:
+            print("Cell statistics only works for a batch of samples")
+            return None
+        from plotly.subplots import make_subplots
+        import plotly.graph_objects as go
+
+        lattice_features = ['cell_a', 'cell_b', 'cell_c',
+                            'cell_alpha', 'cell_beta', 'cell_gamma',
+                            'aunit_x', 'aunit_y', 'aunit_z',
+                            'orientation_1', 'orientation_2', 'orientation_2']
+
+        samples = self.cell_parameters()
+        # 1d Histograms
+        colors = 'red'
+        fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)
+        for i in range(12):
+            row = i // 3 + 1
+            col = i % 3 + 1
+            fig.add_trace(go.Violin(
+                x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
+                showlegend=False,
+                meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False,
+                line_color=colors,
+            ),
+                row=row, col=col
+            )
+
+        fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
+        fig.update_traces(opacity=0.5)
+        fig.show()
+
     def set_cell_parameters(self,
                             cell_parameters,
                             skip_box_analysis: bool = False):
