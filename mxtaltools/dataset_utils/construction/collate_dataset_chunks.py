@@ -5,13 +5,19 @@ from mxtaltools.dataset_utils.dataset_manager import DataManager
 #
 
 if __name__ == '__main__':
-
-    'CSD crystal dataset'
+    'urea dataset'
     miner = DataManager(device='cpu',
                         datasets_path=r"D:\crystal_datasets/",
-                        chunks_path=r"D:\crystal_datasets/CSD_featurized_chunks/",
+                        chunks_path=r"D:\crystal_datasets/",
                         dataset_type='crystal')
-    miner.process_new_dataset(new_dataset_name='reduced_CSD_dataset')
+    miner.process_new_dataset(new_dataset_name='test_ttt',
+                              chunks_patterns=['urea_sg'])
+    # 'CSD crystal dataset'
+    # miner = DataManager(device='cpu',
+    #                     datasets_path=r"D:\crystal_datasets/",
+    #                     chunks_path=r"D:\crystal_datasets/CSD_featurized_chunks/",
+    #                     dataset_type='crystal')
+    # miner.process_new_dataset(new_dataset_name='reduced_CSD_dataset')
     #
 
     # 'QM9 molecules dataset'
