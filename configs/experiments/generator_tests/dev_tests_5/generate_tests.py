@@ -206,7 +206,7 @@ config_list = [
     {
         'min_batch_size': 25,
         'max_batch_size': 10000,
-        'batch_growth_increment': 0.1,
+        'batch_growth_increment': 0.5,
         'generator': {
             'samples_per_iter': 5,
             'mean_step_size': 0.25,
