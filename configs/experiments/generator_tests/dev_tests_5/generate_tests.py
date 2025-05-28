@@ -202,7 +202,32 @@ config_list = [
                 'vector_norm': None,
             }
         }
-    },  # 7 - larger batches
+    },  # 7 - larger batches # LR way too high
+    {
+        'min_batch_size': 25,
+        'max_batch_size': 10000,
+        'batch_growth_increment': 0.1,
+        'generator': {
+            'samples_per_iter': 5,
+            'mean_step_size': 0.25,
+            'init_vdw_loss_factor': 0.001,
+            'optimizer': {
+                'init_lr': 5e-4,
+                'max_lr': 1e-4,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.25,
+                'lr_shrink_lambda': 0.94,
+            },
+            'model': {
+                'hidden_dim': 1024,
+                'dropout': 0.5,
+                'norm': None,
+                'num_layers': 4,
+                'vector_norm': None,
+            }
+        }
+    },  # 7 - larger batches # LR way too high
 ]
 
 
