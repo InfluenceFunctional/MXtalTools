@@ -169,6 +169,9 @@ def test_MolCrystalData(device):
     cluster_batch.construct_radial_graph()
     lj_en, scaled_lj_en = cluster_batch.compute_LJ_energy()
     es_en = cluster_batch.compute_ES_energy()
+    silu_en = cluster_batch.compute_silu_energy()
+    cluster_batch.compute_ellipsoidal_energy()
+
     assert torch.all(torch.isfinite(lj_en)), "NaN LJ potentials"
     assert torch.all(torch.isfinite(es_en)), "NaN electrostatic potentials"
 

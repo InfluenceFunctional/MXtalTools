@@ -102,7 +102,8 @@ def asymmetric_radius_graph(x: torch.Tensor,
                             convolve_inds: torch.Tensor,
                             batch: torch.Tensor,
                             loop: bool = False,
-                            max_num_neighbors: int = 32, flow: str = 'source_to_target',
+                            max_num_neighbors: int = 32,
+                            flow: str = 'source_to_target',
                             num_workers: int = 1) -> torch.Tensor:
     r"""Computes graph edges to all points within a given distance.
 

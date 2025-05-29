@@ -1,3 +1,4 @@
+import copy
 import gc
 import glob
 import multiprocessing as mp
@@ -1985,6 +1986,7 @@ class Modeller:
             self.vdw_loss_factor = self.config.generator.init_vdw_loss_factor
             self.vdw_turnover_pot = 0.01
             self.prior_variation_scale = 0.05  # start with small steps
+            self.ellipsoid_scale = self.config.generator.ellipsoid_scale
 
         if update_weights:
             self.models_dict['generator'].train(True)
@@ -2259,22 +2261,31 @@ class Modeller:
          molwise_overlap, molwise_normed_overlap) = cluster_batch.compute_LJ_energy(return_overlaps=True)
 
         # get generator loss - a SiLU fitted roughly to 12-6 LJ minimum, with shorter range and softer repulsion
-        silu_pot = cluster_batch.compute_silu_energy() / cluster_batch.num_atoms
         # soften this loss dynamically
+
+        silu_pot = cluster_batch.compute_silu_energy() / cluster_batch.num_atoms
         high_bools = silu_pot > self.vdw_turnover_pot
         vdw_loss = silu_pot.clone()
         vdw_loss[high_bools] = self.vdw_turnover_pot + torch.log10(silu_pot[high_bools] + 1 - self.vdw_turnover_pot)
         vdw_loss = vdw_loss.clip(max=50)
 
+        if not hasattr(self, 'ellipsoid_model'):
+            cluster_batch.load_ellipsoid_model()
+            self.ellipsoid_model = copy.deepcopy(cluster_batch.ellipsoid_model)
+            self.ellipsoid_model = self.ellipsoid_model.to(self.device)
+            self.ellipsoid_model.eval()
+        ellipsoid_loss = cluster_batch.compute_ellipsoidal_energy(semi_axis_scale=self.ellipsoid_scale,
+                                                                  model=self.ellipsoid_model)
+
         # losses related to box - not too big, not too small
         aunit_lengths = cluster_batch.scale_lengths_to_aunit()
         box_loss = softplus_shift(-(aunit_lengths - 3)).sum(1) + softplus_shift(
             aunit_lengths - (3 * 2 * crystal_batch.radius[:, None])).sum(1)
-        packing_loss = F.relu((-torch.log(crystal_batch.packing_coeff.clip(min=0.00001))) - 0.25)
+        packing_loss = F.relu((-torch.log(crystal_batch.packing_coeff.clip(min=0.00001))) - 0.5)
 
         self.generator_annealing(last_iter, vdw_loss)
 
-        loss = vdw_loss  # self.vdw_loss_factor * vdw_loss + box_loss
+        loss = ellipsoid_loss + packing_loss  #+ vdw_loss  # self.vdw_loss_factor * vdw_loss + box_loss
 
         return loss, molwise_normed_overlap, molwise_scaled_lj_pot, box_loss, packing_loss, vdw_loss, cluster_batch
 
@@ -2355,14 +2366,16 @@ class Modeller:
 
             # get proposed step
             step_size = 2 * self.prior_variation_scale * torch.rand(mol_batch.num_graphs, device=self.device)[
-                                                                   :, None]
+                                                         :, None]
             generator_proposed_step = self.models_dict['generator'](x=scalar_embedding,
                                                                     v=vector_embedding,
                                                                     sg_ind_list=crystal_batch.sg_ind,
                                                                     max_step_size=step_size,
                                                                     prior=init_state)
 
-            generator_raw_samples = init_state + generator_proposed_step
+            zz = torch.zeros((len(generator_proposed_step), 6), dtype=torch.float32, device=self.device)
+            restrained_step = torch.cat([zz, generator_proposed_step[:, 6:]], dim=1)
+            generator_raw_samples = init_state + restrained_step
 
             # build proposed crystal
             new_crystal_batch = crystal_batch.clone().detach()

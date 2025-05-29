@@ -68,6 +68,7 @@ supercell_size: 10
 generator:
   samples_per_iter: 5
   mean_step_size: 1
+  ellipsoid_scale: 1
   init_vdw_loss_factor: 0.00001
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
 

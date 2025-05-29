@@ -1,5 +1,7 @@
 import copy
+import os
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import (Any, Dict, Iterable, List, NamedTuple, Optional, Union)
 
 import numpy as np
@@ -11,12 +13,13 @@ from torch_geometric.data.storage import (BaseStorage, EdgeStorage,
                                           GlobalStorage, NodeStorage)
 from torch_geometric.typing import OptTensor
 from torch_sparse import SparseTensor
-
+from torch_scatter import scatter
 from mxtaltools.analysis.vdw_analysis import vdw_analysis, electrostatic_analysis, get_intermolecular_dists_dict, \
     buckingham_energy, silu_energy
+from mxtaltools.common.ellipsoid_ops import featurize_ellipsoid_batch
 from mxtaltools.common.geometry_utils import batch_compute_molecule_volume, \
     compute_mol_radius, batch_compute_mol_radius, batch_compute_mol_mass, compute_mol_mass, center_mol_batch, \
-    apply_rotation_to_batch, enforce_crystal_system, batch_compute_fractional_transform
+    apply_rotation_to_batch, enforce_crystal_system, batch_compute_fractional_transform, scatter_compute_Ip
 from mxtaltools.common.utils import softplus_shift, std_normal_to_uniform, uniform_to_std_normal
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
@@ -29,7 +32,8 @@ from mxtaltools.crystal_building.utils import get_aunit_positions, aunit2unit_ce
 from mxtaltools.crystal_search.standalone_crystal_opt import standalone_gradient_descent_optimization
 from mxtaltools.dataset_utils.mol_building import smiles2conformer
 from mxtaltools.dataset_utils.utils import collate_data_list
-from mxtaltools.models.functions.radial_graph import build_radial_graph
+from mxtaltools.models.functions.radial_graph import build_radial_graph, asymmetric_radius_graph
+from mxtaltools.models.modules.components import ResidualMLP
 from mxtaltools.models.utils import enforce_1d_bound, get_mol_embedding_for_proxy
 
 
@@ -640,7 +644,8 @@ class MolCrystalData(MolData):
 
         self.aunit_orientation = std_normal_to_aunit_orientations(std_normal[:, 9:])
         aunit_scaled_centroids = std_normal_to_uniform(std_normal[:, 6:9])
-        self.aunit_centroid = aunit_scaled_centroids * torch.stack([self.asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
+        self.aunit_centroid = aunit_scaled_centroids * torch.stack(
+            [self.asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
 
         self.cell_lengths, self.cell_angles = enforce_crystal_system(
             self.cell_lengths,
@@ -653,7 +658,8 @@ class MolCrystalData(MolData):
         if not hasattr(self, 'asym_unit_dict'):
             self.asym_unit_dict = self.build_asym_unit_dict()
 
-        aunit_scaled_centroids = self.aunit_centroid / torch.stack([self.asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
+        aunit_scaled_centroids = self.aunit_centroid / torch.stack(
+            [self.asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
         std_aunit = uniform_to_std_normal(aunit_scaled_centroids)
         std_orientation = aunit_orientations_to_std_normal(self.aunit_orientation)
         a, b, c = self.cell_lengths.split(1, dim=1)
@@ -750,8 +756,9 @@ class MolCrystalData(MolData):
         else:
             return arr / self.radius[None]
 
-    def build_asym_unit_dict(self, force_all_sgs: Optional[
-        bool] = False):  # todo add capability to only do this for the necessary keys
+    def build_asym_unit_dict(self,
+                             force_all_sgs: Optional[bool] = False
+                             ):  # todo add capability to only do this for the necessary keys
         """  # todo unify this throughout this file
         NOTE this function is extremely slow
         Best used during batch operations
@@ -1082,6 +1089,198 @@ class MolCrystalData(MolData):
             assert False, "SiLU energies not implemented for single crystals"
 
         return molwise_silu_energy
+
+    def compute_ellipsoidal_energy(self,
+                                   semi_axis_scale: float = 1,
+                                   return_details: Optional[bool] = False,
+                                   model: Optional = None):
+        """
+        Compute an energy function given the overlaps of molecules in an ellipsoid representation
+        Using our pretrained ellipsoid overlap function
+
+        Only works on cluster batches (rather than crystal batches)
+
+        1) embed all molecules as ellipsoids
+        2) get inter-ellipsoidal edges
+        3) parameterize ellipsoid pairs
+        4) format batch to ellipsoid model
+        5) evaluate overlaps
+        6) convert overlaps to energies
+        """
+        if model is None:
+            if not hasattr(self, "ellipsoid_model"):
+                self.load_ellipsoid_model()
+        else:
+            ellipsoid_model = model
+
+        Ip, longest_length, molwise_batch, semi_axis_lengths, tot_mol_index, tot_num_mols = self.compute_cluster_ellipsoids(
+            semi_axis_scale)
+
+        edge_i_good, edge_j_good, mol_centroids = self.get_ellipsoid_edges(longest_length, molwise_batch, tot_mol_index,
+                                                                           tot_num_mols)
+
+        norm_factor, normed_v1, normed_v2, x = featurize_ellipsoid_batch(Ip,
+                                                                         edge_i_good,
+                                                                         edge_j_good,
+                                                                         mol_centroids,
+                                                                         semi_axis_lengths,
+                                                                         self.device)
+
+        # pass to the model
+        if hasattr(self, 'ellipsoid_model'):
+            output = self.ellipsoid_model(x)
+        else:
+            output = ellipsoid_model(x)
+
+
+        # process results
+        v1_pred, v2_pred, overlap_pred_i = output[:, 0], output[:, 1], output[:, 2]
+        normed_overlap_pred = (overlap_pred_i / (normed_v1 * normed_v2) * (normed_v1 + normed_v2)).clip(min=0)
+        overlap_pred = normed_overlap_pred * norm_factor ** 3
+        #v_pred_error = (F.l1_loss(normed_v1, v1_pred, reduction='none') + F.l1_loss(normed_v2, v2_pred, reduction='none'))/2
+
+        overlap_energy = normed_overlap_pred ** 2
+        crystal_overlap_energy = scatter(overlap_pred, molwise_batch[edge_j_good], dim=0, dim_size=self.num_graphs,
+                                         reduce='sum')
+
+        if not return_details:
+            return crystal_overlap_energy
+        else:
+            return crystal_overlap_energy, overlap_energy, v1_pred, v2_pred, normed_v1, normed_v2, norm_factor
+
+    """
+    #Check predictions
+    from mxtaltools.common.ellipsoid_ops import compute_ellipsoid_overlap
+    n_samples = 100
+    overlaps = torch.zeros(n_samples, device=self.device)
+    for ind in range(n_samples):
+        overlaps[ind], _ = compute_ellipsoid_overlap(e1[ind], e2[ind], v1[ind], v2[ind], r[ind], num_probes=10000, show_tqdm=True)
+
+    import plotly.graph_objects as go
+    go.Figure(go.Scatter(x=overlaps.cpu().detach(), y=overlap_pred[:n_samples].cpu().detach(), mode='markers',showlegend=True, name=f'R={torch.corrcoef(torch.stack([overlaps, overlap_pred[:n_samples]]))[0, 1].cpu().detach().numpy():.4f}')).show()
+
+    """
+
+    def get_ellipsoid_edges(self, longest_length, molwise_batch, tot_mol_index, tot_num_mols):
+        # get centroids
+        mol_centroids = scatter(self.pos, tot_mol_index, dim=0, dim_size=tot_num_mols, reduce='mean')
+        mol_aux_inds = scatter(self.aux_ind, tot_mol_index, dim=0, dim_size=tot_num_mols, reduce='max')
+        # get edges
+        edge_i, edge_j = asymmetric_radius_graph(
+            x=mol_centroids,
+            batch=molwise_batch,
+            inside_inds=torch.argwhere(mol_aux_inds == 0).flatten(),
+            convolve_inds=torch.argwhere(mol_aux_inds >= 1).flatten(),
+            # take 1 and 2 here, or we might have indexing issues
+            max_num_neighbors=10,
+            r=self.radius.amax() * 2)
+        # filter edges longer than 2x mol_radius for each sample
+        dists = torch.linalg.norm(mol_centroids[edge_i] - mol_centroids[edge_j], dim=1)
+        edge_i_good = edge_i[dists < (2 * longest_length[edge_i])]
+        edge_j_good = edge_j[dists < (2 * longest_length[edge_i])]
+        return edge_i_good, edge_j_good, mol_centroids
+
+    def compute_cluster_ellipsoids(self, semi_axis_scale):
+        # molecule indexing
+        mols_per_cluster = torch.tensor(self.edges_dict['n_repeats'], device=self.device)
+        tot_num_mols = torch.sum(mols_per_cluster)
+        tot_mol_index = torch.arange(tot_num_mols, device=self.device
+                                     ).repeat_interleave(self.num_atoms.repeat_interleave(mols_per_cluster))
+        molwise_batch = torch.arange(self.num_graphs, device=self.device
+                                     ).repeat_interleave(mols_per_cluster, dim=0)
+        atoms_per_mol = self.num_atoms.repeat_interleave(mols_per_cluster)
+        # get principal axes
+        centered_mol_pos = center_mol_batch(self.pos,
+                                            tot_mol_index,
+                                            num_graphs=tot_num_mols,
+                                            nodes_per_graph=atoms_per_mol)
+        Ip, Ipm, _ = scatter_compute_Ip(centered_mol_pos, tot_mol_index)
+        # convention above is row-wise, smallest to largest
+        # convention for ellipsoid model is the reverse, so we will swap
+        Ipm = torch.flip(Ipm, (1,))
+        Ip = torch.flip(Ip, (1,))
+        # rescale ellipsoid semi-axes to align with the longest axis of the molecule
+        longest_length = self.radius.repeat_interleave(mols_per_cluster)
+        sqrt_eigenvalues = torch.sqrt(Ipm + 1e-5)
+        semi_axis_lengths = (sqrt_eigenvalues / sqrt_eigenvalues.amax(1, keepdim=True)
+                             * longest_length[:, None] * semi_axis_scale)
+        return Ip, longest_length, molwise_batch, semi_axis_lengths, tot_mol_index, tot_num_mols
+
+    """  # to visualize ellipsoid fit
+    import numpy as np
+    import plotly.graph_objects as go
+
+    
+    def plot_ellipsoid_and_points(center, eigvals, eigvecs, points, n=50):
+    
+        # Create unit sphere
+        u = np.linspace(0, 2 * np.pi, n)
+        v = np.linspace(0, np.pi, n)
+        x = np.outer(np.cos(u), np.sin(v))
+        y = np.outer(np.sin(u), np.sin(v))
+        z = np.outer(np.ones_like(u), np.cos(v))
+        sphere = np.stack((x, y, z), axis=-1)  # shape (n, n, 3)
+    
+        # Scale by sqrt of eigenvalues (semi-axes)
+        radii = np.sqrt(eigvals)
+        ellipsoid = sphere * radii
+    
+        # Rotate by eigenvectors
+        ellipsoid = ellipsoid @ eigvecs.T  # (n, n, 3)
+    
+        # Translate to center
+        ellipsoid += center
+    
+        # Extract coordinates for surface plot
+        x_e = ellipsoid[..., 0]
+        y_e = ellipsoid[..., 1]
+        z_e = ellipsoid[..., 2]
+    
+        # Create ellipsoid surface
+        ellipsoid_surface = go.Surface(
+            x=x_e, y=y_e, z=z_e,
+            opacity=0.5,
+            colorscale='Blues',
+            showscale=False,
+        )
+    
+        # Create scatter plot of points
+        scatter_points = go.Scatter3d(
+            x=points[:, 0], y=points[:, 1], z=points[:, 2],
+            mode='markers',
+            marker=dict(size=3, color='red'),
+            name='Atoms'
+        )
+    
+        # Center marker (optional)
+        center_marker = go.Scatter3d(
+            x=[center[0]], y=[center[1]], z=[center[2]],
+            mode='markers',
+            marker=dict(size=5, color='black'),
+            name='Center'
+        )
+    
+        fig = go.Figure(data=[ellipsoid_surface, scatter_points, center_marker])
+        fig.update_layout(scene=dict(aspectmode='data'))
+        fig.show()
+    
+    eigvecs = Ip[0].cpu().detach().numpy()
+    eigvals = (semi_axis_lengths[0].cpu().detach().numpy())**2
+    points = self.pos[tot_mol_index == 0].cpu().detach().numpy()
+    center = np.mean(points, axis=0)
+    
+    plot_ellipsoid_and_points(center, eigvals, eigvecs, points)
+    
+    """
+
+    def load_ellipsoid_model(self):
+        self.ellipsoid_model = ResidualMLP(
+            22, 512, 3, 8, None, 0
+        )
+        self_path = Path(os.path.realpath(__file__)).parent.resolve()
+        checkpoint = torch.load(self_path.joinpath(Path('ellipsoid_overlap_model.pt')), weights_only=True)
+        self.ellipsoid_model.load_state_dict(checkpoint)
+        self.ellipsoid_model.to(self.device).eval()
 
     def clean_cell_parameters(self, mode: str = 'hard',
                               canonicalize_orientations: bool = True,

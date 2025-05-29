@@ -377,8 +377,12 @@ def scatter_compute_Ip(all_coords, batch):
     Ips = Ip_o.permute(0, 2, 1)  # switch to row-wise eigenvectors
 
     sort_inds = torch.argsort(Ipms, dim=1)
-    Ipm = torch.stack([Ipms[i, sort_inds[i]] for i in range(len(sort_inds))])
-    Ip = torch.stack([Ips[i][sort_inds[i]] for i in range(len(sort_inds))])  # sort also the eigenvectors
+    # too slow
+    # Ipm = torch.stack([Ipms[i, sort_inds[i]] for i in range(len(sort_inds))])
+    # Ip = torch.stack([Ips[i][sort_inds[i]] for i in range(len(sort_inds))])  # sort also the eigenvectors
+    # much faster
+    Ipm = torch.gather(Ipms, dim=1, index=sort_inds)
+    Ip = torch.gather(Ips, dim=1, index=sort_inds.unsqueeze(2).expand(-1, -1, Ips.shape[2]))
 
     return Ip, Ipm, inertial_tensor
 
@@ -1386,4 +1390,19 @@ def fractional_transform_torch(coords, transform_matrix):
     elif coords.ndim == 2 and transform_matrix.ndim == 3:
         return torch.einsum('nj,nij->ni', (coords, transform_matrix))
 
+def compute_ellipsoid_volume(e):
+    return 4 / 3 * torch.pi * e.norm(dim=-1).prod(dim=-1)
 
+
+
+def compute_cosine_similarity_matrix(e1, e2):
+    """
+    compute the row-to-row dot products for batches of ellipsoids [n, i, j]
+    returns the [n, i, i] matrix of dot products between rows in e1 and e2
+
+    permuting the order of e1, e2, results in transposition of the overlap matrix
+    :param e1:
+    :param e2:
+    :return:
+    """
+    return torch.einsum('nij, nkj -> nik', e1, e2)

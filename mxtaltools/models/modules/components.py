@@ -591,3 +591,40 @@ class EmbeddingBlock(torch.nn.Module):
         embedding = self.embeddings(x[:, 0].long())
 
         return self.linear(torch.cat([embedding, x[:, 1:]], dim=-1))
+
+
+class ResidualMLP(nn.Module):
+    """
+    a simpler general-purpose MLP
+    """
+    def __init__(self, input_dim, hidden_dim, output_dim, num_layers,
+                 norm, dropout_p):
+        super().__init__()
+        self.input_layer = nn.Linear(input_dim, hidden_dim)
+
+        self.hidden_layers = nn.ModuleList([
+            nn.Linear(hidden_dim, hidden_dim) for _ in range(num_layers)
+        ])
+
+        if norm is not None:
+            self.norms = nn.ModuleList([
+                nn.LayerNorm(hidden_dim) for _ in range(num_layers)
+            ])
+        else:
+            self.norms = nn.ModuleList([
+                nn.Identity() for _ in range(num_layers)
+            ])
+
+        self.dropouts = nn.ModuleList([
+            nn.Dropout(dropout_p) for _ in range(num_layers)
+        ])
+
+        self.output_layer = nn.Linear(hidden_dim, output_dim)
+
+    def forward(self, x):
+        x = F.relu(self.input_layer(x))
+        for layer, dropout, norm in zip(self.hidden_layers, self.dropouts, self.norms):
+            residual = x
+            x = dropout(F.relu(norm(layer(x))))
+            x = x + residual  # skip connection
+        return self.output_layer(x)
