@@ -64,7 +64,7 @@ generator:
   model:
     dropout: 0.1
     hidden_dim: 1024
-    norm: null
+    norm: layer
     num_layers: 8
     vector_norm: null
   optimizer:

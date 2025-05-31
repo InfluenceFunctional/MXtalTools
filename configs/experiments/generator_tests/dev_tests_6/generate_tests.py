@@ -23,7 +23,7 @@ config_list = [
             'model': {
                 'hidden_dim': 1024,
                 'dropout': 0.1,
-                'norm': None,
+                'norm': 'layer',
                 'num_layers': 8,
                 'vector_norm': None,
             }
