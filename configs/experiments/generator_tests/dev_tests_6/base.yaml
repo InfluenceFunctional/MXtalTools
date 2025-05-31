@@ -38,7 +38,7 @@ logger:
   run_name: gen_dev6
   experiment_tag: gen_dev6
   sample_reporting_frequency: 10  # how often to do detailed reporting with figures
-  stats_reporting_frequency: 10
+  stats_reporting_frequency: 1
   log_figures: True
 
 sample_steps: 100

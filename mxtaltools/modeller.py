@@ -2010,7 +2010,7 @@ class Modeller:
                 if step >= iteration_override:
                     break  # stop training early
 
-            if step % 10 == 0 and self.epoch_type == 'train':
+            if step % 10 == 0 and self.epoch_type == 'train' and step > 0:
                 self.anneal_generator_curriculum()
 
         self.logger.concatenate_stats_dict(self.epoch_type)
@@ -2064,13 +2064,16 @@ class Modeller:
         stage2_cutoff = 0.1
         stage2_max_ellipsoid_scale = 0.75
         stage2_max_orientation_scale = 1
-        trailing_ellipsoid_loss = np.mean(self.logger.train_stats['ellipsoid_loss'][-history:])
+        ellipsoid_losses = self.logger.train_stats['ellipsoid_loss']
+        trailing_ellipsoid_loss = np.mean(ellipsoid_losses[-history:])
 
         """annealing checks"""
         if self.learning_stage == 1:
             """if ellipsoid losses are small, increase ellipsoid scale"""
             if trailing_ellipsoid_loss < stage1_cutoff and self.ellipsoid_scale < stage1_max_ellipsoid_scale:
                 self.ellipsoid_scale = min(self.ellipsoid_scale * increment_fraction, stage1_max_ellipsoid_scale)
+
+                print(f"Ellipsoid loss is {trailing_ellipsoid_loss:.3f} from {len(ellipsoid_losses)} samples, incrementing scale to {self.ellipsoid_scale:.3f}")
 
         elif self.learning_stage == 2:
             """allow orientation changes and larger ellipsoids"""

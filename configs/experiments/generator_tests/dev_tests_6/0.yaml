@@ -90,7 +90,7 @@ logger:
   log_figures: true
   run_name: dev_tests_6
   sample_reporting_frequency: 10
-  stats_reporting_frequency: 10
+  stats_reporting_frequency: 1
 machine: cluster
 max_batch_size: 1000
 max_epoch_steps: 200
