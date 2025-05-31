@@ -2016,7 +2016,7 @@ class Modeller:
         self.logger.concatenate_stats_dict(self.epoch_type)
 
     def init_generator_curriculum(self):
-        self.ellipsoid_scale = 0.1
+        self.ellipsoid_scale = 0.25
         self.vdw_turnover_pot = 0.01
         self.density_loss_scale = 1
         self.length_scale = 0
@@ -2029,6 +2029,15 @@ class Modeller:
         self.learning_stage = 1
 
         self.max_ellipsoid_scale = 1.2
+
+        self.curriculum_history = 1000
+        self.increment_fraction = 1.05
+        self.stage1_cutoff = 0.1
+        self.stage1_max_ellipsoid_scale = 0.5
+
+        self.stage2_cutoff = 0.1
+        self.stage2_max_ellipsoid_scale = 0.75
+        self.stage2_max_orientation_scale = 1
 
         stats = {'ellipsoid_scale': self.ellipsoid_scale,
                  'vdw_turnover_pot': self.vdw_turnover_pot,
@@ -2056,44 +2065,37 @@ class Modeller:
         -: update the learning curriculum
         -: update phase
         """
-        history = 1000
-        increment_fraction = 1.05
-        stage1_cutoff = 0.1
-        stage1_max_ellipsoid_scale = 0.5
 
-        stage2_cutoff = 0.1
-        stage2_max_ellipsoid_scale = 0.75
-        stage2_max_orientation_scale = 1
         ellipsoid_losses = self.logger.train_stats['ellipsoid_loss']
-        trailing_ellipsoid_loss = np.mean(ellipsoid_losses[-history:])
+        trailing_ellipsoid_loss = np.mean(ellipsoid_losses[-self.curriculum_history:])
 
         """annealing checks"""
         if self.learning_stage == 1:
             """if ellipsoid losses are small, increase ellipsoid scale"""
-            if trailing_ellipsoid_loss < stage1_cutoff and self.ellipsoid_scale < stage1_max_ellipsoid_scale:
-                self.ellipsoid_scale = min(self.ellipsoid_scale * increment_fraction, stage1_max_ellipsoid_scale)
+            if trailing_ellipsoid_loss < self.stage1_cutoff and self.ellipsoid_scale < self.stage1_max_ellipsoid_scale:
+                self.ellipsoid_scale = min(self.ellipsoid_scale * self.increment_fraction, self.stage1_max_ellipsoid_scale)
 
                 print(f"Ellipsoid loss is {trailing_ellipsoid_loss:.3f} from {len(ellipsoid_losses)} samples, incrementing scale to {self.ellipsoid_scale:.3f}")
 
         elif self.learning_stage == 2:
             """allow orientation changes and larger ellipsoids"""
-            if trailing_ellipsoid_loss < stage2_cutoff:
-                if self.ellipsoid_scale < stage2_max_ellipsoid_scale:
-                    if self.orientation_scale < stage2_max_orientation_scale:
-                        self.ellipsoid_scale = min(self.ellipsoid_scale * increment_fraction, stage2_max_ellipsoid_scale)
-                        self.orientation_scale = min(self.orientation_scale * increment_fraction, stage2_max_orientation_scale)
+            if trailing_ellipsoid_loss < self.stage2_cutoff:
+                if self.ellipsoid_scale < self.stage2_max_ellipsoid_scale:
+                    if self.orientation_scale < self.stage2_max_orientation_scale:
+                        self.ellipsoid_scale = min(self.ellipsoid_scale * self.increment_fraction, self.stage2_max_ellipsoid_scale)
+                        self.orientation_scale = min(self.orientation_scale * self.increment_fraction, self.stage2_max_orientation_scale)
 
         elif self.learning_stage == 3:
             aa = 1
 
         """curriculum updates"""
         if self.learning_stage == 1:
-            if self.ellipsoid_scale >= stage1_max_ellipsoid_scale:
+            if self.ellipsoid_scale >= self.stage1_max_ellipsoid_scale:
                 self.learning_stage += 1
                 print("Moving to Curriculum Stage 2!")
         elif self.learning_stage == 2:
-            if self.ellipsoid_scale >= stage2_max_ellipsoid_scale:
-                if self.orientation_scale >= stage2_max_orientation_scale:
+            if self.ellipsoid_scale >= self.stage2_max_ellipsoid_scale:
+                if self.orientation_scale >= self.stage2_max_orientation_scale:
                     self.learning_stage += 1
 
         stats = {'ellipsoid_scale': self.ellipsoid_scale,

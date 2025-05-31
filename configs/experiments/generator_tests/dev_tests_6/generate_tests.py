@@ -7,8 +7,8 @@ base_config = load_yaml('base.yaml')
 
 config_list = [
     {
-        'min_batch_size': 25,
-        'max_batch_size': 1000,
+        'min_batch_size': 1000,
+        'max_batch_size': 10000,
         'generator': {
             'samples_per_iter': 5,
 
