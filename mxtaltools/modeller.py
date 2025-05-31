@@ -2039,6 +2039,13 @@ class Modeller:
         self.stage2_max_ellipsoid_scale = 0.75
         self.stage2_max_orientation_scale = 1
 
+        self.stage3_ell_cutoff = 0.1
+        self.stage3_density_cutoff = 0.4
+        self.stage3_max_length_scale = 1
+        self.stage3_max_angle_scale = 1
+        self.stage3_max_density_loss_coefficient = 1
+        self.stage3_max_ellipsoid_scale = 1
+
         stats = {'ellipsoid_scale': self.ellipsoid_scale,
                  'vdw_turnover_pot': self.vdw_turnover_pot,
                  'density_loss_scale': self.density_loss_scale,
@@ -2068,6 +2075,8 @@ class Modeller:
 
         ellipsoid_losses = self.logger.train_stats['ellipsoid_loss']
         trailing_ellipsoid_loss = np.mean(ellipsoid_losses[-self.curriculum_history:])
+        density_losses = self.logger.train_stats['density_loss']
+        trailing_density_loss = np.mean(density_losses[-self.curriculum_history:])
 
         """annealing checks"""
         if self.learning_stage == 1:
@@ -2080,13 +2089,17 @@ class Modeller:
         elif self.learning_stage == 2:
             """allow orientation changes and larger ellipsoids"""
             if trailing_ellipsoid_loss < self.stage2_cutoff:
-                if self.ellipsoid_scale < self.stage2_max_ellipsoid_scale:
-                    if self.orientation_scale < self.stage2_max_orientation_scale:
-                        self.ellipsoid_scale = min(self.ellipsoid_scale * self.increment_fraction, self.stage2_max_ellipsoid_scale)
-                        self.orientation_scale = min(self.orientation_scale * self.increment_fraction, self.stage2_max_orientation_scale)
+                    self.ellipsoid_scale = min(self.ellipsoid_scale * self.increment_fraction, self.stage2_max_ellipsoid_scale)
+                    self.orientation_scale = min(self.orientation_scale * self.increment_fraction, self.stage2_max_orientation_scale)
 
         elif self.learning_stage == 3:
-            aa = 1
+            if trailing_ellipsoid_loss < self.stage3_ell_cutoff:
+                if trailing_density_loss < self.stage3_density_cutoff:
+                    self.length_scale = min(self.length_scale * self.increment_fraction, self.stage3_max_length_scale)
+                    self.angle_scale = min(self.angle_scale * self.increment_fraction, self.stage3_max_angle_scale)
+                    self.density_loss_coefficient = min(self.density_loss_coefficient * self.increment_fraction, self.stage3_max_density_loss_coefficient)
+                    self.ellipsoid_scale = min(self.ellipsoid_scale * self.increment_fraction, self.stage3_max_ellipsoid_scale)
+
 
         """curriculum updates"""
         if self.learning_stage == 1:
@@ -2486,7 +2499,7 @@ class Modeller:
 
             # analyze cell
             (molwise_normed_overlap, molwise_scaled_lj_pot, molwise_lj_pot,
-             ellipsoid_overlap, silu_pot, cluster_batch) = self.analyze_generator_samples(crystal_batch)
+             ellipsoid_overlap, silu_pot, cluster_batch) = self.analyze_generator_samples(new_crystal_batch)
             vdw_loss, density_loss, ellipsoid_loss = self.generator_losses(cluster_batch, silu_pot, ellipsoid_overlap)
 
             loss = (self.ellipsoid_loss_coefficient * ellipsoid_loss +

@@ -371,7 +371,7 @@ def scatter_compute_Ip(all_coords, batch):
          torch.vstack((Ixz, Iyz, Izz))[:, None, :].permute(2, 1, 0)
          ), dim=-2)  # inertial tensor
 
-    Ipm_c, Ip_c = torch.linalg.eig(inertial_tensor)  # principal inertial tensor
+    Ipm_c, Ip_c = torch.linalg.eigh(inertial_tensor)  # principal inertial tensor # eigh faster on hermit matrices
     Ipms, Ip_o = torch.real(Ipm_c), torch.real(Ip_c)
 
     Ips = Ip_o.permute(0, 2, 1)  # switch to row-wise eigenvectors

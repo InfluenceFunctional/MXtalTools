@@ -1175,8 +1175,9 @@ class MolCrystalData(MolData):
             r=self.radius.amax() * 2)
         # filter edges longer than 2x mol_radius for each sample
         dists = torch.linalg.norm(mol_centroids[edge_i] - mol_centroids[edge_j], dim=1)
-        edge_i_good = edge_i[dists < (2 * longest_length[edge_i])]
-        edge_j_good = edge_j[dists < (2 * longest_length[edge_i])]
+        good_inds = dists < (2 * longest_length[edge_i])
+        edge_i_good = edge_i[good_inds]
+        edge_j_good = edge_j[good_inds]
         return edge_i_good, edge_j_good, mol_centroids
 
     def compute_cluster_ellipsoids(self, semi_axis_scale):

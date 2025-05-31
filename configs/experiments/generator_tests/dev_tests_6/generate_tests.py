@@ -7,11 +7,11 @@ base_config = load_yaml('base.yaml')
 
 config_list = [
     {
-        'min_batch_size': 1000,
-        'max_batch_size': 10000,
+        'min_batch_size': 100,
+        'batch_growth_increment': 0.25,
+        'max_batch_size': 2000,
         'generator': {
             'samples_per_iter': 5,
-
             'optimizer': {
                 'init_lr': 1e-4,
                 'max_lr': 5e-4,
@@ -21,10 +21,10 @@ config_list = [
                 'lr_shrink_lambda': 0.94,
             },
             'model': {
-                'hidden_dim': 512,
-                'dropout': 0,
+                'hidden_dim': 1024,
+                'dropout': 0.1,
                 'norm': None,
-                'num_layers': 4,
+                'num_layers': 8,
                 'vector_norm': None,
             }
         }

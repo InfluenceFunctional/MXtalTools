@@ -214,11 +214,12 @@ def featurize_ellipsoid_batch(Ip, edge_i_good, edge_j_good, mol_centroids, semi_
     # relative rotation matrix
     # R_rel = torch.einsum('nik, njk -> nij', unit_std_normed_e1, unit_std_normed_e2)
     cmat = compute_cosine_similarity_matrix(unit_std_normed_e1, unit_std_normed_e2)
-    x = torch.zeros((len(e1), 22), dtype=torch.float32, device=device)
-    x[:, 0] = normed_r.norm(dim=-1)
-    x[:, 1:10] = cmat.reshape(len(e1), 9)
-    x[:, 10:13] = std_normed_e1.norm(dim=-1)
-    x[:, 13:16] = std_normed_e2.norm(dim=-1)
-    x[:, 16:19] = r1_local
-    x[:, 19:22] = r2_local
+    x = torch.cat([
+        normed_r.norm(dim=-1, keepdim=True),
+        cmat.reshape(len(e1), 9),
+        std_normed_e1.norm(dim=-1),
+        std_normed_e2.norm(dim=-1),
+        r1_local,
+        r2_local,
+    ], dim=1)
     return max_val, normed_v1, normed_v2, x
