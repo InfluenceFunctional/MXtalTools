@@ -630,7 +630,8 @@ class MolCrystalData(MolData):
         if not hasattr(self, 'asym_unit_dict'):
             self.asym_unit_dict = self.build_asym_unit_dict()
 
-        assert std_normal.isfinite().all()
+        if not std_normal.isfinite().all():
+            raise ValueError('Numerical Error: Gen basis cell params not all finite')
 
         a_out, al_out, b_out, be_out, c_out, ga_out = (
             randn_to_niggli_box_vectors(self.asym_unit_dict,
@@ -672,7 +673,8 @@ class MolCrystalData(MolData):
         std_cell_lengths = torch.vstack([a_out, b_out, c_out]).T
         std_cell_angles = torch.vstack([al_out, be_out, ga_out]).T
         std_cell_params = torch.cat([std_cell_lengths, std_cell_angles, std_aunit, std_orientation], dim=1)
-        assert std_cell_params.isfinite().all()
+        if not std_cell_params.isfinite().all():
+            raise ValueError('Numerical Error: Std cell params not all finite')
 
         return std_cell_params
 
