@@ -198,14 +198,7 @@ class Logger:
         # general metrics
 
         metrics_to_log = {'epoch': self.epoch,
-                          'packing_loss_coefficient': self.packing_loss_coefficient,
-                          'prior_loss_coefficient': self.prior_loss_coefficient,
-                          'vdw_turnover_potential': self.vdw_turnover_potential,
-                          'vdw_loss_coefficient': self.vdw_loss_coefficient,
-                          'prior_variation_scale': self.prior_variation_scale,
                           'batch_size': self.batch_size,
-                          'train_buffer_size': self.train_buffer_size,
-                          'test_buffer_size': self.test_buffer_size,
                           }
 
         for key in self.learning_rates.keys():
@@ -241,6 +234,12 @@ class Logger:
                         if stats_dict[key].ndim == 1:
                             if '<U' not in str(stats_dict[key].dtype):  # if it is not a list of strings
                                 metrics_to_log[f'{name}_{key}'] = np.average(stats_dict[key])
+                    elif isinstance(stats_dict[key], list):
+                        try:
+                            mean_val = np.mean(stats_dict[key])
+                            metrics_to_log[f'{name}_{key}'] = mean_val
+                        except:
+                            pass
                     else:  # ignore other objects
                         pass
 

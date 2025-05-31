@@ -1090,10 +1090,10 @@ class MolCrystalData(MolData):
 
         return molwise_silu_energy
 
-    def compute_ellipsoidal_energy(self,
-                                   semi_axis_scale: float = 1,
-                                   return_details: Optional[bool] = False,
-                                   model: Optional = None):
+    def compute_ellipsoidal_overlap(self,
+                                    semi_axis_scale: float = 1,
+                                    return_details: Optional[bool] = False,
+                                    model: Optional = None):
         """
         Compute an energy function given the overlaps of molecules in an ellipsoid representation
         Using our pretrained ellipsoid overlap function
@@ -1139,14 +1139,13 @@ class MolCrystalData(MolData):
         overlap_pred = normed_overlap_pred * norm_factor ** 3
         #v_pred_error = (F.l1_loss(normed_v1, v1_pred, reduction='none') + F.l1_loss(normed_v2, v2_pred, reduction='none'))/2
 
-        overlap_energy = normed_overlap_pred ** 2
-        crystal_overlap_energy = scatter(overlap_pred, molwise_batch[edge_j_good], dim=0, dim_size=self.num_graphs,
+        molwise_ellipsoid_overlap = scatter(overlap_pred, molwise_batch[edge_j_good], dim=0, dim_size=self.num_graphs,
                                          reduce='sum')
 
         if not return_details:
-            return crystal_overlap_energy
+            return molwise_ellipsoid_overlap
         else:
-            return crystal_overlap_energy, overlap_energy, v1_pred, v2_pred, normed_v1, normed_v2, norm_factor
+            return molwise_ellipsoid_overlap, v1_pred, v2_pred, normed_v1, normed_v2, norm_factor
 
     """
     #Check predictions

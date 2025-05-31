@@ -139,10 +139,7 @@ proxy_discriminator:
 
 # for GAN training
 generator:
-  prior_variation_growth_step: 0.0001
   samples_per_iter: 5
-  mean_step_size: 2
-  init_vdw_loss_factor: 0.001
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
 
   #generator optimizer and model
