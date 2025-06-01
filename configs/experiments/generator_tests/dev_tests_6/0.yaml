@@ -63,9 +63,9 @@ generator:
   canonical_conformer_orientation: random
   model:
     dropout: 0.1
-    hidden_dim: 1024
+    hidden_dim: 512
     norm: layer
-    num_layers: 8
+    num_layers: 20
     vector_norm: null
   optimizer:
     beta1: 0.9
@@ -75,7 +75,7 @@ generator:
     lr_growth_lambda: 1.3
     lr_schedule: true
     lr_shrink_lambda: 0.94
-    max_lr: 0.0005
+    max_lr: 0.0001
     min_lr: 1.0e-06
     optimizer: adamw
     overwrite_on_reload: false
