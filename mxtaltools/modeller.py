@@ -2531,8 +2531,9 @@ class Modeller:
                             if not torch.isfinite(param.grad).all():
                                 print(f"Non-finite gradient detected in {name}")
                                 print(f"Gradient stats: min={param.grad.min()}, max={param.grad.max()}, mean={param.grad.mean()}")
-                    raise ValueError('Numerical Error: Model weights not all finite')
 
+                    print(f"Failed cell params {new_crystal_batch.cell_parameters()}")
+                    raise ValueError('Numerical Error: Model weights not all finite')
 
             if not skip_stats:
                 self.logger.update_current_losses('generator', self.epoch_type,

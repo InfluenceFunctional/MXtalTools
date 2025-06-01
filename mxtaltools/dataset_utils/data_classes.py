@@ -1205,9 +1205,9 @@ class MolCrystalData(MolData):
         Ip = torch.flip(Ip, (1,))
         # rescale ellipsoid semi-axes to align with the longest axis of the molecule
         longest_length = self.radius.repeat_interleave(mols_per_cluster)
-        sqrt_eigenvalues = torch.sqrt(Ipm + 1e-5)
+        sqrt_eigenvalues = torch.sqrt(Ipm.clip(min=0) + 1e-5)
         semi_axis_lengths = (sqrt_eigenvalues / sqrt_eigenvalues.amax(1, keepdim=True)
-                             * longest_length[:, None] * semi_axis_scale)
+                             * longest_length[:, None] * semi_axis_scale).clip(min=0.01)
         return Ip, longest_length, molwise_batch, semi_axis_lengths, tot_mol_index, tot_num_mols
 
     """  # to visualize ellipsoid fit

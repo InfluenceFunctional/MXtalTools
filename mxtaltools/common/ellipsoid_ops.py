@@ -182,7 +182,8 @@ def compute_ellipsoid_overlap(e1,
     """
 
 
-def featurize_ellipsoid_batch(Ip, edge_i_good, edge_j_good, mol_centroids, semi_axis_lengths, device):
+def featurize_ellipsoid_batch(Ip, edge_i_good, edge_j_good, mol_centroids, semi_axis_lengths, device,
+                              eps=1e-5):
     # featurize pairs
     r = mol_centroids[edge_j_good] - mol_centroids[edge_i_good]
     e1 = Ip[edge_j_good] * semi_axis_lengths[edge_j_good][:, :, None]
@@ -206,7 +207,7 @@ def featurize_ellipsoid_batch(Ip, edge_i_good, edge_j_good, mol_centroids, semi_
     sign_flip2 = (dot2 < 0).float() * -2 + 1  # flips points same way as r
     std_normed_e2 = normed_e2 * sign_flip2.unsqueeze(-1)
     # parameterize
-    r_hat = F.normalize(normed_r, dim=-1)
+    r_hat = F.normalize(normed_r + eps, dim=-1)
     r1_local = torch.einsum('nij,nj->ni', std_normed_e1, r_hat)  # r in frame of ellipsoid 1
     r2_local = torch.einsum('nij,nj->ni', std_normed_e2, -r_hat)  # r in frame of ellipsoid 2
     unit_std_normed_e1 = std_normed_e1 / std_normed_e1.norm(dim=-1, keepdim=True)
