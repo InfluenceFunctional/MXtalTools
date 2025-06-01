@@ -2031,7 +2031,7 @@ class Modeller:
         self.max_ellipsoid_scale = 1.2
 
         self.curriculum_history = 1000
-        self.increment_fraction = 1.05
+        self.increment_fraction = 0.05
         self.stage1_cutoff = 0.1
         self.stage1_max_ellipsoid_scale = 0.5
 
@@ -2082,23 +2082,23 @@ class Modeller:
         if self.learning_stage == 1:
             """if ellipsoid losses are small, increase ellipsoid scale"""
             if trailing_ellipsoid_loss < self.stage1_cutoff and self.ellipsoid_scale < self.stage1_max_ellipsoid_scale:
-                self.ellipsoid_scale = min(self.ellipsoid_scale * self.increment_fraction, self.stage1_max_ellipsoid_scale)
+                self.ellipsoid_scale = min(self.ellipsoid_scale + self.increment_fraction, self.stage1_max_ellipsoid_scale)
 
                 print(f"Ellipsoid loss is {trailing_ellipsoid_loss:.3f} from {len(ellipsoid_losses)} samples, incrementing scale to {self.ellipsoid_scale:.3f}")
 
         elif self.learning_stage == 2:
             """allow orientation changes and larger ellipsoids"""
             if trailing_ellipsoid_loss < self.stage2_cutoff:
-                    self.ellipsoid_scale = min(self.ellipsoid_scale * self.increment_fraction, self.stage2_max_ellipsoid_scale)
-                    self.orientation_scale = min(self.orientation_scale * self.increment_fraction, self.stage2_max_orientation_scale)
+                    self.ellipsoid_scale = min(self.ellipsoid_scale + self.increment_fraction, self.stage2_max_ellipsoid_scale)
+                    self.orientation_scale = min(self.orientation_scale + self.increment_fraction, self.stage2_max_orientation_scale)
 
         elif self.learning_stage == 3:
             if trailing_ellipsoid_loss < self.stage3_ell_cutoff:
                 if trailing_density_loss < self.stage3_density_cutoff:
-                    self.length_scale = min(self.length_scale * self.increment_fraction, self.stage3_max_length_scale)
-                    self.angle_scale = min(self.angle_scale * self.increment_fraction, self.stage3_max_angle_scale)
-                    self.density_loss_coefficient = min(self.density_loss_coefficient * self.increment_fraction, self.stage3_max_density_loss_coefficient)
-                    self.ellipsoid_scale = min(self.ellipsoid_scale * self.increment_fraction, self.stage3_max_ellipsoid_scale)
+                    self.length_scale = min(self.length_scale + self.increment_fraction, self.stage3_max_length_scale)
+                    self.angle_scale = min(self.angle_scale + self.increment_fraction, self.stage3_max_angle_scale)
+                    self.density_loss_coefficient = min(self.density_loss_coefficient + self.increment_fraction, self.stage3_max_density_loss_coefficient)
+                    self.ellipsoid_scale = min(self.ellipsoid_scale + self.increment_fraction, self.stage3_max_ellipsoid_scale)
 
 
         """curriculum updates"""
@@ -2519,11 +2519,32 @@ class Modeller:
                 generator_loss.backward()  # back-propagation
                 torch.nn.utils.clip_grad_value_(self.models_dict['generator'].parameters(),
                                                 1)
-                # torch.nn.utils.clip_grad_norm_(self.models_dict['generator'].parameters(),
-                #                                self.config.gradient_norm_clip)  # gradient clipping
-                print("Grad norm (clipped):", torch.nn.utils.clip_grad_norm_(self.models_dict['generator'].parameters(),
-                                                                             self.config.gradient_norm_clip))
+                torch.nn.utils.clip_grad_norm_(self.models_dict['generator'].parameters(),
+                                               self.config.gradient_norm_clip)  # gradient clipping
+                # print("Grad norm (clipped):", torch.nn.utils.clip_grad_norm_(self.models_dict['generator'].parameters(),
+                #                                                              self.config.gradient_norm_clip))
+
+                # ✅ Pre-step check: are any gradients NaN or Inf?
+                nonfinite_grads = []
+                for name, param in self.models_dict['generator'].named_parameters():
+                    if param.grad is not None and not torch.isfinite(param.grad).all():
+                        nonfinite_grads.append((name, param.grad))
+
+                if nonfinite_grads:
+                    print("Detected non-finite gradients before optimizer step:")
+                    for name, grad in nonfinite_grads:
+                        print(
+                            f" - {name}: min={grad.min()}, max={grad.max()}, mean={grad.mean()}, isnan={torch.isnan(grad).any()}, isinf={torch.isinf(grad).any()}")
+                    print(f"Loss components: vdw={vdw_loss}, ellipsoid={ellipsoid_loss}, density={density_loss}")
+                    raise ValueError("Numerical Error: Non-finite gradients detected before optimizer step")
+
                 self.optimizers_dict['generator'].step()  # update parameters
+
+                # ✅ Optional post-step parameter sanity check
+                for name, param in self.models_dict['generator'].named_parameters():
+                    if not torch.isfinite(param).all():
+                        print(f"Post-step: Non-finite weights in {name}")
+                        raise ValueError("Numerical Error: Non-finite parameters after step")
 
                 if not torch.stack([torch.isfinite(p).any() for p in self.models_dict['generator'].parameters()]).all():
                     print(f"Loss is {loss}")
