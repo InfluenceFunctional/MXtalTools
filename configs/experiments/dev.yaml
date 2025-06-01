@@ -1,4 +1,4 @@
-anomaly_detection: true
+anomaly_detection: false
 batch_growth_increment: 0.25
 checkpointing_loss_type: test
 dataset:

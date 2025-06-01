@@ -186,14 +186,19 @@ def featurize_ellipsoid_batch(Ip, edge_i_good, edge_j_good, mol_centroids, semi_
                               eps=1e-5):
     # featurize pairs
     r = mol_centroids[edge_j_good] - mol_centroids[edge_i_good]
+    assert torch.isfinite(Ip).all(), "Non-finite principal axes!"
     e1 = Ip[edge_j_good] * semi_axis_lengths[edge_j_good][:, :, None]
     e2 = Ip[edge_i_good] * semi_axis_lengths[edge_i_good][:, :, None]
     v1 = compute_ellipsoid_volume(e1)
     v2 = compute_ellipsoid_volume(e2)
+    assert torch.isfinite(v1).all()
+    assert (v1 > 0).all()
+    assert torch.isfinite(semi_axis_lengths).all()
+    assert (semi_axis_lengths > 0).all()
     # normalize
     max_e1 = e1.norm(dim=-1).amax(1)
     max_e2 = e2.norm(dim=-1).amax(1)
-    max_val = torch.stack([max_e1, max_e2]).T.amax(1)
+    max_val = torch.stack([max_e1, max_e2]).T.amax(1) + eps
     normed_e1 = e1 / max_val[:, None, None]
     normed_e2 = e2 / max_val[:, None, None]
     normed_r = r / max_val[:, None]

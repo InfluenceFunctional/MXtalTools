@@ -1136,10 +1136,9 @@ class MolCrystalData(MolData):
         else:
             output = ellipsoid_model(x)
 
-
         # process results
         v1_pred, v2_pred, overlap_pred_i = output[:, 0], output[:, 1], output[:, 2]
-        normed_overlap_pred = (overlap_pred_i / (normed_v1 * normed_v2) * (normed_v1 + normed_v2)).clip(min=0)
+        normed_overlap_pred = (overlap_pred_i / (1e-3 + (normed_v1 * normed_v2) * (normed_v1 + normed_v2))).clip(min=0)
         overlap_pred = normed_overlap_pred * norm_factor ** 3
         #v_pred_error = (F.l1_loss(normed_v1, v1_pred, reduction='none') + F.l1_loss(normed_v2, v2_pred, reduction='none'))/2
 
@@ -1184,7 +1183,7 @@ class MolCrystalData(MolData):
         edge_j_good = edge_j[good_inds]
         return edge_i_good, edge_j_good, mol_centroids
 
-    def compute_cluster_ellipsoids(self, semi_axis_scale):
+    def compute_cluster_ellipsoids(self, semi_axis_scale, eps:float = 1e-3):
         # molecule indexing
         mols_per_cluster = torch.tensor(self.edges_dict['n_repeats'], device=self.device)
         tot_num_mols = torch.sum(mols_per_cluster)
@@ -1204,10 +1203,10 @@ class MolCrystalData(MolData):
         Ipm = torch.flip(Ipm, (1,))
         Ip = torch.flip(Ip, (1,))
         # rescale ellipsoid semi-axes to align with the longest axis of the molecule
-        longest_length = self.radius.repeat_interleave(mols_per_cluster)
-        sqrt_eigenvalues = torch.sqrt(Ipm.clip(min=0) + 1e-5)
+        longest_length = self.radius.repeat_interleave(mols_per_cluster).clip(min=0.1)
+        sqrt_eigenvalues = torch.sqrt(Ipm.clip(min=0) + eps)
         semi_axis_lengths = (sqrt_eigenvalues / sqrt_eigenvalues.amax(1, keepdim=True)
-                             * longest_length[:, None] * semi_axis_scale).clip(min=0.01)
+                             * longest_length[:, None] * semi_axis_scale).clip(min=0.1)
         return Ip, longest_length, molwise_batch, semi_axis_lengths, tot_mol_index, tot_num_mols
 
     """  # to visualize ellipsoid fit

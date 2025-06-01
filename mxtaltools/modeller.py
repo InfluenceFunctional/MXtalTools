@@ -2526,6 +2526,8 @@ class Modeller:
                 self.optimizers_dict['generator'].step()  # update parameters
 
                 if not torch.stack([torch.isfinite(p).any() for p in self.models_dict['generator'].parameters()]).all():
+                    print(f"Loss is {loss}")
+                    print(f"vdw loss {vdw_loss} ell loss {ellipsoid_loss} den loss {density_loss}")
                     for name, param in self.models_dict['generator'].named_parameters():
                         if param.grad is not None:
                             if not torch.isfinite(param.grad).all():
