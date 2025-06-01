@@ -2517,9 +2517,22 @@ class Modeller:
             if update_weights:
                 self.optimizers_dict['generator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
                 generator_loss.backward()  # back-propagation
-                torch.nn.utils.clip_grad_norm_(self.models_dict['generator'].parameters(),
-                                               self.config.gradient_norm_clip)  # gradient clipping
+                torch.nn.utils.clip_grad_value_(self.models_dict['generator'].parameters(),
+                                                1)
+                # torch.nn.utils.clip_grad_norm_(self.models_dict['generator'].parameters(),
+                #                                self.config.gradient_norm_clip)  # gradient clipping
+                print("Grad norm (clipped):", torch.nn.utils.clip_grad_norm_(self.models_dict['generator'].parameters(),
+                                                                             self.config.gradient_norm_clip))
                 self.optimizers_dict['generator'].step()  # update parameters
+
+                if not torch.stack([torch.isfinite(p).any() for p in self.models_dict['generator'].parameters()]).all():
+                    for name, param in self.models_dict['generator'].named_parameters():
+                        if param.grad is not None:
+                            if not torch.isfinite(param.grad).all():
+                                print(f"Non-finite gradient detected in {name}")
+                                print(f"Gradient stats: min={param.grad.min()}, max={param.grad.max()}, mean={param.grad.mean()}")
+                    raise ValueError('Numerical Error: Model weights not all finite')
+
 
             if not skip_stats:
                 self.logger.update_current_losses('generator', self.epoch_type,

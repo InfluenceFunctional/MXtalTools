@@ -55,10 +55,11 @@ class CrystalGenerator(nn.Module):
         x_w_v = torch.cat([x_w_sg, v.reshape(v.shape[0], v.shape[1] * v.shape[2])], dim=1)
         length_delta, angle_delta, position_delta, orientation_delta = self.model(x=x_w_v).split(3, dim=1)
 
-        length_delta_norm = length_delta.norm(dim=1, keepdim=True)
-        angle_delta_norm = angle_delta.norm(dim=1, keepdim=True)
-        position_delta_norm = position_delta.norm(dim=1, keepdim=True)
-        orientation_delta_norm = orientation_delta.norm(dim=1, keepdim=True)
+        eps = 1e-4  # account for possible instability here
+        length_delta_norm = length_delta.norm(dim=1, keepdim=True).clamp(min=eps)
+        angle_delta_norm = angle_delta.norm(dim=1, keepdim=True).clamp(min=eps)
+        position_delta_norm = position_delta.norm(dim=1, keepdim=True).clamp(min=eps)
+        orientation_delta_norm = orientation_delta.norm(dim=1, keepdim=True).clamp(min=eps)
 
         normed_length_delta = length_delta / length_delta_norm
         normed_angle_delta = angle_delta / angle_delta_norm
