@@ -631,6 +631,7 @@ class MolCrystalData(MolData):
             self.asym_unit_dict = self.build_asym_unit_dict()
 
         if not std_normal.isfinite().all():
+            print(std_normal)
             raise ValueError('Numerical Error: Gen basis cell params not all finite')
 
         a_out, al_out, b_out, be_out, c_out, ga_out = (
@@ -674,6 +675,7 @@ class MolCrystalData(MolData):
         std_cell_angles = torch.vstack([al_out, be_out, ga_out]).T
         std_cell_params = torch.cat([std_cell_lengths, std_cell_angles, std_aunit, std_orientation], dim=1)
         if not std_cell_params.isfinite().all():
+            print(std_cell_params)
             raise ValueError('Numerical Error: Std cell params not all finite')
 
         return std_cell_params
