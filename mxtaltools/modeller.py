@@ -2471,6 +2471,8 @@ class Modeller:
                                                                  device=crystal_batch.device)
         orientation_scale_tensor = self.orientation_scale * torch.ones((crystal_batch.num_graphs, 1),
                                                                        device=crystal_batch.device)
+
+        """sample from model"""
         for ind in range(self.config.generator.samples_per_iter):
             if ind == 0:
                 init_state = prior_in_gen_basis.detach().clone()

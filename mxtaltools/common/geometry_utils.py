@@ -337,7 +337,19 @@ def batch_get_furthest_node_vector(all_coords: torch.FloatTensor, batch: torch.L
     return all_coords[max_ind]
 
 
-def scatter_compute_Ip(all_coords, batch):
+def nan_hook(name, tensor_ref, batch):
+    def _hook(grad):
+        if torch.isnan(grad).any():
+            print(f"NaNs in grad of {name}")
+            print(f"Original tensor: {tensor_ref}")
+            print(f"Batch: {batch}")
+            assert False, "Stop the code!!"
+        return torch.nan_to_num(grad)
+    return _hook
+
+def scatter_compute_Ip(all_coords, batch,
+                       eps: float = 0.05,
+                       add_noise: bool = False):
     """
     Parallel function to compute inertial for a list of unequal sized sets of coordinates.
 
@@ -352,17 +364,29 @@ def scatter_compute_Ip(all_coords, batch):
     Ipm : torch.tensor(num_graphs, 3)
     I : torch.tensor(num_graphs, 3, 3)
     """
-    Ixy = -scatter(all_coords[:, 0] * all_coords[:, 1],
+
+    """
+    input is symmetric by construction
+    when backpropagating, we need to ensure no degenerate eigenvalues
+    empirically has to be bigger already than ~0.0127 to lift degeneracies
+    taking default at 0.05 for safety
+    """
+    if all_coords.requires_grad or add_noise:
+        coords_to_compute = all_coords + torch.randn_like(all_coords) * eps
+    else:
+        coords_to_compute = all_coords
+
+    Ixy = -scatter(coords_to_compute[:, 0] * coords_to_compute[:, 1],
                    batch, reduce='sum')
-    Iyz = -scatter(all_coords[:, 1] * all_coords[:, 2],
+    Iyz = -scatter(coords_to_compute[:, 1] * coords_to_compute[:, 2],
                    batch, reduce='sum')
-    Ixz = -scatter(all_coords[:, 0] * all_coords[:, 2],
+    Ixz = -scatter(coords_to_compute[:, 0] * coords_to_compute[:, 2],
                    batch, reduce='sum')
-    Ixx = scatter(all_coords[:, 1] ** 2 + all_coords[:, 2] ** 2,
+    Ixx = scatter(coords_to_compute[:, 1] ** 2 + coords_to_compute[:, 2] ** 2,
                   batch, reduce='sum')
-    Iyy = scatter(all_coords[:, 0] ** 2 + all_coords[:, 2] ** 2,
+    Iyy = scatter(coords_to_compute[:, 0] ** 2 + coords_to_compute[:, 2] ** 2,
                   batch, reduce='sum')
-    Izz = scatter(all_coords[:, 0] ** 2 + all_coords[:, 1] ** 2,
+    Izz = scatter(coords_to_compute[:, 0] ** 2 + coords_to_compute[:, 1] ** 2,
                   batch, reduce='sum')
 
     inertial_tensor = torch.cat(
@@ -374,6 +398,8 @@ def scatter_compute_Ip(all_coords, batch):
     Ipm_c, Ip_c = torch.linalg.eigh(inertial_tensor)  # principal inertial tensor # eigh faster on hermit matrices
     Ipms, Ip_o = torch.real(Ipm_c), torch.real(Ip_c)
 
+    #Ip_o, Ipms, _ = torch.linalg.svd(inertial_tensor)  # superior numerical stability, yet equivalent for symmetric positive semi-definite
+
     Ips = Ip_o.permute(0, 2, 1)  # switch to row-wise eigenvectors
 
     sort_inds = torch.argsort(Ipms, dim=1)
@@ -383,6 +409,10 @@ def scatter_compute_Ip(all_coords, batch):
     # much faster
     Ipm = torch.gather(Ipms, dim=1, index=sort_inds)
     Ip = torch.gather(Ips, dim=1, index=sort_inds.unsqueeze(2).expand(-1, -1, Ips.shape[2]))
+
+    if Ipms.requires_grad:
+        coords_to_compute.retain_grad()
+        coords_to_compute.register_hook(nan_hook("coords", coords_to_compute, batch))
 
     return Ip, Ipm, inertial_tensor
 
