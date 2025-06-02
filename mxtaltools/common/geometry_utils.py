@@ -410,9 +410,9 @@ def scatter_compute_Ip(all_coords, batch,
     Ipm = torch.gather(Ipms, dim=1, index=sort_inds)
     Ip = torch.gather(Ips, dim=1, index=sort_inds.unsqueeze(2).expand(-1, -1, Ips.shape[2]))
 
-    if Ipms.requires_grad:
-        coords_to_compute.retain_grad()
-        coords_to_compute.register_hook(nan_hook("coords", coords_to_compute, batch))
+    # if Ipms.requires_grad:
+    #     coords_to_compute.retain_grad()
+    #     coords_to_compute.register_hook(nan_hook("coords", coords_to_compute, batch))
 
     return Ip, Ipm, inertial_tensor
 
