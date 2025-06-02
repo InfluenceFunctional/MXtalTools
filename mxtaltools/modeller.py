@@ -2089,8 +2089,8 @@ class Modeller:
         elif self.learning_stage == 2:
             """allow orientation changes and larger ellipsoids"""
             if trailing_ellipsoid_loss < self.stage2_cutoff:
-                    self.ellipsoid_scale = min(self.ellipsoid_scale + self.increment_fraction, self.stage2_max_ellipsoid_scale)
-                    self.orientation_scale = min(self.orientation_scale + self.increment_fraction, self.stage2_max_orientation_scale)
+                self.ellipsoid_scale = min(self.ellipsoid_scale + self.increment_fraction, self.stage2_max_ellipsoid_scale)
+                self.orientation_scale = min(self.orientation_scale + self.increment_fraction, self.stage2_max_orientation_scale)
 
         elif self.learning_stage == 3:
             if trailing_ellipsoid_loss < self.stage3_ell_cutoff:
@@ -2463,13 +2463,12 @@ class Modeller:
             'mol_radius': crystal_batch.radius.detach(),
             'generated_space_group_numbers': crystal_batch.sg_ind.detach(),
         }
-        dict_of_tensors_to_cpu_numpy(stats)
 
-        length_scale_tensor = self.length_scale * torch.ones((crystal_batch.num_graphs, 1), device=crystal_batch.device)
-        angle_scale_tensor = self.angle_scale * torch.ones((crystal_batch.num_graphs, 1), device=crystal_batch.device)
-        position_scale_tensor = self.position_scale * torch.ones((crystal_batch.num_graphs, 1),
+        length_scale_tensor = self.config.generator.step_size * self.length_scale * torch.ones((crystal_batch.num_graphs, 1), device=crystal_batch.device)
+        angle_scale_tensor = self.config.generator.step_size * self.angle_scale * torch.ones((crystal_batch.num_graphs, 1), device=crystal_batch.device)
+        position_scale_tensor = self.config.generator.step_size * self.position_scale * torch.ones((crystal_batch.num_graphs, 1),
                                                                  device=crystal_batch.device)
-        orientation_scale_tensor = self.orientation_scale * torch.ones((crystal_batch.num_graphs, 1),
+        orientation_scale_tensor = self.config.generator.step_size * self.orientation_scale * torch.ones((crystal_batch.num_graphs, 1),
                                                                        device=crystal_batch.device)
 
         """sample from model"""
@@ -2523,42 +2522,8 @@ class Modeller:
                                                 1)
                 torch.nn.utils.clip_grad_norm_(self.models_dict['generator'].parameters(),
                                                self.config.gradient_norm_clip)  # gradient clipping
-                # print("Grad norm (clipped):", torch.nn.utils.clip_grad_norm_(self.models_dict['generator'].parameters(),
-                #                                                              self.config.gradient_norm_clip))
-
-                # ✅ Pre-step check: are any gradients NaN or Inf?
-                nonfinite_grads = []
-                for name, param in self.models_dict['generator'].named_parameters():
-                    if param.grad is not None and not torch.isfinite(param.grad).all():
-                        nonfinite_grads.append((name, param.grad))
-
-                if nonfinite_grads:
-                    print("Detected non-finite gradients before optimizer step:")
-                    for name, grad in nonfinite_grads:
-                        print(
-                            f" - {name}: min={grad.min()}, max={grad.max()}, mean={grad.mean()}, isnan={torch.isnan(grad).any()}, isinf={torch.isinf(grad).any()}")
-                    print(f"Loss components: vdw={vdw_loss}, ellipsoid={ellipsoid_loss}, density={density_loss}")
-                    raise ValueError("Numerical Error: Non-finite gradients detected before optimizer step")
 
                 self.optimizers_dict['generator'].step()  # update parameters
-
-                # ✅ Optional post-step parameter sanity check
-                for name, param in self.models_dict['generator'].named_parameters():
-                    if not torch.isfinite(param).all():
-                        print(f"Post-step: Non-finite weights in {name}")
-                        raise ValueError("Numerical Error: Non-finite parameters after step")
-
-                if not torch.stack([torch.isfinite(p).any() for p in self.models_dict['generator'].parameters()]).all():
-                    print(f"Loss is {loss}")
-                    print(f"vdw loss {vdw_loss} ell loss {ellipsoid_loss} den loss {density_loss}")
-                    for name, param in self.models_dict['generator'].named_parameters():
-                        if param.grad is not None:
-                            if not torch.isfinite(param.grad).all():
-                                print(f"Non-finite gradient detected in {name}")
-                                print(f"Gradient stats: min={param.grad.min()}, max={param.grad.max()}, mean={param.grad.mean()}")
-
-                    print(f"Failed cell params {new_crystal_batch.cell_parameters()}")
-                    raise ValueError('Numerical Error: Model weights not all finite')
 
             if not skip_stats:
                 self.logger.update_current_losses('generator', self.epoch_type,

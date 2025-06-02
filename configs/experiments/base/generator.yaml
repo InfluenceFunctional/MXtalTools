@@ -67,6 +67,7 @@ supercell_size: 10
 # for GAN training
 generator:
   samples_per_iter: 5
+  step_size: 1
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
 
   #generator optimizer and model
