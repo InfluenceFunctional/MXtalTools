@@ -395,7 +395,7 @@ def scatter_compute_Ip(all_coords, batch,
          torch.vstack((Ixz, Iyz, Izz))[:, None, :].permute(2, 1, 0)
          ), dim=-2)  # inertial tensor
 
-    Ipm_c, Ip_c = torch.linalg.eigh(inertial_tensor)  # principal inertial tensor # eigh faster on hermit matrices
+    Ipm_c, Ip_c = torch.linalg.eigh(inertial_tensor)  # principal inertial tensor # eigh must faster on sym matrices
     Ipms, Ip_o = torch.real(Ipm_c), torch.real(Ip_c)
 
     #Ip_o, Ipms, _ = torch.linalg.svd(inertial_tensor)  # superior numerical stability, yet equivalent for symmetric positive semi-definite
