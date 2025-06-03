@@ -30,7 +30,7 @@ seeds:
 
 # batching & convergence
 num_samples: 10000
-max_epoch_steps: 50
+max_epoch_steps: 20
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
@@ -41,7 +41,7 @@ overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 10000
 max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (WIP)
 history: 50 # for convergence checks
-gradient_norm_clip: 1
+gradient_norm_clip: 10
 extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:

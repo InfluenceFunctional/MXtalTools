@@ -62,10 +62,10 @@ generate_sgs:
 generator:
   canonical_conformer_orientation: random
   model:
-    dropout: 0.1
-    hidden_dim: 1024
+    dropout: 0
+    hidden_dim: 512
     norm: null
-    num_layers: 20
+    num_layers: 4
     vector_norm: null
   optimizer:
     beta1: 0.9
@@ -81,8 +81,8 @@ generator:
     overwrite_on_reload: false
     use_plateau_scheduler: false
     weight_decay: 0.005
-  samples_per_iter: 5
-  step_size: 0.1
+  samples_per_iter: 20
+  step_size: 0.025
 gradient_norm_clip: 2
 grow_batch_size: true
 history: 50
@@ -93,10 +93,10 @@ logger:
   sample_reporting_frequency: 10
   stats_reporting_frequency: 1
 machine: cluster
-max_batch_size: 750
+max_batch_size: 500
 max_epoch_steps: 200
 max_epochs: 10000
-min_batch_size: 100
+min_batch_size: 25
 minimum_epochs: 50
 misc_dataset_name: misc_data_for_qm9_dataset.npy
 mode: generator

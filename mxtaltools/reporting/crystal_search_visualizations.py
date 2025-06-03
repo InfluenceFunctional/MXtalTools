@@ -88,7 +88,17 @@ def stacked_property_distribution_lists(y: list,
     if log:
         y = np.copy(y)
         y = np.log10(y)
-    colors = pc.n_colors('rgb(255, 150, 50)', 'rgb(0, 25, 250)', max(2, num_stacks), colortype='rgb')
+
+    def rgb_str_to_tuple(rgb_str):
+        """Convert 'rgb(R, G, B)' -> (R, G, B) as floats"""
+        return tuple(map(float, rgb_str.strip('rgb() ').split(',')))
+
+    def format_rgb(rgb_tuple):
+        """Convert (R, G, B) floats -> 'rgb(R, G, B)' with ints"""
+        return f"rgb({int(round(rgb_tuple[0]))}, {int(round(rgb_tuple[1]))}, {int(round(rgb_tuple[2]))})"
+
+    raw_colors = pc.n_colors('rgb(255, 150, 50)', 'rgb(0, 25, 250)', max(2, num_stacks), colortype='rgb')
+    colors = [format_rgb(rgb_str_to_tuple(c)) for c in raw_colors]
 
     fig = go.Figure()
     if bandwidth is None:

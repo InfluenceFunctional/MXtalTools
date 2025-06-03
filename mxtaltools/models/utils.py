@@ -257,6 +257,10 @@ def dict_of_tensors_to_cpu_numpy(stats):
             stats[key] = value.cpu()
 
 
+def increment_value(value, increment, maxval, minval=0):
+    return max(minval, min(value + increment, maxval))
+
+
 def clean_cell_params(samples,
                       sg_inds,
                       lattice_means,

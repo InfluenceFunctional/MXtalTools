@@ -1527,6 +1527,10 @@ def detailed_reporting(config, dataDims, train_epoch_stats_dict, test_epoch_stat
                     wandb.log(data={'Iterwise Packing Coeff':
                                         iter_wise_hist(test_epoch_stats_dict, 'packing_coefficient')
                                     }, commit=False)
+                    wandb.log(data={'Iterwise Ellipsoid Energy':
+                                        iter_wise_hist(test_epoch_stats_dict, 'ellipsoid_energy')
+                                    }, commit=False)
+
 
                 elif config.mode == 'discriminator':
                     cell_params_hist(wandb, test_epoch_stats_dict,

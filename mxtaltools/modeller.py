@@ -39,7 +39,7 @@ from mxtaltools.models.autoencoder_utils import compute_type_evaluation_overlap,
     ae_reconstruction_loss, batch_rmsd
 from mxtaltools.models.utils import (softmax_and_score, get_regression_loss,
                                      dict_of_tensors_to_cpu_numpy,
-                                     embed_crystal_list, get_model_sizes,
+                                     embed_crystal_list, get_model_sizes, increment_value,
                                      )
 from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering
 from mxtaltools.reporting.logger import Logger
@@ -2016,6 +2016,7 @@ class Modeller:
         self.logger.concatenate_stats_dict(self.epoch_type)
 
     def init_generator_curriculum(self):
+        self.step_size = self.config.generator.step_size
         self.ellipsoid_scale = 0.25
         self.vdw_turnover_pot = 0.01
         self.density_loss_scale = 1
@@ -2028,14 +2029,19 @@ class Modeller:
         self.density_loss_coefficient = 0
         self.learning_stage = 1
 
-        self.max_ellipsoid_scale = 1.2
+        self.max_ellipsoid_scale = 0.8  # ~approximates molecular volume most closely
+
+        self.acceptance_rate_harden_cutoff = 0.95
+        self.acceptance_rate_soften_cutoff = 0.75
 
         self.curriculum_history = 1000
         self.increment_fraction = 0.05
-        self.stage1_cutoff = 0.1
+        self.stage1_ellipsoid_cutoff = 0.1
+        self.stage1_acceptance_cutoff = 0.75
         self.stage1_max_ellipsoid_scale = 0.5
 
-        self.stage2_cutoff = 0.1
+        self.stage2_ellipsoid_cutoff = 0.1
+        self.stage2_acceptance_cutoff = 0.9
         self.stage2_max_ellipsoid_scale = 0.75
         self.stage2_max_orientation_scale = 1
 
@@ -2057,6 +2063,7 @@ class Modeller:
                  'vdw_loss_coefficient': self.vdw_loss_coefficient,
                  'density_loss_coefficient': self.density_loss_coefficient,
                  'learning_stage': self.learning_stage,
+                 'max_step_size': self.step_size,
                  }
         self.logger.update_stats_dict(self.epoch_type,
                                       stats.keys(),
@@ -2078,28 +2085,64 @@ class Modeller:
         density_losses = self.logger.train_stats['density_loss']
         trailing_density_loss = np.mean(density_losses[-self.curriculum_history:])
 
-        """annealing checks"""
-        if self.learning_stage == 1:
-            """if ellipsoid losses are small, increase ellipsoid scale"""
-            if trailing_ellipsoid_loss < self.stage1_cutoff and self.ellipsoid_scale < self.stage1_max_ellipsoid_scale:
-                self.ellipsoid_scale = min(self.ellipsoid_scale + self.increment_fraction, self.stage1_max_ellipsoid_scale)
+        current_step_loss = np.array(self.logger.current_losses['generator']['all_train'])[
+                            -self.logger.batch_size * 11 * self.config.generator.samples_per_iter:]
+        current_acceptance_rate = np.mean(current_step_loss <= 0)  # previous 10 steps
+        if self.logger.epoch > 0:
+            trailing_step_loss = np.array(self.logger.loss_record['generator']['mean_train'])[-1, :]
+            trailing_acceptance_rate = np.mean(trailing_step_loss <= 0)  # previous epoch
+        else:
+            trailing_acceptance_rate = 0
 
-                print(f"Ellipsoid loss is {trailing_ellipsoid_loss:.3f} from {len(ellipsoid_losses)} samples, incrementing scale to {self.ellipsoid_scale:.3f}")
+        """annealing checks"""
+        """if we are doing exceptionally well, we harden the global problem"""
+        if trailing_acceptance_rate >= self.acceptance_rate_harden_cutoff:
+            self.step_size = increment_value(self.step_size, 0.01, 1)
+            print("Increasing global step size")
+
+        if self.learning_stage == 1:
+            """
+            if ellipsoid losses are small, always increase ellipsoid scale
+            if ellipsoid losses are not ~zero (large ellipsoids relative to cell volume) switch to trailing step loss metric
+            """
+            if ((trailing_ellipsoid_loss < self.stage1_ellipsoid_cutoff) or
+                    (current_acceptance_rate >= self.stage1_acceptance_cutoff)):
+                if self.ellipsoid_scale < self.stage1_max_ellipsoid_scale:
+                    self.ellipsoid_scale = increment_value(self.ellipsoid_scale, self.increment_fraction,
+                                                           self.stage1_max_ellipsoid_scale)
+
+            """If the model is doing badly, reverse course"""
+            if current_acceptance_rate < self.acceptance_rate_soften_cutoff:
+                self.ellipsoid_scale = increment_value(self.ellipsoid_scale, -self.increment_fraction,
+                                                       self.stage1_max_ellipsoid_scale)
 
         elif self.learning_stage == 2:
             """allow orientation changes and larger ellipsoids"""
-            if trailing_ellipsoid_loss < self.stage2_cutoff:
-                self.ellipsoid_scale = min(self.ellipsoid_scale + self.increment_fraction, self.stage2_max_ellipsoid_scale)
-                self.orientation_scale = min(self.orientation_scale + self.increment_fraction, self.stage2_max_orientation_scale)
+            if ((trailing_ellipsoid_loss < self.stage2_ellipsoid_cutoff) or
+                    (current_acceptance_rate >= self.stage2_acceptance_cutoff)):
+                self.ellipsoid_scale = increment_value(self.ellipsoid_scale, self.increment_fraction,
+                                                       self.stage2_max_ellipsoid_scale)
+                self.orientation_scale = increment_value(self.orientation_scale, self.increment_fraction,
+                                                         self.stage2_max_orientation_scale)
 
-        elif self.learning_stage == 3:
+            if current_acceptance_rate < self.acceptance_rate_soften_cutoff:
+                self.ellipsoid_scale = increment_value(self.ellipsoid_scale, -self.increment_fraction,
+                                                       self.stage2_max_ellipsoid_scale)
+                self.orientation_scale = increment_value(self.orientation_scale, -self.increment_fraction,
+                                                         self.stage2_max_orientation_scale)
+
+        elif self.learning_stage == 3:  # todo cleanup
             if trailing_ellipsoid_loss < self.stage3_ell_cutoff:
                 if trailing_density_loss < self.stage3_density_cutoff:
-                    self.length_scale = min(self.length_scale + self.increment_fraction, self.stage3_max_length_scale)
-                    self.angle_scale = min(self.angle_scale + self.increment_fraction, self.stage3_max_angle_scale)
-                    self.density_loss_coefficient = min(self.density_loss_coefficient + self.increment_fraction, self.stage3_max_density_loss_coefficient)
-                    self.ellipsoid_scale = min(self.ellipsoid_scale + self.increment_fraction, self.stage3_max_ellipsoid_scale)
-
+                    self.length_scale = increment_value(self.length_scale, self.increment_fraction,
+                                                        self.stage3_max_length_scale)
+                    self.angle_scale = increment_value(self.angle_scale, self.increment_fraction,
+                                                       self.stage3_max_angle_scale)
+                    self.density_loss_coefficient = increment_value(self.density_loss_coefficient,
+                                                                    self.increment_fraction,
+                                                                    self.stage3_max_density_loss_coefficient)
+                    self.ellipsoid_scale = increment_value(self.ellipsoid_scale, self.increment_fraction,
+                                                           self.stage3_max_ellipsoid_scale)
 
         """curriculum updates"""
         if self.learning_stage == 1:
@@ -2450,9 +2493,9 @@ class Modeller:
          ellipsoid_overlap, silu_pot, cluster_batch) = self.analyze_generator_samples(crystal_batch)
         vdw_loss, density_loss, ellipsoid_loss = self.generator_losses(cluster_batch, silu_pot, ellipsoid_overlap)
 
-        loss = (self.ellipsoid_loss_coefficient * ellipsoid_loss +
-                self.vdw_loss_coefficient * vdw_loss +
-                self.density_loss_coefficient * density_loss)
+        prior_sample_loss = (self.ellipsoid_loss_coefficient * ellipsoid_loss +
+                             self.vdw_loss_coefficient * vdw_loss +
+                             self.density_loss_coefficient * density_loss)
 
         with torch.no_grad():
             vector_embedding = self.models_dict['autoencoder'].encode(mol_batch.clone())
@@ -2464,18 +2507,22 @@ class Modeller:
             'generated_space_group_numbers': crystal_batch.sg_ind.detach(),
         }
 
-        length_scale_tensor = self.config.generator.step_size * self.length_scale * torch.ones((crystal_batch.num_graphs, 1), device=crystal_batch.device)
-        angle_scale_tensor = self.config.generator.step_size * self.angle_scale * torch.ones((crystal_batch.num_graphs, 1), device=crystal_batch.device)
-        position_scale_tensor = self.config.generator.step_size * self.position_scale * torch.ones((crystal_batch.num_graphs, 1),
-                                                                 device=crystal_batch.device)
-        orientation_scale_tensor = self.config.generator.step_size * self.orientation_scale * torch.ones((crystal_batch.num_graphs, 1),
-                                                                       device=crystal_batch.device)
+        length_scale_tensor = self.step_size * self.length_scale * torch.ones(
+            (crystal_batch.num_graphs, 1), device=crystal_batch.device)
+        angle_scale_tensor = self.step_size * self.angle_scale * torch.ones(
+            (crystal_batch.num_graphs, 1), device=crystal_batch.device)
+        position_scale_tensor = self.step_size * self.position_scale * torch.ones(
+            (crystal_batch.num_graphs, 1),
+            device=crystal_batch.device)
+        orientation_scale_tensor = self.step_size * self.orientation_scale * torch.ones(
+            (crystal_batch.num_graphs, 1),
+            device=crystal_batch.device)
 
         """sample from model"""
         for ind in range(self.config.generator.samples_per_iter):
             if ind == 0:
                 init_state = prior_in_gen_basis.detach().clone()
-                prev_loss = loss.detach().clone()
+                prev_loss = prior_sample_loss.detach().clone()
             else:
                 init_state = gen_basis_sample.detach().clone()
                 prev_loss = loss.detach().clone()
@@ -2497,6 +2544,7 @@ class Modeller:
             # build proposed crystal
             new_crystal_batch = crystal_batch.clone().detach()
             new_crystal_batch.gen_basis_to_cell_params(generator_raw_samples)  # cleaning implicit in this function
+            gen_basis_sample = new_crystal_batch.cell_params_to_gen_basis()
 
             # analyze cell
             (molwise_normed_overlap, molwise_scaled_lj_pot, molwise_lj_pot,
@@ -2507,33 +2555,31 @@ class Modeller:
                     self.vdw_loss_coefficient * vdw_loss +
                     self.density_loss_coefficient * density_loss)
 
-            # penalize the genrator for taking large steps
-            gen_basis_sample = new_crystal_batch.cell_params_to_gen_basis()
-
             # get total loss
-            step_loss = (loss - prev_loss)
-            generator_losses = step_loss
+            generator_losses = (loss - prev_loss)
             generator_loss = generator_losses.mean()
 
             if update_weights:
                 self.optimizers_dict['generator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
                 generator_loss.backward()  # back-propagation
-                torch.nn.utils.clip_grad_value_(self.models_dict['generator'].parameters(),
-                                                1)
+                # torch.nn.utils.clip_grad_value_(self.models_dict['generator'].parameters(),
+                #                                 1)
                 torch.nn.utils.clip_grad_norm_(self.models_dict['generator'].parameters(),
                                                self.config.gradient_norm_clip)  # gradient clipping
 
                 self.optimizers_dict['generator'].step()  # update parameters
 
+            self.logger.update_current_losses('generator', self.epoch_type,
+                                              generator_loss.data.detach().cpu().numpy(),
+                                              generator_losses.detach().cpu().numpy())
+
             if not skip_stats:
-                self.logger.update_current_losses('generator', self.epoch_type,
-                                                  generator_loss.data.detach().cpu().numpy(),
-                                                  generator_losses.detach().cpu().numpy())
                 stats.update({
                     'step_size': generator_proposed_step.norm(dim=1).detach(),
                     'per_mol_scaled_LJ_energy': molwise_scaled_lj_pot.detach(),
                     'per_mol_normed_overlap': molwise_normed_overlap.detach(),
                     'packing_coefficient': new_crystal_batch.packing_coeff.detach(),
+                    'ellipsoid_energy': ellipsoid_loss.detach(),
                     'sample_iter': torch.ones(new_crystal_batch.num_graphs) * ind + 1,
                     'cell_parameters': new_crystal_batch.cell_parameters().detach(),
                     'cell_delta': generator_proposed_step.cpu().detach(),
@@ -2541,7 +2587,7 @@ class Modeller:
                 if ind == self.config.generator.samples_per_iter - 1:  # log sample losses on last iter only
                     stats.update({
                         'density_loss': density_loss.detach(),
-                        'step_loss': step_loss.detach(),
+                        'step_loss': generator_losses.detach(),
                         'generator_vdw_loss': vdw_loss.detach(),
                         'ellipsoid_loss': ellipsoid_loss.detach(),
                     })
