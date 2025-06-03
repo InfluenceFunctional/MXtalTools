@@ -1131,7 +1131,7 @@ class MolCrystalData(MolData):
                                                                          self.device)
 
         # pass to the model
-        if hasattr(self, 'ellipsoid_model'):
+        if hasattr(self, 'ellipsoid_model') and ellipsoid_model is None:
             output = self.ellipsoid_model(x)
         else:
             output = ellipsoid_model(x)
@@ -1183,7 +1183,10 @@ class MolCrystalData(MolData):
         edge_j_good = edge_j[good_inds]
         return edge_i_good, edge_j_good, mol_centroids
 
-    def compute_cluster_ellipsoids(self, semi_axis_scale, eps:float = 1e-3):
+    def compute_cluster_ellipsoids(self, semi_axis_scale,
+                                   eps:float = 1e-3,
+                                   cov_eps=0.1,
+                                   add_noise: bool = False):
         # molecule indexing
         mols_per_cluster = torch.tensor(self.edges_dict['n_repeats'], device=self.device)
         tot_num_mols = torch.sum(mols_per_cluster)
@@ -1197,17 +1200,32 @@ class MolCrystalData(MolData):
                                             tot_mol_index,
                                             num_graphs=tot_num_mols,
                                             nodes_per_graph=atoms_per_mol)
-        Ip, Ipm, _ = scatter_compute_Ip(centered_mol_pos, tot_mol_index)
-        # convention above is row-wise, smallest to largest
-        # convention for ellipsoid model is the reverse, so we will swap
-        Ipm = torch.flip(Ipm, (1,))
-        Ip = torch.flip(Ip, (1,))
-        # rescale ellipsoid semi-axes to align with the longest axis of the molecule
-        longest_length = self.radius.repeat_interleave(mols_per_cluster).clip(min=0.1)
-        sqrt_eigenvalues = torch.sqrt(Ipm.clip(min=0) + eps)
+
+        if centered_mol_pos.requires_grad or add_noise:
+            coords_to_compute = centered_mol_pos + torch.randn_like(centered_mol_pos) * cov_eps
+        else:
+            coords_to_compute = centered_mol_pos
+
+        # we'll get the eigenvalues of the covariance matrix to approximate the molecule spatial extent
+        # Compute outer products: [N, 3, 3]
+        outer = coords_to_compute[:, :, None] * coords_to_compute[:, None, :]
+
+        # Accumulate covariance sums per molecule
+        cov_sums = torch.zeros((tot_num_mols, 3, 3), device=self.device)
+        cov_sums = cov_sums.index_add(0, tot_mol_index, outer)
+
+        # Normalize by number of atoms per molecule
+        atoms_per_mol = atoms_per_mol.to(dtype=torch.float32)  # in case it's int
+        covariances = cov_sums / atoms_per_mol[:, None, None]
+        eigvals, eigvecs = torch.linalg.eigh(covariances)  # principal inertial tensor # eigh must faster on sym matrices
+        longest_length = self.radius.repeat_interleave(mols_per_cluster).clip(min=0.1) + 1.5  # account for vdW volume about distant atoms
+        min_axis_length = 3.0
+        sqrt_eigenvalues = torch.sqrt(eigvals + eps)
         semi_axis_lengths = (sqrt_eigenvalues / sqrt_eigenvalues.amax(1, keepdim=True)
-                             * longest_length[:, None] * semi_axis_scale).clip(min=0.1)
-        return Ip, longest_length, molwise_batch, semi_axis_lengths, tot_mol_index, tot_num_mols
+                             * longest_length[:, None] * semi_axis_scale).clip(min=min_axis_length * semi_axis_scale)
+        # semi_axes_lengths = torch.sqrt(torch.clamp(eigvals, min=(min_axis_length ** 2) * semi_axis_scale))
+
+        return eigvecs, longest_length, molwise_batch, semi_axis_lengths, tot_mol_index, tot_num_mols
 
     """  # to visualize ellipsoid fit
     import numpy as np

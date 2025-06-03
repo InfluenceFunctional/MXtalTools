@@ -1,3 +1,4 @@
+import copy
 from typing import Optional, Union
 
 import torch
@@ -48,6 +49,12 @@ def standalone_gradient_descent_optimization(
 
     optimization_trajectory = []
 
+    if optim_target.lower() == 'ellipsoid':
+        init_crystal_batch.load_ellipsoid_model()
+        ellipsoid_model = copy.deepcopy(init_crystal_batch.ellipsoid_model)
+        ellipsoid_model = ellipsoid_model.to(init_crystal_batch.device)
+        ellipsoid_model.eval()
+
     converged = False
     # torch.autograd.set_detect_anomaly(True)  # for debugging
     with (torch.enable_grad()):
@@ -83,6 +90,11 @@ def standalone_gradient_descent_optimization(
                 elif optim_target.lower() == 'rdf_score':
                     dist_pred = F.softplus(score_model(cluster_batch, force_edges_rebuild=False)[:, 2])
                     loss = dist_pred
+
+                elif optim_target.lower() == 'ellipsoid':
+                    overlap = cluster_batch.ellipsoid_overlap = cluster_batch.compute_ellipsoidal_overlap(
+                        semi_axis_scale=1, model=ellipsoid_model).clip(min=0)
+                    loss = overlap**2
 
                 "auxiliary losses"
                 if target_packing_coeff is not None:

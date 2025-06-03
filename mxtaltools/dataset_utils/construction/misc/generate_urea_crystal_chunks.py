@@ -23,22 +23,36 @@ if __name__ == '__main__':
     # # Parse the arguments
     # args = parser.parse_args()
     # chunk_ind = args.chunk_ind
-    chunk_ind = 0
+    chunk_ind = 999
 
     # initialize
     space_group = 2
     num_chunks = 1
-    batch_size = 100
+    batch_size = 20
     chunks_path = os.getcwd()  #Path(r'/scratch/mk8347/csd_runs/datasets')
-
+    # # UREA
+    # atom_coords = torch.tensor([
+    #     [-1.3042, - 0.0008, 0.0001],
+    #     [0.6903, - 1.1479, 0.0001],
+    #     [0.6888, 1.1489, 0.0001],
+    #     [- 0.0749, - 0.0001, - 0.0003],
+    # ], dtype=torch.float32, device=device)
+    # atom_coords -= atom_coords.mean(0)
+    # atom_types = torch.tensor([8, 7, 7, 6], dtype=torch.long, device=device)
+    # # NICOTINAMIDE
     atom_coords = torch.tensor([
-        [-1.3042, - 0.0008, 0.0001],
-        [0.6903, - 1.1479, 0.0001],
-        [0.6888, 1.1489, 0.0001],
-        [- 0.0749, - 0.0001, - 0.0003],
+        [-2.3940, 1.1116, -0.0088],
+        [1.7614, -1.2284, -0.0034],
+        [-2.4052, -1.1814, 0.0027],
+        [-0.2969, 0.0397, 0.0024],
+        [0.4261, 1.2273, 0.0039],
+        [0.4117, -1.1510, -0.0013],
+        [1.8161, 1.1886, 0.0018],
+        [-1.7494, 0.0472, 0.0045],
+        [2.4302, -0.0535, -0.0018]
     ], dtype=torch.float32, device=device)
-    atom_coords -= atom_coords.mean(0)
-    atom_types = torch.tensor([8, 7, 7, 6], dtype=torch.long, device=device)
+    atom_coords -= atom_coords.mean(dim=0)
+    atom_types = torch.tensor([8, 7, 7, 6, 6, 6, 6, 6, 6], dtype=torch.long, device=device)
 
     mol = MolData(
         z=atom_types,
@@ -65,9 +79,9 @@ if __name__ == '__main__':
     chunk_path = os.path.join(chunks_path, f'urea_sg_{space_group}_chunk_{chunk_ind}.pkl')
 
     crystal_batch.sample_reasonable_random_parameters(
-        target_packing_coeff=0.5,  # diffuse target
+        target_packing_coeff=0.8,  # diffuse target
         tolerance=5,
-        max_attempts=500,
+        max_attempts=1,
         sample_niggli=True,
     )
 
@@ -75,7 +89,8 @@ if __name__ == '__main__':
 
     opt1_trajectory = (
         crystal_batch.optimize_crystal_parameters(
-            optim_target='silu',
+            #optim_target='silu',
+            optim_target='ellipsoid',
             show_tqdm=True,
             convergence_eps=1e-6,
             # score_model=score_model,
