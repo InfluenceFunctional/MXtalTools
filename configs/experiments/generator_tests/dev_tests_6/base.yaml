@@ -37,8 +37,8 @@ extra_test_period: 4 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how ofte
 logger:
   run_name: gen_dev6
   experiment_tag: gen_dev6
-  sample_reporting_frequency: 10  # how often to do detailed reporting with figures
-  stats_reporting_frequency: 1
+  sample_reporting_frequency: 2  # how often to do detailed reporting with figures
+  stats_reporting_frequency: 5
   log_figures: True
 
 sample_steps: 100
