@@ -18,7 +18,7 @@ from torch_scatter import scatter
 import torch.nn.functional as F
 
 from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
-from mxtaltools.common.utils import get_point_density, softmax_np
+from mxtaltools.common.utils import get_point_density, softmax_np, get_plotly_fig_size_mb
 
 from mxtaltools.common.geometry_utils import cell_vol_np
 from mxtaltools.constants.mol_classifier_constants import polymorph2form
@@ -52,7 +52,7 @@ target_identifiers = {
 }
 
 
-def cell_params_hist(wandb, stats_dict, sample_sources_list):
+def cell_params_hist(stats_dict, sample_sources_list):
     n_crystal_features = 12
     samples_dict = {name: stats_dict[name] for name in sample_sources_list}
 
@@ -83,11 +83,10 @@ def cell_params_hist(wandb, stats_dict, sample_sources_list):
 
     fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
     fig.update_traces(opacity=0.5)
+    return fig
 
-    wandb.log(data={'Lattice Features Distribution': fig}, commit=False)
 
-
-def niggli_hist(wandb, stats_dict, sample_sources_list):
+def niggli_hist(stats_dict, sample_sources_list):
     n_crystal_features = 6
     samples_dict = {name: stats_dict[name] for name in sample_sources_list}
 
@@ -124,8 +123,7 @@ def niggli_hist(wandb, stats_dict, sample_sources_list):
 
     fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
     fig.update_traces(opacity=0.5)
-
-    wandb.log(data={'Niggli Features Distribution': fig}, commit=False)
+    return fig
 
 
 def simple_cell_hist(sample_batch):
@@ -1517,27 +1515,31 @@ def detailed_reporting(config, dataDims, train_epoch_stats_dict, test_epoch_stat
         if 'generated_cell_parameters' in test_epoch_stats_dict.keys() or 'cell_parameters' in test_epoch_stats_dict.keys():
             if config.logger.log_figures:
                 if config.mode == 'generator':
-                    cell_params_hist(wandb, test_epoch_stats_dict,
+                    fig_dict = {}
+                    fig_dict['Lattice Features Distribution'] = cell_params_hist(test_epoch_stats_dict,
                                      ['prior', 'cell_parameters'])
-                    niggli_hist(wandb, test_epoch_stats_dict,
+                    fig_dict['Niggli Features Distribution'] = niggli_hist(test_epoch_stats_dict,
                                 ['prior', 'cell_parameters'])
-                    wandb.log(data={'Iterwise vdW':
-                                        iter_wise_hist(test_epoch_stats_dict, 'per_mol_scaled_LJ_energy')
-                                    }, commit=False)
-                    wandb.log(data={'Iterwise Packing Coeff':
-                                        iter_wise_hist(test_epoch_stats_dict, 'packing_coefficient')
-                                    }, commit=False)
-                    wandb.log(data={'Iterwise Ellipsoid Energy':
-                                        iter_wise_hist(test_epoch_stats_dict, 'ellipsoid_energy')
-                                    }, commit=False)
+                    fig_dict['Iterwise vdW'] = iter_wise_hist(test_epoch_stats_dict, 'per_mol_scaled_LJ_energy')
+                    fig_dict['Iterwise Packing Coeff'] = iter_wise_hist(test_epoch_stats_dict, 'packing_coefficient')
+                    fig_dict['Iterwise Ellipsoid Energy'] = iter_wise_hist(test_epoch_stats_dict, 'ellipsoid_energy')
+                    for key in fig_dict.keys():
+                        fig = fig_dict[key]
+                        if get_plotly_fig_size_mb(fig) > 0.1: # bigger than 1 MB
+                            fig.write_image(key + 'fig.png', width=512,
+                                            height=512)  # save the image rather than the fig, for size reasons
+                            fig_dict[key] = wandb.Image(key + 'fig.png')
 
 
                 elif config.mode == 'discriminator':
-                    cell_params_hist(wandb, test_epoch_stats_dict,
+                    fig = cell_params_hist(test_epoch_stats_dict,
                                      ['real_cell_parameters', 'generated_cell_parameters'])
+                    wandb.log(data={'Lattice Features Distribution': fig}, commit=False)
+
                 elif config.mode == 'proxy_discriminator':
-                    cell_params_hist(wandb, test_epoch_stats_dict,
+                    fig = cell_params_hist(wandb, test_epoch_stats_dict,
                                      ['generated_cell_parameters'])
+                    wandb.log(data={'Lattice Features Distribution': fig}, commit=False)
 
         if config.mode == 'generator':
             cell_generation_analysis(config, dataDims, test_epoch_stats_dict)

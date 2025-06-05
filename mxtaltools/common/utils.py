@@ -1,5 +1,9 @@
+import json
+import sys
+
 import numpy
 import numpy as np
+import plotly
 
 import torch
 from torch.nn import functional as F, functional
@@ -350,3 +354,9 @@ def std_normal_to_uniform(rands):
 
 def uniform_to_std_normal(uniform):
     return torch.distributions.Normal(0, 1).icdf(uniform.clip(min=1e-5, max=1-1e-5))  # prevent exploding values
+
+
+def get_plotly_fig_size_mb(fig) -> float:
+    # Convert Plotly figure to JSON string
+    fig_json = json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
+    return sys.getsizeof(fig_json) / (1024 * 1024)
