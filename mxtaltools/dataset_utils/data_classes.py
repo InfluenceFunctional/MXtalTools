@@ -1123,7 +1123,7 @@ class MolCrystalData(MolData):
         edge_i_good, edge_j_good, mol_centroids = self.get_ellipsoid_edges(longest_length, molwise_batch, tot_mol_index,
                                                                            tot_num_mols)
 
-        norm_factor, normed_v1, normed_v2, x = featurize_ellipsoid_batch(Ip,
+        norm_factor, normed_v1, normed_v2, x, v1, v2 = featurize_ellipsoid_batch(Ip,
                                                                          edge_i_good,
                                                                          edge_j_good,
                                                                          mol_centroids,
@@ -1131,35 +1131,52 @@ class MolCrystalData(MolData):
                                                                          self.device)
 
         # pass to the model
-        if hasattr(self, 'ellipsoid_model') and ellipsoid_model is None:
+        if hasattr(self, 'ellipsoid_model') and model is None:
             output = self.ellipsoid_model(x)
         else:
             output = ellipsoid_model(x)
 
         # process results
-        v1_pred, v2_pred, overlap_pred_i = output[:, 0], output[:, 1], output[:, 2]
-        normed_overlap_pred = (overlap_pred_i / (1e-3 + (normed_v1 * normed_v2) * (normed_v1 + normed_v2))).clip(min=0)
-        overlap_pred = normed_overlap_pred * norm_factor ** 3
-        #v_pred_error = (F.l1_loss(normed_v1, v1_pred, reduction='none') + F.l1_loss(normed_v2, v2_pred, reduction='none'))/2
+        v1_pred, v2_pred, normed_overlap_pred = output[:, 0] * norm_factor ** 3, output[:, 1] * norm_factor **3, output[:, 2].clip(min=0)
+        reduced_volume = (normed_v1 * normed_v2) / (normed_v1 + normed_v2)
+        denormed_overlap_pred = normed_overlap_pred * reduced_volume  # model works in the reduced basis
+        overlap_pred = denormed_overlap_pred * norm_factor ** 3  # inunits of cubic angstroms
+        v_pred_error = (v1_pred - v1).abs()/v1 + (v2_pred - v2).abs() / v2
 
+        # sum of overlaps cubic angstroms per molecule
         molwise_ellipsoid_overlap = scatter(overlap_pred, molwise_batch[edge_j_good], dim=0, dim_size=self.num_graphs,
+                                         reduce='sum')
+
+        normed_ellipsoid_overlap = scatter(normed_overlap_pred, molwise_batch[edge_j_good], dim=0, dim_size=self.num_graphs,
                                          reduce='sum')
 
         if not return_details:
             return molwise_ellipsoid_overlap
         else:
-            return molwise_ellipsoid_overlap, v1_pred, v2_pred, normed_v1, normed_v2, norm_factor
+            return molwise_ellipsoid_overlap, v1_pred, v2_pred, v1, v2, norm_factor, normed_ellipsoid_overlap
 
     """
-    #Check predictions
+    # Check predictions
     from mxtaltools.common.ellipsoid_ops import compute_ellipsoid_overlap
-    n_samples = 100
+    
+    n_samples = self.num_graphs
+    r = mol_centroids[edge_j_good] - mol_centroids[edge_i_good]
+    assert torch.isfinite(Ip).all(), "Non-finite principal axes!"
+    e1 = Ip[edge_j_good] * semi_axis_lengths[edge_j_good][:, :, None]
+    e2 = Ip[edge_i_good] * semi_axis_lengths[edge_i_good][:, :, None]
     overlaps = torch.zeros(n_samples, device=self.device)
     for ind in range(n_samples):
-        overlaps[ind], _ = compute_ellipsoid_overlap(e1[ind], e2[ind], v1[ind], v2[ind], r[ind], num_probes=10000, show_tqdm=True)
-
+        overlaps[ind], _ = compute_ellipsoid_overlap(e1[ind], e2[ind], v1[ind], v2[ind], r[ind], num_probes=10000,
+                                                     show_tqdm=True)
+    
     import plotly.graph_objects as go
-    go.Figure(go.Scatter(x=overlaps.cpu().detach(), y=overlap_pred[:n_samples].cpu().detach(), mode='markers',showlegend=True, name=f'R={torch.corrcoef(torch.stack([overlaps, overlap_pred[:n_samples]]))[0, 1].cpu().detach().numpy():.4f}')).show()
+    def simple_parity(x, y):
+        go.Figure(
+            go.Scatter(x=x, y=y.cpu().detach(), mode='markers', showlegend=True,
+                       name=f'R={torch.corrcoef(torch.stack([x, y]))[0, 1].cpu().detach().numpy():.4f}')).show()
+    
+    simple_parity(overlaps.cpu().detach(), overlap_pred[:n_samples].cpu().detach())
+    simple_parity(torch.cat([v1,v2]).cpu().detach(), torch.cat([v1_pred, v2_pred]).cpu().detach())
 
     """
 
@@ -1188,6 +1205,7 @@ class MolCrystalData(MolData):
                                    cov_eps=0.1,
                                    add_noise: bool = False):
         # molecule indexing
+
         mols_per_cluster = torch.tensor(self.edges_dict['n_repeats'], device=self.device)
         tot_num_mols = torch.sum(mols_per_cluster)
         tot_mol_index = torch.arange(tot_num_mols, device=self.device
@@ -1217,15 +1235,20 @@ class MolCrystalData(MolData):
         # Normalize by number of atoms per molecule
         atoms_per_mol = atoms_per_mol.to(dtype=torch.float32)  # in case it's int
         covariances = cov_sums / atoms_per_mol[:, None, None]
-        eigvals, eigvecs = torch.linalg.eigh(covariances)  # principal inertial tensor # eigh must faster on sym matrices
+        eigvals, eigvecs_c = torch.linalg.eigh(covariances)  # principal inertial tensor # eigh must faster on sym matrices
+
+        eigvecs = eigvecs_c.permute(0, 2, 1)  # switch to row-wise eigenvectors
+        sort_inds = torch.argsort(eigvals, dim=1, descending=True)  # we want eigenvectors sorted a>b>c row-wise
+        eigvals_sorted = torch.gather(eigvals, dim=1, index=sort_inds)
+        eigvecs_sorted = torch.gather(eigvecs, dim=1, index=sort_inds.unsqueeze(2).expand(-1, -1, 3))
+
         longest_length = self.radius.repeat_interleave(mols_per_cluster).clip(min=0.1) + 1.5  # account for vdW volume about distant atoms
         min_axis_length = 3.0
-        sqrt_eigenvalues = torch.sqrt(eigvals + eps)
+        sqrt_eigenvalues = torch.sqrt(eigvals_sorted + eps)
         semi_axis_lengths = (sqrt_eigenvalues / sqrt_eigenvalues.amax(1, keepdim=True)
                              * longest_length[:, None] * semi_axis_scale).clip(min=min_axis_length * semi_axis_scale)
-        # semi_axes_lengths = torch.sqrt(torch.clamp(eigvals, min=(min_axis_length ** 2) * semi_axis_scale))
 
-        return eigvecs, longest_length, molwise_batch, semi_axis_lengths, tot_mol_index, tot_num_mols
+        return eigvecs_sorted, longest_length, molwise_batch, semi_axis_lengths, tot_mol_index, tot_num_mols
 
     """  # to visualize ellipsoid fit
     import numpy as np

@@ -2017,17 +2017,20 @@ class Modeller:
 
     def init_generator_curriculum(self):
         self.step_size = self.config.generator.step_size
-        self.ellipsoid_scale = 0.25
+        self.prior_loss_coefficient = 1.0
+        self.step_loss_coefficient = 0.0
+        self.prior_loss_cutoff = 0.05
+        self.ellipsoid_scale = 0.35
         self.vdw_turnover_pot = 0.01
-        self.density_loss_scale = 1
-        self.length_scale = 0
-        self.angle_scale = 0
-        self.position_scale = 1
-        self.orientation_scale = 0
-        self.ellipsoid_loss_coefficient = 1
-        self.vdw_loss_coefficient = 0
-        self.density_loss_coefficient = 0
-        self.learning_stage = 1
+        self.density_loss_scale = 1.0
+        self.length_scale = 0.0
+        self.angle_scale = 0.0
+        self.position_scale = 1.0
+        self.orientation_scale = 0.0
+        self.ellipsoid_loss_coefficient = 1.0
+        self.vdw_loss_coefficient = 0.0
+        self.density_loss_coefficient = 0.0
+        self.learning_stage = 1.0
 
         self.max_ellipsoid_scale = 0.8  # ~approximates molecular volume most closely
 
@@ -2043,14 +2046,14 @@ class Modeller:
         self.stage2_ellipsoid_cutoff = 0.1
         self.stage2_acceptance_cutoff = 0.9
         self.stage2_max_ellipsoid_scale = 0.75
-        self.stage2_max_orientation_scale = 1
+        self.stage2_max_orientation_scale = 1.0
 
         self.stage3_ell_cutoff = 0.1
         self.stage3_density_cutoff = 0.4
-        self.stage3_max_length_scale = 1
-        self.stage3_max_angle_scale = 1
-        self.stage3_max_density_loss_coefficient = 1
-        self.stage3_max_ellipsoid_scale = 1
+        self.stage3_max_length_scale = 1.0
+        self.stage3_max_angle_scale = 1.0
+        self.stage3_max_density_loss_coefficient = 1.0
+        self.stage3_max_ellipsoid_scale = 1.0
 
         stats = {'ellipsoid_scale': self.ellipsoid_scale,
                  'vdw_turnover_pot': self.vdw_turnover_pot,
@@ -2064,6 +2067,8 @@ class Modeller:
                  'density_loss_coefficient': self.density_loss_coefficient,
                  'learning_stage': self.learning_stage,
                  'max_step_size': self.step_size,
+                 'prior_loss_coefficient': self.prior_loss_coefficient,
+                 'step_loss_coefficient': self.step_loss_coefficient
                  }
         self.logger.update_stats_dict(self.epoch_type,
                                       stats.keys(),
@@ -2084,65 +2089,51 @@ class Modeller:
         trailing_ellipsoid_loss = np.mean(ellipsoid_losses[-self.curriculum_history:])
         density_losses = self.logger.train_stats['density_loss']
         trailing_density_loss = np.mean(density_losses[-self.curriculum_history:])
+        prior_losses = self.logger.train_stats['prior_loss']
+        trailing_prior_loss = np.mean(prior_losses[-self.curriculum_history:])
 
         current_step_loss = np.array(self.logger.current_losses['generator']['all_train'])[
                             -self.logger.batch_size * 11 * self.config.generator.samples_per_iter:]
         current_acceptance_rate = np.mean(current_step_loss <= 0)  # previous 10 steps
-        if self.logger.epoch > 0:
-            trailing_step_loss = np.array(self.logger.loss_record['generator']['mean_train'])[-1, :]
-            trailing_acceptance_rate = np.mean(trailing_step_loss <= 0)  # previous epoch
+
+        """First, always converge prior"""
+        if not trailing_prior_loss < self.prior_loss_cutoff:
+            if trailing_prior_loss > 0.5:
+                self.step_loss_coefficient = increment_value(self.step_loss_coefficient, -self.increment_fraction, 1, minval=0)
         else:
-            trailing_acceptance_rate = 0
+            if self.step_loss_coefficient < 1:
+                self.step_loss_coefficient = increment_value(self.step_loss_coefficient, self.increment_fraction, 1)
 
-        """annealing checks"""
-        """if we are doing exceptionally well, we harden the global problem"""
-        if trailing_acceptance_rate >= self.acceptance_rate_harden_cutoff:
-            self.step_size = increment_value(self.step_size, 0.01, 1)
-            print("Increasing global step size")
-
-        if self.learning_stage == 1:
-            """
-            if ellipsoid losses are small, always increase ellipsoid scale
-            if ellipsoid losses are not ~zero (large ellipsoids relative to cell volume) switch to trailing step loss metric
-            """
-            if ((trailing_ellipsoid_loss < self.stage1_ellipsoid_cutoff) or
-                    (current_acceptance_rate >= self.stage1_acceptance_cutoff)):
-                if self.ellipsoid_scale < self.stage1_max_ellipsoid_scale:
+            """annealing checks"""
+            if self.learning_stage == 1:
+                """
+                if ellipsoid losses are small, always increase ellipsoid scale
+                if ellipsoid losses are not ~zero (large ellipsoids relative to cell volume) switch to trailing step loss metric
+                """
+                if trailing_ellipsoid_loss < self.stage1_ellipsoid_cutoff:
                     self.ellipsoid_scale = increment_value(self.ellipsoid_scale, self.increment_fraction,
-                                                           self.stage1_max_ellipsoid_scale)
+                                                               self.stage1_max_ellipsoid_scale)
 
-            """If the model is doing badly, reverse course"""
-            if current_acceptance_rate < self.acceptance_rate_soften_cutoff:
-                self.ellipsoid_scale = increment_value(self.ellipsoid_scale, -self.increment_fraction,
-                                                       self.stage1_max_ellipsoid_scale)
-
-        elif self.learning_stage == 2:
-            """allow orientation changes and larger ellipsoids"""
-            if ((trailing_ellipsoid_loss < self.stage2_ellipsoid_cutoff) or
-                    (current_acceptance_rate >= self.stage2_acceptance_cutoff)):
-                self.ellipsoid_scale = increment_value(self.ellipsoid_scale, self.increment_fraction,
-                                                       self.stage2_max_ellipsoid_scale)
-                self.orientation_scale = increment_value(self.orientation_scale, self.increment_fraction,
-                                                         self.stage2_max_orientation_scale)
-
-            if current_acceptance_rate < self.acceptance_rate_soften_cutoff:
-                self.ellipsoid_scale = increment_value(self.ellipsoid_scale, -self.increment_fraction,
-                                                       self.stage2_max_ellipsoid_scale)
-                self.orientation_scale = increment_value(self.orientation_scale, -self.increment_fraction,
-                                                         self.stage2_max_orientation_scale)
-
-        elif self.learning_stage == 3:  # todo cleanup
-            if trailing_ellipsoid_loss < self.stage3_ell_cutoff:
-                if trailing_density_loss < self.stage3_density_cutoff:
-                    self.length_scale = increment_value(self.length_scale, self.increment_fraction,
-                                                        self.stage3_max_length_scale)
-                    self.angle_scale = increment_value(self.angle_scale, self.increment_fraction,
-                                                       self.stage3_max_angle_scale)
-                    self.density_loss_coefficient = increment_value(self.density_loss_coefficient,
-                                                                    self.increment_fraction,
-                                                                    self.stage3_max_density_loss_coefficient)
+            elif self.learning_stage == 2:
+                """allow orientation changes and larger ellipsoids"""
+                if trailing_ellipsoid_loss < self.stage2_ellipsoid_cutoff:
                     self.ellipsoid_scale = increment_value(self.ellipsoid_scale, self.increment_fraction,
-                                                           self.stage3_max_ellipsoid_scale)
+                                                           self.stage2_max_ellipsoid_scale)
+                    self.orientation_scale = increment_value(self.orientation_scale, self.increment_fraction,
+                                                             self.stage2_max_orientation_scale)
+
+            elif self.learning_stage == 3:
+                if trailing_ellipsoid_loss < self.stage3_ell_cutoff:
+                    if trailing_density_loss < self.stage3_density_cutoff:
+                        self.length_scale = increment_value(self.length_scale, self.increment_fraction,
+                                                            self.stage3_max_length_scale)
+                        self.angle_scale = increment_value(self.angle_scale, self.increment_fraction,
+                                                           self.stage3_max_angle_scale)
+                        self.density_loss_coefficient = increment_value(self.density_loss_coefficient,
+                                                                        self.increment_fraction,
+                                                                        self.stage3_max_density_loss_coefficient)
+                        self.ellipsoid_scale = increment_value(self.ellipsoid_scale, self.increment_fraction,
+                                                               self.stage3_max_ellipsoid_scale)
 
         """curriculum updates"""
         if self.learning_stage == 1:
@@ -2165,6 +2156,9 @@ class Modeller:
                  'vdw_loss_coefficient': self.vdw_loss_coefficient,
                  'density_loss_coefficient': self.density_loss_coefficient,
                  'learning_stage': self.learning_stage,
+                 'max_step_size': self.step_size,
+                 'prior_loss_coefficient': self.prior_loss_coefficient,
+                 'step_loss_coefficient': self.step_loss_coefficient
                  }
         self.logger.update_stats_dict(self.epoch_type,
                                       stats.keys(),
@@ -2423,16 +2417,18 @@ class Modeller:
             self.ellipsoid_model = copy.deepcopy(cluster_batch.ellipsoid_model)
             self.ellipsoid_model = self.ellipsoid_model.to(self.device)
             self.ellipsoid_model.eval()
-        ellipsoid_overlap = cluster_batch.compute_ellipsoidal_overlap(
+        molwise_ellipsoid_overlap, v1_pred, v2_pred, v1, v2, norm_factor, normed_ellipsoid_overlap \
+            = cluster_batch.compute_ellipsoidal_overlap(
             semi_axis_scale=self.ellipsoid_scale,
-            model=self.ellipsoid_model).clip(min=0)
+            model=self.ellipsoid_model,
+            return_details=True)
 
         return (molwise_normed_overlap, molwise_scaled_lj_pot, molwise_lj_pot,
-                ellipsoid_overlap, silu_pot, cluster_batch)
+                normed_ellipsoid_overlap, silu_pot, cluster_batch)
 
     def generator_losses(self, cluster_batch,
                          silu_pot,
-                         ellipsoid_overlap
+                         normed_ellipsoid_overlap
                          ):
         """
         Convert crystal features into losses
@@ -2449,7 +2445,7 @@ class Modeller:
         density_loss = F.relu(-(cluster_batch.packing_coeff - self.density_loss_scale))
 
         """Loss based on ellipsoid overlaps"""
-        ellipsoid_loss = ellipsoid_overlap ** 2
+        ellipsoid_loss = (normed_ellipsoid_overlap ** 2).clip(max=2)
 
         return vdw_loss, density_loss, ellipsoid_loss
 
@@ -2466,33 +2462,12 @@ class Modeller:
         - backprop score
         """
         """Initialize random crystal batch"""
-        mol_batch.recenter_molecules()
-        mol_batch.orient_molecule(self.config.generator.canonical_conformer_orientation,
-                                  include_inversion=False)
-
-        sgs_to_build = np.random.choice(self.config.generate_sgs, replace=True, size=mol_batch.num_graphs)
-        sg_rand_inds = torch.tensor(
-            [list(self.sym_info['space_groups'].values()).index(SG) + 1 for SG in sgs_to_build], dtype=torch.long,
-            device=self.device)  # indexing from 0
-
-        crystal_batch = collate_data_list([MolCrystalData(molecule=mol_batch[ind],
-                                                          sg_ind=sg_rand_inds[ind],
-                                                          aunit_handedness=torch.ones(1, device=self.device,
-                                                                                      dtype=torch.long
-                                                                                      )) for ind in
-                                           range(mol_batch.num_graphs)])
-
-        target_cps = (torch.randn(mol_batch.num_graphs, device=self.device) * 0.0447 + 0.6226).clip(min=0.45, max=0.95)
-        crystal_batch.sample_random_reduced_crystal_parameters(target_packing_coeff=target_cps)
-
-        """analyze random prior sample"""
-        prior_in_gen_basis = crystal_batch.cell_params_to_gen_basis().clone().detach()
-        destandardized_prior = crystal_batch.cell_parameters().clone().detach()
+        crystal_batch, destandardized_prior, prior_in_gen_basis = self.get_generator_prior_sample(mol_batch)
 
         (molwise_normed_overlap, molwise_scaled_lj_pot, molwise_lj_pot,
-         ellipsoid_overlap, silu_pot, cluster_batch) = self.analyze_generator_samples(crystal_batch)
-        vdw_loss, density_loss, ellipsoid_loss = self.generator_losses(cluster_batch, silu_pot, ellipsoid_overlap)
-
+         normed_ellipsoid_overlap, silu_pot, cluster_batch) = self.analyze_generator_samples(crystal_batch)
+        vdw_loss, density_loss, ellipsoid_loss = self.generator_losses(cluster_batch, silu_pot,
+                                                                       normed_ellipsoid_overlap)
         prior_sample_loss = (self.ellipsoid_loss_coefficient * ellipsoid_loss +
                              self.vdw_loss_coefficient * vdw_loss +
                              self.density_loss_coefficient * density_loss)
@@ -2507,28 +2482,26 @@ class Modeller:
             'generated_space_group_numbers': crystal_batch.sg_ind.detach(),
         }
 
-        length_scale_tensor = self.step_size * self.length_scale * torch.ones(
-            (crystal_batch.num_graphs, 1), device=crystal_batch.device)
-        angle_scale_tensor = self.step_size * self.angle_scale * torch.ones(
-            (crystal_batch.num_graphs, 1), device=crystal_batch.device)
-        position_scale_tensor = self.step_size * self.position_scale * torch.ones(
-            (crystal_batch.num_graphs, 1),
-            device=crystal_batch.device)
-        orientation_scale_tensor = self.step_size * self.orientation_scale * torch.ones(
-            (crystal_batch.num_graphs, 1),
-            device=crystal_batch.device)
+        # sample step sizes randomly between [0, max], with global step size step_rands
+        step_rands = torch.rand((crystal_batch.num_graphs, 1), device=crystal_batch.device)
+        length_scale_tensor = self.step_size * self.length_scale * step_rands
+        angle_scale_tensor = self.step_size * self.angle_scale * step_rands
+        position_scale_tensor = self.step_size * self.position_scale * step_rands
+        orientation_scale_tensor = self.step_size * self.orientation_scale * step_rands
 
         """sample from model"""
         for ind in range(self.config.generator.samples_per_iter):
             if ind == 0:
                 init_state = prior_in_gen_basis.detach().clone()
-                prev_loss = prior_sample_loss.detach().clone()
+                prev_sample_loss = prior_sample_loss.detach().clone()
             else:
                 init_state = gen_basis_sample.detach().clone()
-                prev_loss = loss.detach().clone()
+                prev_sample_loss = sample_loss.detach().clone()
 
             # get proposed step
-            generator_proposed_step = self.models_dict['generator'](
+            (generator_proposed_step,
+             prev_prediction,
+             current_prediction) = self.models_dict['generator'](
                 x=scalar_embedding,
                 v=vector_embedding,
                 sg_ind_list=crystal_batch.sg_ind,
@@ -2539,31 +2512,37 @@ class Modeller:
                 prior=init_state
             )
 
+            """build proposed crystal"""
             generator_raw_samples = init_state + generator_proposed_step
-
-            # build proposed crystal
             new_crystal_batch = crystal_batch.clone().detach()
             new_crystal_batch.gen_basis_to_cell_params(generator_raw_samples)  # cleaning implicit in this function
             gen_basis_sample = new_crystal_batch.cell_params_to_gen_basis()
 
-            # analyze cell
+            """analyze new crystal"""
             (molwise_normed_overlap, molwise_scaled_lj_pot, molwise_lj_pot,
-             ellipsoid_overlap, silu_pot, cluster_batch) = self.analyze_generator_samples(new_crystal_batch)
-            vdw_loss, density_loss, ellipsoid_loss = self.generator_losses(cluster_batch, silu_pot, ellipsoid_overlap)
+             normed_ellipsoid_overlap, silu_pot, cluster_batch) = self.analyze_generator_samples(new_crystal_batch)
+            vdw_loss, density_loss, ellipsoid_loss = self.generator_losses(cluster_batch, silu_pot,
+                                                                           normed_ellipsoid_overlap)
+            prior_loss = self.compute_prior_loss(angle_scale_tensor, generator_proposed_step, length_scale_tensor,
+                                                 orientation_scale_tensor, position_scale_tensor)
 
-            loss = (self.ellipsoid_loss_coefficient * ellipsoid_loss +
+            sample_loss = (self.ellipsoid_loss_coefficient * ellipsoid_loss +
                     self.vdw_loss_coefficient * vdw_loss +
                     self.density_loss_coefficient * density_loss)
-
-            # get total loss
-            generator_losses = (loss - prev_loss)
+            assert torch.sum(torch.isnan(sample_loss)) == 0
+            """get model loss"""
+            aux_loss_1 = F.smooth_l1_loss(prev_prediction.flatten(), prev_sample_loss.flatten(), reduction='none')
+            aux_loss_2 = F.smooth_l1_loss(current_prediction.flatten(), sample_loss.flatten().detach(), reduction='none')
+            step_loss = (sample_loss - prev_sample_loss)
+            opt_loss = self.step_loss_coefficient * step_loss.clip(max=1) + self.prior_loss_coefficient * prior_loss
+            generator_losses = opt_loss + aux_loss_1 + aux_loss_2
             generator_loss = generator_losses.mean()
 
             if update_weights:
                 self.optimizers_dict['generator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
                 generator_loss.backward()  # back-propagation
                 # torch.nn.utils.clip_grad_value_(self.models_dict['generator'].parameters(),
-                #                                 1)
+                #                                 10)
                 torch.nn.utils.clip_grad_norm_(self.models_dict['generator'].parameters(),
                                                self.config.gradient_norm_clip)  # gradient clipping
 
@@ -2575,7 +2554,10 @@ class Modeller:
 
             if not skip_stats:
                 stats.update({
+                    'prior_loss': prior_loss.detach(),
                     'step_size': generator_proposed_step.norm(dim=1).detach(),
+                    'aux_loss_1': aux_loss_1.detach(),
+                    'aux_loss_2': aux_loss_2.detach(),
                     'per_mol_scaled_LJ_energy': molwise_scaled_lj_pot.detach(),
                     'per_mol_normed_overlap': molwise_normed_overlap.detach(),
                     'packing_coefficient': new_crystal_batch.packing_coeff.detach(),
@@ -2587,7 +2569,7 @@ class Modeller:
                 if ind == self.config.generator.samples_per_iter - 1:  # log sample losses on last iter only
                     stats.update({
                         'density_loss': density_loss.detach(),
-                        'step_loss': generator_losses.detach(),
+                        'step_loss': step_loss.detach(),
                         'generator_vdw_loss': vdw_loss.detach(),
                         'ellipsoid_loss': ellipsoid_loss.detach(),
                     })
@@ -2600,6 +2582,45 @@ class Modeller:
                                               stats.keys(),
                                               stats.values(),
                                               mode='extend')
+
+    def compute_prior_loss(self, angle_scale_tensor, generator_proposed_step, length_scale_tensor,
+                           orientation_scale_tensor, position_scale_tensor):
+        """
+        A penalty for step sizes greater than the scale_tensors
+        """
+        length_delta, angle_delta, position_delta, orientation_delta = generator_proposed_step.split(3, dim=1)
+        length_delta_norm, angle_delta_norm, position_delta_norm, orientation_delta_norm = (
+            length_delta.norm(dim=1, keepdim=True), angle_delta.norm(dim=1, keepdim=True),
+            position_delta.norm(dim=1, keepdim=True), orientation_delta.norm(dim=1, keepdim=True))
+
+        length_step_penalty = F.relu(length_delta_norm - length_scale_tensor)
+        angle_step_penalty = F.relu(angle_delta_norm - angle_scale_tensor)
+        position_step_penalty = F.relu(position_delta_norm - position_scale_tensor)
+        orientation_step_penalty = F.relu(orientation_delta_norm - orientation_scale_tensor)
+        prior_loss = (length_step_penalty + angle_step_penalty + position_step_penalty + orientation_step_penalty) ** 2
+
+        return prior_loss.flatten()
+
+    def get_generator_prior_sample(self, mol_batch):
+        mol_batch.recenter_molecules()
+        mol_batch.orient_molecule(self.config.generator.canonical_conformer_orientation,
+                                  include_inversion=False)
+        sgs_to_build = np.random.choice(self.config.generate_sgs, replace=True, size=mol_batch.num_graphs)
+        sg_rand_inds = torch.tensor(
+            [list(self.sym_info['space_groups'].values()).index(SG) + 1 for SG in sgs_to_build], dtype=torch.long,
+            device=self.device)  # indexing from 0
+        crystal_batch = collate_data_list([MolCrystalData(molecule=mol_batch[ind],
+                                                          sg_ind=sg_rand_inds[ind],
+                                                          aunit_handedness=torch.ones(1, device=self.device,
+                                                                                      dtype=torch.long
+                                                                                      )) for ind in
+                                           range(mol_batch.num_graphs)])
+        target_cps = (torch.randn(mol_batch.num_graphs, device=self.device) * 0.0447 + 0.6226).clip(min=0.45, max=0.95)
+        crystal_batch.sample_random_reduced_crystal_parameters(target_packing_coeff=target_cps)
+        """analyze random prior sample"""
+        prior_in_gen_basis = crystal_batch.cell_params_to_gen_basis().clone().detach()
+        destandardized_prior = crystal_batch.cell_parameters().clone().detach()
+        return crystal_batch, destandardized_prior, prior_in_gen_basis
 
     def increment_batch_size(self, train_loader, test_loader, extra_test_loader):
         self.times['batch_resizing_start'] = time()

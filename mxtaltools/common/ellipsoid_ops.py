@@ -228,4 +228,4 @@ def featurize_ellipsoid_batch(Ip, edge_i_good, edge_j_good, mol_centroids, semi_
         r1_local,
         r2_local,
     ], dim=1)
-    return max_val, normed_v1, normed_v2, x
+    return max_val, normed_v1, normed_v2, x, v1, v2

@@ -26,7 +26,7 @@ class CrystalGenerator(nn.Module):
                                # scalar embedding, prior, target deviation,
                                # sg information, vector embedding,
                                input_dim=embedding_dim + 12 + 4 + 237 + embedding_dim * 3,
-                               output_dim=6 + z_prime * 6,
+                               output_dim=6 + z_prime * 6 + 2,
                                )
 
     def forward(self,
@@ -38,7 +38,7 @@ class CrystalGenerator(nn.Module):
                 max_angle_step: torch.Tensor,
                 max_position_step: torch.Tensor,
                 max_orientation_step: torch.Tensor,
-                ) -> torch.Tensor:
+                ) -> (torch.Tensor, torch.Tensor, torch.Tensor):
         """
         Step format is x1 = x0 + max_step_size * unit_delta * sigmoid(||delta||)
         Yielding an adjustable actual step size on 0-max_step_size
@@ -53,26 +53,8 @@ class CrystalGenerator(nn.Module):
             max_orientation_step],
            dim=1)
         x_w_v = torch.cat([x_w_sg, v.reshape(v.shape[0], v.shape[1] * v.shape[2])], dim=1)
-        length_delta, angle_delta, position_delta, orientation_delta = self.model(x=x_w_v).split(3, dim=1)
+        outputs = self.model(x=x_w_v)
 
-        eps = 1e-4  # account for possible instability here
-        length_delta_norm = length_delta.norm(dim=1, keepdim=True).clamp(min=eps)
-        angle_delta_norm = angle_delta.norm(dim=1, keepdim=True).clamp(min=eps)
-        position_delta_norm = position_delta.norm(dim=1, keepdim=True).clamp(min=eps)
-        orientation_delta_norm = orientation_delta.norm(dim=1, keepdim=True).clamp(min=eps)
-
-        normed_length_delta = length_delta / length_delta_norm
-        normed_angle_delta = angle_delta / angle_delta_norm
-        normed_position_delta = position_delta / position_delta_norm
-        normed_orientation_delta = orientation_delta / orientation_delta_norm
-
-        step = torch.cat([
-            max_length_step * F.sigmoid(length_delta_norm) * normed_length_delta,
-            max_angle_step * F.sigmoid(angle_delta_norm) * normed_angle_delta,
-            max_position_step * F.sigmoid(position_delta_norm) * normed_position_delta,
-            max_orientation_step * F.sigmoid(orientation_delta_norm) * normed_orientation_delta,
-        ], dim=-1)
-
-        return step
+        return outputs[:, :12], outputs[:, 12], outputs[:, 13]
 
 

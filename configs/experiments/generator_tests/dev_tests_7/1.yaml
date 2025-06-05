@@ -1,0 +1,126 @@
+anomaly_detection: false
+batch_growth_increment: 0.3
+checkpointing_loss_type: test
+dataset:
+  filter_protons: false
+  max_dataset_length: 10000000
+  refresh_interval: -1
+  test_fraction: 0.2
+  type: molecule
+dataset_name: qm9_dataset.pt
+dataset_yaml_path: /skinny_generator.yaml
+device: cuda
+discriminator:
+  distortion_magnitude: -1
+  model:
+    activation: gelu
+    fc:
+      dropout: 0
+      hidden_dim: 16
+      norm: null
+      num_layers: 1
+    graph:
+      atom_type_embedding_dim: 32
+      cutoff: 2
+      dropout: 0
+      embedding_dim: 16
+      envelope_exponent: 5
+      fcs_per_gc: 1
+      max_num_neighbors: 100
+      message_dim: 16
+      node_dim: 16
+      norm: null
+      num_convs: 1
+      num_input_classes: 101
+      num_radial: 32
+      radial_embedding: bessel
+    graph_aggregator: softmax
+    periodic_convolution_type: all_layers
+  optimizer:
+    beta1: 0.9
+    beta2: 0.999
+    convergence_eps: 0.0001
+    init_lr: 1.0e-05
+    lr_growth_lambda: 1.0
+    lr_schedule: true
+    lr_shrink_lambda: 0.95
+    max_lr: 1.0e-06
+    min_lr: 5.0e-06
+    optimizer: adamw
+    use_plateau_scheduler: false
+    weight_decay: 0.1
+  train_adversarially: false
+  train_on_distorted: false
+  train_on_randn: false
+  use_classification_loss: true
+  use_rdf_distance_loss: true
+early_epochs_step_override: 5
+extra_test_period: 4
+extra_test_set_name: null
+generate_sgs:
+- P-1
+generator:
+  canonical_conformer_orientation: random
+  model:
+    dropout: 0
+    hidden_dim: 256
+    norm: layer
+    num_layers: 4
+    vector_norm: null
+  optimizer:
+    beta1: 0.9
+    beta2: 0.999
+    convergence_eps: 0.0001
+    init_lr: 1.0e-05
+    lr_growth_lambda: 1.2
+    lr_schedule: true
+    lr_shrink_lambda: 0.97
+    max_lr: 0.0001
+    min_lr: 1.0e-06
+    optimizer: adamw
+    overwrite_on_reload: false
+    use_plateau_scheduler: false
+    weight_decay: 0.005
+  samples_per_iter: 20
+  step_size: 0.025
+gradient_norm_clip: 2
+grow_batch_size: true
+history: 50
+logger:
+  experiment_tag: dev_tests_7
+  log_figures: true
+  run_name: dev_tests_7
+  sample_reporting_frequency: 2
+  stats_reporting_frequency: 5
+machine: cluster
+max_batch_size: 500
+max_epoch_steps: 200
+max_epochs: 10000
+min_batch_size: 25
+minimum_epochs: 50
+misc_dataset_name: misc_data_for_qm9_dataset.npy
+mode: generator
+model_names:
+- generator
+- autoencoder
+model_paths:
+  autoencoder: best_autoencoder_experiments_autoencoder_tests_otf_zinc_test9_2_24-01-09-15-05
+  discriminator: null
+  embedding_regressor: null
+  generator: null
+  regressor: null
+num_early_epochs: 0
+overfit_tolerance: 4
+positional_noise:
+  autoencoder: 0
+  discriminator: 0
+  generator: 0
+  regressor: 0
+sample_steps: 100
+save_checkpoints: true
+seeds:
+  dataset: 0
+  model: 12345
+supercell_size: 10
+sweep_id: null
+sweep_path: null
