@@ -82,7 +82,7 @@ generator:
     use_plateau_scheduler: false
     weight_decay: 0.005
   samples_per_iter: 3
-  step_size: 0.025
+  step_size: 4
 gradient_norm_clip: 2
 grow_batch_size: true
 history: 50
