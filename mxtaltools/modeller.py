@@ -2077,7 +2077,7 @@ class Modeller:
         -: update phase
         """
 
-        current_epoch_losses = np.array(self.logger.current_losses['generator']['all_train'])
+        current_epoch_losses = np.array(self.logger.current_losses['generator']['all_train'])[-self.curriculum_history:]
         converging = np.std(current_epoch_losses) < self.loss_cutoff
 
         prior_losses = self.logger.train_stats['prior_loss']
