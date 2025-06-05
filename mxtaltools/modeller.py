@@ -2034,22 +2034,14 @@ class Modeller:
 
         self.max_ellipsoid_scale = 0.8  # ~approximates molecular volume most closely
 
-        self.acceptance_rate_harden_cutoff = 0.95
-        self.acceptance_rate_soften_cutoff = 0.75
-
+        self.loss_cutoff = 0.05
         self.curriculum_history = 1000
         self.increment_fraction = 0.05
-        self.stage1_ellipsoid_cutoff = 0.1
-        self.stage1_acceptance_cutoff = 0.75
         self.stage1_max_ellipsoid_scale = 0.5
 
-        self.stage2_ellipsoid_cutoff = 0.1
-        self.stage2_acceptance_cutoff = 0.9
         self.stage2_max_ellipsoid_scale = 0.75
         self.stage2_max_orientation_scale = 1.0
 
-        self.stage3_ell_cutoff = 0.1
-        self.stage3_density_cutoff = 0.4
         self.stage3_max_length_scale = 1.0
         self.stage3_max_angle_scale = 1.0
         self.stage3_max_density_loss_coefficient = 1.0
@@ -2085,21 +2077,17 @@ class Modeller:
         -: update phase
         """
 
-        ellipsoid_losses = self.logger.train_stats['ellipsoid_loss']
-        trailing_ellipsoid_loss = np.mean(ellipsoid_losses[-self.curriculum_history:])
-        density_losses = self.logger.train_stats['density_loss']
-        trailing_density_loss = np.mean(density_losses[-self.curriculum_history:])
+        current_epoch_losses = np.array(self.logger.current_losses['generator']['all_train'])
+        converging = np.std(current_epoch_losses) < self.loss_cutoff
+
         prior_losses = self.logger.train_stats['prior_loss']
         trailing_prior_loss = np.mean(prior_losses[-self.curriculum_history:])
-
-        current_step_loss = np.array(self.logger.current_losses['generator']['all_train'])[
-                            -self.logger.batch_size * 11 * self.config.generator.samples_per_iter:]
-        current_acceptance_rate = np.mean(current_step_loss <= 0)  # previous 10 steps
 
         """First, always converge prior"""
         if not trailing_prior_loss < self.prior_loss_cutoff:
             if trailing_prior_loss > 0.5:
-                self.step_loss_coefficient = increment_value(self.step_loss_coefficient, -self.increment_fraction, 1, minval=0)
+                self.step_loss_coefficient = increment_value(self.step_loss_coefficient, -self.increment_fraction, 1,
+                                                             minval=0)
         else:
             if self.step_loss_coefficient < 1:
                 self.step_loss_coefficient = increment_value(self.step_loss_coefficient, self.increment_fraction, 1)
@@ -2110,30 +2098,29 @@ class Modeller:
                 if ellipsoid losses are small, always increase ellipsoid scale
                 if ellipsoid losses are not ~zero (large ellipsoids relative to cell volume) switch to trailing step loss metric
                 """
-                if trailing_ellipsoid_loss < self.stage1_ellipsoid_cutoff:
+                if converging:
                     self.ellipsoid_scale = increment_value(self.ellipsoid_scale, self.increment_fraction,
-                                                               self.stage1_max_ellipsoid_scale)
+                                                           self.stage1_max_ellipsoid_scale)
 
             elif self.learning_stage == 2:
                 """allow orientation changes and larger ellipsoids"""
-                if trailing_ellipsoid_loss < self.stage2_ellipsoid_cutoff:
+                if converging:
                     self.ellipsoid_scale = increment_value(self.ellipsoid_scale, self.increment_fraction,
                                                            self.stage2_max_ellipsoid_scale)
                     self.orientation_scale = increment_value(self.orientation_scale, self.increment_fraction,
                                                              self.stage2_max_orientation_scale)
 
             elif self.learning_stage == 3:
-                if trailing_ellipsoid_loss < self.stage3_ell_cutoff:
-                    if trailing_density_loss < self.stage3_density_cutoff:
-                        self.length_scale = increment_value(self.length_scale, self.increment_fraction,
-                                                            self.stage3_max_length_scale)
-                        self.angle_scale = increment_value(self.angle_scale, self.increment_fraction,
-                                                           self.stage3_max_angle_scale)
-                        self.density_loss_coefficient = increment_value(self.density_loss_coefficient,
-                                                                        self.increment_fraction,
-                                                                        self.stage3_max_density_loss_coefficient)
-                        self.ellipsoid_scale = increment_value(self.ellipsoid_scale, self.increment_fraction,
-                                                               self.stage3_max_ellipsoid_scale)
+                if converging:
+                    self.length_scale = increment_value(self.length_scale, self.increment_fraction,
+                                                        self.stage3_max_length_scale)
+                    self.angle_scale = increment_value(self.angle_scale, self.increment_fraction,
+                                                       self.stage3_max_angle_scale)
+                    self.density_loss_coefficient = increment_value(self.density_loss_coefficient,
+                                                                    self.increment_fraction,
+                                                                    self.stage3_max_density_loss_coefficient)
+                    self.ellipsoid_scale = increment_value(self.ellipsoid_scale, self.increment_fraction,
+                                                           self.stage3_max_ellipsoid_scale)
 
         """curriculum updates"""
         if self.learning_stage == 1:
@@ -2527,12 +2514,13 @@ class Modeller:
                                                  orientation_scale_tensor, position_scale_tensor)
 
             sample_loss = (self.ellipsoid_loss_coefficient * ellipsoid_loss +
-                    self.vdw_loss_coefficient * vdw_loss +
-                    self.density_loss_coefficient * density_loss)
+                           self.vdw_loss_coefficient * vdw_loss +
+                           self.density_loss_coefficient * density_loss)
             assert torch.sum(torch.isnan(sample_loss)) == 0
             """get model loss"""
             aux_loss_1 = F.smooth_l1_loss(prev_prediction.flatten(), prev_sample_loss.flatten(), reduction='none')
-            aux_loss_2 = F.smooth_l1_loss(current_prediction.flatten(), sample_loss.flatten().detach(), reduction='none')
+            aux_loss_2 = F.smooth_l1_loss(current_prediction.flatten(), sample_loss.flatten().detach(),
+                                          reduction='none')
             step_loss = (sample_loss - prev_sample_loss)
             opt_loss = self.step_loss_coefficient * step_loss.clip(max=1) + self.prior_loss_coefficient * prior_loss
             generator_losses = opt_loss + aux_loss_1 + aux_loss_2

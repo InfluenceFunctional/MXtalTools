@@ -11,7 +11,7 @@ config_list = [
         'batch_growth_increment': 0.3,
         'max_batch_size': 500,
         'generator': {
-            'samples_per_iter': 20,
+            'samples_per_iter': 2,
             'step_size': 4,
             'optimizer': {
                 'init_lr': 1e-5,
@@ -35,7 +35,7 @@ config_list = [
         'batch_growth_increment': 0.3,
         'max_batch_size': 500,
         'generator': {
-            'samples_per_iter': 20,
+            'samples_per_iter': 2,
             'step_size': 4,
             'optimizer': {
                 'init_lr': 1e-5,
@@ -59,7 +59,7 @@ config_list = [
         'batch_growth_increment': 0.5,
         'max_batch_size': 10000,
         'generator': {
-            'samples_per_iter': 3,
+            'samples_per_iter': 2,
             'step_size': 4,
             'optimizer': {
                 'init_lr': 1e-5,
