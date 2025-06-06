@@ -1517,28 +1517,28 @@ def detailed_reporting(config, dataDims, train_epoch_stats_dict, test_epoch_stat
                 if config.mode == 'generator':
                     fig_dict = {}
                     fig_dict['Lattice Features Distribution'] = cell_params_hist(test_epoch_stats_dict,
-                                     ['prior', 'cell_parameters'])
+                                                                                 ['prior', 'cell_parameters'])
                     fig_dict['Niggli Features Distribution'] = niggli_hist(test_epoch_stats_dict,
-                                ['prior', 'cell_parameters'])
+                                                                           ['prior', 'cell_parameters'])
                     fig_dict['Iterwise vdW'] = iter_wise_hist(test_epoch_stats_dict, 'per_mol_scaled_LJ_energy')
                     fig_dict['Iterwise Packing Coeff'] = iter_wise_hist(test_epoch_stats_dict, 'packing_coefficient')
                     fig_dict['Iterwise Ellipsoid Energy'] = iter_wise_hist(test_epoch_stats_dict, 'ellipsoid_energy')
                     for key in fig_dict.keys():
                         fig = fig_dict[key]
-                        if get_plotly_fig_size_mb(fig) > 0.1: # bigger than 1 MB
-                            fig.write_image(key + 'fig.png', width=512,
+                        if get_plotly_fig_size_mb(fig) > 0.1:  # bigger than .1 MB
+                            fig.write_image(key + 'fig.png', width=1024,
                                             height=512)  # save the image rather than the fig, for size reasons
                             fig_dict[key] = wandb.Image(key + 'fig.png')
-
+                    wandb.log(fig_dict, commit=False)
 
                 elif config.mode == 'discriminator':
                     fig = cell_params_hist(test_epoch_stats_dict,
-                                     ['real_cell_parameters', 'generated_cell_parameters'])
+                                           ['real_cell_parameters', 'generated_cell_parameters'])
                     wandb.log(data={'Lattice Features Distribution': fig}, commit=False)
 
                 elif config.mode == 'proxy_discriminator':
                     fig = cell_params_hist(wandb, test_epoch_stats_dict,
-                                     ['generated_cell_parameters'])
+                                           ['generated_cell_parameters'])
                     wandb.log(data={'Lattice Features Distribution': fig}, commit=False)
 
         if config.mode == 'generator':

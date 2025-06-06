@@ -77,7 +77,7 @@ config_list = [
                 'vector_norm': None,
             }
         }
-    },  # 2 - larger batch
+    },  # 2 - larger batch  - eigh crash and very slow
 ]
 
 

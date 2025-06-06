@@ -2078,7 +2078,8 @@ class Modeller:
         """
 
         current_epoch_losses = np.array(self.logger.current_losses['generator']['all_train'])[-self.curriculum_history:]
-        converging = np.std(current_epoch_losses) < self.loss_cutoff
+        slope, _ = np.polyfit(np.arange(len(current_epoch_losses)), current_epoch_losses, 1)
+        converging = slope < 0
 
         prior_losses = self.logger.train_stats['prior_loss']
         trailing_prior_loss = np.mean(prior_losses[-self.curriculum_history:])
