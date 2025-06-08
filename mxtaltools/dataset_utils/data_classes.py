@@ -631,7 +631,6 @@ class MolCrystalData(MolData):
             self.asym_unit_dict = self.build_asym_unit_dict()
 
         if not std_normal.isfinite().all():
-            print(std_normal)
             raise ValueError('Numerical Error: Gen basis cell params not all finite')
 
         a_out, al_out, b_out, be_out, c_out, ga_out = (
