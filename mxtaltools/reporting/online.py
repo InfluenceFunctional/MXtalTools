@@ -3,24 +3,22 @@ from typing import Optional
 import ase
 import ase.io
 import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import torch
+import torch.nn.functional as F
 import wandb
 from _plotly_utils.colors import n_colors, sample_colorscale
 from plotly.subplots import make_subplots
 from scipy.stats import linregress
-
-import plotly.graph_objects as go
-import plotly.express as px
-import pandas as pd
 from sklearn.metrics import roc_auc_score, f1_score, confusion_matrix
 from torch import scatter
 from torch_scatter import scatter
-import torch.nn.functional as F
 
 from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
-from mxtaltools.common.utils import get_point_density, softmax_np, get_plotly_fig_size_mb
-
 from mxtaltools.common.geometry_utils import cell_vol_np
+from mxtaltools.common.utils import get_point_density, softmax_np, get_plotly_fig_size_mb
 from mxtaltools.constants.mol_classifier_constants import polymorph2form
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.autoencoder_utils import batch_rmsd
@@ -127,9 +125,6 @@ def niggli_hist(stats_dict, sample_sources_list):
 
 
 def simple_cell_hist(sample_batch):
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
-    import numpy as np
     samples = sample_batch.cell_parameters().cpu().detach().numpy()
 
     lattice_features = ['cell_a', 'cell_b', 'cell_c',
@@ -151,6 +146,25 @@ def simple_cell_hist(sample_batch):
         ),
             row=row, col=col
         )
+    custom_ranges = {
+        0: [0, np.inf],  # for cell_a
+        1: [0, np.inf],  # for cell_b
+        2: [0, np.inf],  # for cell_c
+        3: [1, np.pi/2],  # for cell_alpha
+        4: [1, np.pi/2],  # for cell_beta
+        5: [1, np.pi/2],  # for cell_gamma
+        6: [0, 1],  # for aunit_x
+        7: [0, 1],  # for aunit_y
+        8: [0, 1],  # for aunit_z
+        9: [-2*np.pi, 2*np.pi],  # orientation_1
+        10: [-2*np.pi, 2*np.pi],  # orientation_2
+        11: [0, 2*np.pi],  # orientation_3
+    }
+
+    for i in range(n_crystal_features):
+        row = i // 3 + 1
+        col = i % 3 + 1
+        fig.update_xaxes(range=custom_ranges[i], row=row, col=col)
 
     fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
     #fig.update_traces(opacity=0.5)
