@@ -69,6 +69,7 @@ def get_point_density(xy, bins=35):
 
     # To be sure to plot all data
     z[np.where(np.isnan(z))] = 0.0
+    z = z.clip(min=0)
 
     return np.sqrt(z / z.max())
 

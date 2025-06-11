@@ -15,6 +15,7 @@ from scipy.stats import linregress
 from sklearn.metrics import roc_auc_score, f1_score, confusion_matrix
 from torch import scatter
 from torch_scatter import scatter
+import umap
 
 from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
 from mxtaltools.common.geometry_utils import cell_vol_np
@@ -1302,7 +1303,7 @@ def generated_cell_scatter_fig(epoch_stats_dict, layout):
         return fig
 
 
-def simple_cell_scatter_fig(sample_batch):
+def simple_cell_scatter_fig(sample_batch, aux_array = None, aux_scalar_name: str = ''):
     xy = np.vstack([sample_batch.packing_coeff.cpu().detach(), sample_batch.silu_pot.cpu().detach()])
     try:
         z = get_point_density(xy, bins=25)
@@ -1312,19 +1313,24 @@ def simple_cell_scatter_fig(sample_batch):
                     'packing_coefficient': sample_batch.packing_coeff.cpu().detach(),
                     'point_density': z
                     }
+    if aux_array is not None:
+        scatter_dict[aux_scalar_name] = aux_array
+        color_tag = aux_scalar_name
+    else:
+        color_tag = 'point_density'
     opacity = max(0.25, 1 - sample_batch.num_graphs / 5e4)
     df = pd.DataFrame.from_dict(scatter_dict)
 
     fig = px.scatter(scatter_dict,
                      x='packing_coefficient', y='energy',
-                     color='point_density',
+                     color=color_tag,
                      marginal_x='violin', marginal_y='violin',
                      opacity=opacity
                      )
 
     fig.update_layout(yaxis_title='Energy', xaxis_title='Packing Coeff')
     fig.update_layout(yaxis_range=[np.amin(df['energy']) - np.ptp(df['energy']) * 0.1,
-                                   np.amax(df['energy']) + np.ptp(df['energy']) * 0.1],
+                                   min(500, np.amax(df['energy']) + np.ptp(df['energy']) * 0.1)],
                       xaxis_range=[max(0, np.amin(df['packing_coefficient']) * 0.9),
                                    min(2, np.amax(df['packing_coefficient']) * 1.1)],
                       )
@@ -2099,3 +2105,36 @@ def polymorph_classification_trajectory_analysis(test_loader, stats_dict, traj_n
                     atom_types_traj,
                     atomwise_prediction_traj,
                     filename=traj_name[0].replace('\\', '/').replace('/', '_') + '_prediction')  # write a trajectory
+
+
+def simple_embedding_fig(sample_batch, aux_array = None):
+    if aux_array is not None:
+        color_array = aux_array
+    else:
+        xy = np.vstack([sample_batch.packing_coeff.cpu().detach(), sample_batch.silu_pot.cpu().detach()])
+        try:
+            z = get_point_density(xy, bins=25)
+        except:
+            z = np.ones(len(xy))
+        color_array = z
+
+    reducer = umap.UMAP(n_components=2,
+                        metric='cosine',
+                        n_neighbors=25,
+                        min_dist=0.01)
+    scalar_encodings = sample_batch.cell_parameters().cpu().detach().numpy()
+    normed_encoding = (scalar_encodings - scalar_encodings.mean(0)) / scalar_encodings.std(0)
+
+    embedding = reducer.fit_transform(normed_encoding)
+    fig = go.Figure()
+    fig.add_trace(go.Scattergl(x=embedding[:, 0],
+                                y=embedding[:, 1],
+                                mode='markers',
+                                opacity=.65,
+                                marker_size=8,
+                                showlegend=False,
+                                marker_color=color_array
+                                ))
+    fig.update_xaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
+    fig.update_yaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
+    return fig

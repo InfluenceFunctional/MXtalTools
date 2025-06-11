@@ -1119,8 +1119,9 @@ class MolCrystalData(MolData):
         Ip, longest_length, molwise_batch, semi_axis_lengths, tot_mol_index, tot_num_mols = self.compute_cluster_ellipsoids(
             semi_axis_scale)
 
-        edge_i_good, edge_j_good, mol_centroids = self.get_ellipsoid_edges(longest_length, molwise_batch, tot_mol_index,
-                                                                           tot_num_mols)
+        max_ellipsoid_radius = semi_axis_lengths.amax(1)
+        edge_i_good, edge_j_good, mol_centroids = self.get_ellipsoid_edges(molwise_batch, tot_mol_index,
+                                                                           tot_num_mols, max_ellipsoid_radius)
 
         norm_factor, normed_v1, normed_v2, x, v1, v2 = featurize_ellipsoid_batch(Ip,
                                                                          edge_i_good,
@@ -1179,7 +1180,7 @@ class MolCrystalData(MolData):
 
     """
 
-    def get_ellipsoid_edges(self, longest_length, molwise_batch, tot_mol_index, tot_num_mols):
+    def get_ellipsoid_edges(self, molwise_batch, tot_mol_index, tot_num_mols, max_ellipsoid_radius):
         # get centroids
         mol_centroids = scatter(self.pos, tot_mol_index, dim=0, dim_size=tot_num_mols, reduce='mean')
         mol_aux_inds = scatter(self.aux_ind, tot_mol_index, dim=0, dim_size=tot_num_mols, reduce='max')
@@ -1191,10 +1192,10 @@ class MolCrystalData(MolData):
             convolve_inds=torch.argwhere(mol_aux_inds >= 1).flatten(),
             # take 1 and 2 here, or we might have indexing issues
             max_num_neighbors=10,
-            r=self.radius.amax() * 2)
+            r=max_ellipsoid_radius.amax() * 2)
         # filter edges longer than 2x mol_radius for each sample
         dists = torch.linalg.norm(mol_centroids[edge_i] - mol_centroids[edge_j], dim=1)
-        good_inds = dists < (2 * longest_length[edge_i])
+        good_inds = dists < (2 * max_ellipsoid_radius[edge_i])
         edge_i_good = edge_i[good_inds]
         edge_j_good = edge_j[good_inds]
         return edge_i_good, edge_j_good, mol_centroids
