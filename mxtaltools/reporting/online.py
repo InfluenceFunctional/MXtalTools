@@ -151,15 +151,15 @@ def simple_cell_hist(sample_batch):
         0: [0, np.inf],  # for cell_a
         1: [0, np.inf],  # for cell_b
         2: [0, np.inf],  # for cell_c
-        3: [1, np.pi/2],  # for cell_alpha
-        4: [1, np.pi/2],  # for cell_beta
-        5: [1, np.pi/2],  # for cell_gamma
+        3: [1, np.pi / 2],  # for cell_alpha
+        4: [1, np.pi / 2],  # for cell_beta
+        5: [1, np.pi / 2],  # for cell_gamma
         6: [0, 1],  # for aunit_x
         7: [0, 1],  # for aunit_y
         8: [0, 1],  # for aunit_z
-        9: [-2*np.pi, 2*np.pi],  # orientation_1
-        10: [-2*np.pi, 2*np.pi],  # orientation_2
-        11: [0, 2*np.pi],  # orientation_3
+        9: [-2 * np.pi, 2 * np.pi],  # orientation_1
+        10: [-2 * np.pi, 2 * np.pi],  # orientation_2
+        11: [0, 2 * np.pi],  # orientation_3
     }
 
     for i in range(n_crystal_features):
@@ -1303,7 +1303,7 @@ def generated_cell_scatter_fig(epoch_stats_dict, layout):
         return fig
 
 
-def simple_cell_scatter_fig(sample_batch, aux_array = None, aux_scalar_name: str = ''):
+def simple_cell_scatter_fig(sample_batch, aux_array=None, aux_scalar_name: str = ''):
     xy = np.vstack([sample_batch.packing_coeff.cpu().detach(), sample_batch.silu_pot.cpu().detach()])
     try:
         z = get_point_density(xy, bins=25)
@@ -2107,7 +2107,7 @@ def polymorph_classification_trajectory_analysis(test_loader, stats_dict, traj_n
                     filename=traj_name[0].replace('\\', '/').replace('/', '_') + '_prediction')  # write a trajectory
 
 
-def simple_embedding_fig(sample_batch, aux_array = None):
+def simple_embedding_fig(sample_batch, aux_array=None):
     if aux_array is not None:
         color_array = aux_array
     else:
@@ -2122,19 +2122,24 @@ def simple_embedding_fig(sample_batch, aux_array = None):
                         metric='cosine',
                         n_neighbors=25,
                         min_dist=0.01)
-    scalar_encodings = sample_batch.cell_parameters().cpu().detach().numpy()
-    normed_encoding = (scalar_encodings - scalar_encodings.mean(0)) / scalar_encodings.std(0)
+    normed_encoding = sample_batch.standardize_cell_parameters().cpu().detach().numpy()
 
     embedding = reducer.fit_transform(normed_encoding)
     fig = go.Figure()
     fig.add_trace(go.Scattergl(x=embedding[:, 0],
-                                y=embedding[:, 1],
-                                mode='markers',
-                                opacity=.65,
-                                marker_size=8,
-                                showlegend=False,
-                                marker_color=color_array
-                                ))
+                               y=embedding[:, 1],
+                               mode='markers',
+                               opacity=.65,
+                               name='Sample energy',
+                               showlegend=False,
+                               marker=dict(
+                                   size=5,
+                                   color=color_array.clip(max=100),
+                                   colorscale="portland",
+                                   cmax=100,
+                                   colorbar=dict(title="Sample Energy")
+                               )
+                               ))
     fig.update_xaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
     fig.update_yaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
     return fig
