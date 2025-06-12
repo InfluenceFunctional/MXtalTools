@@ -1329,7 +1329,8 @@ def simple_cell_scatter_fig(sample_batch, aux_array=None, aux_scalar_name: str =
                      )
 
     fig.update_layout(yaxis_title='Energy', xaxis_title='Packing Coeff')
-    fig.update_layout(yaxis_range=[np.amin(df['energy']) - np.ptp(df['energy']) * 0.1,
+    # todo rescale this better
+    fig.update_layout(yaxis_range=[np.amin(df['energy']) - 10,
                                    min(500, np.amax(df['energy']) + np.ptp(df['energy']) * 0.1)],
                       xaxis_range=[max(0, np.amin(df['packing_coefficient']) * 0.9),
                                    min(2, np.amax(df['packing_coefficient']) * 1.1)],
