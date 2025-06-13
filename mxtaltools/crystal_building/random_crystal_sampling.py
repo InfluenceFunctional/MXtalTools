@@ -279,13 +279,6 @@ def niggli_box_vectors_to_randn(asym_unit_dict, mol_radii, a, b, c, al, be, ga, 
     be_std = 0.5 * siginv(sigmoid_be_scaled)
     ga_std = 0.5 * siginv(sigmoid_ga_scaled)
 
-    assert a_std.isfinite().all()
-    assert b_std.isfinite().all()
-    assert c_std.isfinite().all()
-    assert al_std.isfinite().all()
-    assert be_std.isfinite().all()
-    assert ga_std.isfinite().all()
-
     return a_std, al_std, b_std, be_std, c_std, ga_std
 
 

@@ -659,12 +659,9 @@ class MolCrystalData(MolData):
         if not hasattr(self, 'asym_unit_dict'):
             self.asym_unit_dict = self.build_asym_unit_dict()
 
-        aunit_scaled_centroids = self.aunit_centroid / torch.stack(
-            [self.asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
-        std_aunit = uniform_to_std_normal(aunit_scaled_centroids)
-        std_orientation = aunit_orientations_to_std_normal(self.aunit_orientation)
         a, b, c = self.cell_lengths.split(1, dim=1)
         al, be, ga = self.cell_angles.split(1, dim=1)
+
         a_out, al_out, b_out, be_out, c_out, ga_out = (
             niggli_box_vectors_to_randn(self.asym_unit_dict,
                                         self.radius,
@@ -672,10 +669,12 @@ class MolCrystalData(MolData):
                                         self.sg_ind))
         std_cell_lengths = torch.vstack([a_out, b_out, c_out]).T
         std_cell_angles = torch.vstack([al_out, be_out, ga_out]).T
+
+        aunit_scaled_centroids = self.scale_centroid_to_aunit()
+        std_aunit = uniform_to_std_normal(aunit_scaled_centroids)
+        std_orientation = aunit_orientations_to_std_normal(self.aunit_orientation)
+
         std_cell_params = torch.cat([std_cell_lengths, std_cell_angles, std_aunit, std_orientation], dim=1)
-        if not std_cell_params.isfinite().all():
-            print(std_cell_params)
-            raise ValueError('Numerical Error: Std cell params not all finite')
 
         return std_cell_params
 
