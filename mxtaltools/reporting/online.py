@@ -1315,7 +1315,7 @@ def log_crystal_samples(epoch_stats_dict: Optional[dict] = None, sample_batch: O
 
     samples_list = []
     for ind, file in enumerate(filenames):
-        samples_list.append(wandb.Molecule(open(file), caption=f"sample_{ind}"))
+        samples_list.append(wandb.Molecule(open(file), caption=file))
 
     if return_filenames:
         return samples_list, filenames
