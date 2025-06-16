@@ -655,7 +655,7 @@ class MolCrystalData(MolData):
         )
         self.box_analysis()
 
-    def cell_params_to_gen_basis(self):
+    def cell_params_to_gen_basis(self):  # todo would be nice to redo all these using torch affine transform
         if not hasattr(self, 'asym_unit_dict'):
             self.asym_unit_dict = self.build_asym_unit_dict()
 

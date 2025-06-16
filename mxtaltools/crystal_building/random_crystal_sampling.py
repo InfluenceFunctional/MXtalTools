@@ -251,7 +251,7 @@ def niggli_box_vectors_to_randn(asym_unit_dict, mol_radii, a, b, c, al, be, ga, 
     auc_normed = c_normed * torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_inds])[:, 2]
     log_auc = torch.log(auc_normed)
     min_val = 0.1
-    max_val = 4
+    max_val = 8
     eps = 1e-4
     c_lognorm = inverse_sigmoid_shift(log_auc.clip(min=np.log(min_val + eps), max=np.log(max_val - eps)), np.log(min_val), np.log(max_val))
     c_std = (c_lognorm - log_mean) / log_std

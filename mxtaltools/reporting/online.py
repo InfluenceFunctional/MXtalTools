@@ -1,3 +1,4 @@
+import os
 from typing import Optional
 
 import ase
@@ -171,6 +172,52 @@ def simple_cell_hist(sample_batch):
     #fig.update_traces(opacity=0.5)
     return fig
 
+
+def simple_latent_hist(sample_batch):
+    samples = sample_batch.cell_params_to_gen_basis().cpu().detach().numpy()
+
+    lattice_features = ['cell_a', 'cell_b', 'cell_c',
+                        'cell_alpha', 'cell_beta', 'cell_gamma',
+                        'aunit_x', 'aunit_y', 'aunit_z',
+                        'orientation_1', 'orientation_2', 'orientation_3']
+    # 1d Histograms
+    n_crystal_features = 12
+    colors = ['red', 'blue']
+    fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)
+    for i in range(n_crystal_features):
+        row = i // 3 + 1
+        col = i % 3 + 1
+        fig.add_trace(go.Violin(
+            x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
+            meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False,
+            showlegend=False,
+            line_color=colors[0],
+        ),
+            row=row, col=col
+        )
+    custom_ranges = {
+        0: [-6, 6],  # for cell_a
+        1: [-6, 6],  # for cell_b
+        2: [-6, 6],  # for cell_c
+        3: [-6, 6],  # for cell_alpha
+        4: [-6, 6],  # for cell_beta
+        5: [-6, 6],  # for cell_gamma
+        6: [-6, 6],  # for aunit_x
+        7: [-6, 6],  # for aunit_y
+        8: [-6, 6],  # for aunit_z
+        9: [-6, 6],  # orientation_1
+        10: [-6, 6],  # orientation_2
+        11: [-6, 6],  # orientation_3
+    }
+
+    for i in range(n_crystal_features):
+        row = i // 3 + 1
+        col = i % 3 + 1
+        fig.update_xaxes(range=custom_ranges[i], row=row, col=col)
+
+    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
+    #fig.update_traces(opacity=0.5)
+    return fig
 
 def iter_wise_hist(stats_dict, target_key, log=False):
     energy = stats_dict[target_key]
@@ -1246,7 +1293,7 @@ def vdw_vs_prior_dist(epoch_stats_dict: dict):
     wandb.log({"vdW vs Prior Loss": fig}, commit=False)
 
 
-def log_crystal_samples(epoch_stats_dict: Optional[dict] = None, sample_batch: Optional = None):
+def log_crystal_samples(epoch_stats_dict: Optional[dict] = None, sample_batch: Optional = None, return_filenames: bool =False):
     if epoch_stats_dict is not None:
         sample_crystals = epoch_stats_dict['generator_samples']
     else:
@@ -1258,12 +1305,22 @@ def log_crystal_samples(epoch_stats_dict: Optional[dict] = None, sample_batch: O
                                      index=int(topk_samples[ind]),
                                      mode='distance',
                                      cutoff=8) for ind in range(min(6, len(topk_samples)))]
-    [ase.io.write(f'sample_{i}.cif', mols[i]) for i in range(len(mols))]
-    samples_list = []
-    for ind in range(len(mols)):
-        samples_list.append(wandb.Molecule(open(f"sample_{ind}.cif"), caption=f"sample_{ind}"))
+    filenames = []
+    for i in range(len(mols)):
+        cp = float(sample_crystals[i].packing_coeff)
+        lj_pot = float(sample_crystals[i].lj_pot)
+        filename = f'cp={cp:.3f}_LJ={lj_pot:.3f}.cif'
+        filenames.append(filename)
+        ase.io.write(filename, mols[i])
 
-    return samples_list
+    samples_list = []
+    for ind, file in enumerate(filenames):
+        samples_list.append(wandb.Molecule(open(file), caption=f"sample_{ind}"))
+
+    if return_filenames:
+        return samples_list, filenames
+    else:
+        return samples_list
 
 
 def generated_cell_scatter_fig(epoch_stats_dict, layout):
