@@ -1309,13 +1309,16 @@ def log_crystal_samples(epoch_stats_dict: Optional[dict] = None, sample_batch: O
     for i in range(len(mols)):
         cp = float(sample_crystals[i].packing_coeff)
         lj_pot = float(sample_crystals[i].lj_pot)
-        filename = f'cp={cp:.3f}_LJ={lj_pot:.3f}.cif'
+        filename = f'cp={cp:.2f}_LJ={lj_pot:.1g}.cif'
         filenames.append(filename)
         ase.io.write(filename, mols[i])
 
     samples_list = []
     for ind, file in enumerate(filenames):
-        samples_list.append(wandb.Molecule(open(file), caption=file))
+        try:
+            samples_list.append(wandb.Molecule(open(file), caption=file))
+        except FileNotFoundError:
+            pass
 
     if return_filenames:
         return samples_list, filenames
@@ -1672,19 +1675,6 @@ def detailed_reporting(config, dataDims, train_epoch_stats_dict, test_epoch_stat
         discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_test_dict)
 
     return None
-
-
-def log_mean_deviations(test_epoch_stats_dict):
-    lattice_features = ['cell_a', 'cell_b', 'cell_c', 'cell_alpha', 'cell_beta', 'cell_gamma',
-                        'aunit_x', 'aunit_y',
-                        'aunit_z', 'aunit_theta', 'aunit_phi', 'aunit_r']
-    if isinstance(deviations, list):
-        deviations = np.stack(deviations)
-    mean_deviations = np.abs(deviations).mean(0)
-    dev_dict = {lattice_features[ind] + '_mean_scaled_deviation': mean_deviations[ind] for ind in
-                range(len(mean_deviations))}
-    wandb.log(data=dev_dict, commit=False)
-
 
 def classifier_reporting(true_labels, probs, ordered_class_names, wandb, epoch_type):
     present_classes = np.unique(true_labels)
