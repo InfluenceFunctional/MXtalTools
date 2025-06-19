@@ -126,7 +126,7 @@ def niggli_hist(stats_dict, sample_sources_list):
     return fig
 
 
-def simple_cell_hist(sample_batch):
+def simple_cell_hist(sample_batch, reference_dist =None):
     samples = sample_batch.cell_parameters().cpu().detach().numpy()
 
     lattice_features = ['cell_a', 'cell_b', 'cell_c',
@@ -140,14 +140,26 @@ def simple_cell_hist(sample_batch):
     for i in range(n_crystal_features):
         row = i // 3 + 1
         col = i % 3 + 1
+        if reference_dist is not None:
+            fig.add_trace(go.Violin(
+                x=reference_dist[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
+                meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False,
+                name='Reference', legendgroup='Reference',
+                showlegend=True if ((i == 0) and reference_dist is not None) else False,
+                line_color=colors[1],
+            ),
+                row=row, col=col
+            )
         fig.add_trace(go.Violin(
             x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
             meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False,
-            showlegend=False,
+            name='Samples', legendgroup='Samples',
+            showlegend=True if ((i == 0) and reference_dist is not None) else False,
             line_color=colors[0],
         ),
             row=row, col=col
         )
+
     custom_ranges = {
         0: [0, np.inf],  # for cell_a
         1: [0, np.inf],  # for cell_b
@@ -173,7 +185,7 @@ def simple_cell_hist(sample_batch):
     return fig
 
 
-def simple_latent_hist(sample_batch):
+def simple_latent_hist(sample_batch, reference_dist = None):
     samples = sample_batch.cell_params_to_gen_basis().cpu().detach().numpy()
 
     lattice_features = ['cell_a', 'cell_b', 'cell_c',
@@ -187,6 +199,16 @@ def simple_latent_hist(sample_batch):
     for i in range(n_crystal_features):
         row = i // 3 + 1
         col = i % 3 + 1
+        if reference_dist is not None:
+            fig.add_trace(go.Violin(
+                x=reference_dist[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
+                meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False,
+                name='Samples', legendgroup='Samples',
+                showlegend=True if ((i == 0) and reference_dist is not None) else False,
+                line_color=colors[1],
+            ),
+                row=row, col=col
+            )
         fig.add_trace(go.Violin(
             x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
             meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False,
@@ -195,6 +217,7 @@ def simple_latent_hist(sample_batch):
         ),
             row=row, col=col
         )
+
     custom_ranges = {
         0: [-6, 6],  # for cell_a
         1: [-6, 6],  # for cell_b
@@ -1369,7 +1392,10 @@ def simple_cell_scatter_fig(sample_batch, aux_array=None, aux_scalar_name: str =
         z = get_point_density(xy, bins=25)
     except:
         z = np.ones(len(xy))
-    scatter_dict = {'energy': sample_batch.silu_pot.cpu().detach(),
+
+    energy = sample_batch.silu_pot.cpu().detach()
+    energy[energy>0] = np.log(energy[energy>0])
+    scatter_dict = {'energy': energy,
                     'packing_coefficient': sample_batch.packing_coeff.cpu().detach(),
                     'point_density': z
                     }
@@ -1389,7 +1415,6 @@ def simple_cell_scatter_fig(sample_batch, aux_array=None, aux_scalar_name: str =
                      )
 
     fig.update_layout(yaxis_title='Energy', xaxis_title='Packing Coeff')
-    # todo rescale this better
     fig.update_layout(yaxis_range=[np.amin(df['energy']) - 10,
                                    min(500, np.amax(df['energy']) + np.ptp(df['energy']) * 0.1)],
                       xaxis_range=[max(0, np.amin(df['packing_coefficient']) * 0.9),
@@ -2155,39 +2180,66 @@ def polymorph_classification_trajectory_analysis(test_loader, stats_dict, traj_n
                     filename=traj_name[0].replace('\\', '/').replace('/', '_') + '_prediction')  # write a trajectory
 
 
-def simple_embedding_fig(sample_batch, aux_array=None):
+def simple_embedding_fig(sample_batch, aux_array=None, reference_distribution=None,
+                         max_umap_samples: int = 1000):
+    normed_encoding = sample_batch.standardize_cell_parameters().cpu().detach().numpy()
+
+    reducer = umap.UMAP(n_components=2,
+                        metric='euclidean',
+                        n_neighbors=15,
+                        min_dist=0.05,
+                        )
+
+    if reference_distribution is not None:
+        if len(reference_distribution > max_umap_samples):
+            inds = np.random.choice(len(reference_distribution), size=max_umap_samples, replace=False)
+            reducer.fit(reference_distribution[inds])
+        else:
+            reducer.fit(reference_distribution)
+
+        ref_embedding = reducer.transform(reference_distribution)
+        embedding = reducer.transform(normed_encoding)
+    else:
+        embedding = reducer.fit_transform(normed_encoding)
+
     if aux_array is not None:
         color_array = aux_array
     else:
-        xy = np.vstack([sample_batch.packing_coeff.cpu().detach(), sample_batch.silu_pot.cpu().detach()])
+        xy = np.vstack([embedding[:, 0], embedding[:, 1]])
         try:
             z = get_point_density(xy, bins=25)
         except:
             z = np.ones(len(xy))
         color_array = z
 
-    reducer = umap.UMAP(n_components=2,
-                        metric='cosine',
-                        n_neighbors=25,
-                        min_dist=0.01)
-    normed_encoding = sample_batch.standardize_cell_parameters().cpu().detach().numpy()
-
-    embedding = reducer.fit_transform(normed_encoding)
     fig = go.Figure()
+    if reference_distribution is not None:
+        fig.add_trace(go.Scattergl(x=ref_embedding[:, 0],
+                                   y=ref_embedding[:, 1],
+                                   mode='markers',
+                                   opacity=.15,
+                                   name='Reference Distribution',
+                                   showlegend=True,
+                                   marker=dict(
+                                       size=5,
+                                       color='black',
+                                   )
+                                   ))
     fig.add_trace(go.Scattergl(x=embedding[:, 0],
                                y=embedding[:, 1],
                                mode='markers',
-                               opacity=.65,
-                               name='Sample energy',
-                               showlegend=False,
+                               opacity=0.85,
+                               name='Policy Samples',
+                               showlegend=True,
                                marker=dict(
-                                   size=5,
+                                   size=6,
                                    color=color_array.clip(max=100),
                                    colorscale="portland",
                                    cmax=100,
                                    colorbar=dict(title="Sample Energy")
                                )
                                ))
+    fig.update_layout(legend_xanchor='center', legend_y=0.0, legend_orientation="h")
     fig.update_xaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
     fig.update_yaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
     return fig
