@@ -203,7 +203,7 @@ def simple_latent_hist(sample_batch, reference_dist = None):
             fig.add_trace(go.Violin(
                 x=reference_dist[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
                 meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False,
-                name='Samples', legendgroup='Samples',
+                name='Reference', legendgroup='Reference',
                 showlegend=True if ((i == 0) and reference_dist is not None) else False,
                 line_color=colors[1],
             ),
@@ -212,7 +212,8 @@ def simple_latent_hist(sample_batch, reference_dist = None):
         fig.add_trace(go.Violin(
             x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
             meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False,
-            showlegend=False,
+            name='Samples', legendgroup='Samples',
+            showlegend=True if ((i == 0) and reference_dist is not None) else False,
             line_color=colors[0],
         ),
             row=row, col=col
