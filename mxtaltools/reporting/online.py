@@ -161,9 +161,9 @@ def simple_cell_hist(sample_batch, reference_dist =None):
         )
 
     custom_ranges = {
-        0: [0, np.inf],  # for cell_a
-        1: [0, np.inf],  # for cell_b
-        2: [0, np.inf],  # for cell_c
+        0: [0, float(np.max(samples[:, 0]) * 1.1)],
+        1: [0, float(np.max(samples[:, 1]) * 1.1)],
+        2: [0, float(np.max(samples[:, 2]) * 1.1)],
         3: [1, np.pi / 2],  # for cell_alpha
         4: [1, np.pi / 2],  # for cell_beta
         5: [1, np.pi / 2],  # for cell_gamma
