@@ -173,11 +173,11 @@ def ase_mol_from_crystaldata(crystal_batch,
         return mol
 
 
-def get_niggli_cell(crystal_batch, index):
+def get_niggli_cell(crystal_batch, index, radians: bool=False):
 
     mol = ase_mol_from_crystaldata(crystal_batch, index=index)
     #mol.info['spacegroup'] = Spacegroup(int(original_cluster_batch.sg_ind[ind]), setting=1)
     mol.write('temp.cif')
     atoms = read("temp.cif")
     niggli_reduce(atoms)
-    return cell_to_cellpar(atoms.cell)
+    return cell_to_cellpar(atoms.cell, radians=radians)

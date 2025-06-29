@@ -12,21 +12,23 @@ from torch_geometric.data.data import BaseData
 from torch_geometric.data.storage import (BaseStorage, EdgeStorage,
                                           GlobalStorage, NodeStorage)
 from torch_geometric.typing import OptTensor
-from torch_sparse import SparseTensor
 from torch_scatter import scatter
+from torch_sparse import SparseTensor
+
 from mxtaltools.analysis.vdw_analysis import vdw_analysis, electrostatic_analysis, get_intermolecular_dists_dict, \
     buckingham_energy, silu_energy
 from mxtaltools.common.ellipsoid_ops import featurize_ellipsoid_batch
 from mxtaltools.common.geometry_utils import batch_compute_molecule_volume, \
     compute_mol_radius, batch_compute_mol_radius, batch_compute_mol_mass, compute_mol_mass, center_mol_batch, \
-    apply_rotation_to_batch, enforce_crystal_system, batch_compute_fractional_transform, scatter_compute_Ip
-from mxtaltools.common.utils import softplus_shift, std_normal_to_uniform, uniform_to_std_normal
+    apply_rotation_to_batch, enforce_crystal_system, batch_compute_fractional_transform
+from mxtaltools.common.utils import softplus_shift
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
 from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE
+from mxtaltools.crystal_building.crystal_latent_transforms import CompositeTransform, AunitTransform, NiggliTransform, \
+    StdNormalTransform, BoundedTransform
 from mxtaltools.crystal_building.random_crystal_sampling import sample_aunit_lengths, sample_cell_angles, \
-    sample_aunit_orientations, sample_aunit_centroids, sample_reduced_box_vectors, randn_to_niggli_box_vectors, \
-    std_normal_to_aunit_orientations, aunit_orientations_to_std_normal, niggli_box_vectors_to_randn
+    sample_aunit_orientations, sample_aunit_centroids, sample_reduced_box_vectors
 from mxtaltools.crystal_building.utils import get_aunit_positions, aunit2unit_cell, parameterize_crystal_batch, \
     unit_cell_to_supercell_cluster, align_mol_batch_to_standard_axes, canonicalize_rotvec
 from mxtaltools.crystal_search.standalone_crystal_opt import standalone_gradient_descent_optimization
@@ -625,28 +627,21 @@ class MolCrystalData(MolData):
         )
         self.box_analysis()
 
-    def gen_basis_to_cell_params(self, std_normal: torch.tensor,
-                                 clip_min_length: Optional[float] = 0):
+    def gen_basis_to_cell_params(self, std_normal: torch.tensor):
         if not hasattr(self, 'asym_unit_dict'):
             self.asym_unit_dict = self.build_asym_unit_dict()
 
-        if not std_normal.isfinite().all():
-            raise ValueError('Numerical Error: Gen basis cell params not all finite')
+        if not hasattr(self, 'latent_transform'):
+            self.latent_transform = CompositeTransform([
+                AunitTransform(asym_unit_dict=self.asym_unit_dict),
+                NiggliTransform(),
+                StdNormalTransform(),
+                BoundedTransform(min_val=-6 + 1e-3, max_val=6 - 1e-3, slope=1),
+            ])
 
-        a_out, al_out, b_out, be_out, c_out, ga_out = (
-            randn_to_niggli_box_vectors(self.asym_unit_dict,
-                                        self.radius,
-                                        std_normal[:, :6],
-                                        self.sg_ind))
-        self.cell_lengths = torch.vstack([a_out, b_out, c_out]).T
-        if clip_min_length > 0:
-            self.cell_lengths = self.cell_lengths.clip(min=clip_min_length)
-        self.cell_angles = torch.vstack([al_out, be_out, ga_out]).T
-
-        self.aunit_orientation = std_normal_to_aunit_orientations(std_normal[:, 9:])
-        aunit_scaled_centroids = std_normal_to_uniform(std_normal[:, 6:9])
-        self.aunit_centroid = aunit_scaled_centroids * torch.stack(
-            [self.asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
+        self.set_cell_parameters(
+            self.latent_transform.inverse(std_normal, self.sg_ind, self.radius)
+        )
 
         self.cell_lengths, self.cell_angles = enforce_crystal_system(
             self.cell_lengths,
@@ -659,22 +654,15 @@ class MolCrystalData(MolData):
         if not hasattr(self, 'asym_unit_dict'):
             self.asym_unit_dict = self.build_asym_unit_dict()
 
-        a, b, c = self.cell_lengths.split(1, dim=1)
-        al, be, ga = self.cell_angles.split(1, dim=1)
+        if not hasattr(self, 'latent_transform'):
+            self.latent_transform = CompositeTransform([
+                AunitTransform(asym_unit_dict=self.asym_unit_dict),
+                NiggliTransform(),
+                StdNormalTransform(),
+                BoundedTransform(min_val=-6, max_val=6, slope=1),
+            ])
 
-        a_out, al_out, b_out, be_out, c_out, ga_out = (
-            niggli_box_vectors_to_randn(self.asym_unit_dict,
-                                        self.radius,
-                                        a.flatten(), b.flatten(), c.flatten(), al.flatten(), be.flatten(), ga.flatten(),
-                                        self.sg_ind))
-        std_cell_lengths = torch.vstack([a_out, b_out, c_out]).T
-        std_cell_angles = torch.vstack([al_out, be_out, ga_out]).T
-
-        aunit_scaled_centroids = self.scale_centroid_to_aunit()
-        std_aunit = uniform_to_std_normal(aunit_scaled_centroids)
-        std_orientation = aunit_orientations_to_std_normal(self.aunit_orientation)
-
-        std_cell_params = torch.cat([std_cell_lengths, std_cell_angles, std_aunit, std_orientation], dim=1)
+        std_cell_params = self.latent_transform.forward(self.cell_parameters(), self.sg_ind, self.radius)
 
         return std_cell_params
 
