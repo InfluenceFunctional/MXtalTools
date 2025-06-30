@@ -13,7 +13,7 @@ class AunitTransform(nn.Module):
         cell_lengths, cell_angles, cell_centroids, cell_orientations = cell_parameters.split(3, dim=1)
         auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds])
         # aunit_lengths = cell_lengths * auvs
-        aunit_centroids = cell_centroids / auvs
+        aunit_centroids = cell_centroids / auvs.to(cell_centroids.device)
 
         return torch.cat([
             cell_lengths,
@@ -130,6 +130,104 @@ class BoundedTransform(nn.Module):
         return torch.log(x / (1 - x)) / self.slope - self.bias
 
 
+class SquashingTransform(nn.Module):
+    def __init__(self,
+                 min_val,
+                 max_val,
+                 eps=1e-2,
+                 threshold: float = 5.0,
+                 softness: float = 5.0,
+                 ):
+        super().__init__()
+        self.min_val = min_val
+        self.max_val = max_val
+        self.eps = eps
+        self.threshold = threshold
+        self.softness = softness
+        self.sat_level = max_val
+
+    def forward(self, latent: torch.Tensor) -> torch.Tensor:
+        """
+        Ultra-smooth soft clipper with gradual derivative transition using PyTorch
+
+        Parameters:
+        -----------
+        x : torch.Tensor
+            Input tensor
+        threshold : float
+            Point where transition becomes noticeable (not abrupt)
+        sat_level : float
+            Maximum output level (saturation point)
+        softness : float
+            Controls how gradual the transition is (higher = more gradual)
+
+        Returns:
+        --------
+        torch.Tensor
+            Soft-clipped output with very smooth derivative
+        """
+        # Use a smooth tanh-like function but with better center linearity
+        # Scale input to control where transition begins
+        x_scaled = latent / self.threshold
+
+        # Use a modified rational sigmoid that:
+        # 1. Has slope ≈ 1 at center
+        # 2. Saturates at ±sat_level
+        # 3. Has smooth derivative everywhere
+
+        # Higher-order sigmoid: x / (1 + |x|^softness)^(1/softness)
+        abs_x_scaled = torch.abs(x_scaled)
+        sign_x = torch.sign(x_scaled)
+
+        # Smooth transition factor
+        denom = torch.pow(1 + torch.pow(abs_x_scaled, self.softness), 1.0 / self.softness)
+
+        # Apply saturation scaling
+        squashed = self.sat_level * sign_x * abs_x_scaled / denom
+
+        return squashed.clip(min=self.min_val,
+                             max=self.max_val)  # clipping shouldn't be necessary but one can't be too careful
+
+    def inverse(self, squashed: torch.Tensor) -> torch.Tensor:
+        """
+        Analytical inverse of the smooth soft clip function
+
+        Parameters:
+        -----------
+        y : torch.Tensor
+            Output from the soft clip function (input to inverse)
+        threshold : float
+            Same threshold parameter used in forward function
+        sat_level : float
+            Same saturation level used in forward function
+        softness : float
+            Same softness parameter used in forward function
+
+        Returns:
+        --------
+        torch.Tensor
+            Original input x that would produce output y
+        """
+        # Clamp y to valid range to avoid numerical issues
+        y_clamped = torch.clamp(squashed, self.min_val + self.eps, self.max_val - self.eps)
+
+        # Normalize y by saturation level
+        y_norm = y_clamped / self.sat_level
+        abs_y_norm = torch.abs(y_norm)
+        sign_y = torch.sign(y_norm)
+
+        y_power = torch.pow(abs_y_norm, self.softness)
+        u = y_power / (1 - y_power + 1e-8)  # Small epsilon for numerical stability
+
+        # Convert back: t = u^(1/softness)
+        t = torch.pow(u, 1.0 / self.softness)
+
+        # Scale back to original domain
+        stretched = sign_y * t * self.threshold
+
+        return stretched
+
+
 class LogNormalTransform(nn.Module):
     def __init__(self,
                  mean_log: float = 0.4,
@@ -153,7 +251,6 @@ class LogNormalTransform(nn.Module):
 class RotationTransform(nn.Module):
     def __init__(self,
                  max_angle: float = 2 * torch.pi,
-                 slope: float = 1.0,
                  eps: float = 1e-6
                  ):
         super().__init__()
@@ -163,6 +260,7 @@ class RotationTransform(nn.Module):
         self.register_buffer('normal_std', torch.tensor(1.0))
         self.normal = torch.distributions.Normal(self.normal_mean, self.normal_std)
         self.polar_dist = torch.distributions.HalfNormal(scale=2.0)
+        self.bound = SquashingTransform(min_val=-6, max_val=6)
 
     def azimuth_to_std_normal(self, phi):
         # Map from [-π, π] → [0, 1]
@@ -175,19 +273,19 @@ class RotationTransform(nn.Module):
         return u * (2 * torch.pi) - torch.pi  # maps back to [-π, π]
 
     def polar_to_std_normal(self, theta):
-        u = self.polar_dist.cdf(theta.clamp(0, torch.pi / 2))
-        u = u.clamp(self.eps, 1 - self.eps)
-        return self.normal.icdf(u)
+        u = theta / (torch.pi / 2)
+        u = u.clip(self.eps, 1 - self.eps)
+        u = torch.log(u) - torch.log(1 - u) - torch.pi / 4  # inverse sigmoid
+        return u
 
     def std_normal_to_polar(self, z):
-        u = torch.distributions.Normal(0, 1).cdf(z)
-        return self.polar_dist.icdf(u)
+        return (torch.pi / 2) * torch.sigmoid(z + torch.pi / 4)
 
     def rotation_to_std_normal(self, r):
-        return r - torch.pi  # assuming std=1
+        return self.bound(r - torch.pi)  # assuming std=1 and enforcing the bound
 
     def std_normal_to_rotation(self, z):
-        return z + torch.pi
+        return self.bound.inverse(z) + torch.pi
 
     def forward(self, latent: torch.Tensor) -> torch.Tensor:
         """
@@ -196,9 +294,9 @@ class RotationTransform(nn.Module):
         """
         std_theta, std_phi, std_r = latent.split(1, dim=1)
 
-        theta = self.std_normal_to_polar(std_theta)
-        phi = self.std_normal_to_azimuth(std_phi)
-        r = self.std_normal_to_rotation(std_r)
+        theta = self.std_normal_to_polar(std_theta)#.clip(min=0, max=torch.pi / 2)
+        phi = self.std_normal_to_azimuth(std_phi)#.clip(min=-torch.pi, max=torch.pi)
+        r = self.std_normal_to_rotation(std_r).clip(min=0.01, max=torch.pi * 2 - 0.01)  # cannot be allowed to touch extrema exactly
 
         rotvec = sph2rotvec(torch.cat([theta, phi, r], dim=1))
 
@@ -224,9 +322,8 @@ class StdNormalTransform(nn.Module):
                  length_slope: float = 1.0,
                  angle_slope: float = 1.0,
                  centroid_slope: float = 1.0,
-                 orientation_slope: float = 1.0,
                  c_log_mean: float = 0.24,
-                 c_log_std: float = 0.3618,
+                 c_log_std: float = 0.25,  #0.3618,
                  ):
         super().__init__()
         self.eps = 1e-6
@@ -246,7 +343,6 @@ class StdNormalTransform(nn.Module):
         })
         self.rotation_transform = RotationTransform(
             max_angle=2 * torch.pi,
-            slope=orientation_slope
         )
 
     def forward(self, niggli_params):

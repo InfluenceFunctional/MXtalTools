@@ -2181,9 +2181,10 @@ def polymorph_classification_trajectory_analysis(test_loader, stats_dict, traj_n
                     filename=traj_name[0].replace('\\', '/').replace('/', '_') + '_prediction')  # write a trajectory
 
 
-def simple_embedding_fig(sample_batch, aux_array=None, reference_distribution=None,
-                         max_umap_samples: int = 1000):
-    normed_encoding = sample_batch.standardize_cell_parameters().cpu().detach().numpy()
+def simple_embedding_fig(std_cell_params, aux_array=None,
+                         reference_distribution=None,
+                         max_umap_samples: int = 1000,
+                         known_minima=None):
 
     reducer = umap.UMAP(n_components=2,
                         metric='euclidean',
@@ -2199,9 +2200,12 @@ def simple_embedding_fig(sample_batch, aux_array=None, reference_distribution=No
             reducer.fit(reference_distribution)
 
         ref_embedding = reducer.transform(reference_distribution)
-        embedding = reducer.transform(normed_encoding)
+        embedding = reducer.transform(std_cell_params)
     else:
-        embedding = reducer.fit_transform(normed_encoding)
+        embedding = reducer.fit_transform(std_cell_params)
+
+    if known_minima is not None:
+        known_embedding = reducer.transform(known_minima)
 
     if aux_array is not None:
         color_array = aux_array
@@ -2224,6 +2228,22 @@ def simple_embedding_fig(sample_batch, aux_array=None, reference_distribution=No
                                    marker=dict(
                                        size=5,
                                        color='black',
+                                   )
+                                   ))
+    if known_minima is not None:
+        fig.add_trace(go.Scattergl(x=known_embedding[:, 0],
+                                   y=known_embedding[:, 1],
+                                   mode='markers',
+                                   opacity=1,
+                                   name='Known Modes',
+                                   showlegend=True,
+                                   marker=dict(
+                                       size=15,
+                                       color='green',  # Fill color
+                                       line=dict(
+                                           color='black',  # Outline color
+                                           width=4  # Outline thickness
+                                       )
                                    )
                                    ))
     fig.add_trace(go.Scattergl(x=embedding[:, 0],

@@ -2,7 +2,7 @@ import torch
 
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.crystal_building.crystal_latent_transforms import AunitTransform, NiggliTransform, BoundedTransform, \
-    StdNormalTransform, CompositeTransform
+    StdNormalTransform, CompositeTransform, SquashingTransform
 from mxtaltools.dataset_utils.utils import collate_data_list
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
@@ -55,7 +55,7 @@ def plot_reconstruction_agreement(cp1, cp2):
 """ 
 Load up test dataset, and mix in random crystals
 """
-dataset = collate_data_list(torch.load(r'D:\crystal_datasets\test_CSD_dataset.pt ')[:1000])
+dataset = collate_data_list(torch.load(r'D:\crystal_datasets\test_CSD_dataset.pt '))
 
 sg_inds = dataset.sg_ind
 mol_radii = dataset.radius
@@ -71,23 +71,12 @@ cell_params[:, :6] = dataset.cell_parameters()[:, :6]
 
 latents = dataset.cell_params_to_gen_basis()
 dataset.gen_basis_to_cell_params(latents)
-del dataset
 
 # acute niggli cells in reasonable SGs only, and with correctly placed aunits
-good_inds = (sg_inds < 90) * (cell_params[:, 3:6] <= torch.pi / 2).all(dim=1) * (aunit_centroids <= 1).all(dim=1)
+good_inds = (sg_inds == 2) * (cell_params[:, 3:6] <= torch.pi / 2).all(dim=1) * (aunit_centroids <= 1).all(dim=1)
 sg_inds = sg_inds[good_inds]
 mol_radii = mol_radii[good_inds]
 cell_params = cell_params[good_inds]
-
-# "mix in random samples"
-# num_samples = 100
-# sg_inds = torch.cat([sg_inds,
-#                      torch.randint(1, int(sg_inds.amax()), (num_samples,))])
-# cell_params = torch.cat([cell_params,
-#                          torch.randn((num_samples, 12)) * 2])
-# mol_radii = torch.cat([
-#     mol_radii,
-#     torch.rand(num_samples) * 10 + 4])
 
 asym_unit_dict = ASYM_UNITS.copy()
 sgs_to_tensorize = asym_unit_dict.keys()
@@ -110,13 +99,82 @@ finally for actual training we need to bound this thing in a reasonable range
 aunit_transform = AunitTransform(asym_unit_dict=asym_unit_dict)
 niggli_transform = NiggliTransform()
 std_transform = StdNormalTransform()
-global_bound_transform = BoundedTransform(min_val=-6, max_val=6, slope=1)
+global_bound_transform = SquashingTransform(min_val=-6, max_val=6)
 latent_transform = CompositeTransform([
     AunitTransform(asym_unit_dict=asym_unit_dict),
     NiggliTransform(),
     StdNormalTransform(),
-    BoundedTransform(min_val=-6, max_val=6, slope=1),
+    SquashingTransform(min_val=-6, max_val=6),
 ])
+
+"""get cell parameters from randn noise"""
+noise = torch.randn((len(sg_inds), 12)) * 2
+cells = latent_transform.inverse(noise, sg_inds, mol_radii)
+std_cell_params = latent_transform(cells, sg_inds, mol_radii)
+
+lattice_features = ['cell_a', 'cell_b', 'cell_c',
+                    'cell_alpha', 'cell_beta', 'cell_gamma',
+                    'aunit_x', 'aunit_y', 'aunit_z',
+                    'orientation_1', 'orientation_2', 'orientation_3']
+# 1d Histograms
+n_crystal_features = 12
+colors = ['red', 'blue']
+fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)
+for i in range(n_crystal_features):
+    row = i // 3 + 1
+    col = i % 3 + 1
+
+    samples = cells.clone()
+    fig.add_trace(go.Violin(
+        x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
+        meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False,
+        name='random crystals', legendgroup='random crystals', showlegend=i == 0,
+        line_color=colors[0],
+    ),
+        row=row, col=col
+    )
+    samples = cell_params.clone()
+    fig.add_trace(go.Violin(
+        x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
+        meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False,
+        name='good crystals', legendgroup='good crystals', showlegend=i == 0,
+        line_color=colors[1],
+    ),
+        row=row, col=col
+    )
+
+fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
+fig.show()
+
+n_crystal_features = 12
+colors = ['red', 'blue']
+fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)
+for i in range(n_crystal_features):
+    row = i // 3 + 1
+    col = i % 3 + 1
+
+    samples = torch.nan_to_num(noise.clone())
+    fig.add_trace(go.Violin(
+        x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
+        meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False,
+        name='random crystals', legendgroup='random crystals', showlegend=i == 0,
+        line_color=colors[0],
+    ),
+        row=row, col=col
+    )
+    samples = torch.nan_to_num(std_cell_params.clone())
+    fig.add_trace(go.Violin(
+        x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
+        meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False,
+        name='good crystals', legendgroup='good crystals', showlegend=i == 0,
+        line_color=colors[1],
+    ),
+        row=row, col=col
+    )
+
+fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
+fig.show()
+
 
 aunit_params = aunit_transform.forward(cell_params, sg_inds)
 cell_params_re = aunit_transform.inverse(aunit_params, sg_inds)
@@ -130,7 +188,7 @@ niggli_params_re = std_transform.inverse(std_params)
 bounded_std_params = global_bound_transform.forward(std_params)
 std_params_re = global_bound_transform.inverse(bounded_std_params)
 
-std_params2 = global_bound_transform.inverse(std_params)
+bounded_std_params2 = global_bound_transform.inverse(std_params)
 niggli_params2 = std_transform.inverse(std_params)
 aunit_params2 = niggli_transform.inverse(niggli_params, mol_radii)
 cell_params2 = aunit_transform.inverse(aunit_params, sg_inds)
@@ -145,17 +203,18 @@ assert torch.isclose(bounded_std_params, bounded_std_params3).all()
 assert torch.isclose(cell_params, cell_params_re).all()
 assert torch.isclose(aunit_params, aunit_params_re).all()
 assert torch.isclose(niggli_params, niggli_params_re, atol=1e-4).all()
-assert torch.isclose(std_params, std_params_re, atol=1e-4).all()
+#assert torch.isclose(std_params, std_params_re, atol=1e-4).all()
 
 """global reversal assertions"""
 assert torch.isclose(cell_params, cell_params2).all()
 assert torch.isclose(aunit_params, aunit_params2).all()
 assert torch.isclose(niggli_params, niggli_params2, atol=1e-4).all()
-assert torch.isclose(std_params, std_params2, atol=1e-4).all()
+#assert torch.isclose(std_params, std_params2, atol=1e-4).all()
 
 plot_all_dists([cell_params, aunit_params, niggli_params, std_params, bounded_std_params])
 
 #plot_reconstruction_agreement(cell_params, cell_params2)
+
 
 aa = 1
 

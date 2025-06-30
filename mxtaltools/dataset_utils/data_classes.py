@@ -26,7 +26,7 @@ from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
 from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE
 from mxtaltools.crystal_building.crystal_latent_transforms import CompositeTransform, AunitTransform, NiggliTransform, \
-    StdNormalTransform, BoundedTransform
+    StdNormalTransform, BoundedTransform, SquashingTransform
 from mxtaltools.crystal_building.random_crystal_sampling import sample_aunit_lengths, sample_cell_angles, \
     sample_aunit_orientations, sample_aunit_centroids, sample_reduced_box_vectors
 from mxtaltools.crystal_building.utils import get_aunit_positions, aunit2unit_cell, parameterize_crystal_batch, \
@@ -632,12 +632,8 @@ class MolCrystalData(MolData):
             self.asym_unit_dict = self.build_asym_unit_dict()
 
         if not hasattr(self, 'latent_transform'):
-            self.latent_transform = CompositeTransform([
-                AunitTransform(asym_unit_dict=self.asym_unit_dict),
-                NiggliTransform(),
-                StdNormalTransform(),
-                BoundedTransform(min_val=-6 + 1e-3, max_val=6 - 1e-3, slope=1),
-            ])
+            self.init_latent_transform()
+
 
         self.set_cell_parameters(
             self.latent_transform.inverse(std_normal, self.sg_ind, self.radius)
@@ -650,20 +646,23 @@ class MolCrystalData(MolData):
         )
         self.box_analysis()
 
+    def init_latent_transform(self):
+        self.latent_transform = CompositeTransform([
+            AunitTransform(asym_unit_dict=self.asym_unit_dict),
+            NiggliTransform(),
+            StdNormalTransform(),
+            SquashingTransform(min_val=-6, max_val=6),
+        ])
+
     def cell_params_to_gen_basis(self):  # todo would be nice to redo all these using torch affine transform
         if not hasattr(self, 'asym_unit_dict'):
             self.asym_unit_dict = self.build_asym_unit_dict()
 
         if not hasattr(self, 'latent_transform'):
-            self.latent_transform = CompositeTransform([
-                AunitTransform(asym_unit_dict=self.asym_unit_dict),
-                NiggliTransform(),
-                StdNormalTransform(),
-                BoundedTransform(min_val=-6, max_val=6, slope=1),
-            ])
+            self.init_latent_transform()
 
         std_cell_params = self.latent_transform.forward(self.cell_parameters(), self.sg_ind, self.radius)
-
+        assert torch.isfinite(std_cell_params).all()
         return std_cell_params
 
     def sample_reduced_box_vectors(self, target_packing_coeff: Optional[float] = None):
