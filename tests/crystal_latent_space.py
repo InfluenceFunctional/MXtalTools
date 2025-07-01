@@ -99,16 +99,16 @@ finally for actual training we need to bound this thing in a reasonable range
 aunit_transform = AunitTransform(asym_unit_dict=asym_unit_dict)
 niggli_transform = NiggliTransform()
 std_transform = StdNormalTransform()
-global_bound_transform = SquashingTransform(min_val=-6, max_val=6)
+# global_bound_transform = SquashingTransform(min_val=-6, max_val=6)
 latent_transform = CompositeTransform([
     AunitTransform(asym_unit_dict=asym_unit_dict),
     NiggliTransform(),
     StdNormalTransform(),
-    SquashingTransform(min_val=-6, max_val=6),
+    #SquashingTransform(min_val=-6, max_val=6),
 ])
 
 """get cell parameters from randn noise"""
-noise = torch.randn((len(sg_inds), 12)) * 2
+noise = torch.randn((len(sg_inds), 12)) * 1.5
 cells = latent_transform.inverse(noise, sg_inds, mol_radii)
 std_cell_params = latent_transform(cells, sg_inds, mol_radii)
 
@@ -185,10 +185,10 @@ aunit_params_re = niggli_transform.inverse(niggli_params, mol_radii)
 std_params = std_transform.forward(niggli_params)
 niggli_params_re = std_transform.inverse(std_params)
 
-bounded_std_params = global_bound_transform.forward(std_params)
-std_params_re = global_bound_transform.inverse(bounded_std_params)
-
-bounded_std_params2 = global_bound_transform.inverse(std_params)
+# bounded_std_params = global_bound_transform.forward(std_params)
+# std_params_re = global_bound_transform.inverse(bounded_std_params)
+#
+# bounded_std_params2 = global_bound_transform.inverse(std_params)
 niggli_params2 = std_transform.inverse(std_params)
 aunit_params2 = niggli_transform.inverse(niggli_params, mol_radii)
 cell_params2 = aunit_transform.inverse(aunit_params, sg_inds)
@@ -197,7 +197,7 @@ cell_params2 = aunit_transform.inverse(aunit_params, sg_inds)
 bounded_std_params3 = latent_transform.forward(cell_params, sg_inds, mol_radii)
 cell_params3 = latent_transform.inverse(bounded_std_params3, sg_inds, mol_radii)
 assert torch.isclose(cell_params, cell_params3, atol=1e-4).all()
-assert torch.isclose(bounded_std_params, bounded_std_params3).all()
+assert torch.isclose(std_params, bounded_std_params3).all()
 
 """stepwise reversal assertions"""
 assert torch.isclose(cell_params, cell_params_re).all()
@@ -211,7 +211,7 @@ assert torch.isclose(aunit_params, aunit_params2).all()
 assert torch.isclose(niggli_params, niggli_params2, atol=1e-4).all()
 #assert torch.isclose(std_params, std_params2, atol=1e-4).all()
 
-plot_all_dists([cell_params, aunit_params, niggli_params, std_params, bounded_std_params])
+plot_all_dists([cell_params, aunit_params, niggli_params, std_params])
 
 #plot_reconstruction_agreement(cell_params, cell_params2)
 

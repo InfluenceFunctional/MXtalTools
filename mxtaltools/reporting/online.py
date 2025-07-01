@@ -1392,7 +1392,7 @@ def simple_cell_scatter_fig(sample_batch, aux_array=None, aux_scalar_name: str =
     try:
         z = get_point_density(xy, bins=25)
     except:
-        z = np.ones(len(xy))
+        z = np.ones(xy.shape[1])
 
     energy = sample_batch.silu_pot.cpu().detach()
     energy[energy>0] = np.log(energy[energy>0])

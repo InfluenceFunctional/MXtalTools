@@ -26,7 +26,7 @@ from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
 from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE
 from mxtaltools.crystal_building.crystal_latent_transforms import CompositeTransform, AunitTransform, NiggliTransform, \
-    StdNormalTransform, SquashingTransform
+    StdNormalTransform
 from mxtaltools.crystal_building.random_crystal_sampling import sample_aunit_lengths, sample_cell_angles, \
     sample_aunit_orientations, sample_aunit_centroids, sample_reduced_box_vectors
 from mxtaltools.crystal_building.utils import get_aunit_positions, aunit2unit_cell, parameterize_crystal_batch, \
@@ -634,7 +634,6 @@ class MolCrystalData(MolData):
         if not hasattr(self, 'latent_transform'):
             self.init_latent_transform()
 
-
         self.set_cell_parameters(
             self.latent_transform.inverse(std_normal, self.sg_ind, self.radius)
         )
@@ -651,7 +650,10 @@ class MolCrystalData(MolData):
             AunitTransform(asym_unit_dict=self.asym_unit_dict),
             NiggliTransform(),
             StdNormalTransform(),
-            SquashingTransform(min_val=-6, max_val=6),
+            # SquashingTransform(min_val=-6,
+            #                    max_val=6,
+            #                    threshold=5.99,
+            #                    ),
         ])
 
     def cell_params_to_gen_basis(self):  # todo would be nice to redo all these using torch affine transform
@@ -1110,11 +1112,11 @@ class MolCrystalData(MolData):
                                                                            tot_num_mols, max_ellipsoid_radius)
 
         norm_factor, normed_v1, normed_v2, x, v1, v2 = featurize_ellipsoid_batch(Ip,
-                                                                         edge_i_good,
-                                                                         edge_j_good,
-                                                                         mol_centroids,
-                                                                         semi_axis_lengths,
-                                                                         self.device)
+                                                                                 edge_i_good,
+                                                                                 edge_j_good,
+                                                                                 mol_centroids,
+                                                                                 semi_axis_lengths,
+                                                                                 self.device)
 
         # pass to the model
         if hasattr(self, 'ellipsoid_model') and model is None:
@@ -1123,18 +1125,21 @@ class MolCrystalData(MolData):
             output = ellipsoid_model(x)
 
         # process results
-        v1_pred, v2_pred, normed_overlap_pred = output[:, 0] * norm_factor ** 3, output[:, 1] * norm_factor **3, output[:, 2].clip(min=0)
+        v1_pred, v2_pred, normed_overlap_pred = output[:, 0] * norm_factor ** 3, output[:,
+                                                                                 1] * norm_factor ** 3, output[:,
+                                                                                                        2].clip(min=0)
         reduced_volume = (normed_v1 * normed_v2) / (normed_v1 + normed_v2)
         denormed_overlap_pred = normed_overlap_pred * reduced_volume  # model works in the reduced basis
         overlap_pred = denormed_overlap_pred * norm_factor ** 3  # inunits of cubic angstroms
-        v_pred_error = (v1_pred - v1).abs()/v1 + (v2_pred - v2).abs() / v2
+        v_pred_error = (v1_pred - v1).abs() / v1 + (v2_pred - v2).abs() / v2
 
         # sum of overlaps cubic angstroms per molecule
         molwise_ellipsoid_overlap = scatter(overlap_pred, molwise_batch[edge_j_good], dim=0, dim_size=self.num_graphs,
-                                         reduce='sum')
+                                            reduce='sum')
 
-        normed_ellipsoid_overlap = scatter(normed_overlap_pred, molwise_batch[edge_j_good], dim=0, dim_size=self.num_graphs,
-                                         reduce='sum')
+        normed_ellipsoid_overlap = scatter(normed_overlap_pred, molwise_batch[edge_j_good], dim=0,
+                                           dim_size=self.num_graphs,
+                                           reduce='sum')
 
         if not return_details:
             return molwise_ellipsoid_overlap
@@ -1187,7 +1192,7 @@ class MolCrystalData(MolData):
         return edge_i_good, edge_j_good, mol_centroids
 
     def compute_cluster_ellipsoids(self, semi_axis_scale,
-                                   eps:float = 1e-3,
+                                   eps: float = 1e-3,
                                    cov_eps=0.1,
                                    add_noise: bool = False):
         # molecule indexing
@@ -1221,14 +1226,16 @@ class MolCrystalData(MolData):
         # Normalize by number of atoms per molecule
         atoms_per_mol = atoms_per_mol.to(dtype=torch.float32)  # in case it's int
         covariances = cov_sums / atoms_per_mol[:, None, None]
-        eigvals, eigvecs_c = torch.linalg.eigh(covariances)  # principal inertial tensor # eigh must faster on sym matrices
+        eigvals, eigvecs_c = torch.linalg.eigh(
+            covariances)  # principal inertial tensor # eigh must faster on sym matrices
 
         eigvecs = eigvecs_c.permute(0, 2, 1)  # switch to row-wise eigenvectors
         sort_inds = torch.argsort(eigvals, dim=1, descending=True)  # we want eigenvectors sorted a>b>c row-wise
         eigvals_sorted = torch.gather(eigvals, dim=1, index=sort_inds)
         eigvecs_sorted = torch.gather(eigvecs, dim=1, index=sort_inds.unsqueeze(2).expand(-1, -1, 3))
 
-        longest_length = self.radius.repeat_interleave(mols_per_cluster).clip(min=0.1) + 1.5  # account for vdW volume about distant atoms
+        longest_length = self.radius.repeat_interleave(mols_per_cluster).clip(
+            min=0.1) + 1.5  # account for vdW volume about distant atoms
         min_axis_length = 3.0
         sqrt_eigenvalues = torch.sqrt(eigvals_sorted + eps)
         semi_axis_lengths = (sqrt_eigenvalues / sqrt_eigenvalues.amax(1, keepdim=True)
