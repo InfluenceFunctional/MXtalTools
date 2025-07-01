@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from torch import nn as nn
 
@@ -232,16 +233,20 @@ class LogNormalTransform(nn.Module):
     def __init__(self,
                  mean_log: float = 0.4,
                  std_log: float = 0.35,
-                 eps: float = 1e-6
+                 eps: float = 1e-6,
+                 exp_min: float = None,
+                 exp_max: float = None,
                  ):
         super().__init__()
         self.register_buffer('mean_log', torch.tensor(mean_log))
         self.register_buffer('std_log', torch.tensor(std_log))
         self.eps = eps
+        self.exp_min = exp_min
+        self.exp_max = exp_max
 
     def forward(self, latent: torch.Tensor) -> torch.Tensor:
         """Maps latent to log-normal physical variable"""
-        return torch.exp((latent * self.std_log + self.mean_log).clip(min=-5, max=20))
+        return torch.exp((latent * self.std_log + self.mean_log).clip(min=np.log(self.exp_min), max=np.log(self.exp_max)))
 
     def inverse(self, value: torch.Tensor) -> torch.Tensor:
         """Maps log-normal physical value to latent"""
@@ -331,7 +336,7 @@ class StdNormalTransform(nn.Module):
         self.transforms = nn.ModuleDict({
             'A': BoundedTransform(0.0, 1.0, slope=length_slope, bias=1.15),
             'B': BoundedTransform(0.0, 1.0, slope=length_slope, bias=1.15),
-            'C': LogNormalTransform(c_log_mean, c_log_std),
+            'C': LogNormalTransform(c_log_mean, c_log_std, exp_min=0.01, exp_max=8),
 
             'cos_alpha': BoundedTransform(0.0, 1.0, slope=angle_slope),
             'cos_beta': BoundedTransform(0.0, 1.0, slope=angle_slope),
@@ -391,3 +396,260 @@ class CompositeTransform(nn.Module):
             else:
                 x = transform.inverse(x)
         return x
+
+#
+# import torch
+# import torch.nn as nn
+# from typing import Callable, Optional
+#
+# def compute_log_det_jacobian(
+#     transform_fn: Callable[[torch.Tensor], torch.Tensor],
+#     x: torch.Tensor,
+#     create_graph: bool = False
+# ) -> torch.Tensor:
+#     """
+#     Compute log determinant of Jacobian for arbitrary transform function.
+#
+#     Args:
+#         transform_fn: Function that takes [batch, dim] and returns [batch, dim]
+#         x: Input tensor of shape [batch, dim]
+#         create_graph: Whether to create computational graph for higher-order derivatives
+#
+#     Returns:
+#         log_det: Log determinant for each batch element, shape [batch]
+#     """
+#     batch_size, dim = x.shape
+#     x = x.requires_grad_(True)
+#     y = transform_fn(x)
+#
+#     log_dets = []
+#
+#     for batch_idx in range(batch_size):
+#         jacobian_row = []
+#
+#         for output_dim in range(dim):
+#             # Create one-hot gradient for this output dimension
+#             grad_outputs = torch.zeros_like(y)
+#             grad_outputs[batch_idx, output_dim] = 1.0
+#
+#             # Compute gradients
+#             grads = torch.autograd.grad(
+#                 outputs=y,
+#                 inputs=x,
+#                 grad_outputs=grad_outputs,
+#                 retain_graph=True,
+#                 create_graph=create_graph,
+#                 only_inputs=True
+#             )[0]
+#
+#             # Extract row of Jacobian for this batch element
+#             jacobian_row.append(grads[batch_idx])
+#
+#         # Stack to form Jacobian matrix [dim, dim]
+#         jacobian = torch.stack(jacobian_row, dim=0)
+#
+#         # Compute log determinant
+#         log_det = torch.logdet(jacobian)
+#         log_dets.append(log_det)
+#
+#     return torch.stack(log_dets)
+#
+# def compute_log_det_jacobian_diagonal(
+#     transform_fn: Callable[[torch.Tensor], torch.Tensor],
+#     x: torch.Tensor,
+#     create_graph: bool = False
+# ) -> torch.Tensor:
+#     """
+#     Fast diagonal approximation of log determinant of Jacobian.
+#     Assumes off-diagonal elements are negligible.
+#
+#     Args:
+#         transform_fn: Function that takes [batch, dim] and returns [batch, dim]
+#         x: Input tensor of shape [batch, dim]
+#         create_graph: Whether to create computational graph
+#
+#     Returns:
+#         log_det: Approximate log determinant for each batch element, shape [batch]
+#     """
+#     batch_size, dim = x.shape
+#     x = x.requires_grad_(True)
+#     y = transform_fn(x)
+#
+#     log_det = torch.zeros(batch_size, device=x.device)
+#
+#     for i in range(dim):
+#         # Compute diagonal element of Jacobian
+#         grad_outputs = torch.zeros_like(y)
+#         grad_outputs[:, i] = 1.0
+#
+#         grads = torch.autograd.grad(
+#             outputs=y,
+#             inputs=x,
+#             grad_outputs=grad_outputs,
+#             retain_graph=True,
+#             create_graph=create_graph,
+#             only_inputs=True
+#         )[0]
+#
+#         # Add log of diagonal element
+#         diagonal_element = grads[:, i]
+#         log_det += torch.log(torch.abs(diagonal_element) + 1e-8)
+#
+#     return log_det
+#
+# class JacobianWrapper(nn.Module):
+#     """
+#     Wrapper that adds Jacobian computation to any transform.
+#     """
+#
+#     def __init__(self, transform: nn.Module):
+#         super().__init__()
+#         self.transform = transform
+#
+#     def forward(self, x: torch.Tensor) -> torch.Tensor:
+#         return self.transform(x)
+#
+#     def inverse(self, y: torch.Tensor) -> torch.Tensor:
+#         if hasattr(self.transform, 'inverse'):
+#             return self.transform.inverse(y)
+#         else:
+#             raise NotImplementedError("Transform does not have inverse method")
+#
+#     def log_det_jacobian_forward(self, x: torch.Tensor, diagonal_approx: bool = False) -> torch.Tensor:
+#         """Compute log det of forward Jacobian."""
+#         if diagonal_approx:
+#             return compute_log_det_jacobian_diagonal(self.transform, x)
+#         else:
+#             return compute_log_det_jacobian(self.transform, x)
+#
+#     def log_det_jacobian_inverse(self, y: torch.Tensor, diagonal_approx: bool = False) -> torch.Tensor:
+#         """Compute log det of inverse Jacobian."""
+#         if not hasattr(self.transform, 'inverse'):
+#             raise NotImplementedError("Transform does not have inverse method")
+#
+#         if diagonal_approx:
+#             return compute_log_det_jacobian_diagonal(self.transform.inverse, y)
+#         else:
+#             return compute_log_det_jacobian(self.transform.inverse, y)
+#
+# # Simple functional interface
+# def add_jacobian_computation(transform_fn: Callable[[torch.Tensor], torch.Tensor]):
+#     """
+#     Decorator to add Jacobian computation methods to a function.
+#
+#     Usage:
+#         @add_jacobian_computation
+#         def my_transform(x):
+#             return torch.tanh(x * 2)
+#
+#         x = torch.randn(4, 3)
+#         y = my_transform(x)
+#         log_det = my_transform.log_det_jacobian(x)
+#     """
+#     def log_det_jacobian(x: torch.Tensor, diagonal_approx: bool = False) -> torch.Tensor:
+#         if diagonal_approx:
+#             return compute_log_det_jacobian_diagonal(transform_fn, x)
+#         else:
+#             return compute_log_det_jacobian(transform_fn, x)
+#
+#     # Attach method to function
+#     transform_fn.log_det_jacobian = log_det_jacobian
+#     return transform_fn
+#
+# # Example usage and testing
+# if __name__ == "__main__":
+#     # Example 1: Simple function
+#     @add_jacobian_computation
+#     def simple_transform(x):
+#         return torch.tanh(x * 2) + x**2
+#
+#     # Example 2: Your complex transforms
+#     class SquashingTransform(nn.Module):
+#         def __init__(self, min_val, max_val, threshold=5.0, softness=5.0):
+#             super().__init__()
+#             self.min_val = min_val
+#             self.max_val = max_val
+#             self.threshold = threshold
+#             self.softness = softness
+#             self.sat_level = max_val
+#
+#         def forward(self, latent):
+#             x_scaled = latent / self.threshold
+#             abs_x_scaled = torch.abs(x_scaled)
+#             sign_x = torch.sign(x_scaled)
+#             denom = torch.pow(1 + torch.pow(abs_x_scaled, self.softness), 1.0 / self.softness)
+#             squashed = self.sat_level * sign_x * abs_x_scaled / denom
+#             return squashed.clip(min=self.min_val, max=self.max_val)
+#
+#     # Test data
+#     x = torch.randn(4, 3)
+#
+#     print("Testing simple function:")
+#     y = simple_transform(x)
+#     log_det_exact = simple_transform.log_det_jacobian(x, diagonal_approx=False)
+#     log_det_diag = simple_transform.log_det_jacobian(x, diagonal_approx=True)
+#     print(f"Output shape: {y.shape}")
+#     print(f"Log det (exact): {log_det_exact}")
+#     print(f"Log det (diagonal): {log_det_diag}")
+#     print(f"Difference: {(log_det_exact - log_det_diag).abs().max():.6f}")
+#
+#     print("\nTesting complex transform with wrapper:")
+#     squash = SquashingTransform(min_val=-5, max_val=5)
+#     wrapped_squash = JacobianWrapper(squash)
+#
+#     y2 = wrapped_squash(x)
+#     log_det_exact2 = wrapped_squash.log_det_jacobian_forward(x, diagonal_approx=False)
+#     log_det_diag2 = wrapped_squash.log_det_jacobian_forward(x, diagonal_approx=True)
+#     print(f"Output shape: {y2.shape}")
+#     print(f"Log det (exact): {log_det_exact2}")
+#     print(f"Log det (diagonal): {log_det_diag2}")
+#     print(f"Difference: {(log_det_exact2 - log_det_diag2).abs().max():.6f}")
+#
+#     # Performance comparison
+#     import time
+#
+#     print("\nPerformance comparison (100 iterations):")
+#
+#     # Exact method
+#     start = time.time()
+#     for _ in range(100):
+#         _ = compute_log_det_jacobian(squash, x)
+#     exact_time = time.time() - start
+#
+#     # Diagonal approximation
+#     start = time.time()
+#     for _ in range(100):
+#         _ = compute_log_det_jacobian_diagonal(squash, x)
+#     diag_time = time.time() - start
+#
+#     print(f"Exact method: {exact_time:.4f}s")
+#     print(f"Diagonal approx: {diag_time:.4f}s")
+#     print(f"Speedup: {exact_time/diag_time:.2f}x")
+#
+#     # Validation against finite differences
+#     print("\nValidation against finite differences:")
+#     eps = 1e-5
+#     batch_size, dim = x.shape
+#
+#     # Compute finite difference Jacobian for first batch element
+#     x_test = x[0:1].clone()
+#     y_base = squash(x_test)
+#     jacobian_fd = torch.zeros(dim, dim)
+#
+#     for i in range(dim):
+#         x_plus = x_test.clone()
+#         x_minus = x_test.clone()
+#         x_plus[0, i] += eps
+#         x_minus[0, i] -= eps
+#
+#         y_plus = squash(x_plus)
+#         y_minus = squash(x_minus)
+#
+#         jacobian_fd[:, i] = ((y_plus - y_minus) / (2 * eps)).squeeze()
+#
+#     log_det_fd = torch.logdet(jacobian_fd)
+#     log_det_auto = compute_log_det_jacobian(squash, x_test)[0]
+#
+#     print(f"Finite difference log det: {log_det_fd:.6f}")
+#     print(f"Automatic log det: {log_det_auto:.6f}")
+#     print(f"Error: {(log_det_fd - log_det_auto).abs():.8f}")
