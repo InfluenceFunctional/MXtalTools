@@ -1226,8 +1226,18 @@ class MolCrystalData(MolData):
         # Normalize by number of atoms per molecule
         atoms_per_mol = atoms_per_mol.to(dtype=torch.float32)  # in case it's int
         covariances = cov_sums / atoms_per_mol[:, None, None]
-        eigvals, eigvecs_c = torch.linalg.eigh(
-            covariances)  # principal inertial tensor # eigh must faster on sym matrices
+
+        try:
+            eigvals, eigvecs_c = torch.linalg.eigh(covariances)
+        except RuntimeError as e:
+            if "CUSOLVER_STATUS_INVALID_VALUE" in str(e):
+                print("Invalid matrix to eigh! Substituting dummy ellipsoids.")
+                eigvals = torch.ones((covariances.shape[0], 3), device=covariances.device)
+                eigvecs_c = torch.eye(3, device=covariances.device).unsqueeze(0).repeat(covariances.shape[0], 1, 1)
+            else:
+                raise e
+        # eigvals, eigvecs_c = torch.linalg.eigh(
+        #     covariances)  # principal inertial tensor # eigh must faster on sym matrices
 
         eigvecs = eigvecs_c.permute(0, 2, 1)  # switch to row-wise eigenvectors
         sort_inds = torch.argsort(eigvals, dim=1, descending=True)  # we want eigenvectors sorted a>b>c row-wise
