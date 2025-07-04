@@ -113,8 +113,8 @@ class NiggliTransform(nn.Module):
 class BoundedTransform(nn.Module):
     def __init__(self, min_val, max_val, slope=1.0, eps=1e-6, bias: float = 0.0):
         super().__init__()
-        self.register_buffer('min_val', torch.tensor(min_val))
-        self.register_buffer('max_val', torch.tensor(max_val))
+        self.min_val = min_val
+        self.max_val = max_val
         self.slope = slope
         self.eps = eps
         self.bias = bias
@@ -238,8 +238,8 @@ class LogNormalTransform(nn.Module):
                  exp_max: float = None,
                  ):
         super().__init__()
-        self.register_buffer('mean_log', torch.tensor(mean_log))
-        self.register_buffer('std_log', torch.tensor(std_log))
+        self.mean_log = mean_log
+        self.std_log = std_log
         self.eps = eps
         self.exp_min = exp_min
         self.exp_max = exp_max
