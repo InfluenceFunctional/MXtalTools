@@ -219,25 +219,25 @@ def simple_latent_hist(sample_batch, reference_dist = None):
             row=row, col=col
         )
 
-    custom_ranges = {
-        0: [-6, 6],  # for cell_a
-        1: [-6, 6],  # for cell_b
-        2: [-6, 6],  # for cell_c
-        3: [-6, 6],  # for cell_alpha
-        4: [-6, 6],  # for cell_beta
-        5: [-6, 6],  # for cell_gamma
-        6: [-6, 6],  # for aunit_x
-        7: [-6, 6],  # for aunit_y
-        8: [-6, 6],  # for aunit_z
-        9: [-6, 6],  # orientation_1
-        10: [-6, 6],  # orientation_2
-        11: [-6, 6],  # orientation_3
-    }
-
-    for i in range(n_crystal_features):
-        row = i // 3 + 1
-        col = i % 3 + 1
-        fig.update_xaxes(range=custom_ranges[i], row=row, col=col)
+    # custom_ranges = {
+    #     0: [-6.5, 6.5],  # for cell_a
+    #     1: [-6.5, 6.5],  # for cell_b
+    #     2: [-6.5, 6.5],  # for cell_c
+    #     3: [-6.5, 6.5],  # for cell_alpha
+    #     4: [-6.5, 6.5],  # for cell_beta
+    #     5: [-6.5, 6.5],  # for cell_gamma
+    #     6: [-6.5, 6.5],  # for aunit_x
+    #     7: [-6.5, 6.5],  # for aunit_y
+    #     8: [-6.5, 6.5],  # for aunit_z
+    #     9: [-6.5, 6.5],  # orientation_1
+    #     10: [-6.5, 6.5],  # orientation_2
+    #     11: [-6.5, 6.5],  # orientation_3
+    # }
+    #
+    # for i in range(n_crystal_features):
+    #     row = i // 3 + 1
+    #     col = i % 3 + 1
+    #     fig.update_xaxes(range=custom_ranges[i], row=row, col=col)
 
     fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
     #fig.update_traces(opacity=0.5)
