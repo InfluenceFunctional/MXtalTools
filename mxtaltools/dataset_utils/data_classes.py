@@ -635,7 +635,7 @@ class MolCrystalData(MolData):
             self.init_latent_transform()
 
         self.set_cell_parameters(
-            self.latent_transform.inverse(std_normal, self.sg_ind, self.radius)
+            self.latent_transform.inverse(std_normal.clip(min=-6, max=6), self.sg_ind, self.radius)
         )
 
         self.cell_lengths, self.cell_angles = enforce_crystal_system(
@@ -656,14 +656,14 @@ class MolCrystalData(MolData):
             #                    ),
         ])
 
-    def cell_params_to_gen_basis(self):  # todo would be nice to redo all these using torch affine transform
+    def cell_params_to_gen_basis(self):
         if not hasattr(self, 'asym_unit_dict'):
             self.asym_unit_dict = self.build_asym_unit_dict()
 
         if not hasattr(self, 'latent_transform'):
             self.init_latent_transform()
 
-        std_cell_params = self.latent_transform.forward(self.cell_parameters(), self.sg_ind, self.radius)
+        std_cell_params = self.latent_transform.forward(self.cell_parameters(), self.sg_ind, self.radius).clip(min=-6, max=6)
         assert torch.isfinite(std_cell_params).all()
         return std_cell_params
 

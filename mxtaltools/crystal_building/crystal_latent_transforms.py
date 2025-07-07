@@ -352,8 +352,8 @@ class StdNormalTransform(nn.Module):
                  length_slope: float = 1.0,
                  angle_slope: float = 1.0,
                  centroid_slope: float = 1.0,
-                 c_log_mean: float = 0.24,
-                 c_log_std: float = 0.25,  #0.3618,
+                 c_log_mean: float = 0.4, #0.24,
+                 c_log_std: float = 0.36,  #0.3618,
                  ):
         super().__init__()
         self.eps = 1e-6
