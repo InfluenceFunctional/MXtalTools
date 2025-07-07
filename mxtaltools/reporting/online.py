@@ -135,6 +135,7 @@ def simple_cell_hist(sample_batch, reference_dist =None):
                         'orientation_1', 'orientation_2', 'orientation_3']
     # 1d Histograms
     n_crystal_features = 12
+    bw = 50
     colors = ['red', 'blue']
     fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)
     for i in range(n_crystal_features):
@@ -143,7 +144,7 @@ def simple_cell_hist(sample_batch, reference_dist =None):
         if reference_dist is not None:
             fig.add_trace(go.Violin(
                 x=reference_dist[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
-                meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False,
+                meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / bw), points=False,
                 name='Reference', legendgroup='Reference',
                 showlegend=True if ((i == 0) and reference_dist is not None) else False,
                 line_color=colors[1],
@@ -152,7 +153,7 @@ def simple_cell_hist(sample_batch, reference_dist =None):
             )
         fig.add_trace(go.Violin(
             x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
-            meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False,
+            meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / bw), points=False,
             name='Samples', legendgroup='Samples',
             showlegend=True if ((i == 0) and reference_dist is not None) else False,
             line_color=colors[0],
@@ -194,6 +195,7 @@ def simple_latent_hist(sample_batch, reference_dist = None):
                         'orientation_1', 'orientation_2', 'orientation_3']
     # 1d Histograms
     n_crystal_features = 12
+    bw = 50
     colors = ['red', 'blue']
     fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)
     for i in range(n_crystal_features):
@@ -202,7 +204,7 @@ def simple_latent_hist(sample_batch, reference_dist = None):
         if reference_dist is not None:
             fig.add_trace(go.Violin(
                 x=reference_dist[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
-                meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False,
+                meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / bw), points=False,
                 name='Reference', legendgroup='Reference',
                 showlegend=True if ((i == 0) and reference_dist is not None) else False,
                 line_color=colors[1],
@@ -211,7 +213,7 @@ def simple_latent_hist(sample_batch, reference_dist = None):
             )
         fig.add_trace(go.Violin(
             x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
-            meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False,
+            meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / bw), points=False,
             name='Samples', legendgroup='Samples',
             showlegend=True if ((i == 0) and reference_dist is not None) else False,
             line_color=colors[0],
