@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Union, Optional
 
 import numpy as np
 import torch
@@ -29,11 +29,11 @@ def vdw_analysis(vdw_radii: torch.Tensor,
 
 def scale_molwise_lj_pot(vdw_potential: torch.Tensor,
                          ):
-
     rescaled_vdw_loss = vdw_potential.clone()
     rescaled_vdw_loss[rescaled_vdw_loss > 0] = torch.log(rescaled_vdw_loss[rescaled_vdw_loss > 0] + 1)
 
     return rescaled_vdw_loss
+
 
 '''
 import torch
@@ -67,7 +67,6 @@ def compute_lj_pot(dist_dict, vdw_radii):
         nan=0.0, posinf=1e20, neginf=-1e-20
     )
     return lj_pot, normed_overlap, overlap
-
 
 
 def old_compute_num_h_bonds(supercell_data, atom_acceptor_ind, atom_donor_ind, i):
@@ -105,10 +104,11 @@ def electrostatic_analysis(dist_dict, num_graphs: int, cutoff: float = 0.92):
     dists = dist_dict['intermolecular_dist']
     charges = dist_dict['intermolecular_partial_charges']
     # default cutoff of 0.77 gets us 99% exponentially squashed by 6 angstroms distance
-    estat_energy = ((charges[0] * charges[1]) / dists) * torch.exp(-(dists*cutoff))
+    estat_energy = ((charges[0] * charges[1]) / dists) * torch.exp(-(dists * cutoff))
     molwise_estat_energy = scatter(estat_energy, batch, reduce='sum', dim_size=num_graphs)
 
     return molwise_estat_energy
+
 
 def buckingham_energy(dist_dict,
                       num_graphs,
@@ -159,7 +159,6 @@ def buckingham_energy(dist_dict,
     #     B = 1
     #     A, B, C = fit_buckingham_to_lj(sigma, epsilon, B)
     #     """
-
 
 
 def old_new_hydrogen_bond_analysis(supercell_data, dist_dict, cutoff: float = 2.2):
@@ -302,8 +301,10 @@ def get_intermolecular_dists_dict(cluster_batch,
 
 
 def silu_energy(dist_dict,
-                      num_graphs,
-                      vdw_radii,):
+                num_graphs,
+                vdw_radii,
+                repulsion: Optional[float] = 1.0
+                ):
     """
     a shorter range and softer LJ-type energy
     """
@@ -311,7 +312,9 @@ def silu_energy(dist_dict,
     elements = dist_dict['intermolecular_dist_atoms']
     atom_radii = [vdw_radii[elements[0]], vdw_radii[elements[1]]]
     radii_sums = atom_radii[0] + atom_radii[1]
-    edgewise_potentials = (F.silu(-4 * (dists - radii_sums)) / 0.28) + torch.exp(-dists * 100) * 100
+    # replusion = 1 roughly equivalent to LJ functional form
+    # repulsion < 1 broadens the potential well and shifts the minimum to the left
+    edgewise_potentials = (F.silu(-4 * (dists - radii_sums * repulsion) * repulsion) / 0.28)
     molwise_silu_energy = scatter(edgewise_potentials, dist_dict['intermolecular_dist_batch'],
-                       reduce='sum', dim_size=num_graphs)
+                                  reduce='sum', dim_size=num_graphs)
     return molwise_silu_energy

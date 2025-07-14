@@ -63,7 +63,7 @@ def cell_params_hist(stats_dict, sample_sources_list):
     lattice_features = ['cell_a', 'cell_b', 'cell_c',
                         'cell_alpha', 'cell_beta', 'cell_gamma',
                         'aunit_x', 'aunit_y', 'aunit_z',
-                        'orientation_1', 'orientation_2', 'orientation_2']
+                        'orientation_1', 'orientation_2', 'orientation_3']
     # 1d Histograms
     colors = n_colors('rgb(255,0,0)', 'rgb(0, 0, 255)', len(samples_dict.keys()) + 1, colortype='rgb')
     fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)
@@ -1396,7 +1396,7 @@ def simple_cell_scatter_fig(sample_batch, aux_array=None, aux_scalar_name: str =
     except:
         z = np.ones(xy.shape[1])
 
-    energy = sample_batch.silu_pot.cpu().detach()
+    energy = sample_batch.lj_pot.cpu().detach()
     energy[energy>0] = np.log(energy[energy>0])
     scatter_dict = {'energy': energy,
                     'packing_coefficient': sample_batch.packing_coeff.cpu().detach(),

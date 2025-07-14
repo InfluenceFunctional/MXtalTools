@@ -1068,13 +1068,15 @@ class MolCrystalData(MolData):
 
         return molwise_buckingham_energy
 
-    def compute_silu_energy(self):
+    def compute_silu_energy(self,
+                            repulsion: Optional[float] =None):
         vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()), device=self.device)
         if "Batch" in self.__class__.__name__:
             molwise_silu_energy = silu_energy(
                 self.edges_dict,
                 self.num_graphs,
-                vdw_radii_tensor
+                vdw_radii_tensor,
+                repulsion=repulsion,
             )
         else:
             assert False, "SiLU energies not implemented for single crystals"
@@ -1191,11 +1193,11 @@ class MolCrystalData(MolData):
         edge_j_good = edge_j[good_inds]
         return edge_i_good, edge_j_good, mol_centroids
 
-    def compute_cluster_ellipsoids(self, semi_axis_scale,
+    def compute_cluster_ellipsoids(self,
+                                   surface_padding,
                                    eps: float = 1e-3,
                                    cov_eps=0.1,
                                    add_noise: bool = False):
-        # molecule indexing
 
         mols_per_cluster = torch.tensor(self.edges_dict['n_repeats'], device=self.device)
         tot_num_mols = torch.sum(mols_per_cluster)
@@ -1244,12 +1246,18 @@ class MolCrystalData(MolData):
         eigvals_sorted = torch.gather(eigvals, dim=1, index=sort_inds)
         eigvecs_sorted = torch.gather(eigvecs, dim=1, index=sort_inds.unsqueeze(2).expand(-1, -1, 3))
 
-        longest_length = self.radius.repeat_interleave(mols_per_cluster).clip(
-            min=0.1) + 1.5  # account for vdW volume about distant atoms
-        min_axis_length = 3.0
+        """
+        Set default as the ellipsoid tip being at the surface of the molecule (assume largest radius)
+        Then, plus or minus angstroms to expose or cover surface atoms
+        """
+        longest_length = self.radius.repeat_interleave(mols_per_cluster).clip(min=0.1)
+        padding_scaling_factor = (longest_length + surface_padding) / longest_length
+        min_axis_length = torch.amax(torch.stack([1.5 * padding_scaling_factor, 0.1 * torch.ones_like(padding_scaling_factor)]),dim=0)  # need a finite thickness for flat molecules
         sqrt_eigenvalues = torch.sqrt(eigvals_sorted + eps)
-        semi_axis_lengths = (sqrt_eigenvalues / sqrt_eigenvalues.amax(1, keepdim=True)
-                             * longest_length[:, None] * semi_axis_scale).clip(min=min_axis_length * semi_axis_scale)
+        normed_eigs = sqrt_eigenvalues / sqrt_eigenvalues.amax(1, keepdim=True)  # normalize to relative lengths
+        # semi axis scale now controls how much of the surface is revealed - for negative values, surface atoms will poke out
+        # if the surface padding is set too small, the ellipsoid will just retreat into a tiny sphere
+        semi_axis_lengths = (normed_eigs * longest_length[:, None] + surface_padding).clip(min=min_axis_length[:, None])
 
         return eigvecs_sorted, longest_length, molwise_batch, semi_axis_lengths, tot_mol_index, tot_num_mols
 
