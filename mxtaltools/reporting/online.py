@@ -182,6 +182,15 @@ def simple_cell_hist(sample_batch, reference_dist =None):
         fig.update_xaxes(range=custom_ranges[i], row=row, col=col)
 
     fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
+    fig.update_layout(
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.05,
+            xanchor="center",
+            x=0.5
+        )
+    )
     #fig.update_traces(opacity=0.5)
     return fig
 
@@ -242,6 +251,15 @@ def simple_latent_hist(sample_batch, reference_dist = None):
         fig.update_xaxes(range=custom_ranges[i], row=row, col=col)
 
     fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
+    fig.update_layout(
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.05,
+            xanchor="center",
+            x=0.5
+        )
+    )
     #fig.update_traces(opacity=0.5)
     return fig
 

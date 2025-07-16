@@ -308,6 +308,8 @@ def silu_energy(dist_dict,
     """
     a shorter range and softer LJ-type energy
     """
+    if repulsion is None:
+        repulsion = 1
     dists = dist_dict['intermolecular_dist']
     elements = dist_dict['intermolecular_dist_atoms']
     atom_radii = [vdw_radii[elements[0]], vdw_radii[elements[1]]]

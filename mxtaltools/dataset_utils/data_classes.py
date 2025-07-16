@@ -1069,7 +1069,7 @@ class MolCrystalData(MolData):
         return molwise_buckingham_energy
 
     def compute_silu_energy(self,
-                            repulsion: Optional[float] =None):
+                            repulsion: Optional[float] = None):
         vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()), device=self.device)
         if "Batch" in self.__class__.__name__:
             molwise_silu_energy = silu_energy(
