@@ -93,7 +93,7 @@ def standalone_gradient_descent_optimization(
 
                 elif optim_target.lower() == 'ellipsoid':
                     overlap = cluster_batch.ellipsoid_overlap = cluster_batch.compute_ellipsoidal_overlap(
-                        semi_axis_scale=1, model=ellipsoid_model).clip(min=0)
+                        surface_padding=1, model=ellipsoid_model).clip(min=0)
                     loss = overlap**2
 
                 "auxiliary losses"

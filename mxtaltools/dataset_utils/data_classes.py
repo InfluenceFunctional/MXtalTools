@@ -1084,7 +1084,7 @@ class MolCrystalData(MolData):
         return molwise_silu_energy
 
     def compute_ellipsoidal_overlap(self,
-                                    semi_axis_scale: float = 1,
+                                    surface_padding: float = 1,
                                     return_details: Optional[bool] = False,
                                     model: Optional = None):
         """
@@ -1107,7 +1107,7 @@ class MolCrystalData(MolData):
             ellipsoid_model = model
 
         Ip, longest_length, molwise_batch, semi_axis_lengths, tot_mol_index, tot_num_mols = self.compute_cluster_ellipsoids(
-            semi_axis_scale)
+            surface_padding)
 
         max_ellipsoid_radius = semi_axis_lengths.amax(1)
         edge_i_good, edge_j_good, mol_centroids = self.get_ellipsoid_edges(molwise_batch, tot_mol_index,

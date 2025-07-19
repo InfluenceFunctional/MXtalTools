@@ -2407,7 +2407,7 @@ class Modeller:
             self.ellipsoid_model.eval()
         molwise_ellipsoid_overlap, v1_pred, v2_pred, v1, v2, norm_factor, normed_ellipsoid_overlap \
             = cluster_batch.compute_ellipsoidal_overlap(
-            semi_axis_scale=self.ellipsoid_scale,
+            surface_padding=self.ellipsoid_scale,
             model=self.ellipsoid_model,
             return_details=True)
 
