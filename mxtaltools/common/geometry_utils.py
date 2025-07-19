@@ -395,7 +395,13 @@ def scatter_compute_Ip(all_coords, batch,
          torch.vstack((Ixz, Iyz, Izz))[:, None, :].permute(2, 1, 0)
          ), dim=-2)  # inertial tensor
 
-    Ipm_c, Ip_c = torch.linalg.eigh(inertial_tensor)  # principal inertial tensor # eigh must faster on sym matrices
+    try:
+        Ipm_c, Ip_c = torch.linalg.eigh(inertial_tensor)
+    except RuntimeError:
+        if 'cuda' in str(inertial_tensor.device):
+            Ipm_c, Ip_c = torch.linalg.eigh(inertial_tensor.cpu())
+            Ipm_c = Ipm_c.to('cuda')
+            Ip_c = Ip_c.to('cuda')
     Ipms, Ip_o = torch.real(Ipm_c), torch.real(Ip_c)
 
     #Ip_o, Ipms, _ = torch.linalg.svd(inertial_tensor)  # superior numerical stability, yet equivalent for symmetric positive semi-definite
