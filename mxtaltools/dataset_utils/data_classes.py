@@ -1013,17 +1013,21 @@ class MolCrystalData(MolData):
                                              )
         self.edge_index = self.edges_dict['edge_index']
 
-    def construct_radial_graph(self, cutoff: float = 6):
+    def construct_radial_graph(self,
+                               cutoff: float = 6,
+                               max_num_neighbors=10000):
         if "Batch" in self.__class__.__name__:
             self.edges_dict = get_intermolecular_dists_dict(
                 self,
-                cutoff
+                cutoff,
+                max_num_neighbors=max_num_neighbors
             )
 
         else:
             self.edges_dict = get_intermolecular_dists_dict(
                 collate_data_list([self]),
-                cutoff
+                cutoff,
+                max_num_neighbors=max_num_neighbors
             )
             #assert False, "Radial graph construction not implemented for single crystals"
 
