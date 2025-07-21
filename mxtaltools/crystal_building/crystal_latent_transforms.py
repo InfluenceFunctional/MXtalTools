@@ -231,7 +231,7 @@ class SquashingTransform(nn.Module):
 
 class LogNormalTransform(nn.Module):
     def __init__(self,
-                 mean_log: float = 0.4,
+                 mean_log: float = 0.5,
                  std_log: float = 0.35,
                  eps: float = 1e-6,
                  exp_min: float = None,
@@ -352,7 +352,7 @@ class StdNormalTransform(nn.Module):
                  length_slope: float = 1.0,
                  angle_slope: float = 1.0,
                  centroid_slope: float = 1.0,
-                 c_log_mean: float = 0.4, #0.24,
+                 c_log_mean: float = 0.6, #0.4, #0.24,
                  c_log_std: float = 0.36,  #0.3618,
                  ):
         super().__init__()
