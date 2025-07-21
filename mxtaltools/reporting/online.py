@@ -126,7 +126,7 @@ def niggli_hist(stats_dict, sample_sources_list):
     return fig
 
 
-def simple_cell_hist(sample_batch, reference_dist =None):
+def simple_cell_hist(sample_batch, reference_dist=None):
     samples = sample_batch.cell_parameters().cpu().detach().numpy()
 
     lattice_features = ['cell_a', 'cell_b', 'cell_c',
@@ -195,7 +195,7 @@ def simple_cell_hist(sample_batch, reference_dist =None):
     return fig
 
 
-def simple_latent_hist(sample_batch, reference_dist = None):
+def simple_latent_hist(sample_batch, reference_dist=None):
     samples = sample_batch.cell_params_to_gen_basis().cpu().detach().numpy()
 
     lattice_features = ['cell_a', 'cell_b', 'cell_c',
@@ -262,6 +262,7 @@ def simple_latent_hist(sample_batch, reference_dist = None):
     )
     #fig.update_traces(opacity=0.5)
     return fig
+
 
 def iter_wise_hist(stats_dict, target_key, log=False):
     energy = stats_dict[target_key]
@@ -1337,7 +1338,8 @@ def vdw_vs_prior_dist(epoch_stats_dict: dict):
     wandb.log({"vdW vs Prior Loss": fig}, commit=False)
 
 
-def log_crystal_samples(epoch_stats_dict: Optional[dict] = None, sample_batch: Optional = None, return_filenames: bool =False):
+def log_crystal_samples(epoch_stats_dict: Optional[dict] = None, sample_batch: Optional = None,
+                        return_filenames: bool = False):
     if epoch_stats_dict is not None:
         sample_crystals = epoch_stats_dict['generator_samples']
     else:
@@ -1407,15 +1409,18 @@ def generated_cell_scatter_fig(epoch_stats_dict, layout):
         return fig
 
 
-def simple_cell_scatter_fig(sample_batch, aux_array=None, aux_scalar_name: str = ''):
+def simple_cell_scatter_fig(sample_batch, cluster_inds=None, aux_array=None, aux_scalar_name: str = ''):
     xy = np.vstack([sample_batch.packing_coeff.cpu().detach(), sample_batch.silu_pot.cpu().detach()])
     try:
         z = get_point_density(xy, bins=25)
     except:
         z = np.ones(xy.shape[1])
 
+    # if hasattr(sample_batch, 'gfn_energy'):
+    #     energy = sample_batch.gfn_energy
+    # else:
     energy = sample_batch.lj_pot.cpu().detach()
-    energy[energy>0] = np.log(energy[energy>0])
+    energy[energy > 0] = np.log(energy[energy > 0])
     scatter_dict = {'energy': energy,
                     'packing_coefficient': sample_batch.packing_coeff.cpu().detach(),
                     'point_density': z
@@ -1441,6 +1446,36 @@ def simple_cell_scatter_fig(sample_batch, aux_array=None, aux_scalar_name: str =
                       xaxis_range=[max(0, np.amin(df['packing_coefficient']) * 0.9),
                                    min(2, np.amax(df['packing_coefficient']) * 1.1)],
                       )
+
+    if cluster_inds is not None:
+        energy_np = energy.cpu().numpy()
+        packing_np = sample_batch.packing_coeff.cpu().numpy()
+        anchor_x = []
+        anchor_y = []
+
+        for c in np.unique(cluster_inds):
+            mask = cluster_inds == c
+            if np.any(mask):
+                min_idx = np.argmin(energy_np[mask])
+                true_idx = np.where(mask)[0][min_idx]
+                anchor_x.append(packing_np[true_idx])
+                anchor_y.append(energy_np[true_idx])
+
+        fig.add_scatter(
+            x=anchor_x,
+            y=anchor_y,
+            mode='markers',
+            marker=dict(
+                line=dict(
+                    color='grey',
+                    width=4),
+                color='black',
+                size=14,
+            ),
+            name='Cluster Minima',
+            showlegend=False
+        )
+
     return fig
 
 
@@ -1721,6 +1756,7 @@ def detailed_reporting(config, dataDims, train_epoch_stats_dict, test_epoch_stat
         discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_test_dict)
 
     return None
+
 
 def classifier_reporting(true_labels, probs, ordered_class_names, wandb, epoch_type):
     present_classes = np.unique(true_labels)
@@ -2205,7 +2241,6 @@ def simple_embedding_fig(std_cell_params, aux_array=None,
                          reference_distribution=None,
                          max_umap_samples: int = 1000,
                          known_minima=None):
-
     reducer = umap.UMAP(n_components=2,
                         metric='euclidean',
                         n_neighbors=15,

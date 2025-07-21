@@ -246,7 +246,8 @@ class LogNormalTransform(nn.Module):
 
     def forward(self, latent: torch.Tensor) -> torch.Tensor:
         """Maps latent to log-normal physical variable"""
-        return torch.exp((latent * self.std_log + self.mean_log).clip(min=np.log(self.exp_min), max=np.log(self.exp_max)))
+        return torch.exp(
+            (latent * self.std_log + self.mean_log).clip(min=np.log(self.exp_min), max=np.log(self.exp_max)))
 
     def inverse(self, value: torch.Tensor) -> torch.Tensor:
         """Maps log-normal physical value to latent"""
@@ -308,9 +309,10 @@ class RotationTransform(nn.Module):
         """
         std_theta, std_phi, std_r = latent.split(1, dim=1)
 
-        theta = self.std_normal_to_polar(std_theta)#.clip(min=0, max=torch.pi / 2)
-        phi = self.std_normal_to_azimuth(std_phi)#.clip(min=-torch.pi, max=torch.pi)
-        r = self.std_normal_to_rotation(std_r).clip(min=0.01, max=torch.pi * 2 - 0.01)  # cannot be allowed to touch extrema exactly
+        theta = self.std_normal_to_polar(std_theta)  #.clip(min=0, max=torch.pi / 2)
+        phi = self.std_normal_to_azimuth(std_phi)  #.clip(min=-torch.pi, max=torch.pi)
+        r = self.std_normal_to_rotation(std_r).clip(min=0.01,
+                                                    max=torch.pi * 2 - 0.01)  # cannot be allowed to touch extrema exactly
 
         rotvec = sph2rotvec(torch.cat([theta, phi, r], dim=1))
 
@@ -347,12 +349,13 @@ class ProbitTransform(nn.Module):
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         return self.normal.cdf(z)
 
+
 class StdNormalTransform(nn.Module):
     def __init__(self,
                  length_slope: float = 1.0,
                  angle_slope: float = 1.0,
                  centroid_slope: float = 1.0,
-                 c_log_mean: float = 0.6, #0.4, #0.24,
+                 c_log_mean: float = 0.8,  #0.4, #0.24,
                  c_log_std: float = 0.36,  #0.3618,
                  ):
         super().__init__()
