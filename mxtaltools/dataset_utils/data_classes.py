@@ -389,10 +389,13 @@ class MolData(MXtalBase):  # todo add method for batch_molecule_compute_principa
         if len(heavy_atom_inds) > 0:
             self.z = self.z[heavy_atom_inds]
             self.pos = self.pos[heavy_atom_inds]
-            self.batch = self.batch[heavy_atom_inds]
-            a, b = torch.unique(self.batch, return_counts=True)
-            self.ptr = torch.cat([torch.zeros(1, device=self.device), torch.cumsum(b, dim=0)]).long()
-            self.num_atoms = torch.diff(self.ptr).long()
+            if hasattr(self, 'batch') and self.batch is not None:
+                self.batch = self.batch[heavy_atom_inds]
+                a, b = torch.unique(self.batch, return_counts=True)
+                self.ptr = torch.cat([torch.zeros(1, device=self.device), torch.cumsum(b, dim=0)]).long()
+                self.num_atoms = torch.diff(self.ptr).long()
+            else:
+                self.num_atoms = len(self.z)
             self.num_nodes = len(self.z)
 
     @property
