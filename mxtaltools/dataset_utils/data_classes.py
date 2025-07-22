@@ -1569,7 +1569,7 @@ class MolCrystalData(MolData):
         orientation_means = torch.tensor([[0, 0, torch.pi / 2]], dtype=torch.float32, device=self.device)
         return std_aunit_orientation * orientation_stds + orientation_means
 
-    def plot_batch_cell_params(self):
+    def plot_batch_cell_params(self, space='real'):
         if not self.is_batch:
             print("Cell statistics only works for a batch of samples")
             return None
@@ -1580,8 +1580,13 @@ class MolCrystalData(MolData):
                             'cell_alpha', 'cell_beta', 'cell_gamma',
                             'aunit_x', 'aunit_y', 'aunit_z',
                             'orientation_1', 'orientation_2', 'orientation_2']
+        if space == 'real':
+            samples = self.cell_parameters()
+        elif space == 'gen':
+            samples = self.cell_params_to_gen_basis()
+        elif space == 'standard':
+            samples = self.standardize_cell_parameters()
 
-        samples = self.cell_parameters()
         # 1d Histograms
         colors = 'red'
         fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)

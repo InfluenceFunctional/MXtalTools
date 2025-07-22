@@ -354,8 +354,7 @@ class StdNormalTransform(nn.Module):
     def __init__(self,
                  length_slope: float = 1.0,
                  angle_slope: float = 1.0,
-                 centroid_slope: float = 1.0,
-                 c_log_mean: float = 0.8,  #0.4, #0.24,
+                 c_log_mean: float = 1.0,  #0.4, #0.24,
                  c_log_std: float = 0.36,  #0.3618,
                  ):
         super().__init__()

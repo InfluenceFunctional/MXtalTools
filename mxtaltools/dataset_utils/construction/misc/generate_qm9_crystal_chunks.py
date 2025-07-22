@@ -35,7 +35,8 @@ if __name__ == '__main__':
 
     mol_list = torch.load(r'D:/crystal_datasets/test_qm9_dataset.pt')
     # select some random molecules
-    mol_inds = np.random.choice(len(mol_list), size=10, replace=False)
+    rng = np.random.Generator(np.random.PCG64(space_group))
+    mol_inds = rng.choice(len(mol_list), size=batch_size, replace=False)
 
     crystal_batch = collate_data_list([MolCrystalData(
         molecule=mol_list[ind].clone(),
@@ -55,9 +56,9 @@ if __name__ == '__main__':
     chunk_path = os.path.join(chunks_path, f'qm9_sg_{space_group}_chunk_{chunk_ind}.pkl')
 
     crystal_batch.sample_reasonable_random_parameters(
-        target_packing_coeff=0.5,
+        target_packing_coeff=0.35,
         tolerance=5,
-        max_attempts=100,
+        max_attempts=20,
         sample_niggli=True,
     )
 
