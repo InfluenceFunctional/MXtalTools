@@ -10,16 +10,16 @@ from mxtaltools.common.utils import repeat_interleave, torch_ptp
 from mxtaltools.models.functions.radial_graph import asymmetric_radius_graph
 
 
-def crystal_rdf(crystal_batch,
-                precomputed_distances_dict=None,
-                rrange: list[int, int] = [0, 10],
-                bins: int = 100,
-                mode: str = 'all',
-                elementwise: bool = False,
-                raw_density: bool = False,
-                atomwise: bool = False,
-                cpu_detach: bool = False,
-                remove_radial_scaling: bool = False) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+def old_crystal_rdf(crystal_batch,
+                    precomputed_distances_dict=None,
+                    rrange: list[int, int] = [0, 10],
+                    bins: int = 100,
+                    mode: str = 'all',
+                    elementwise: bool = False,
+                    raw_density: bool = False,
+                    atomwise: bool = False,
+                    cpu_detach: bool = False,
+                    remove_radial_scaling: bool = False) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     """
     compute the RDF for all the supercells in a Molcrystal_batch object
 
@@ -161,17 +161,17 @@ def crystal_rdf(crystal_batch,
         return rdfs_array, rr
 
 
-def new_crystal_rdf(crystal_batch,
-                    precomputed_distances_dict=None,
-                    rrange: list[int, int] = [0, 10],
-                    bins: int = 100,
-                    mode: str = 'all',
-                    elementwise: bool = False,
-                    raw_density: bool = False,
-                    atomwise: bool = False,
-                    cpu_detach: bool = False,
-                    atomic_numbers_override: Optional[torch.LongTensor] = None
-                    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+def crystal_rdf(crystal_batch,
+                precomputed_distances_dict=None,
+                rrange: list[int, int] = [0, 10],
+                bins: int = 100,
+                mode: str = 'all',
+                elementwise: bool = False,
+                raw_density: bool = False,
+                atomwise: bool = False,
+                cpu_detach: bool = False,
+                atomic_numbers_override: Optional[torch.LongTensor] = None
+                ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     """
     faster rdf calculation
     """

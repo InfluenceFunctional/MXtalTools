@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader
 from torch_scatter import scatter
 from tqdm import tqdm
 
-from mxtaltools.analysis.crystal_rdf import compute_rdf_distance, new_crystal_rdf
+from mxtaltools.analysis.crystal_rdf import compute_rdf_distance, crystal_rdf
 from mxtaltools.common.geometry_utils import list_molecule_principal_axes_torch, embed_vector_to_rank3, \
     cell_vol_angle_factor
 from mxtaltools.common.instantiate_models import instantiate_models
@@ -2263,14 +2263,14 @@ class Modeller:
     def compute_discriminator_rdf_distance(self, fake_cluster_batch, real_cluster_batch):
         rdf_dists = torch.zeros(real_cluster_batch.num_graphs, device=self.config.device, dtype=torch.float32)
         if self.config.discriminator.use_rdf_distance_loss:
-            real_rdf, rr, _ = new_crystal_rdf(real_cluster_batch, real_cluster_batch.edges_dict,
-                                              rrange=[0, self.config.discriminator.model.graph.cutoff], bins=2000,
-                                              mode='intermolecular', elementwise=True, raw_density=True,
-                                              cpu_detach=False)
-            fake_rdf, _, _ = new_crystal_rdf(fake_cluster_batch, fake_cluster_batch.edges_dict,
-                                             rrange=[0, self.config.discriminator.model.graph.cutoff], bins=2000,
-                                             mode='intermolecular', elementwise=True, raw_density=True,
-                                             cpu_detach=False)
+            real_rdf, rr, _ = crystal_rdf(real_cluster_batch, real_cluster_batch.edges_dict,
+                                          rrange=[0, self.config.discriminator.model.graph.cutoff], bins=2000,
+                                          mode='intermolecular', elementwise=True, raw_density=True,
+                                          cpu_detach=False)
+            fake_rdf, _, _ = crystal_rdf(fake_cluster_batch, fake_cluster_batch.edges_dict,
+                                         rrange=[0, self.config.discriminator.model.graph.cutoff], bins=2000,
+                                         mode='intermolecular', elementwise=True, raw_density=True,
+                                         cpu_detach=False)
 
             for i in range(real_cluster_batch.num_graphs):
                 rdf_dists[i] = compute_rdf_distance(real_rdf[i], fake_rdf[i], rr) / real_cluster_batch.num_atoms[i]

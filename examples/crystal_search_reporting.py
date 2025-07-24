@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from torch.nn import functional as F
 from tqdm import tqdm
 
-from mxtaltools.analysis.crystal_rdf import new_crystal_rdf, compute_rdf_distance
+from mxtaltools.analysis.crystal_rdf import crystal_rdf, compute_rdf_distance
 from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
 from mxtaltools.common.ase_interface import get_niggli_cell
 from mxtaltools.common.training_utils import load_crystal_score_model
@@ -58,13 +58,13 @@ def csp_reporting(optimized_samples,
     """
     _, _, _, original_cluster_batch = original_crystal_batch.to(device).build_and_analyze(
         return_cluster=True, cutoff=6)
-    real_rdf, rr, _ = new_crystal_rdf(original_cluster_batch.to(device),
-                                      original_cluster_batch.edges_dict,
-                                      rrange=[0, 6], bins=2000,
-                                      mode='intermolecular',
-                                      elementwise=True,
-                                      raw_density=True,
-                                      cpu_detach=False)
+    real_rdf, rr, _ = crystal_rdf(original_cluster_batch.to(device),
+                                  original_cluster_batch.edges_dict,
+                                  rrange=[0, 6], bins=2000,
+                                  mode='intermolecular',
+                                  elementwise=True,
+                                  raw_density=True,
+                                  cpu_detach=False)
 
     rdf_dists = torch.zeros(len(rdf_dist_pred), device=original_cluster_batch.device, dtype=torch.float32)
     for i in range(len(fake_rdfs)):
@@ -74,13 +74,13 @@ def csp_reporting(optimized_samples,
 
     """also to noisy crystals"""
 
-    noisy_rdfs, rr, _ = new_crystal_rdf(noisy_cluster_batch.to(device),
-                                        noisy_cluster_batch.edges_dict,
-                                        rrange=[0, 6], bins=2000,
-                                        mode='intermolecular',
-                                        elementwise=True,
-                                        raw_density=True,
-                                        cpu_detach=False)
+    noisy_rdfs, rr, _ = crystal_rdf(noisy_cluster_batch.to(device),
+                                    noisy_cluster_batch.edges_dict,
+                                    rrange=[0, 6], bins=2000,
+                                    mode='intermolecular',
+                                    elementwise=True,
+                                    raw_density=True,
+                                    cpu_detach=False)
 
     noisy_rdf_dists = torch.zeros(len(noisy_rdfs), device=original_cluster_batch.device, dtype=torch.float32)
     for i in range(len(noisy_rdfs)):

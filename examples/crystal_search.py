@@ -8,7 +8,7 @@ import wandb
 sys.path.insert(0, os.path.abspath("../"))
 
 from datetime import datetime
-from mxtaltools.analysis.crystal_rdf import new_crystal_rdf
+from mxtaltools.analysis.crystal_rdf import crystal_rdf
 from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.common.training_utils import load_crystal_score_model, load_molecule_scalar_regressor, enable_dropout
 from mxtaltools.dataset_utils.utils import collate_data_list
@@ -164,11 +164,11 @@ if __name__ == '__main__':
                 model_output = score_model(optimized_cluster_batch.to(device), force_edges_rebuild=True).cpu()
                 model_score = softmax_and_score(model_output[:, :2])
 
-                fake_rdf, _, _ = new_crystal_rdf(optimized_cluster_batch,
-                                                 optimized_cluster_batch.edges_dict,
-                                                 rrange=[0, 6], bins=2000,
-                                                 mode='intermolecular', elementwise=True, raw_density=True,
-                                                 cpu_detach=False)
+                fake_rdf, _, _ = crystal_rdf(optimized_cluster_batch,
+                                             optimized_cluster_batch.edges_dict,
+                                             rrange=[0, 6], bins=2000,
+                                             mode='intermolecular', elementwise=True, raw_density=True,
+                                             cpu_detach=False)
 
                 for ind, sample in enumerate(opt1_trajectory[-1]):
                     sample.model_output = model_output[ind][None, :].clone().cpu()
