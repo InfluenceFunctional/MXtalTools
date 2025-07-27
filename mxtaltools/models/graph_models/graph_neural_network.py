@@ -145,7 +145,7 @@ class VectorGNN(torch.nn.Module):
         if override_cutoff is None:
             self.register_buffer('cutoff', torch.tensor(cutoff, dtype=torch.float32))
         else:
-            self.register_buffer('cutoff', torch.tensor(override_cutoff, dtype=torch.float32))
+            self.register_buffer('cutoff', torch.tensor(override_cutoff, dtype=torch.float32) if not torch.is_tensor(override_cutoff) else override_cutoff.clone().detach())
 
         if radial_embedding == 'bessel':
             self.rbf = BesselBasisLayer(num_radial, self.cutoff, envelope_exponent)

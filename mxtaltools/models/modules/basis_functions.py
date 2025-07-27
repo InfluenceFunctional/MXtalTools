@@ -9,7 +9,7 @@ class BesselBasisLayer(torch.nn.Module):  # NOTE borrowed from DimeNet implement
                  cutoff: float = 5.0,
                  envelope_exponent: int = 5):
         super(BesselBasisLayer, self).__init__()
-        self.register_buffer('cutoff', torch.tensor(cutoff))
+        self.register_buffer('cutoff', torch.tensor(cutoff) if not torch.is_tensor(cutoff) else cutoff.clone().detach())
         self.envelope = Envelope(envelope_exponent)
         self.freq = torch.nn.Parameter(torch.Tensor(num_radial))
         self.reset_parameters()

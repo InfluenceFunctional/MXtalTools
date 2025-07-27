@@ -450,14 +450,16 @@ def embed_crystal_list(
         encoder = load_encoder(encoder_checkpoint_path).to(device)
     embeddings = []
     num_chunks = len(crystal_list) // batch_size + int(len(crystal_list) % batch_size != 0)
-    lj_pots, scaled_lj_pots, es_pots, bh_pots = (torch.zeros(len(crystal_list), dtype=torch.float32, device=device) for _ in range(4))
+    lj_pots, scaled_lj_pots, es_pots, bh_pots = (torch.zeros(len(crystal_list), dtype=torch.float32, device=device) for
+                                                 _ in range(4))
     with torch.no_grad():
         for ind in tqdm(range(num_chunks)):  # do it this way so to avoid shuffling
             sample_inds = torch.arange(ind * batch_size, min((ind + 1) * batch_size, len(crystal_list)))
             crystal_batch = collate_data_list([crystal_list[ind] for ind in sample_inds]
                                               ).to(device)
             if redo_crystal_analysis:
-                lj_pots[sample_inds], es_pots[sample_inds], scaled_lj_pots[sample_inds], cluster_batch = crystal_batch.build_and_analyze(cutoff=10, return_cluster=True)
+                lj_pots[sample_inds], es_pots[sample_inds], scaled_lj_pots[
+                    sample_inds], cluster_batch = crystal_batch.build_and_analyze(cutoff=10, return_cluster=True)
                 bh_pots[sample_inds] = cluster_batch.compute_buckingham_energy()
 
             embedding = crystal_batch.do_embedding(embedding_type,
@@ -497,11 +499,11 @@ def load_encoder(checkpoint_path):
         model_config.model,
         5,
         autoencoder_type_index,
-        1, # will get overwritten
+        1,  # will get overwritten
         protons_in_input=True
     )
 
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
     if list(checkpoint['model_state_dict'])[0][
        0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
         for i in list(checkpoint['model_state_dict']):
