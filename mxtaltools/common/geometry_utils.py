@@ -843,7 +843,7 @@ def probe_compute_molecule_volume(
                                 r=vdw_radii_tensor.max(),
                                 batch_x=batch,
                                 batch_y=probe_batch,
-                                max_num_neighbors=100000)
+                                max_num_neighbors=probes_per_mol)
         dists = torch.linalg.norm(random_probes[edge_i] - pos[edge_j], dim=1)
 
         # Check if each probe is inside any sphere

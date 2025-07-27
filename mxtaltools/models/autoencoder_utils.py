@@ -37,7 +37,7 @@ def compute_gaussian_overlap(ref_types,
                    # r=2 * ref_points[:, :3].norm(dim=1).amax(),  # max range encompasses largest molecule in the batch
                    # alternatively any point which will have even a small overlap - should be faster by ignoring unimportant edges, where the gradient will anyway be vanishing
                    r=4 * sigma,
-                   max_num_neighbors=10000,
+                   max_num_neighbors=1000,
                    batch_x=mol_batch.batch,
                    batch_y=decoded_data.batch)  # this step is slower than before
     dists = torch.linalg.norm(ref_points[edges[1]] - pred_points[edges[0]], dim=1)
@@ -339,7 +339,7 @@ def batch_rmsd(mol_batch,
     edges = radius(ref_points,
                    pred_points,
                    r=intrapoint_cutoff,
-                   max_num_neighbors=10000,
+                   max_num_neighbors=1000,
                    batch_x=mol_batch.batch,
                    batch_y=decoded_mol_batch.batch)  # this step is slower than before
     dists = torch.linalg.norm(ref_points[edges[1]] - pred_points[edges[0]], dim=1)

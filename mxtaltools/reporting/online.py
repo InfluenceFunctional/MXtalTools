@@ -129,6 +129,16 @@ def niggli_hist(stats_dict, sample_sources_list):
 def simple_cell_hist(sample_batch, reference_dist=None):
     samples = sample_batch.cell_parameters().cpu().detach().numpy()
 
+    if hasattr(sample_batch, 'lj_pot'):
+        if sample_batch.lj_pot is not None:
+            energies = sample_batch.lj_pot
+            good_inds = torch.argwhere(energies <= torch.quantile(energies, 0.1))
+            good_samples = samples[good_inds.flatten()]
+        else:
+            good_samples = None
+    else:
+        good_samples = None
+
     lattice_features = ['cell_a', 'cell_b', 'cell_c',
                         'cell_alpha', 'cell_beta', 'cell_gamma',
                         'aunit_x', 'aunit_y', 'aunit_z',
@@ -136,7 +146,7 @@ def simple_cell_hist(sample_batch, reference_dist=None):
     # 1d Histograms
     n_crystal_features = 12
     bw = 50
-    colors = ['red', 'blue']
+    colors = ['red', 'blue', 'green']
     fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)
     for i in range(n_crystal_features):
         row = i // 3 + 1
@@ -151,6 +161,7 @@ def simple_cell_hist(sample_batch, reference_dist=None):
             ),
                 row=row, col=col
             )
+
         fig.add_trace(go.Violin(
             x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
             meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / bw), points=False,
@@ -160,6 +171,16 @@ def simple_cell_hist(sample_batch, reference_dist=None):
         ),
             row=row, col=col
         )
+        if good_samples is not None:
+            fig.add_trace(go.Violin(
+                x=good_samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
+                meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / bw), points=False,
+                name='Top 10%', legendgroup='Top 10%',
+                showlegend=True if ((i == 0) and reference_dist is not None) else False,
+                line_color=colors[2],
+            ),
+                row=row, col=col
+            )
 
     custom_ranges = {
         0: [0, float(np.max(samples[:, 0]) * 1.1)],
@@ -195,8 +216,9 @@ def simple_cell_hist(sample_batch, reference_dist=None):
     return fig
 
 
-def simple_latent_hist(sample_batch, reference_dist=None):
-    samples = sample_batch.cell_params_to_gen_basis().cpu().detach().numpy()
+def simple_latent_hist(sample_batch, samples=None, reference_dist=None):
+    if samples is None:
+        samples = sample_batch.cell_params_to_gen_basis().cpu().detach().numpy()
 
     lattice_features = ['cell_a', 'cell_b', 'cell_c',
                         'cell_alpha', 'cell_beta', 'cell_gamma',
