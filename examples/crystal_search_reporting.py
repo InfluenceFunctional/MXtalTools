@@ -271,6 +271,7 @@ def single_compack_run(ind):
         print("Analysis failed")
         return 0, 0
 
+
 def cluster_batch_to_ccdc_crystals(cluster_batch, inds):
     crystals = []
     for ind in inds:
@@ -294,7 +295,8 @@ def distance_fig(c_dists, model_score, noisy_c_dists, noisy_model_score, noisy_r
                     opacity=0.6, marker_line_width=1,
                     marker_line_color='white',
                     name='Optimized Samples', row=1, col=1)
-    fig.add_scatter(x=noisy_rdf_dists[good_noisy_inds].log10().cpu().detach(), y=noisy_c_dists[good_noisy_inds].cpu().detach(),
+    fig.add_scatter(x=noisy_rdf_dists[good_noisy_inds].log10().cpu().detach(),
+                    y=noisy_c_dists[good_noisy_inds].cpu().detach(),
                     mode='markers', marker_size=12,
                     marker_color=noisy_model_score[good_noisy_inds],  # 'black',
                     marker_line_width=2,
@@ -312,7 +314,8 @@ def distance_fig(c_dists, model_score, noisy_c_dists, noisy_model_score, noisy_r
                     marker_coloraxis='coloraxis',
                     marker_line_color='white',
                     name='Optimized Samples', row=1, col=2, showlegend=False)
-    fig.add_scatter(x=noisy_rdf_dists[good_noisy_inds].log10().cpu().detach(), y=noisy_c_dists[good_noisy_inds].cpu().detach(),
+    fig.add_scatter(x=noisy_rdf_dists[good_noisy_inds].log10().cpu().detach(),
+                    y=noisy_c_dists[good_noisy_inds].cpu().detach(),
                     mode='markers', marker_size=12,
                     marker_color=noisy_model_score[good_noisy_inds],  # 'black',
                     marker_line_width=2,
@@ -323,7 +326,7 @@ def distance_fig(c_dists, model_score, noisy_c_dists, noisy_model_score, noisy_r
     # fig.add_scatter(x=torch.zeros(1), y=torch.zeros(1), mode='markers', marker_color='yellow',
     #                 marker_size=25, marker_line_color='black', marker_line_width=2,
     #                 name='Experimental Sample')
-    fig.update_layout(yaxis1_range=[0, 40], xaxis1_range=[-1.75,-0.75])# 1.5])
+    fig.update_layout(yaxis1_range=[0, 40], xaxis1_range=[-1.75, -0.75])  # 1.5])
     fig.update_layout(yaxis2_range=[0, 5], xaxis2_range=[-1.75, -.75])
     fig.update_layout(legend_orientation='h')
     fig.update_layout(xaxis1_title='log RDF EMD', yaxis1_title='Lattice Distance (Angstrom)')
@@ -362,8 +365,6 @@ def distance_fig(c_dists, model_score, noisy_c_dists, noisy_model_score, noisy_r
 
 
 def density_funnel(model_score, packing_coeff, rdf_dists, ref_model_score, ref_packing_coeff):
-
-
     fontsize = 26
     good_inds = torch.argwhere((packing_coeff > 0.55) * (model_score > 0) * (packing_coeff < 0.9)).squeeze()
     # fig = make_subplots(rows=1, cols=2, subplot_titles=["(a)", "(b)"],
