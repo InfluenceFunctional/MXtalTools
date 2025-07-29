@@ -30,7 +30,9 @@ if __name__ == '__main__':
     batch_size = 100
     chunks_path = Path(r'/scratch/mk8347/csd_runs/datasets')
 
-    qm9_mols = torch.load(r'D:/crystal_datasets/test_csd_free_qm9_dataset.pt')
+    #qm9_mols = torch.load(r'D:/crystal_datasets/test_csd_free_qm9_dataset.pt')
+    qm9_mols = torch.load(r'/scratch/mk8347/csd_runs/datasets/test_csd_free_qm9_dataset.pt')
+
     rng = np.random.RandomState(0)
     rands = rng.choice(len(qm9_mols), len(qm9_mols), replace=False)
     bp = int(len(rands) * 0.8)
