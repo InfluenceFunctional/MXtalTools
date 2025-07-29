@@ -1,12 +1,10 @@
 import os
 from pathlib import Path
 import argparse
-
 import numpy as np
 import torch
-from mxtaltools.dataset_utils.construction.parallel_synthesis import generate_smiles_dataset, \
-    process_smiles_to_crystal_opt
-from mxtaltools.dataset_utils.data_classes import MolCrystalData, MolData
+
+from mxtaltools.dataset_utils.data_classes import MolCrystalData
 from mxtaltools.dataset_utils.utils import collate_data_list
 
 """
@@ -15,27 +13,40 @@ Alternate version of this script, for generating just structures of urea
 
 if __name__ == '__main__':
     device = 'cuda'
-    # Create the parser
-    # parser = argparse.ArgumentParser(description='Process an integer.')
-    #
-    # # Add an argument for the integer
-    # parser.add_argument('chunk_ind', type=int,
-    #                     help='An integer passed from the command line', default=0)
-    #
-    # # Parse the arguments
-    # args = parser.parse_args()
-    # chunk_ind = args.chunk_ind
-    chunk_ind = 999
+    #Create the parser
+    parser = argparse.ArgumentParser(description='Process an integer.')
 
+    # Add an argument for the integer
+    parser.add_argument('chunk_ind', type=int,
+                        help='An integer passed from the command line', default=0)
+
+    # Parse the arguments
+    args = parser.parse_args()
+    chunk_ind = args.chunk_ind
+    #chunk_ind = 999
+    mode = 'train'
     # initialize
     space_group = 2
-    num_chunks = 1
-    batch_size = 200
-    chunks_path = os.getcwd()  #Path(r'/scratch/mk8347/csd_runs/datasets')
+    batch_size = 100
+    chunks_path = Path(r'/scratch/mk8347/csd_runs/datasets')
 
-    mol_list = torch.load(r'D:/crystal_datasets/test_qm9_dataset.pt')
+    qm9_mols = torch.load(r'D:/crystal_datasets/test_csd_free_qm9_dataset.pt')
+    rng = np.random.RandomState(0)
+    rands = rng.choice(len(qm9_mols), len(qm9_mols), replace=False)
+    bp = int(len(rands) * 0.8)
+
+    train_mol_list = [qm9_mols[ind] for ind in rands[:bp]]
+    test_mol_list = [qm9_mols[ind] for ind in rands[bp:]]
+    if mode == 'train':
+        mol_list = train_mol_list
+        del test_mol_list
+    elif mode == 'test':
+        mol_list = test_mol_list
+        del train_mol_list
+    else: assert False
+
     # select some random molecules
-    rng = np.random.Generator(np.random.PCG64(space_group))
+    rng = np.random.Generator(np.random.PCG64(int(space_group * chunk_ind * 200)))
     mol_inds = rng.choice(len(mol_list), size=batch_size, replace=False)
 
     crystal_batch = collate_data_list([MolCrystalData(
@@ -56,9 +67,9 @@ if __name__ == '__main__':
     chunk_path = os.path.join(chunks_path, f'qm9_sg_{space_group}_chunk_{chunk_ind}.pkl')
 
     crystal_batch.sample_reasonable_random_parameters(
-        target_packing_coeff=0.35,
+        target_packing_coeff=0.5,
         tolerance=5,
-        max_attempts=20,
+        max_attempts=100,
         sample_niggli=True,
     )
 
@@ -77,7 +88,7 @@ if __name__ == '__main__':
     crystal_batch.to('cpu')
     torch.save(crystal_batch.to_data_list(), chunk_path)
 
-    if True:  # visualize
+    if False:  # visualize
         crystal_batch.plot_batch_cell_params()
         import plotly.graph_objects as go
 

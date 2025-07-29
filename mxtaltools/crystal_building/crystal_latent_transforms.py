@@ -79,6 +79,12 @@ class NiggliTransform(nn.Module):
         return al_cos_max, be_cos_max, ga_cos_max
 
     def inverse(self, niggli_params, mol_radii):
+        """
+        Niggli params to cell params
+        :param niggli_params:
+        :param mol_radii:
+        :return:
+        """
         (a_scale, b_scale, c_normed,
          al_scaled, be_scaled, ga_scaled,
          u, v, w,

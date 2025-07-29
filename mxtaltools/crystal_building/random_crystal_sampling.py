@@ -171,7 +171,7 @@ def sample_reduced_box_vectors(num_graphs,
                                asym_unit_dict=None,
                                target_packing_coeff: Optional[float] = None):
     """
-    Sample type-1 (acute) niggli reduced box paramete from a random prior
+    Sample type-1 (acute) niggli reduced box parameter from a random prior
     Currently the main conditions are satisfied, not the symmetry breaking special conditions
     """
     if asym_unit_dict is None:
@@ -183,7 +183,9 @@ def sample_reduced_box_vectors(num_graphs,
     rands = torch.randn((num_graphs, 6), device=mol_radii.device)
 
     a_out, al_out, b_out, be_out, c_out, ga_out = randn_to_niggli_box_vectors(asym_unit_dict,
-                                                                              mol_radii, rands, sg_inds)
+                                                                              mol_radii,
+                                                                              rands,
+                                                                              sg_inds)
     cell_lengths = torch.vstack([a_out, b_out, c_out]).T
     cell_angles = torch.vstack([al_out, be_out, ga_out]).T
 

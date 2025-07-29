@@ -20,7 +20,7 @@ from mxtaltools.analysis.vdw_analysis import vdw_analysis, electrostatic_analysi
 from mxtaltools.common.ellipsoid_ops import featurize_ellipsoid_batch
 from mxtaltools.common.geometry_utils import batch_compute_molecule_volume, \
     compute_mol_radius, batch_compute_mol_radius, batch_compute_mol_mass, compute_mol_mass, center_mol_batch, \
-    apply_rotation_to_batch, enforce_crystal_system, batch_compute_fractional_transform
+    apply_rotation_to_batch, enforce_crystal_system, batch_compute_fractional_transform, batch_cell_vol_torch
 from mxtaltools.common.utils import softplus_shift
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
@@ -623,7 +623,7 @@ class MolCrystalData(MolData):
         self.sample_random_aunit_centroids()
         # enforce agreement with crystal system
         # other cell parameters are valid by explicit construction
-        # todo add crystal system conditions to samplng workflow, rather than cleaning up here
+        # todo add crystal system conditions to sampling workflow, rather than cleaning up here
         self.cell_lengths, self.cell_angles = enforce_crystal_system(
             self.cell_lengths,
             self.cell_angles,
@@ -649,11 +649,14 @@ class MolCrystalData(MolData):
         )
         self.box_analysis()
 
-    def init_latent_transform(self):
+    def init_latent_transform(self, c_log_mean=0.4):
+        if not hasattr(self, 'asym_unit_dict'):
+            self.asym_unit_dict = self.build_asym_unit_dict()
+
         self.latent_transform = CompositeTransform([
             AunitTransform(asym_unit_dict=self.asym_unit_dict),
             NiggliTransform(),
-            StdNormalTransform(),
+            StdNormalTransform(c_log_mean=c_log_mean),  # 1.0,  #0.4, #0.24,),
             # SquashingTransform(min_val=-6,
             #                    max_val=6,
             #                    threshold=5.99,
@@ -667,32 +670,50 @@ class MolCrystalData(MolData):
         if not hasattr(self, 'latent_transform'):
             self.init_latent_transform()
 
-        std_cell_params = self.latent_transform.forward(self.cell_parameters(), self.sg_ind, self.radius).clip(min=-6, max=6)
+        std_cell_params = self.latent_transform.forward(self.cell_parameters(), self.sg_ind, self.radius).clip(min=-6,
+                                                                                                               max=6)
         assert torch.isfinite(std_cell_params).all()
         return std_cell_params
 
     def sample_reduced_box_vectors(self, target_packing_coeff: Optional[float] = None):
-        if not hasattr(self, 'asym_unit_dict'):
-            self.asym_unit_dict = self.build_asym_unit_dict()
 
-        if 'Batch' in self.__class__.__name__:
-            self.cell_lengths, self.cell_angles = sample_reduced_box_vectors(self.num_graphs,
-                                                                             self.radius,
-                                                                             self.mol_volume,
-                                                                             self.sg_ind,
-                                                                             self.sym_mult,
-                                                                             self.asym_unit_dict,
-                                                                             target_packing_coeff=target_packing_coeff
-                                                                             )
-        else:
-            self.cell_lengths, self.cell_angles = sample_reduced_box_vectors(1,
-                                                                             self.radius,
-                                                                             self.mol_volume,
-                                                                             [self.sg_ind],
-                                                                             self.sym_mult,
-                                                                             self.asym_unit_dict,
-                                                                             target_packing_coeff=target_packing_coeff
-                                                                             )
+        if not hasattr(self, 'latent_transform'):
+            self.init_latent_transform()
+
+        # use the latent transform for lengths and angles sampling, as its more stable and better tested
+        # we can still use the old samplers for aunit params
+        temp_params = self.latent_transform.inverse(torch.randn((self.num_graphs, 12), device=self.device),
+                                                    self.sg_ind,
+                                                    self.radius)
+        cell_lengths = temp_params[:, :3]
+        cell_angles = temp_params[:, 3:6]
+
+        if target_packing_coeff is not None:
+            vol1 = batch_cell_vol_torch(cell_lengths, cell_angles)
+            cp1 = self.volume * self.sym_mult / vol1
+            correction_ratio = (cp1 / target_packing_coeff) ** (1 / 3)
+            cell_lengths *= correction_ratio[:, None]
+
+        self.cell_lengths, self.cell_angles = cell_lengths, cell_angles
+
+        # if 'Batch' in self.__class__.__name__:
+        #     self.cell_lengths, self.cell_angles = sample_reduced_box_vectors(self.num_graphs,
+        #                                                                      self.radius,
+        #                                                                      self.mol_volume,
+        #                                                                      self.sg_ind,
+        #                                                                      self.sym_mult,
+        #                                                                      self.asym_unit_dict,
+        #                                                                      target_packing_coeff=target_packing_coeff
+        #                                                                      )
+        # else:
+        #     self.cell_lengths, self.cell_angles = sample_reduced_box_vectors(1,
+        #                                                                      self.radius,
+        #                                                                      self.mol_volume,
+        #                                                                      [self.sg_ind],
+        #                                                                      self.sym_mult,
+        #                                                                      self.asym_unit_dict,
+        #                                                                      target_packing_coeff=target_packing_coeff
+        #                                                                      )
 
     def sample_reasonable_random_parameters(self,
                                             tolerance: float = 1,
@@ -716,6 +737,7 @@ class MolCrystalData(MolData):
                 self.sample_random_reduced_crystal_parameters(target_packing_coeff=target_packing_coeff)
             else:
                 self.sample_random_crystal_parameters(target_packing_coeff, seed=seed)
+
             _, _, scaled_lj = self.build_and_analyze(cutoff=3)
             improved_inds = torch.argwhere(scaled_lj < best_ljs)
             best_ljs[improved_inds] = scaled_lj[improved_inds]
@@ -1260,7 +1282,9 @@ class MolCrystalData(MolData):
         """
         longest_length = self.radius.repeat_interleave(mols_per_cluster).clip(min=0.1)
         padding_scaling_factor = (longest_length + surface_padding) / longest_length
-        min_axis_length = torch.amax(torch.stack([1.5 * padding_scaling_factor, 0.1 * torch.ones_like(padding_scaling_factor)]),dim=0)  # need a finite thickness for flat molecules
+        min_axis_length = torch.amax(
+            torch.stack([1.5 * padding_scaling_factor, 0.1 * torch.ones_like(padding_scaling_factor)]),
+            dim=0)  # need a finite thickness for flat molecules
         sqrt_eigenvalues = torch.sqrt(eigvals_sorted + eps)
         normed_eigs = sqrt_eigenvalues / sqrt_eigenvalues.amax(1, keepdim=True)  # normalize to relative lengths
         # semi axis scale now controls how much of the surface is revealed - for negative values, surface atoms will poke out
@@ -1368,7 +1392,7 @@ class MolCrystalData(MolData):
                                             x_center=torch.pi / 2,
                                             mode=mode)
 
-        if enforce_niggli:
+        if enforce_niggli:  # TODO functionalize this
             # enforce the scaling factor b/c and a/b in the range [0, 1]
             a, b, c = self.cell_lengths.split(1, 1)
             b_scale = enforce_1d_bound((b / c), 0.5, 0.5, mode=mode)

@@ -67,6 +67,7 @@ def standalone_gradient_descent_optimization(
                 crystal_batch.clean_cell_parameters(
                     enforce_niggli=enforce_niggli,
                     mode='hard',
+                    canonicalize_orientations=True,
                 )
                 lj_pot, es_pot, scaled_lj_pot, cluster_batch = crystal_batch.build_and_analyze(return_cluster=True,
                                                                                                cutoff=cutoff)
