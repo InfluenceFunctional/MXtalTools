@@ -111,7 +111,9 @@ class DataManager:
             if '.pkl' in chunk or '.pt' in chunk:
                 try:
                     loaded_chunk = torch.load(chunk)
-                    if loaded_chunk.is_batch:
+                    if isinstance(loaded_chunk, list):
+                        pass
+                    elif loaded_chunk.is_batch:
                         loaded_chunk = loaded_chunk.to_data_list()
                     if subsamples_per_chunk < len(loaded_chunk):
                         samples_to_keep = np.random.choice(len(loaded_chunk), subsamples_per_chunk, replace=False)
