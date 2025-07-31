@@ -485,7 +485,7 @@ def embed_crystal_list(
 
 
 def load_encoder(checkpoint_path):
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
     model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
 
     allowed_types = np.array([1, 6, 7, 8, 9])
