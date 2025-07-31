@@ -1059,6 +1059,19 @@ class MolCrystalData(MolData):
             )
             #assert False, "Radial graph construction not implemented for single crystals"
 
+    def compute_niggli_overlap(self):
+        a, b, c, al, be, ga = self.cell_parameters()[:, :6].split(1, dim=1)
+        ab = a * b
+        ac = a * c
+        bc = b * c
+
+        al_cos = torch.cos(al)
+        be_cos = torch.cos(be)
+        ga_cos = torch.cos(ga)
+
+        return (ab * ga_cos + ac * be_cos + bc * al_cos).flatten()
+
+
     def compute_LJ_energy(self, return_overlaps: Optional[bool] = False):
         vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()), device=self.device)
         if "Batch" in self.__class__.__name__:
