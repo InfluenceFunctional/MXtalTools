@@ -37,6 +37,13 @@ class AunitTransform(nn.Module):
         ], dim=1)
 
 
+def get_max_cos(a, b, c, eps=1e-6):
+    al_cos_max = b / 2 / c.clamp(min=eps)
+    be_cos_max = a / 2 / c.clamp(min=eps)
+    ga_cos_max = a / 2 / b.clamp(min=eps)
+    return al_cos_max, be_cos_max, ga_cos_max
+
+
 class NiggliTransform(nn.Module):
     def __init__(self,
                  ):
@@ -52,31 +59,26 @@ class NiggliTransform(nn.Module):
         c_normed = c / 2 / mol_radii.clip(min=1.0)[:, None]
 
         # rescale a and b
-        a_scale = (a / b)
-        b_scale = (b / c)
+        a_scale = a / b
+        b_scale = b / c
         # get maximum cosine values
-        al_cos_max, be_cos_max, ga_cos_max = self.get_max_cos(a, b, c)
+        al_cos_max, be_cos_max, ga_cos_max = get_max_cos(a, b, c)
 
-        al_cos = torch.cos(al).clip(min=0, max=1)
-        be_cos = torch.cos(be).clip(min=0, max=1)
-        ga_cos = torch.cos(ga).clip(min=0, max=1)
+        # for general cells, angle between -pi/2 and pi/2
+        al_cos = torch.cos(al).clip(min=-1, max=1)
+        be_cos = torch.cos(be).clip(min=-1, max=1)
+        ga_cos = torch.cos(ga).clip(min=-1, max=1)
 
-        # scale actual cosines against their maxima
-        al_scaled = (al_cos / al_cos_max)
-        be_scaled = (be_cos / be_cos_max)
-        ga_scaled = (ga_cos / ga_cos_max)
+        # scale actual cosines against their maxima (positive or negative)
+        al_scaled = al_cos / al_cos_max
+        be_scaled = be_cos / be_cos_max
+        ga_scaled = ga_cos / ga_cos_max
 
         return torch.cat([
             a_scale, b_scale, c_normed,
             al_scaled, be_scaled, ga_scaled,
             u, v, w, x, y, z
         ], dim=1)
-
-    def get_max_cos(self, a, b, c):
-        al_cos_max = (b / 2 / c)
-        be_cos_max = (a / 2 / c)
-        ga_cos_max = (a / 2 / b)
-        return al_cos_max, be_cos_max, ga_cos_max
 
     def inverse(self, niggli_params, mol_radii):
         """
@@ -96,7 +98,7 @@ class NiggliTransform(nn.Module):
         a = a_scale * b
 
         # descale the cosines
-        al_cos_max, be_cos_max, ga_cos_max = self.get_max_cos(a, b, c)
+        al_cos_max, be_cos_max, ga_cos_max = get_max_cos(a, b, c)
 
         al_cos = al_scaled * al_cos_max
         be_cos = be_scaled * be_cos_max
@@ -104,9 +106,9 @@ class NiggliTransform(nn.Module):
 
         # retrieve the angles
         # for acute niggli cells the minimum cos value is 0
-        al = torch.arccos(al_cos.clip(self.eps, 1 - self.eps))
-        be = torch.arccos(be_cos.clip(self.eps, 1 - self.eps))
-        ga = torch.arccos(ga_cos.clip(self.eps, 1 - self.eps))
+        al = torch.arccos(al_cos.clip(-1 + self.eps, 1 - self.eps))
+        be = torch.arccos(be_cos.clip(-1 + self.eps, 1 - self.eps))
+        ga = torch.arccos(ga_cos.clip(-1 + self.eps, 1 - self.eps))
 
         return torch.cat(
             [a, b, c,
@@ -371,9 +373,9 @@ class StdNormalTransform(nn.Module):
             'B': BoundedTransform(0.0, 1.0, slope=length_slope, bias=1.15),
             'C': LogNormalTransform(c_log_mean, c_log_std, exp_min=0.01, exp_max=8),
 
-            'cos_alpha': BoundedTransform(0.0, 1.0, slope=angle_slope),
-            'cos_beta': BoundedTransform(0.0, 1.0, slope=angle_slope),
-            'cos_gamma': BoundedTransform(0.0, 1.0, slope=angle_slope),
+            'cos_alpha': BoundedTransform(-1.0, 1.0, slope=angle_slope),
+            'cos_beta': BoundedTransform(-1.0, 1.0, slope=angle_slope),
+            'cos_gamma': BoundedTransform(-1.0, 1.0, slope=angle_slope),
 
             'centroid_u': ProbitTransform(),
             'centroid_v': ProbitTransform(),
@@ -1182,3 +1184,55 @@ class CompositeTransform(nn.Module):
 # #
 # # # To compute log determinant for inverse transform
 # # log_det_inverse = latent_transform.log_abs_det_jacobian(x, sg_inds, mol_radii, forward=False)
+
+
+def enforce_niggli_plane(cell_lengths, cell_angles, mode, eps=1e-6):
+    """
+    enforces the condition
+    ab * ga_cos + ac * be_cos + bc * al_cos >= 0
+    'mirror' mode is for random samples, and symmetrically puts them on the correct side of the plane
+    'shift' mode shifts offending samples to the nearest boundary of the good plane
+
+    """
+    a, b, c = cell_lengths.split(1, dim=1)
+    al, be, ga = cell_angles.split(1, dim=1)
+
+    ab, ac, al_cos, bc, be_cos, ga_cos, overlap = compute_niggli_overlap(a, al, b, be, c, ga)
+
+    if mode == 'mirror':
+        # Symmetric reflection for bad samples
+        bad_inds = torch.argwhere(overlap.flatten() < 0).flatten()
+        al[bad_inds] = torch.pi - al[bad_inds]
+        be[bad_inds] = torch.pi - be[bad_inds]
+        ga[bad_inds] = torch.pi - ga[bad_inds]
+
+    elif mode == 'shift':
+        # Soft fix via cosine shift (approximate projection)
+        denom = ab + ac + bc + eps
+        shift = (-overlap + eps) / denom
+        shift = torch.where(overlap < -eps, shift, torch.zeros_like(shift))
+
+        al_cos = al_cos + shift * (bc / denom)
+        be_cos = be_cos + shift * (ac / denom)
+        ga_cos = ga_cos + shift * (ab / denom)
+
+        # Convert back to angles
+        al = torch.arccos(al_cos.clip(-1 + eps, 1 - eps))
+        be = torch.arccos(be_cos.clip(-1 + eps, 1 - eps))
+        ga = torch.arccos(ga_cos.clip(-1 + eps, 1 - eps))
+
+    else:
+        raise ValueError(f"Unknown mode '{mode}': use 'mirror' or 'shift'")
+
+    return torch.cat([al, be, ga], dim=1)
+
+
+def compute_niggli_overlap(a, al, b, be, c, ga):
+    ab = a * b
+    ac = a * c
+    bc = b * c
+    al_cos = torch.cos(al)
+    be_cos = torch.cos(be)
+    ga_cos = torch.cos(ga)
+    overlap = ab * ga_cos + ac * be_cos + bc * al_cos
+    return ab, ac, al_cos, bc, be_cos, ga_cos, overlap

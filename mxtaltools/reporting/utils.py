@@ -35,7 +35,10 @@ def lightweight_one_sided_violin(data, n_points=100, bandwidth_factor=1.0, data_
         return np.array([]), np.array([])
 
     # Create KDE
-    kde = gaussian_kde(data, bw_method=bandwidth_factor)
+    try:
+        kde = gaussian_kde(data, bw_method=bandwidth_factor)
+    except:
+        kde = gaussian_kde(data + np.random.randn(len(data))*0.01, bw_method=bandwidth_factor)
 
     # Create evaluation points
     if data_min is not None:

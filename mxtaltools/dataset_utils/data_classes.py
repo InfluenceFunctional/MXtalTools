@@ -26,9 +26,9 @@ from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
 from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE
 from mxtaltools.crystal_building.crystal_latent_transforms import CompositeTransform, AunitTransform, NiggliTransform, \
-    StdNormalTransform
+    StdNormalTransform, enforce_niggli_plane
 from mxtaltools.crystal_building.random_crystal_sampling import sample_aunit_lengths, sample_cell_angles, \
-    sample_aunit_orientations, sample_aunit_centroids, sample_reduced_box_vectors
+    sample_aunit_orientations, sample_aunit_centroids
 from mxtaltools.crystal_building.utils import get_aunit_positions, aunit2unit_cell, parameterize_crystal_batch, \
     unit_cell_to_supercell_cluster, align_mol_batch_to_standard_axes, canonicalize_rotvec
 from mxtaltools.crystal_search.standalone_crystal_opt import standalone_gradient_descent_optimization
@@ -617,7 +617,7 @@ class MolCrystalData(MolData):
         """
         if seed is not None:
             torch.manual_seed(seed)
-
+        assert self.is_batch, "Random crystal parameters not setup for single crystals"
         self.sample_reduced_box_vectors(target_packing_coeff=target_packing_coeff)
         self.sample_random_aunit_orientations()
         self.sample_random_aunit_centroids()
@@ -693,6 +693,8 @@ class MolCrystalData(MolData):
             cp1 = self.volume * self.sym_mult / vol1
             correction_ratio = (cp1 / target_packing_coeff) ** (1 / 3)
             cell_lengths *= correction_ratio[:, None]
+
+        cell_angles = enforce_niggli_plane(cell_lengths, cell_angles, mode='mirror')
 
         self.cell_lengths, self.cell_angles = cell_lengths, cell_angles
 
@@ -1409,19 +1411,17 @@ class MolCrystalData(MolData):
             al_cos_max = (b / 2 / c)
             be_cos_max = (a / 2 / c)
             ga_cos_max = (a / 2 / b)
-            al_cos_scale = enforce_1d_bound(al_cos / al_cos_max, 0.5, 0.5, mode=mode)
-            be_cos_scale = enforce_1d_bound(be_cos / be_cos_max, 0.5, 0.5, mode=mode)
-            ga_cos_scale = enforce_1d_bound(ga_cos / ga_cos_max, 0.5, 0.5, mode=mode)
-            al = torch.arccos(
-                al_cos_max * al_cos_scale.clip(min=0.01, max=0.99))  # limit it here due to instability in arccos
-            be = torch.arccos(be_cos_max * be_cos_scale.clip(min=0.01, max=0.99))
-            ga = torch.arccos(ga_cos_max * ga_cos_scale.clip(min=0.01, max=0.99))
-            self.cell_angles = torch.cat([
-                al, be, ga],
-                dim=1)
+            # now improved - including obtuse cells
+            al_cos_scale = enforce_1d_bound(al_cos / al_cos_max, 1.0, 0.0, mode=mode)
+            be_cos_scale = enforce_1d_bound(be_cos / be_cos_max, 1.0, 0.0, mode=mode)
+            ga_cos_scale = enforce_1d_bound(ga_cos / ga_cos_max, 1.0, 0.0, mode=mode)
+            # limit it here due to instability in arccos
+            al = torch.arccos(al_cos_max * al_cos_scale.clip(min=-0.99, max=0.99))
+            be = torch.arccos(be_cos_max * be_cos_scale.clip(min=-0.99, max=0.99))
+            ga = torch.arccos(ga_cos_max * ga_cos_scale.clip(min=-0.99, max=0.99))
 
-            # if True:  # test
-            #     assert torch.all((torch.zeros_like(self.cell_angles) <= self.cell_angles) * (self.cell_angles.cos() <= self.niggli_angle_limits()))
+            cell_angles = torch.cat([al, be, ga],dim=1)
+            self.cell_angles = enforce_niggli_plane(self.cell_lengths, cell_angles, mode='shift')  # to check this behavior
 
         # positions must be on 0-1 in the asymmetric unit
         aunit_scaled_pos = self.scale_centroid_to_aunit()

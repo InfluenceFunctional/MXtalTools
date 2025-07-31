@@ -109,9 +109,9 @@ def simple_cell_hist(sample_batch, reference_dist=None, n_kde_points=200, bw_rat
             0: [0, float(np.max(samples[:, 0]) * 1.1)],
             1: [0, float(np.max(samples[:, 1]) * 1.1)],
             2: [0, float(np.max(samples[:, 2]) * 1.1)],
-            3: [1, np.pi / 2],  # for cell_alpha
-            4: [1, np.pi / 2],  # for cell_beta
-            5: [1, np.pi / 2],  # for cell_gamma
+            3: [1, 2],  # for cell_alpha
+            4: [1, 2],  # for cell_beta
+            5: [1, 2],  # for cell_gamma
             6: [0, 1],  # for aunit_x
             7: [0, 1],  # for aunit_y
             8: [0, 1],  # for aunit_z
