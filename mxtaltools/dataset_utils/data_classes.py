@@ -690,7 +690,7 @@ class MolCrystalData(MolData):
 
         if target_packing_coeff is not None:
             vol1 = batch_cell_vol_torch(cell_lengths, cell_angles)
-            cp1 = self.volume * self.sym_mult / vol1
+            cp1 = self.mol_volume * self.sym_mult / vol1
             correction_ratio = (cp1 / target_packing_coeff) ** (1 / 3)
             cell_lengths *= correction_ratio[:, None]
 

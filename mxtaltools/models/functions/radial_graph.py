@@ -178,7 +178,8 @@ def build_radial_graph(pos: torch.FloatTensor,
                        cutoff: float,
                        max_num_neighbors: int,
                        aux_ind: torch.LongTensor=None,
-                       mol_ind: torch.LongTensor=None):
+                       mol_ind: torch.LongTensor=None,  # TODO MK what's going on with this variable
+                       ):
     r"""
     Construct edge indices over a radial graph.
     Optionally, compute intra (within ref_mol_inds) and inter (between ref_mol_inds and outside inds) edges.
