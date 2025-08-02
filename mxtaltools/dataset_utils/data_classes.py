@@ -649,14 +649,17 @@ class MolCrystalData(MolData):
         )
         self.box_analysis()
 
-    def init_latent_transform(self, c_log_mean=0.4):
+    def init_latent_transform(self,
+                              c_log_mean=0.3,
+                              c_log_std=0.25):
         if not hasattr(self, 'asym_unit_dict'):
             self.asym_unit_dict = self.build_asym_unit_dict()
 
         self.latent_transform = CompositeTransform([
             AunitTransform(asym_unit_dict=self.asym_unit_dict),
             NiggliTransform(),
-            StdNormalTransform(c_log_mean=c_log_mean),  # 1.0,  #0.4, #0.24,),
+            StdNormalTransform(c_log_mean=c_log_mean,
+                               c_log_std=c_log_std),
             # SquashingTransform(min_val=-6,
             #                    max_val=6,
             #                    threshold=5.99,
@@ -1071,7 +1074,6 @@ class MolCrystalData(MolData):
 
         return (ab * ga_cos + ac * be_cos + bc * al_cos).flatten()
 
-
     def compute_LJ_energy(self, return_overlaps: Optional[bool] = False):
         vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()), device=self.device)
         if "Batch" in self.__class__.__name__:
@@ -1433,8 +1435,9 @@ class MolCrystalData(MolData):
             be = torch.arccos(be_cos_max * be_cos_scale.clip(min=-0.99, max=0.99))
             ga = torch.arccos(ga_cos_max * ga_cos_scale.clip(min=-0.99, max=0.99))
 
-            cell_angles = torch.cat([al, be, ga],dim=1)
-            self.cell_angles = enforce_niggli_plane(self.cell_lengths, cell_angles, mode='shift')  # to check this behavior
+            cell_angles = torch.cat([al, be, ga], dim=1)
+            self.cell_angles = enforce_niggli_plane(self.cell_lengths, cell_angles,
+                                                    mode='shift')  # to check this behavior
 
         # positions must be on 0-1 in the asymmetric unit
         aunit_scaled_pos = self.scale_centroid_to_aunit()
