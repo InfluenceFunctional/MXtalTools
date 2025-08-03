@@ -17,17 +17,17 @@ def collate_data_list(data_list, exclude_unit_cell: bool = True):
         all_keys.update(data.keys())
 
     # Optionally exclude known keys
-    exclude_keys = {'edges_dict'}
+    exclude_keys = ['edges_dict',
+                    'niggli_energy',
+                    'core_energy',
+                    'density_energy',
+                    'lj_energy',
+                    'bounding_energy',
+                    ]
     if exclude_unit_cell:
-        exclude_keys.add('unit_cell_pos')
+        exclude_keys.append('unit_cell_pos')
 
-    all_keys -= exclude_keys
 
-    # Add missing keys to each Data object as None
-    for data in data_list:
-        for key in all_keys:
-            if key not in data:
-                data[key] = None  # or dummy torch.tensor([]) if needed
 
     return Batch.from_data_list(data_list,
                                 exclude_keys=list(exclude_keys),
