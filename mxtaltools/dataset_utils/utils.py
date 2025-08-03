@@ -11,12 +11,26 @@ from torch_geometric.loader.dataloader import DataLoader
 def collate_data_list(data_list, exclude_unit_cell: bool = True):
     if not isinstance(data_list, list):
         data_list = [data_list]
-    exclude_keys = ['edges_dict']
 
+    all_keys = set()
+    for data in data_list:
+        all_keys.update(data.keys())
+
+    # Optionally exclude known keys
+    exclude_keys = {'edges_dict'}
     if exclude_unit_cell:
-        exclude_keys.append('unit_cell_pos')
+        exclude_keys.add('unit_cell_pos')
+
+    all_keys -= exclude_keys
+
+    # Add missing keys to each Data object as None
+    for data in data_list:
+        for key in all_keys:
+            if key not in data:
+                data[key] = None  # or dummy torch.tensor([]) if needed
+
     return Batch.from_data_list(data_list,
-                                exclude_keys=exclude_keys,
+                                exclude_keys=list(exclude_keys),
                                 )
 
 
