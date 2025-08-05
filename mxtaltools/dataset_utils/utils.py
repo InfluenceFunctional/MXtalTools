@@ -27,8 +27,6 @@ def collate_data_list(data_list, exclude_unit_cell: bool = True):
     if exclude_unit_cell:
         exclude_keys.append('unit_cell_pos')
 
-
-
     return Batch.from_data_list(data_list,
                                 exclude_keys=list(exclude_keys),
                                 )
