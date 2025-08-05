@@ -28,24 +28,21 @@ if __name__ == '__main__':
     # initialize
     space_group = 2
     batch_size = 10
+    num_test_mols = 20  # should be >= batch size
     #chunks_path = os.getcwd()
     chunks_path = Path(r'/scratch/mk8347/csd_runs/datasets/qm9_crystals/')
-
-    #qm9_mols = torch.load(r'D:/crystal_datasets/test_csd_free_qm9_dataset.pt', weights_only=False)
-    qm9_mols = torch.load(r'/scratch/mk8347/csd_runs/datasets/test_csd_free_qm9_dataset.pt', weights_only=False)
-
+    # qm9_mols = torch.load(r'D:/crystal_datasets/test_csd_free_qm9_dataset.pt', weights_only=False)
+    qm9_mols = torch.load(r'/scratch/mk8347/csd_runs/datasets/csd_free_qm9_dataset.pt', weights_only=False)
     rng = np.random.RandomState(0)
     rands = rng.choice(len(qm9_mols), len(qm9_mols), replace=False)
     bp = int(len(rands) * 0.8)
 
-    train_mol_list = [qm9_mols[ind] for ind in rands[:bp]]
-    test_mol_list = [qm9_mols[ind] for ind in rands[bp:]]
     if mode == 'train':
-        mol_list = train_mol_list
-        del test_mol_list
+        mol_list = [qm9_mols[ind] for ind in rands[:bp]]
+
     elif mode == 'test':
-        mol_list = test_mol_list
-        del train_mol_list
+        mol_list = [qm9_mols[ind] for ind in rands[:bp]][:num_test_mols]
+
     else:
         assert False
 
