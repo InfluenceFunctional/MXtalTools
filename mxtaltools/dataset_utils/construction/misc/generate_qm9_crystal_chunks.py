@@ -12,7 +12,7 @@ Alternate version of this script, for generating just structures of urea
 """
 
 if __name__ == '__main__':
-    device = 'cuda'
+    device = 'cpu'
     #Create the parser
     parser = argparse.ArgumentParser(description='Process an integer.')
 
