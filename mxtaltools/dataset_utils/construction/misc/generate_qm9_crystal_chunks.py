@@ -28,7 +28,7 @@ if __name__ == '__main__':
     # mode = 'train'
     # initialize
     space_group = 2
-    batch_size = 10
+    batch_size = 100
     num_test_mols = 20  # should be >= batch size
     #chunks_path = os.getcwd()
     chunks_path = Path(r'/scratch/mk8347/csd_runs/datasets/qm9_crystals/')
@@ -84,6 +84,7 @@ if __name__ == '__main__':
             do_box_restriction=True,
             enforce_niggli=True,
             cutoff=6,
+
         ))
     crystal_batch = collate_data_list(opt1_trajectory[-1]).to(device)
     crystal_batch.box_analysis()
