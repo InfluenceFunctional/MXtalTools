@@ -1637,7 +1637,7 @@ class MolCrystalData(MolData):
                             'orientation_1', 'orientation_2', 'orientation_2']
         if space == 'real':
             samples = self.cell_parameters()
-        elif space == 'gen':
+        elif space == 'latent':
             samples = self.cell_params_to_gen_basis()
         elif space == 'standard':
             samples = self.standardize_cell_parameters()
@@ -1659,7 +1659,7 @@ class MolCrystalData(MolData):
 
         fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
         fig.update_traces(opacity=0.5)
-        fig.show()
+        fig.show(renderer='browser')
 
     def set_cell_parameters(self,
                             cell_parameters,
