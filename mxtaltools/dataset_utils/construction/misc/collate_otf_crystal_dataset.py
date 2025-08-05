@@ -10,7 +10,7 @@ if __name__ == '__main__':
     # new_dataset_name = f'pd_dataset_sg{space_group}'
     # chunks_path = Path(r'/scratch/mk8347/csd_runs/datasets')
     #new_dataset_name = f'pd_dataset_sg{space_group}_test'
-    new_dataset_name = 'train_qm9_sg2_dataset'
+    new_dataset_name = 'qm9_sg2_dataset'
     chunks_path = Path('/scratch/mk8347/csd_runs/datasets/qm9_crystals/')
     os.chdir(chunks_path)
 
@@ -24,6 +24,6 @@ if __name__ == '__main__':
                         dataset_type='crystal',
                         do_crystal_indexing=False)
     miner.process_new_dataset(new_dataset_name=new_dataset_name,
-                              chunks_patterns=['qm9_sg_2'],
+                              chunks_patterns=['train_qm9_sg_2'],
                               build_stats=False)
-    print(f"finished processing datast with {len(miner.dataset)} samples")
+    print(f"finished processing dataset with {len(miner.dataset)} samples")
