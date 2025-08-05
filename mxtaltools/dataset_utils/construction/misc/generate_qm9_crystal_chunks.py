@@ -19,12 +19,13 @@ if __name__ == '__main__':
     # Add an argument for the integer
     parser.add_argument('chunk_ind', type=int,
                         help='An integer passed from the command line', default=0)
-
+    parser.add_argument('mode', type=str, default='train')
     # Parse the arguments
     args = parser.parse_args()
     chunk_ind = args.chunk_ind
-    #chunk_ind = 999
-    mode = 'train'
+    mode = args.mode
+    # chunk_ind = 999
+    # mode = 'train'
     # initialize
     space_group = 2
     batch_size = 10
