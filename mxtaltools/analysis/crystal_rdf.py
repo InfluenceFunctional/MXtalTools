@@ -187,7 +187,7 @@ def crystal_rdf(crystal_batch,
                                         inside_inds=in_inds,
                                         convolve_inds=out_inds,
                                         r=max(rrange),
-                                        max_num_neighbors=500,
+                                        max_num_neighbors=100,
                                         flow='source_to_target')
 
     # track which edges go with which crystals
@@ -202,9 +202,13 @@ def crystal_rdf(crystal_batch,
     efficiently gather the relevant distances
     '''
     if elementwise:
-        dists_per_hist, sorted_dists, rdfs_dict = get_elementwise_dists(crystal_batch.z, edges, dists, device,
+        dists_per_hist, sorted_dists, rdfs_dict = get_elementwise_dists(crystal_batch.z,
+                                                                        edges,
+                                                                        dists,
+                                                                        device,
                                                                         num_graphs,
-                                                                        edge_in_crystal_number, atomic_numbers_override)
+                                                                        edge_in_crystal_number,
+                                                                        atomic_numbers_override)
         num_pairs = len(rdfs_dict.keys())
         batch = torch.arange(len(dists_per_hist), device=device).repeat_interleave(dists_per_hist, dim=0)
         hist, bin_edges = batch_histogram_1d(sorted_dists, batch, num_graphs * num_pairs, rrange=rrange, nbins=bins)

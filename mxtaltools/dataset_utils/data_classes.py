@@ -20,7 +20,8 @@ from mxtaltools.analysis.vdw_analysis import vdw_analysis, electrostatic_analysi
 from mxtaltools.common.ellipsoid_ops import featurize_ellipsoid_batch
 from mxtaltools.common.geometry_utils import batch_compute_molecule_volume, \
     compute_mol_radius, batch_compute_mol_radius, batch_compute_mol_mass, compute_mol_mass, center_mol_batch, \
-    apply_rotation_to_batch, enforce_crystal_system, batch_compute_fractional_transform, batch_cell_vol_torch
+    apply_rotation_to_batch, enforce_crystal_system, batch_compute_fractional_transform, batch_cell_vol_torch, \
+    rotvec2rotmat, rotmat2rotvec
 from mxtaltools.common.utils import softplus_shift
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
@@ -357,9 +358,11 @@ class MolData(MXtalBase):  # todo add method for batch_molecule_compute_principa
     def orient_molecule(self, mode: str,
                         include_inversion: bool = True,
                         target_handedness: Optional[torch.LongTensor] = None,
+                        correct_orientation: bool = False,
                         ):
         if 'Batch' in self.__class__.__name__:
             # always center the molecules
+            if correct_orientation: assert mode == 'random', "Orientation correction only implemented for random rotations"
             self.recenter_molecules()
             if mode == 'standardized':
                 mol_batch = align_mol_batch_to_standard_axes(self, handedness=target_handedness)
@@ -369,6 +372,7 @@ class MolData(MXtalBase):  # todo add method for batch_molecule_compute_principa
                     Rotation.random(num=self.num_graphs).as_matrix(),
                     device=self.device, dtype=torch.float32)
                 if include_inversion:
+                    assert not correct_orientation, "Cannot reconstruct rotations through inversion."
                     invert_inds = torch.randint(2, (self.num_graphs,)) * 2 - 1
                     random_rotations *= invert_inds[:, None, None]
 
@@ -376,6 +380,16 @@ class MolData(MXtalBase):  # todo add method for batch_molecule_compute_principa
                     self.pos,
                     random_rotations,
                     self.batch)
+                if correct_orientation:
+                    # adjust aunit_orientation such that the final orientation is unchanged
+                    # new combined rotation should undo the random rotation, then apply the aunit_orientation
+                    invert_random_rotation = torch.linalg.inv(random_rotations)
+                    new_orientation_matrix = rotvec2rotmat(self.aunit_orientation) @ invert_random_rotation
+                    new_rotvec = rotmat2rotvec(new_orientation_matrix)
+                    new_rotvec_fixed = canonicalize_rotvec(new_rotvec)
+                    self.aunit_orientation = new_rotvec_fixed
+                    # correction is successful when this is small
+                    # (rotvec2rotmat(new_rotvec_fixed) @ random_rotations - rotvec2rotmat(self.aunit_orientation)).abs().sum()
             else:
                 pass
 
@@ -1401,7 +1415,7 @@ class MolCrystalData(MolData):
             self.cell_lengths = self.cell_lengths.clip(min=length_pad)
         elif mode == 'soft':
             self.cell_lengths = softplus_shift(
-                self.cell_lengths - length_pad) + length_pad  # enforces a minimum value of 3
+                self.cell_lengths - length_pad) + length_pad  # enforces a minimum value of length_pad
 
         # range from (0,pi) with padding to prevent too-skinny cells
         self.cell_angles = enforce_1d_bound(self.cell_angles,
@@ -1436,8 +1450,9 @@ class MolCrystalData(MolData):
             ga = torch.arccos(ga_cos_max * ga_cos_scale.clip(min=-0.99, max=0.99))
 
             cell_angles = torch.cat([al, be, ga], dim=1)
-            self.cell_angles = enforce_niggli_plane(self.cell_lengths, cell_angles,
-                                                    mode='shift')  # to check this behavior
+            self.cell_angles = enforce_niggli_plane(self.cell_lengths,
+                                                    cell_angles,
+                                                    mode='shift')
 
         # positions must be on 0-1 in the asymmetric unit
         aunit_scaled_pos = self.scale_centroid_to_aunit()

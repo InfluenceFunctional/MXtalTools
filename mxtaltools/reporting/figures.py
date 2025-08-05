@@ -135,6 +135,7 @@ def simple_cell_hist(sample_batch, reference_dist=None, n_kde_points=200, bw_rat
     else:
         good_samples = None
 
+    kld_values = []
     lattice_features = ['cell_a', 'cell_b', 'cell_c',
                         'cell_alpha', 'cell_beta', 'cell_gamma',
                         'aunit_x', 'aunit_y', 'aunit_z',
@@ -148,6 +149,12 @@ def simple_cell_hist(sample_batch, reference_dist=None, n_kde_points=200, bw_rat
         row = i // 3 + 1
         col = i % 3 + 1
         bw = 1.0 / bw_ratio  # float(np.ptp(samples[:, i]) / bw_ratio)
+        # Main samples
+        x_samp, y_samp = lightweight_one_sided_violin(samples[:, i],
+                                                      n_kde_points,
+                                                      bandwidth_factor=bw,
+                                                      data_min=custom_ranges[i][0],
+                                                      data_max=custom_ranges[i][1])
         # Reference distribution
         if reference_dist is not None:
             x_ref, y_ref = lightweight_one_sided_violin(reference_dist[:, i],
@@ -155,35 +162,33 @@ def simple_cell_hist(sample_batch, reference_dist=None, n_kde_points=200, bw_rat
                                                         bandwidth_factor=bw,
                                                         data_min=custom_ranges[i][0],
                                                         data_max=custom_ranges[i][1])
-            if len(x_ref) > 0:
+            if len(x_ref) > 0 and len(x_samp) > 0:
                 fig.add_trace(go.Scatter(
                     x=x_ref,
                     y=y_ref,
                     mode='lines',
-                    fill='toself',#'tonexty' if i == 0 else 'tonexty',  # Fill to next y (which is 0)
+                    fill='toself',  #'tonexty' if i == 0 else 'tonexty',  # Fill to next y (which is 0)
                     fillcolor='rgba(0, 0, 255, 0.3)',  # Semi-transparent blue
                     line=dict(color=colors[1], width=1),
                     name='Reference',
                     legendgroup='Reference',
                     showlegend=True if i == 0 else False,
                 ), row=row, col=col)
+                # Interpolate to common x-grid
+                x_common = np.linspace(*custom_ranges[i], n_kde_points)
+                y_ref_interp = np.interp(x_common, x_ref, y_ref, left=0, right=0)
+                y_samp_interp = np.interp(x_common, x_samp, y_samp, left=0, right=0)
 
-                # # Add zero line for reference to fill against
-                # fig.add_trace(go.Scatter(
-                #     x=x_ref,
-                #     y=np.zeros_like(x_ref),
-                #     mode='lines',
-                #     line=dict(color='rgba(0,0,0,0)', width=0),
-                #     showlegend=False,
-                #     hoverinfo='skip'
-                # ), row=row, col=col)
+                # Normalize
+                dx = x_common[1] - x_common[0]
+                P = y_ref_interp / (np.sum(y_ref_interp) * dx + 1e-12)
+                Q = y_samp_interp / (np.sum(y_samp_interp) * dx + 1e-12)
 
-        # Main samples
-        x_samp, y_samp = lightweight_one_sided_violin(samples[:, i],
-                                                      n_kde_points,
-                                                      bandwidth_factor=bw,
-                                                      data_min=custom_ranges[i][0],
-                                                      data_max=custom_ranges[i][1])
+                # Compute KLD (P || Q)
+                epsilon = 1e-8
+                kl = np.sum(P * np.log((P + epsilon) / (Q + epsilon))) * dx
+                kld_values.append(kl)
+
         if len(x_samp) > 0:
             fig.add_trace(go.Scatter(
                 x=x_samp,
@@ -196,16 +201,6 @@ def simple_cell_hist(sample_batch, reference_dist=None, n_kde_points=200, bw_rat
                 legendgroup='Samples',
                 showlegend=True if i == 0 else False,
             ), row=row, col=col)
-
-            # # Zero line for samples
-            # fig.add_trace(go.Scatter(
-            #     x=x_samp,
-            #     y=np.zeros_like(x_samp),
-            #     mode='lines',
-            #     line=dict(color='rgba(0,0,0,0)', width=0),
-            #     showlegend=False,
-            #     hoverinfo='skip'
-            # ), row=row, col=col)
 
         # Top 10% samples
         if good_samples is not None:
@@ -226,16 +221,6 @@ def simple_cell_hist(sample_batch, reference_dist=None, n_kde_points=200, bw_rat
                     legendgroup='Top 10%',
                     showlegend=True if i == 0 else False,
                 ), row=row, col=col)
-                #
-                # # Zero line for good samples
-                # fig.add_trace(go.Scatter(
-                #     x=x_good,
-                #     y=np.zeros_like(x_good),
-                #     mode='lines',
-                #     line=dict(color='rgba(0,0,0,0)', width=0),
-                #     showlegend=False,
-                #     hoverinfo='skip'
-                # ), row=row, col=col)
 
     for i in range(n_crystal_features):
         row = i // 3 + 1
@@ -255,7 +240,7 @@ def simple_cell_hist(sample_batch, reference_dist=None, n_kde_points=200, bw_rat
         ),
         margin=dict(l=50, r=50, t=50, b=50)
     )
-    return fig
+    return fig, np.array(kld_values)
 
 
 def simple_latent_hist(sample_batch, samples=None, reference_dist=None):

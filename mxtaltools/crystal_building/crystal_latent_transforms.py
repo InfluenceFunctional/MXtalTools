@@ -1198,31 +1198,31 @@ def enforce_niggli_plane(cell_lengths, cell_angles, mode, eps=1e-6):
     al, be, ga = cell_angles.split(1, dim=1)
 
     ab, ac, al_cos, bc, be_cos, ga_cos, overlap = compute_niggli_overlap(a, al, b, be, c, ga)
+    if torch.any(overlap < 0):
+        if mode == 'mirror':
+            # Symmetric reflection for bad samples
+            bad_inds = torch.argwhere(overlap.flatten() < 0).flatten()
+            al[bad_inds] = torch.pi - al[bad_inds]
+            be[bad_inds] = torch.pi - be[bad_inds]
+            ga[bad_inds] = torch.pi - ga[bad_inds]
 
-    if mode == 'mirror':
-        # Symmetric reflection for bad samples
-        bad_inds = torch.argwhere(overlap.flatten() < 0).flatten()
-        al[bad_inds] = torch.pi - al[bad_inds]
-        be[bad_inds] = torch.pi - be[bad_inds]
-        ga[bad_inds] = torch.pi - ga[bad_inds]
+        elif mode == 'shift':
+            # Soft fix via cosine shift (approximate projection)
+            denom = ab + ac + bc + eps
+            shift = (-overlap + eps) / denom
+            shift = torch.where(overlap < -eps, shift, torch.zeros_like(shift))
 
-    elif mode == 'shift':
-        # Soft fix via cosine shift (approximate projection)
-        denom = ab + ac + bc + eps
-        shift = (-overlap + eps) / denom
-        shift = torch.where(overlap < -eps, shift, torch.zeros_like(shift))
+            al_cos = al_cos + shift * (bc / denom)
+            be_cos = be_cos + shift * (ac / denom)
+            ga_cos = ga_cos + shift * (ab / denom)
 
-        al_cos = al_cos + shift * (bc / denom)
-        be_cos = be_cos + shift * (ac / denom)
-        ga_cos = ga_cos + shift * (ab / denom)
+            # Convert back to angles
+            al = torch.arccos(al_cos.clip(-1 + eps, 1 - eps))
+            be = torch.arccos(be_cos.clip(-1 + eps, 1 - eps))
+            ga = torch.arccos(ga_cos.clip(-1 + eps, 1 - eps))
 
-        # Convert back to angles
-        al = torch.arccos(al_cos.clip(-1 + eps, 1 - eps))
-        be = torch.arccos(be_cos.clip(-1 + eps, 1 - eps))
-        ga = torch.arccos(ga_cos.clip(-1 + eps, 1 - eps))
-
-    else:
-        raise ValueError(f"Unknown mode '{mode}': use 'mirror' or 'shift'")
+        else:
+            raise ValueError(f"Unknown mode '{mode}': use 'mirror' or 'shift'")
 
     return torch.cat([al, be, ga], dim=1)
 

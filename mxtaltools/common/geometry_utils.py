@@ -237,7 +237,8 @@ def batch_molecule_principal_axes_torch(coords_i: torch.FloatTensor,
     direction = batch_get_furthest_node_vector(coords, batch, num_graphs)
     normed_direction = direction / torch.linalg.norm(direction, dim=1)[:, None]
     overlaps, signs = get_overlaps(Ip, normed_direction)
-    Ip_fin = correct_Ip_directions(Ip, overlaps, signs)  # fails for mirror planes, on top of symmetric and spherical tops
+    Ip_fin = correct_Ip_directions(Ip, overlaps,
+                                   signs)  # fails for mirror planes, on top of symmetric and spherical tops
 
     return Ip_fin, Ipm_fin, I
 
@@ -345,7 +346,9 @@ def nan_hook(name, tensor_ref, batch):
             print(f"Batch: {batch}")
             assert False, "Stop the code!!"
         return torch.nan_to_num(grad)
+
     return _hook
+
 
 def scatter_compute_Ip(all_coords, batch,
                        eps: float = 0.05,
@@ -614,6 +617,7 @@ def cell_vol_torch(v: torch.tensor, a: torch.tensor):
 
     return vol
 
+
 def batch_cell_vol_torch(v: torch.tensor, a: torch.tensor):
     """
     compute the volume of a parallelpiped given basis vector lengths and internal angles
@@ -634,7 +638,9 @@ def batch_cell_vol_torch(v: torch.tensor, a: torch.tensor):
 
     ''' Calculate volume of the unit cell '''
     vol = v[:, 0] * v[:, 1] * v[:, 2] * torch.sqrt(
-        torch.abs(1.0 - cos_a[:, 0] ** 2 - cos_a[:, 1] ** 2 - cos_a[:, 2] ** 2 + 2.0 * cos_a[:, 0] * cos_a[:, 1] * cos_a[:, 2]))
+        torch.abs(
+            1.0 - cos_a[:, 0] ** 2 - cos_a[:, 1] ** 2 - cos_a[:, 2] ** 2 + 2.0 * cos_a[:, 0] * cos_a[:, 1] * cos_a[:,
+                                                                                                             2]))
 
     return vol
 
@@ -1363,13 +1369,51 @@ def apply_rotation_to_batch(elems, rotations, batch):
     return torch.einsum('nij, nj -> ni', rotations[batch], elems)
 
 
-def rotmat2rotvec(rotation_matrix_list):
+def rotmat2rotvec(rotation_matrix_list, warn_on_bad_determinant=True):
+    # Fixed!
+    if warn_on_bad_determinant:
+        det = torch.linalg.det(rotation_matrix_list)
+        bad_dets = det < 0.0
+        if bad_dets.any():
+            num_bad = bad_dets.sum().item()
+            print(f"[rotmat2rotvec] WARNING: {num_bad} matrices have determinant < 0. "
+                  "These are reflections (not in SO(3)) and cannot be converted to rotation vectors.")
+
     direction_vector_list = torch.stack([
         rotation_matrix_list[:, 2, 1] - rotation_matrix_list[:, 1, 2],
         rotation_matrix_list[:, 0, 2] - rotation_matrix_list[:, 2, 0],
         rotation_matrix_list[:, 1, 0] - rotation_matrix_list[:, 0, 1]],
     ).T
-    return direction_vector_list
+    trace = torch.einsum('nii->n', rotation_matrix_list)
+    r_arg = (trace - 1) / 2
+    r = torch.arccos(r_arg)
+
+    bad_inds = torch.any(torch.stack([r_arg.abs() >= 1,
+                                      torch.isnan(r),
+                                      direction_vector_list.sum(1) == 0,
+                                      torch.isnan(direction_vector_list).sum(dim=1) > 0]
+                                     ).T,
+                         dim=1)
+
+    direction_vector_list[bad_inds, :] = torch.ones_like(direction_vector_list[bad_inds, :])
+    r[bad_inds] = torch.pi
+
+    rotvecs = direction_vector_list / (direction_vector_list.norm(dim=1, keepdim=True).clamp(min=1e-8)) * r[:, None]
+    return rotvecs
+
+
+"""
+old version
+
+
+        direction_vector = torch.tensor([
+            rotation_matrix[2, 1] - rotation_matrix[1, 2],
+            rotation_matrix[0, 2] - rotation_matrix[2, 0],
+            rotation_matrix[1, 0] - rotation_matrix[0, 1]],
+            device=rotation_matrix.device, dtype=torch.float32)  # 32 precision is limiting here in some cases
+
+        rotvec_list.append(direction_vector / torch.linalg.norm(direction_vector) * r)
+        """
 
 
 def sample_random_valid_rotvecs(num_samples):
@@ -1426,9 +1470,9 @@ def fractional_transform_torch(coords, transform_matrix):
     elif coords.ndim == 2 and transform_matrix.ndim == 3:
         return torch.einsum('nj,nij->ni', (coords, transform_matrix))
 
+
 def compute_ellipsoid_volume(e):
     return 4 / 3 * torch.pi * e.norm(dim=-1).prod(dim=-1)
-
 
 
 def compute_cosine_similarity_matrix(e1, e2):

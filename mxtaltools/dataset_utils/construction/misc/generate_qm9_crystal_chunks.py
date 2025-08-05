@@ -27,11 +27,12 @@ if __name__ == '__main__':
     mode = 'train'
     # initialize
     space_group = 2
-    batch_size = 100
-    chunks_path = Path(r'/scratch/mk8347/csd_runs/datasets')
+    batch_size = 10
+    #chunks_path = os.getcwd()
+    chunks_path = Path(r'/scratch/mk8347/csd_runs/datasets/qm9_crystals/')
 
-    #qm9_mols = torch.load(r'D:/crystal_datasets/test_csd_free_qm9_dataset.pt')
-    qm9_mols = torch.load(r'/scratch/mk8347/csd_runs/datasets/test_csd_free_qm9_dataset.pt')
+    #qm9_mols = torch.load(r'D:/crystal_datasets/test_csd_free_qm9_dataset.pt', weights_only=False)
+    qm9_mols = torch.load(r'/scratch/mk8347/csd_runs/datasets/test_csd_free_qm9_dataset.pt', weights_only=False)
 
     rng = np.random.RandomState(0)
     rands = rng.choice(len(qm9_mols), len(qm9_mols), replace=False)
@@ -45,7 +46,8 @@ if __name__ == '__main__':
     elif mode == 'test':
         mol_list = test_mol_list
         del train_mol_list
-    else: assert False
+    else:
+        assert False
 
     # select some random molecules
     rng = np.random.Generator(np.random.PCG64(int(space_group * chunk_ind * 200)))
@@ -123,4 +125,3 @@ if __name__ == '__main__':
         fig.show()
 
     aa = 0
-
