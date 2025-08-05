@@ -49,7 +49,7 @@ if __name__ == '__main__':
 
     # select some random molecules
     rng = np.random.Generator(np.random.PCG64(int(space_group * chunk_ind * 200)))
-    mol_inds = rng.choice(len(mol_list), size=batch_size, replace=False if len(mol_list) < batch_size else True)
+    mol_inds = rng.choice(len(mol_list), size=batch_size, replace=True if len(mol_list) < batch_size else False)
 
     crystal_batch = collate_data_list([MolCrystalData(
         molecule=mol_list[ind].clone(),
