@@ -66,7 +66,7 @@ if __name__ == '__main__':
 
     chunks_path = Path(chunks_path)  # where to save outputs
     os.chdir(chunks_path)
-    chunk_path = os.path.join(chunks_path, f'qm9_sg_{space_group}_chunk_{chunk_ind}.pkl')
+    chunk_path = os.path.join(chunks_path, f'{mode}_qm9_sg_{space_group}_chunk_{chunk_ind}.pkl')
 
     crystal_batch.sample_reasonable_random_parameters(
         target_packing_coeff=0.5,
