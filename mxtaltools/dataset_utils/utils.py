@@ -12,10 +12,6 @@ def collate_data_list(data_list, exclude_unit_cell: bool = True):
     if not isinstance(data_list, list):
         data_list = [data_list]
 
-    all_keys = set()
-    for data in data_list:
-        all_keys.update(data.keys())
-
     # Optionally exclude known keys
     exclude_keys = ['edges_dict',
                     'niggli_energy',
