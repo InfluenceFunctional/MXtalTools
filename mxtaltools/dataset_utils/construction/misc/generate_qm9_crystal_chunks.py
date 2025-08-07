@@ -12,28 +12,30 @@ Alternate version of this script, for generating just structures of urea
 """
 
 if __name__ == '__main__':
-    device = 'cpu'
-    #Create the parser
-    parser = argparse.ArgumentParser(description='Process an integer.')
+    # device = 'cpu'
+    # #Create the parser
+    # parser = argparse.ArgumentParser(description='Process an integer.')
+    #
+    # # Add an argument for the integer
+    # parser.add_argument('chunk_ind', type=int,
+    #                     help='An integer passed from the command line', default=0)
+    # parser.add_argument('mode', type=str, default='train')
+    # # Parse the arguments
+    # args = parser.parse_args()
+    # chunk_ind = args.chunk_ind
+    # mode = args.mode
+    # chunks_path = Path(r'/scratch/mk8347/csd_runs/datasets/qm9_crystals/')
+    # qm9_mols = torch.load(r'/scratch/mk8347/csd_runs/datasets/csd_free_qm9_dataset.pt', weights_only=False)
 
-    # Add an argument for the integer
-    parser.add_argument('chunk_ind', type=int,
-                        help='An integer passed from the command line', default=0)
-    parser.add_argument('mode', type=str, default='train')
-    # Parse the arguments
-    args = parser.parse_args()
-    chunk_ind = args.chunk_ind
-    mode = args.mode
-    # chunk_ind = 999
-    # mode = 'train'
+    chunk_ind = 999
+    device = 'cuda'
+    mode = 'test'
     # initialize
     space_group = 2
-    batch_size = 100
-    num_test_mols = 20  # should be >= batch size
-    #chunks_path = os.getcwd()
-    chunks_path = Path(r'/scratch/mk8347/csd_runs/datasets/qm9_crystals/')
-    # qm9_mols = torch.load(r'D:/crystal_datasets/test_csd_free_qm9_dataset.pt', weights_only=False)
-    qm9_mols = torch.load(r'/scratch/mk8347/csd_runs/datasets/csd_free_qm9_dataset.pt', weights_only=False)
+    batch_size = 25
+    num_test_mols = 1
+    chunks_path = os.getcwd()
+    qm9_mols = torch.load(r'D:/crystal_datasets/test_csd_free_qm9_dataset.pt', weights_only=False)
     rng = np.random.RandomState(0)
     rands = rng.choice(len(qm9_mols), len(qm9_mols), replace=False)
     bp = int(len(rands) * 0.8)

@@ -29,6 +29,7 @@ def standalone_gradient_descent_optimization(
         cutoff: Optional[float] = 10,
         compression_factor: Optional[float] = 0,
         enforce_niggli: Optional[bool] = False,
+        supercell_size: Optional[int] = 10
 ):
     """
     do a local optimization via gradient descent on some score function
@@ -70,6 +71,7 @@ def standalone_gradient_descent_optimization(
                     canonicalize_orientations=True,
                 )
                 lj_pot, es_pot, scaled_lj_pot, cluster_batch = crystal_batch.build_and_analyze(return_cluster=True,
+                                                                                               supercell_size=supercell_size,
                                                                                                cutoff=cutoff)
 
                 params_record[s_ind] = cluster_batch.standardize_cell_parameters().detach().cpu()
