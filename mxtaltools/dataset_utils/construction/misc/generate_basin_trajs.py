@@ -13,7 +13,7 @@ Alternate version of this script, for generating just structures of urea
 
 if __name__ == '__main__':
     space_group = 2
-    batch_size = 500
+    batch_size = 100
     num_of_test_mol = 1
     try:
         device = 'cpu'
