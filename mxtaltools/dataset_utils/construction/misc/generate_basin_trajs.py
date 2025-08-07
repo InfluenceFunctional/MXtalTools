@@ -45,7 +45,7 @@ if __name__ == '__main__':
         mol_list = [qm9_mols[ind] for ind in rands[:bp]]
 
     elif mode == 'test':
-        mol_list = [qm9_mols[ind] for ind in rands[:bp]][num_of_test_mol]
+        mol_list = [[qm9_mols[ind] for ind in rands[:bp]][num_of_test_mol]]
 
     else:
         assert False
