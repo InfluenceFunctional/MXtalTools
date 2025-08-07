@@ -273,6 +273,8 @@ def conditional_simple_cell_hist(sample_batch, cond_inds, n_kde_points=200, bw_r
 
     n_crystal_features = 12
     colors = n_colors('rgb(255,0,0)', 'rgb(0, 0, 255)', len(torch.unique(cond_inds)) + 1, colortype='rgb')
+    fill_colors = n_colors('rgba(255,0,0, 0.5)', 'rgba(0, 0, 255, 0.5)', len(torch.unique(cond_inds)) + 1, colortype='rgb')
+
     fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)
 
     for i in range(n_crystal_features):
@@ -293,7 +295,7 @@ def conditional_simple_cell_hist(sample_batch, cond_inds, n_kde_points=200, bw_r
                     y=y_samp,
                     mode='lines',
                     fill='toself',
-                    fillcolor=colors[c_ind],  # Semi-transparent red
+                    fillcolor=fill_colors[c_ind],
                     line=dict(color=colors[c_ind], width=1),
                     name=f'Samples_{c_ind}',
                     legendgroup=f'Samples_{c_ind}',
