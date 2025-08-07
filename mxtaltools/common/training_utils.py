@@ -270,7 +270,7 @@ def reload_model(model, device, optimizer, path, reload_optimizer=False):
 
 def load_molecule_scalar_regressor(checkpoint_path, device):
     """script to reload a regression model for molecule scalar properties"""
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
     #opt_config = model_config.optimizer
     model_config = model_config.model
@@ -292,7 +292,7 @@ def load_molecule_scalar_regressor(checkpoint_path, device):
 
 def load_crystal_score_model(checkpoint_path, device):
     """script to reload a regression model for molecule scalar properties"""
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
     #opt_config = model_config.optimizer
     model_config = model_config.model
@@ -319,7 +319,7 @@ def load_crystal_score_model(checkpoint_path, device):
 
 
 def load_molecule_autoencoder(checkpoint_path, device):
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
     #opt_config = model_config.optimizer
     model_config = model_config.model

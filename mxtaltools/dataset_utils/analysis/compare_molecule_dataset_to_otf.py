@@ -224,7 +224,7 @@ def generate_otf_dataset(generate_samples: int,
     os.chdir(r'D:\crystal_datasets\otf_chunks')
     otf_dataset = []
     for chunk in chunks:
-        otf_dataset.extend(torch.load(chunk))
+        otf_dataset.extend(torch.load(chunk), weights_only=False)
 
     shuffle(otf_dataset)
     otf_dataset = otf_dataset[:dataset_length]
@@ -286,12 +286,12 @@ if __name__ == '__main__':
 
     """get evaluation dataset"""
     if not os.path.exists(qm9_properties_path) or force_qm9_reanalyzis:
-        qm9_dataset = collate_data_list(torch.load(dataset_path)[:dataset_size])
+        qm9_dataset = collate_data_list(torch.load(dataset_path, weights_only=False)[:dataset_size])
         qm9_properties_dict = analyze_mol_dataset(qm9_dataset, 'cpu')
         del qm9_dataset
         torch.save(qm9_properties_dict, 'D:\crystal_datasets\otf_chunks\qm9_properties_dict.pt')
     else:
-        qm9_properties_dict = torch.load(qm9_properties_path)
+        qm9_properties_dict = torch.load(qm9_properties_path, weights_only=False)
 
     """generate otf dataset"""
     otf_dataset = generate_otf_dataset(generate_samples=generate_samples,

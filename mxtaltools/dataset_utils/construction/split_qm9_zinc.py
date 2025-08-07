@@ -47,7 +47,7 @@ if __name__ == '__main__':
     output_file_name = Path(r"D:\crystal_datasets\zinc22\H_all\qm9_zinc_dataset.txt")
 
     seed(0)
-    dataset = torch.load(qm9_path)
+    dataset = torch.load(qm9_path, weights_only=False)
 
     '''pull out evaluation qm9 data'''
     shuffle(dataset)

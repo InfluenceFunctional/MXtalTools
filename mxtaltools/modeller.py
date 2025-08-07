@@ -1548,7 +1548,7 @@ class Modeller:
         otf_dataset = []
         for ind, chunk in enumerate(tqdm(chunks)):
             if '.pkl' in chunk or '.pt' in chunk:
-                loaded_chunk = torch.load(chunk)
+                loaded_chunk = torch.load(chunk, weights_only=False)
                 otf_dataset.extend(loaded_chunk)
 
         # kill old chunks so we don't re-use
@@ -2694,7 +2694,7 @@ class Modeller:
     def reload_model_checkpoint_configs(self):
         for model_name, model_path in self.config.model_paths.__dict__.items():
             if model_path is not None:
-                checkpoint = torch.load(model_path, map_location=self.device)
+                checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
                 model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
                 if self.config.__dict__[model_name].optimizer is not None:
                     if hasattr(self.config.__dict__[model_name].optimizer, 'overwrite_on_reload'):

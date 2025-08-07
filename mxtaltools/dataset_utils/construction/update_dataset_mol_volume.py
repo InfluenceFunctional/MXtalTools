@@ -33,7 +33,7 @@ if __name__ == "__main__":
     device = 'cuda'
     batch_size = 2000
     for dataset_path in dataset_paths:
-        dataset = torch.load(dataset_path)
+        dataset = torch.load(dataset_path, weights_only=False)
         volumes = torch.zeros(len(dataset), dtype=torch.float32, device='cpu')
         finished = False
         while not finished:

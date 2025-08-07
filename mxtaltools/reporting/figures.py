@@ -243,6 +243,84 @@ def simple_cell_hist(sample_batch, reference_dist=None, n_kde_points=200, bw_rat
     return fig, np.array(kld_values)
 
 
+def conditional_simple_cell_hist(sample_batch, cond_inds, n_kde_points=200, bw_ratio=50, mode='cell'):
+    if mode == 'cell':
+        samples = sample_batch.cell_parameters().cpu().detach().numpy()
+        custom_ranges = {
+            0: [0, float(np.max(samples[:, 0]) * 1.1)],
+            1: [0, float(np.max(samples[:, 1]) * 1.1)],
+            2: [0, float(np.max(samples[:, 2]) * 1.1)],
+            3: [1, 2],  # for cell_alpha
+            4: [1, 2],  # for cell_beta
+            5: [1, 2],  # for cell_gamma
+            6: [0, 1],  # for aunit_x
+            7: [0, 1],  # for aunit_y
+            8: [0, 1],  # for aunit_z
+            9: [-2 * np.pi, 2 * np.pi],  # orientation_1
+            10: [-2 * np.pi, 2 * np.pi],  # orientation_2
+            11: [0, 2 * np.pi],  # orientation_3
+        }
+    elif mode == 'latent':
+        samples = sample_batch.cell_params_to_gen_basis().cpu().detach().numpy()
+        custom_ranges = {i: [-6.5, 6.5] for i in range(12)}
+    else:
+        assert False
+
+    lattice_features = ['cell_a', 'cell_b', 'cell_c',
+                        'cell_alpha', 'cell_beta', 'cell_gamma',
+                        'aunit_x', 'aunit_y', 'aunit_z',
+                        'orientation_1', 'orientation_2', 'orientation_3']
+
+    n_crystal_features = 12
+    colors = n_colors('rgb(255,0,0)', 'rgb(0, 0, 255)', len(torch.unique(cond_inds)) + 1, colortype='rgb')
+    fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)
+
+    for i in range(n_crystal_features):
+        for c_ind in range(len(torch.unique(cond_inds))):
+            row = i // 3 + 1
+            col = i % 3 + 1
+            bw = 1.0 / bw_ratio  # float(np.ptp(samples[:, i]) / bw_ratio)
+            # Main samples
+            x_samp, y_samp = lightweight_one_sided_violin(samples[cond_inds == c_ind, i],
+                                                          n_kde_points,
+                                                          bandwidth_factor=bw,
+                                                          data_min=custom_ranges[i][0],
+                                                          data_max=custom_ranges[i][1])
+
+            if len(x_samp) > 0:
+                fig.add_trace(go.Scatter(
+                    x=x_samp,
+                    y=y_samp,
+                    mode='lines',
+                    fill='toself',
+                    fillcolor=colors[c_ind],  # Semi-transparent red
+                    line=dict(color=colors[c_ind], width=1),
+                    name=f'Samples_{c_ind}',
+                    legendgroup=f'Samples_{c_ind}',
+                    showlegend=True if i == 0 else False,
+                ), row=row, col=col)
+
+    for i in range(n_crystal_features):
+        row = i // 3 + 1
+        col = i % 3 + 1
+        fig.update_xaxes(range=custom_ranges[i], row=row, col=col)
+        fig.update_yaxes(range=[0, None], row=row, col=col)  # Only show positive y
+
+    fig.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.05,
+            xanchor="center",
+            x=0.5
+        ),
+        margin=dict(l=50, r=50, t=50, b=50)
+    )
+    return fig
+
+
 def simple_latent_hist(sample_batch, samples=None, reference_dist=None):
     if samples is None:
         samples = sample_batch.cell_params_to_gen_basis().cpu().detach().numpy()

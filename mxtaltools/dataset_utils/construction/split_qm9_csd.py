@@ -19,7 +19,7 @@ def get_qm9_like_csd():
     qm9_like_path = 'D:/crystal_datasets/qm9_like_csd_crystals.pt'
     if not os.path.exists(qm9_like_path):
         pp = "D:/crystal_datasets/CSD_dataset.pt"
-        dataset = torch.load(pp)
+        dataset = torch.load(pp, weights_only=False)
 
         qm9_like = []
         for ind, elem in enumerate(dataset):
@@ -30,7 +30,7 @@ def get_qm9_like_csd():
 
         torch.save(qm9_like, qm9_like_path)
     else:
-        qm9_like = torch.load(qm9_like_path)
+        qm9_like = torch.load(qm9_like_path, weights_only=False)
 
     return qm9_like
 
@@ -49,7 +49,7 @@ if __name__ == '__main__':
     qm9_path = Path(r"D:\crystal_datasets\qm9_dataset.pt")
 
     qm9_like_mols = get_qm9_like_csd()
-    dataset = torch.load(qm9_path)
+    dataset = torch.load(qm9_path, weights_only=False)
 
     qm9_set = set(filter(None, [canonicalize(data.smiles) for data in dataset]))
     csd_set = set(filter(None, [canonicalize(data.smiles) for data in qm9_like_mols]))

@@ -37,7 +37,7 @@ if __name__ == '__main__':
     if not os.path.exists(chunks_path):
         os.mkdir(chunks_path)
 
-    qm9s_list = torch.load(r'D:\crystal_datasets\QM9s\qm9s.pt')
+    qm9s_list = torch.load(r'D:\crystal_datasets\QM9s\qm9s.pt', weights_only=False)
 
     chunks = chunkify(qm9s_list, 100)
     for ind, chunk in enumerate(tqdm.tqdm(chunks)):

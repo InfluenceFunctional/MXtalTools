@@ -110,7 +110,7 @@ class DataManager:
         for ind, chunk in enumerate(tqdm(chunks[:num_chunks])):
             if '.pkl' in chunk or '.pt' in chunk:
                 try:
-                    loaded_chunk = torch.load(chunk)
+                    loaded_chunk = torch.load(chunk, weights_only=False)
                     if isinstance(loaded_chunk, list):
                         pass
                     elif loaded_chunk.is_batch:
@@ -393,7 +393,7 @@ class DataManager:
 
     def load_training_dataset(self, dataset_name):
         self.times['dataset_loading_start'] = time()
-        self.dataset = torch.load(self.datasets_path.joinpath(dataset_name))
+        self.dataset = torch.load(self.datasets_path.joinpath(dataset_name), weights_only=False)
 
         if 'batch' in str(type(self.dataset)).lower():
             # if it's batched, revert to data list - this is slow, so if possible don't store datasets as batches but as data lists

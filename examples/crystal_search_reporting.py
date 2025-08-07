@@ -129,21 +129,21 @@ def csp_reporting(optimized_samples,
     best_sample_inds = torch.argwhere((packing_coeff > 0.6) * (packing_coeff < 0.8) * (rdf_dist_pred < 0.01)).squeeze()
     #rmsds = list(np.load('rmsds_final.npy'))
     #matches = list(np.load('matches_final.npy'))
-
-    density_funnel(model_score, packing_coeff, rdf_dists, ref_model_score, ref_packing_coeff)
-    distance_fig(c_dists, model_score, noisy_c_dists, noisy_model_score, noisy_rdf_dists, rdf_dists, packing_coeff)
+    #
+    # density_funnel(model_score, packing_coeff, rdf_dists, ref_model_score, ref_packing_coeff)
+    # distance_fig(c_dists, model_score, noisy_c_dists, noisy_model_score, noisy_rdf_dists, rdf_dists, packing_coeff)
 
     matches, rmsds = batch_compack(best_sample_inds, optimized_samples, original_cluster_batch)
 
     all_matched = np.argwhere(matches == 20).flatten()
     matched_rmsds = rmsds[all_matched]
-    compack_fig(matches, rmsds)
+    compack_fig(matches, rmsds, rdfs=rdf_dists[best_sample_inds])
     print(all_matched)
     print(rmsds[all_matched])
     aa = 1
 
 
-def compack_fig(matches, rmsds):
+def compack_fig(matches, rmsds, rdfs):
     fontsize = 26
     fig = go.Figure()
     fig.add_scatter(x=matches[matches > 4], y=rmsds[matches > 4],
