@@ -874,17 +874,15 @@ def generated_cell_scatter_fig(epoch_stats_dict, layout):
 
 
 def simple_cell_scatter_fig(sample_batch, cluster_inds=None, aux_array=None, aux_scalar_name: str = ''):
-    xy = np.vstack([sample_batch.packing_coeff.cpu().detach(), sample_batch.silu_pot.cpu().detach()])
+    energy = (sample_batch.lj_pot/sample_batch.num_atoms).cpu().detach()
+    energy[energy > 0] = np.log(energy[energy > 0])
+
+    xy = np.vstack([sample_batch.packing_coeff.cpu().detach(), energy])
     try:
         z = get_point_density(xy, bins=25)
     except:
         z = np.ones(xy.shape[1])
 
-    # if hasattr(sample_batch, 'gfn_energy'):
-    #     energy = sample_batch.gfn_energy
-    # else:
-    energy = sample_batch.lj_pot.cpu().detach()
-    energy[energy > 0] = np.log(energy[energy > 0])
     scatter_dict = {'energy': energy,
                     'packing_coefficient': sample_batch.packing_coeff.cpu().detach(),
                     'point_density': z
@@ -905,7 +903,7 @@ def simple_cell_scatter_fig(sample_batch, cluster_inds=None, aux_array=None, aux
                      )
 
     fig.update_layout(yaxis_title='Energy', xaxis_title='Packing Coeff')
-    fig.update_layout(yaxis_range=[np.amin(df['energy']) - 10,
+    fig.update_layout(yaxis_range=[np.amin(df['energy']) - 3,
                                    min(500, np.amax(df['energy']) + np.ptp(df['energy']) * 0.1)],
                       xaxis_range=[max(0, np.amin(df['packing_coefficient']) * 0.9),
                                    min(2, np.amax(df['packing_coefficient']) * 1.1)],
