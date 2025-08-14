@@ -86,7 +86,6 @@ if __name__ == '__main__':
             do_box_restriction=True,
             enforce_niggli=True,
             cutoff=6,
-
         ))
     crystal_batch = collate_data_list(opt1_trajectory[-1]).to(device)
     crystal_batch.box_analysis()

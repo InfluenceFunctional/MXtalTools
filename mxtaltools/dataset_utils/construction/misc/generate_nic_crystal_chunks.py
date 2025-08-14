@@ -26,7 +26,6 @@ if __name__ == '__main__':
 
     # initialize
     space_group = 2
-    num_chunks = 1
     batch_size = 200
     chunks_path = Path(r'/scratch/mk8347/csd_runs/datasets')
     # # NICOTINAMIDE
