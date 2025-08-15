@@ -6,6 +6,7 @@ from typing import (Any, Dict, Iterable, List, NamedTuple, Optional, Union)
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from scipy.spatial.transform import Rotation
 from torch import Tensor
 from torch_geometric.data.data import BaseData
@@ -17,7 +18,8 @@ from torch_sparse import SparseTensor
 
 from mxtaltools.analysis.vdw_analysis import vdw_analysis, electrostatic_analysis, get_intermolecular_dists_dict, \
     buckingham_energy, silu_energy
-from mxtaltools.common.ellipsoid_ops import featurize_ellipsoid_batch
+from mxtaltools.common.ellipsoid_ops import compute_ellipsoid_volume, \
+    compute_cosine_similarity_matrix
 from mxtaltools.common.geometry_utils import batch_compute_molecule_volume, \
     compute_mol_radius, batch_compute_mol_radius, batch_compute_mol_mass, compute_mol_mass, center_mol_batch, \
     apply_rotation_to_batch, enforce_crystal_system, batch_compute_fractional_transform, batch_cell_vol_torch, \
@@ -485,15 +487,13 @@ class MolCrystalData(MolData):
                  aux_ind: Optional[torch.LongTensor] = None,
                  mol_ind: Optional[torch.LongTensor] = None,
                  skip_box_analysis: Optional[bool] = False,
+                 dummy_box_analysis: Optional[bool] = False,
                  **kwargs):
         super().__init__()
         self.__dict__['_store'] = GlobalStorage(_parent=self)
         # initialize crystal from an existing molecule
         if molecule is not None:
-            # copy out the data
-            mol_dict = molecule.to_dict()
-            for key, value in mol_dict.items():
-                setattr(self, key, value)
+            self.set_mol_attrs(molecule)
 
         # then overwrite any relevant features
         for key, value in kwargs.items():
@@ -503,23 +503,7 @@ class MolCrystalData(MolData):
         if identifier is not None:
             self.identifier = identifier
         if sg_ind is not None:
-            if not torch.is_tensor(sg_ind):
-                self.sg_ind = torch.tensor(sg_ind, dtype=torch.long, device=self.device)
-            else:
-                self.sg_ind = sg_ind.long().to(self.device)
-            if nonstandard_symmetry:  # set as np stack for correct collation behavior (we don't want batches to stack)
-                if symmetry_operators is not None:
-                    self.symmetry_operators = symmetry_operators
-                else:
-                    assert False, "symmetry_operators must be given for nonstandard symmetry operations"
-                self.nonstandard_symmetry = True
-            else:  # standard symmetry
-                self.symmetry_operators = np.stack(
-                    SYM_OPS[int(sg_ind)])  # if saved as a tensor, we get collation issues
-                self.nonstandard_symmetry = False
-
-            self.sym_mult = torch.ones(1, dtype=torch.long, device=self.device) * len(self.symmetry_operators)
-            self.is_well_defined = is_well_defined
+            self.set_sg_attrs(is_well_defined, nonstandard_symmetry, sg_ind, symmetry_operators)
 
             # record prebuilt unit cell coordinates
             if unit_cell_pos is not None:
@@ -539,17 +523,25 @@ class MolCrystalData(MolData):
             self.cell_angles = cell_angles[None, ...]
 
             if not skip_box_analysis:
-                if any([
-                    self.T_fc is None,
-                    self.T_cf is None,
-                    self.cell_volume is None,
-                    self.packing_coeff is None,
-                    self.density is None
-                ]):  # better to do this in batches and feed it as kwargs # todo add a log/warning for this
-                    self.box_analysis()
+                if dummy_box_analysis:
+                    self.T_fc = torch.eye(3, device=self.device)
+                    self.T_cf = torch.eye(3, device=self.device)
+                    self.cell_volume = torch.ones(1, device=self.device)
+                    self.packing_coeff = torch.ones(1, device=self.device)
+                    self.density = torch.ones(1, device=self.device)
                 else:
-                    assert (self.T_cf is not None and self.cell_volume is not None), \
-                        "T_fc, T_cf, and cell volume must all be provided all together or not at all"
+                    if any([
+                        self.T_fc is None,
+                        self.T_cf is None,
+                        self.cell_volume is None,
+                        self.packing_coeff is None,
+                        self.density is None
+                    ]):  # better to do this in batches and feed it as kwargs # todo add a log/warning for this
+                        self.box_analysis()
+                    else:
+                        assert (self.T_cf is not None and self.cell_volume is not None), \
+                            "T_fc, T_cf, and cell volume must all be provided all together or not at all"
+
 
         if aunit_centroid is not None:
             self.aunit_centroid = aunit_centroid[None, ...]
@@ -562,6 +554,32 @@ class MolCrystalData(MolData):
             self.mol_ind = mol_ind
         if aux_ind is not None:
             self.aux_ind = aux_ind
+
+    def set_sg_attrs(self, is_well_defined, nonstandard_symmetry, sg_ind, symmetry_operators):
+        if not torch.is_tensor(sg_ind):
+            self.sg_ind = torch.tensor(sg_ind, dtype=torch.long, device=self.device)
+        else:
+            self.sg_ind = sg_ind.long().to(self.device)
+        if nonstandard_symmetry:  # set as np stack for correct collation behavior (we don't want batches to stack)
+            if symmetry_operators is not None:
+                self.symmetry_operators = symmetry_operators
+            else:
+                assert False, "symmetry_operators must be given for nonstandard symmetry operations"
+            self.nonstandard_symmetry = True
+        else:  # standard symmetry
+            if symmetry_operators is not None:
+                self.symmetry_operators = symmetry_operators
+            else:
+                self.symmetry_operators = np.stack(SYM_OPS[int(sg_ind)])  # if saved as a tensor, we get collation issues
+            self.nonstandard_symmetry = False
+        self.sym_mult = torch.ones(1, dtype=torch.long, device=self.device) * len(self.symmetry_operators)
+        self.is_well_defined = is_well_defined
+
+    def set_mol_attrs(self, molecule):
+        # copy out the data
+        mol_dict = molecule.to_dict()
+        for key, value in mol_dict.items():
+            setattr(self, key, value)
 
     def box_analysis(self):
         self.T_fc, self.T_cf, self.cell_volume = (
@@ -1167,19 +1185,50 @@ class MolCrystalData(MolData):
         else:
             ellipsoid_model = model
 
-        Ip, longest_length, molwise_batch, semi_axis_lengths, tot_mol_index, tot_num_mols = self.compute_cluster_ellipsoids(
-            surface_padding)
+        mols_per_cluster = torch.tensor(self.edges_dict['n_repeats'], device=self.device)
+        tot_num_mols = torch.sum(mols_per_cluster)
+        tot_mol_index = torch.arange(tot_num_mols, device=self.device).repeat_interleave(self.num_atoms.repeat_interleave(mols_per_cluster))
+        molwise_batch = torch.arange(self.num_graphs, device=self.device).repeat_interleave(mols_per_cluster, dim=0)
 
-        max_ellipsoid_radius = semi_axis_lengths.amax(1)
-        edge_i_good, edge_j_good, mol_centroids = self.get_ellipsoid_edges(molwise_batch, tot_mol_index,
-                                                                           tot_num_mols, max_ellipsoid_radius)
+        edge_i_good, edge_j_good, mol_centroids = self.get_intermolecular_ellipsoid_edges(molwise_batch,
+                                                                                          surface_padding,
+                                                                                          tot_mol_index, tot_num_mols)
 
-        norm_factor, normed_v1, normed_v2, x, v1, v2 = featurize_ellipsoid_batch(Ip,
-                                                                                 edge_i_good,
-                                                                                 edge_j_good,
-                                                                                 mol_centroids,
-                                                                                 semi_axis_lengths,
-                                                                                 self.device)
+        atoms_per_necessary_mol, mol_id_map, molwise_batch_subset, num_necessary_mols, subset_pos, tot_mol_index_subset = self.reindex_ellipsoid_mols(
+            edge_i_good, edge_j_good, molwise_batch, tot_mol_index, tot_num_mols)
+
+        """get ellipsoids"""
+        add_noise = 0.01
+        cov_eps = 0.01
+
+        eigvals_sorted, eigvecs_sorted = self.compute_ellipsoid_eigvecs(add_noise, atoms_per_necessary_mol, cov_eps,
+                                                                        molwise_batch_subset, num_necessary_mols, subset_pos,
+                                                                        tot_mol_index_subset)
+
+        """
+        Set default as the ellipsoid tip being at the surface of the molecule (assume largest radius)
+        Then, plus or minus angstroms to expose or cover surface atoms
+        """
+        eps = 1e-3
+
+        longest_length = self.radius[molwise_batch_subset]
+        padding_scaling_factor = (longest_length + surface_padding) / longest_length
+        min_axis_length = torch.amax(
+            torch.stack([1.5 * padding_scaling_factor, 0.1 * torch.ones_like(padding_scaling_factor)]),
+            dim=0)  # need a finite thickness for flat molecules
+        sqrt_eigenvalues = torch.sqrt(eigvals_sorted.clamp(min=0) + eps)
+        normed_eigs = sqrt_eigenvalues / sqrt_eigenvalues.amax(1, keepdim=True)  # normalize to relative lengths
+        # semi axis scale now controls how much of the surface is revealed - for negative values, surface atoms will poke out
+        # if the surface padding is set too small, the ellipsoid will just retreat into a tiny sphere
+        semi_axis_lengths = (normed_eigs * longest_length[:, None] + surface_padding).clip(min=min_axis_length[:, None])
+
+        Ip = eigvecs_sorted
+
+
+        """ featurize ellipsoids """
+        norm_factor, normed_v1, normed_v2, v1, v2, x = self.featurize_ellipsoids(Ip, edge_i_good, edge_j_good, eps,
+                                                                             mol_centroids, mol_id_map,
+                                                                             semi_axis_lengths)
 
         # pass to the model
         if hasattr(self, 'ellipsoid_model') and model is None:
@@ -1188,9 +1237,10 @@ class MolCrystalData(MolData):
             output = ellipsoid_model(x)
 
         # process results
-        v1_pred, v2_pred, normed_overlap_pred = output[:, 0] * norm_factor ** 3, output[:,
-                                                                                 1] * norm_factor ** 3, output[:,
-                                                                                                        2].clip(min=0)
+        v1_pred, v2_pred, normed_overlap_pred = (output[:, 0] * norm_factor ** 3,
+                                                 output[:, 1] * norm_factor ** 3,
+                                                 output[:, 2].clip(min=0)
+                                                 )
         reduced_volume = (normed_v1 * normed_v2) / (normed_v1 + normed_v2)
         denormed_overlap_pred = normed_overlap_pred * reduced_volume  # model works in the reduced basis
         overlap_pred = denormed_overlap_pred * norm_factor ** 3  # inunits of cubic angstroms
@@ -1209,33 +1259,108 @@ class MolCrystalData(MolData):
         else:
             return molwise_ellipsoid_overlap, v1_pred, v2_pred, v1, v2, norm_factor, normed_ellipsoid_overlap
 
-    """
-    # Check predictions
-    from mxtaltools.common.ellipsoid_ops import compute_ellipsoid_overlap
-    
-    n_samples = self.num_graphs
-    r = mol_centroids[edge_j_good] - mol_centroids[edge_i_good]
-    assert torch.isfinite(Ip).all(), "Non-finite principal axes!"
-    e1 = Ip[edge_j_good] * semi_axis_lengths[edge_j_good][:, :, None]
-    e2 = Ip[edge_i_good] * semi_axis_lengths[edge_i_good][:, :, None]
-    overlaps = torch.zeros(n_samples, device=self.device)
-    for ind in range(n_samples):
-        overlaps[ind], _ = compute_ellipsoid_overlap(e1[ind], e2[ind], v1[ind], v2[ind], r[ind], num_probes=10000,
-                                                     show_tqdm=True)
-    
-    import plotly.graph_objects as go
-    def simple_parity(x, y):
-        go.Figure(
-            go.Scatter(x=x, y=y.cpu().detach(), mode='markers', showlegend=True,
-                       name=f'R={torch.corrcoef(torch.stack([x, y]))[0, 1].cpu().detach().numpy():.4f}')).show()
-    
-    simple_parity(overlaps.cpu().detach(), overlap_pred[:n_samples].cpu().detach())
-    simple_parity(torch.cat([v1,v2]).cpu().detach(), torch.cat([v1_pred, v2_pred]).cpu().detach())
+    def featurize_ellipsoids(self, Ip, edge_i_good, edge_j_good, eps, mol_centroids, mol_id_map, semi_axis_lengths):
+        # featurize pairs
+        r = mol_centroids[edge_j_good] - mol_centroids[edge_i_good]
+        edge_i_local = mol_id_map[edge_i_good]
+        edge_j_local = mol_id_map[edge_j_good]
+        assert torch.isfinite(Ip).all(), "Non-finite principal axes!"
+        e1 = Ip[edge_i_local] * semi_axis_lengths[edge_i_local, :, None]
+        e2 = Ip[edge_j_local] * semi_axis_lengths[edge_j_local, :, None]
+        v1 = compute_ellipsoid_volume(e1)
+        v2 = compute_ellipsoid_volume(e2)
+        assert torch.isfinite(v1).all()
+        assert (v1 > 0).all()
+        assert torch.isfinite(semi_axis_lengths).all()
+        assert (semi_axis_lengths > 0).all()
+        # normalize
+        max_e1 = e1.norm(dim=-1).amax(1)
+        max_e2 = e2.norm(dim=-1).amax(1)
+        max_val = torch.stack([max_e1, max_e2]).T.amax(1) + eps
+        normed_e1 = e1 / max_val[:, None, None]
+        normed_e2 = e2 / max_val[:, None, None]
+        normed_r = r / max_val[:, None]
+        normed_v1 = v1 / max_val ** 3
+        normed_v2 = v2 / max_val ** 3
+        # standardize directions
+        dot1 = torch.einsum('nij,ni->nj', normed_e1, normed_r)
+        sign_flip1 = (dot1 < 0).float() * -2 + 1  # flips points against r
+        std_normed_e1 = normed_e1 * sign_flip1.unsqueeze(-1)
+        dot2 = torch.einsum('nij,ni->nj', normed_e2, -normed_r)
+        sign_flip2 = (dot2 < 0).float() * -2 + 1  # flips points same way as r
+        std_normed_e2 = normed_e2 * sign_flip2.unsqueeze(-1)
+        # parameterize
+        r_hat = F.normalize(normed_r + eps, dim=-1)
+        r1_local = torch.einsum('nij,nj->ni', std_normed_e1, r_hat)  # r in frame of ellipsoid 1
+        r2_local = torch.einsum('nij,nj->ni', std_normed_e2, -r_hat)  # r in frame of ellipsoid 2
+        unit_std_normed_e1 = std_normed_e1 / std_normed_e1.norm(dim=-1, keepdim=True)
+        unit_std_normed_e2 = std_normed_e2 / std_normed_e2.norm(dim=-1, keepdim=True)
+        # relative rotation matrix
+        # R_rel = torch.einsum('nik, njk -> nij', unit_std_normed_e1, unit_std_normed_e2)
+        cmat = compute_cosine_similarity_matrix(unit_std_normed_e1, unit_std_normed_e2)
+        x = torch.cat([
+            normed_r.norm(dim=-1, keepdim=True),
+            cmat.reshape(len(e1), 9),
+            std_normed_e1.norm(dim=-1),
+            std_normed_e2.norm(dim=-1),
+            r1_local,
+            r2_local,
+        ], dim=1)
+        return max_val, normed_v1, normed_v2, v1, v2, x
 
-    """
+    def compute_ellipsoid_eigvecs(self, add_noise, atoms_per_necessary_mol, cov_eps, molwise_batch_subset, num_necessary_mols,
+                                  subset_pos, tot_mol_index_subset):
+        # get principal axes
+        centered_mol_pos = center_mol_batch(subset_pos,
+                                            tot_mol_index_subset,
+                                            num_graphs=len(molwise_batch_subset),
+                                            nodes_per_graph=atoms_per_necessary_mol)
+        if centered_mol_pos.requires_grad or add_noise:
+            coords_to_compute = centered_mol_pos + torch.randn_like(centered_mol_pos) * cov_eps
+        else:
+            coords_to_compute = centered_mol_pos
+        # we'll get the eigenvalues of the covariance matrix to approximate the molecule spatial extent
+        # Compute outer products: [N, 3, 3]
+        outer = coords_to_compute[:, :, None] * coords_to_compute[:, None, :]
+        # Accumulate covariance sums per molecule
+        cov_sums = torch.zeros((num_necessary_mols, 3, 3), device=self.device)
+        cov_sums = cov_sums.index_add(0, tot_mol_index_subset, outer)
+        # Normalize by number of atoms per molecule
+        atoms_per_necessary_mol = atoms_per_necessary_mol.to(dtype=torch.float32)  # in case it's int
+        covariances = cov_sums / atoms_per_necessary_mol[:, None, None]
+        # explicitly symmetrize
+        covariances = 0.5 * (covariances + covariances.transpose(-1, -2))
+        covariances = covariances + torch.eye(3, device=covariances.device).expand(len(covariances), -1, -1) * 1e-3
+        eigvals, eigvecs_c = self.safe_batched_eigh(covariances)
+        eigvecs = eigvecs_c.permute(0, 2, 1)  # switch to row-wise eigenvectors
+        sort_inds = torch.argsort(eigvals, dim=1, descending=True)  # we want eigenvectors sorted a>b>c row-wise
+        eigvals_sorted = torch.gather(eigvals, dim=1, index=sort_inds)
+        eigvecs_sorted = torch.gather(eigvecs, dim=1, index=sort_inds.unsqueeze(2).expand(-1, -1, 3))
+        return eigvals_sorted, eigvecs_sorted
 
-    def get_ellipsoid_edges(self, molwise_batch, tot_mol_index, tot_num_mols, max_ellipsoid_radius):
-        # get centroids
+    def reindex_ellipsoid_mols(self, edge_i_good, edge_j_good, molwise_batch, tot_mol_index, tot_num_mols):
+        necessary_mol_inds = torch.unique(torch.cat([edge_i_good, edge_j_good]))
+        num_necessary_mols = len(necessary_mol_inds)
+        mol_id_map = torch.full((tot_num_mols,), -1, device=self.device)
+        mol_id_map[necessary_mol_inds] = torch.arange(len(necessary_mol_inds), device=self.device)
+        # atom_mask = torch.isin(tot_mol_index, necessary_mol_inds)
+        atom_mask = mol_id_map[tot_mol_index] != -1
+        tot_mol_index_subset = mol_id_map[tot_mol_index[atom_mask]]
+        molwise_batch_subset = molwise_batch[necessary_mol_inds]
+        crystal_with_necessary_mol_ind, mols_per_necessary_cluster = torch.unique(molwise_batch_subset,
+                                                                                  return_counts=True)
+        full_mols_per_necessary_cluster = torch.zeros(self.num_graphs, device=self.device, dtype=torch.long)
+        full_mols_per_necessary_cluster[crystal_with_necessary_mol_ind] = mols_per_necessary_cluster
+        # mols_per_necessary_cluster = scatter(torch.ones_like(molwise_batch_subset), molwise_batch_subset, reduce='sum', dim=0)
+        # mols_per_necessary_cluster = mols_per_necessary_cluster[mols_per_necessary_cluster>0]
+        atoms_per_necessary_mol = scatter(torch.ones_like(tot_mol_index_subset), tot_mol_index_subset, dim=0,
+                                          reduce='sum')  # self.num_atoms[molwise_batch_subset].repeat_interleave(mols_per_necessary_cluster, dim=0)
+        subset_pos = self.pos[atom_mask]
+        return atoms_per_necessary_mol, mol_id_map, molwise_batch_subset, num_necessary_mols, subset_pos, tot_mol_index_subset
+
+    def get_intermolecular_ellipsoid_edges(self, molwise_batch, surface_padding, tot_mol_index, tot_num_mols):
+        """get edges"""
+        max_ellipsoid_radius = self.radius + surface_padding
         mol_centroids = scatter(self.pos, tot_mol_index, dim=0, dim_size=tot_num_mols, reduce='mean')
         mol_aux_inds = scatter(self.aux_ind, tot_mol_index, dim=0, dim_size=tot_num_mols, reduce='max')
         # get edges
@@ -1245,84 +1370,39 @@ class MolCrystalData(MolData):
             inside_inds=torch.argwhere(mol_aux_inds == 0).flatten(),
             convolve_inds=torch.argwhere(mol_aux_inds >= 1).flatten(),
             # take 1 and 2 here, or we might have indexing issues
-            max_num_neighbors=10,
+            max_num_neighbors=50,
             r=max_ellipsoid_radius.amax() * 2)
         # filter edges longer than 2x mol_radius for each sample
         dists = torch.linalg.norm(mol_centroids[edge_i] - mol_centroids[edge_j], dim=1)
-        good_inds = dists < (2 * max_ellipsoid_radius[edge_i])
+        good_inds = dists < (2 * max_ellipsoid_radius[molwise_batch[edge_i]])
         edge_i_good = edge_i[good_inds]
         edge_j_good = edge_j[good_inds]
         return edge_i_good, edge_j_good, mol_centroids
 
-    def compute_cluster_ellipsoids(self,
-                                   surface_padding,
-                                   eps: float = 1e-3,
-                                   cov_eps=0.1,
-                                   add_noise: bool = False):
+    """
+    # Check predictions
+    from mxtaltools.common.ellipsoid_ops import compute_ellipsoid_overlap
+    
+    n_samples = 10
+    overlaps = torch.zeros(n_samples, device=self.device)
+    for ind in range(n_samples):
+        overlaps[ind], _ = compute_ellipsoid_overlap(e1[ind], e2[ind], v1[ind], v2[ind], r[ind], num_probes=10000,
+                                                     show_tqdm=True)
+    
+    import plotly.graph_objects as go
+    
+    
+    def simple_parity(x, y):
+        go.Figure(
+            go.Scatter(x=x, y=y.cpu().detach(), mode='markers', showlegend=True,
+                       name=f'R={torch.corrcoef(torch.stack([x, y]))[0, 1].cpu().detach().numpy():.4f}')).show(renderer='browser')
+    
+    
+    simple_parity(overlaps.cpu().detach(), overlap_pred[:n_samples].cpu().detach())
+    simple_parity(torch.cat([v1, v2]).cpu().detach(), torch.cat([v1_pred, v2_pred]).cpu().detach())
 
-        mols_per_cluster = torch.tensor(self.edges_dict['n_repeats'], device=self.device)
-        tot_num_mols = torch.sum(mols_per_cluster)
-        tot_mol_index = torch.arange(tot_num_mols, device=self.device
-                                     ).repeat_interleave(self.num_atoms.repeat_interleave(mols_per_cluster))
-        molwise_batch = torch.arange(self.num_graphs, device=self.device
-                                     ).repeat_interleave(mols_per_cluster, dim=0)
-        atoms_per_mol = self.num_atoms.repeat_interleave(mols_per_cluster)
-        # get principal axes
-        centered_mol_pos = center_mol_batch(self.pos,
-                                            tot_mol_index,
-                                            num_graphs=tot_num_mols,
-                                            nodes_per_graph=atoms_per_mol)
 
-        if centered_mol_pos.requires_grad or add_noise:
-            coords_to_compute = centered_mol_pos + torch.randn_like(centered_mol_pos) * cov_eps
-        else:
-            coords_to_compute = centered_mol_pos
-
-        # we'll get the eigenvalues of the covariance matrix to approximate the molecule spatial extent
-        # Compute outer products: [N, 3, 3]
-        outer = coords_to_compute[:, :, None] * coords_to_compute[:, None, :]
-
-        # Accumulate covariance sums per molecule
-        cov_sums = torch.zeros((tot_num_mols, 3, 3), device=self.device)
-        cov_sums = cov_sums.index_add(0, tot_mol_index, outer)
-
-        # Normalize by number of atoms per molecule
-        atoms_per_mol = atoms_per_mol.to(dtype=torch.float32)  # in case it's int
-        covariances = cov_sums / atoms_per_mol[:, None, None]
-
-        try:
-            eigvals, eigvecs_c = torch.linalg.eigh(covariances)
-        except RuntimeError as e:
-            if "CUSOLVER_STATUS_INVALID_VALUE" in str(e):
-                print("Invalid matrix to eigh! Substituting dummy ellipsoids.")
-                eigvals = torch.ones((covariances.shape[0], 3), device=covariances.device)
-                eigvecs_c = torch.eye(3, device=covariances.device).unsqueeze(0).repeat(covariances.shape[0], 1, 1)
-            else:
-                raise e
-        # eigvals, eigvecs_c = torch.linalg.eigh(
-        #     covariances)  # principal inertial tensor # eigh must faster on sym matrices
-
-        eigvecs = eigvecs_c.permute(0, 2, 1)  # switch to row-wise eigenvectors
-        sort_inds = torch.argsort(eigvals, dim=1, descending=True)  # we want eigenvectors sorted a>b>c row-wise
-        eigvals_sorted = torch.gather(eigvals, dim=1, index=sort_inds)
-        eigvecs_sorted = torch.gather(eigvecs, dim=1, index=sort_inds.unsqueeze(2).expand(-1, -1, 3))
-
-        """
-        Set default as the ellipsoid tip being at the surface of the molecule (assume largest radius)
-        Then, plus or minus angstroms to expose or cover surface atoms
-        """
-        longest_length = self.radius.repeat_interleave(mols_per_cluster).clip(min=0.1)
-        padding_scaling_factor = (longest_length + surface_padding) / longest_length
-        min_axis_length = torch.amax(
-            torch.stack([1.5 * padding_scaling_factor, 0.1 * torch.ones_like(padding_scaling_factor)]),
-            dim=0)  # need a finite thickness for flat molecules
-        sqrt_eigenvalues = torch.sqrt(eigvals_sorted + eps)
-        normed_eigs = sqrt_eigenvalues / sqrt_eigenvalues.amax(1, keepdim=True)  # normalize to relative lengths
-        # semi axis scale now controls how much of the surface is revealed - for negative values, surface atoms will poke out
-        # if the surface padding is set too small, the ellipsoid will just retreat into a tiny sphere
-        semi_axis_lengths = (normed_eigs * longest_length[:, None] + surface_padding).clip(min=min_axis_length[:, None])
-
-        return eigvecs_sorted, longest_length, molwise_batch, semi_axis_lengths, tot_mol_index, tot_num_mols
+    """
 
     """  # to visualize ellipsoid fit
     import numpy as np
@@ -1390,6 +1470,25 @@ class MolCrystalData(MolData):
     plot_ellipsoid_and_points(center, eigvals, eigvecs, points)
     
     """
+
+    def safe_batched_eigh(self, covs, chunk=10000):
+        out_vals, out_vecs = [], []
+        for i in range(0, covs.shape[0], chunk):
+            cchunk = covs[i:i + chunk]
+            try:
+                ev, evec = torch.linalg.eigh(cchunk)
+            except torch.cuda.OutOfMemoryError:
+                raise
+            except RuntimeError as e:
+                if "CUSOLVER_STATUS_INVALID_VALUE" in str(e):
+                    print("Invalid matrix to eigh! Switching to CPU.")
+                    ev, evec = torch.linalg.eigh(cchunk.cpu())
+                    ev, evec = ev.to(covs.device), evec.to(covs.device)
+                else:
+                    raise e
+            out_vals.append(ev)
+            out_vecs.append(evec)
+        return torch.cat(out_vals, dim=0).float(), torch.cat(out_vecs, dim=0).float()
 
     def load_ellipsoid_model(self):
         self.ellipsoid_model = ResidualMLP(
