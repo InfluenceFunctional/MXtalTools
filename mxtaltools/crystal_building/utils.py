@@ -74,13 +74,8 @@ def unit_cell_to_supercell_cluster(crystal_batch, cutoff: float = 6, supercell_s
     base_indices = aunit_to_unit_cell_index[unit_cell_to_cluster_index]
     cluster_batch.z = crystal_batch.z[base_indices]
     cluster_batch.x = crystal_batch.x[base_indices]
-    #
-    # cluster_batch.z = crystal_batch.z[aunit_to_unit_cell_index][unit_cell_to_cluster_index]
-    # cluster_batch.x = crystal_batch.x[aunit_to_unit_cell_index][unit_cell_to_cluster_index]
-
     cluster_batch.ptr = torch.cat([torch.zeros(1, dtype=torch.long, device=crystal_batch.device),
                                    torch.cumsum(ucell_num_atoms * num_cells, dim=0)]).long()
-
     cluster_batch.batch = unit_cell_batch.repeat_interleave(translations_per_atom, dim=0)
 
     cluster_batch.aux_ind = torch.ones_like(cluster_batch.z)
