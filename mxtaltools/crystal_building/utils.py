@@ -52,18 +52,57 @@ def unit_cell_to_supercell_cluster(crystal_batch, cutoff: float = 6, supercell_s
     atoms_per_translation = ucell_num_atoms.repeat_interleave(num_cells, dim=0)
     atomwise_translation = good_translations.repeat_interleave(atoms_per_translation, dim=0)
 
-    # corresponding unit cell atom for each atom in each cluster
-    unit_cell_to_cluster_index = torch.cat([
-        (torch.arange(ucell_num_atoms[ind], device=crystal_batch.device) + apuc_cum[ind]).repeat(num_cells[ind])
-        for ind in range(crystal_batch.num_graphs)
+
+    # these two replacements are maybe marginally faster
+    # # corresponding unit cell atom for each atom in each cluster
+    # unit_cell_to_cluster_index = torch.cat([
+    #     (torch.arange(ucell_num_atoms[ind], device=crystal_batch.device) + apuc_cum[ind]).repeat(num_cells[ind])
+    #     for ind in range(crystal_batch.num_graphs)
+    # ])
+    atoms_per_crystal = (ucell_num_atoms * num_cells)  # total atoms per crystal
+    tot_num_atoms = atoms_per_crystal.sum()
+
+    # per-atom offsets
+    base = torch.arange(tot_num_atoms, device=crystal_batch.device)
+    # map into per-crystal block
+    block_ids = torch.repeat_interleave(torch.arange(len(atoms_per_crystal), device=crystal_batch.device),
+                                        atoms_per_crystal)
+
+    # relative index within each crystal’s block
+    in_block = base - torch.cumsum(torch.cat([torch.tensor([0], device=crystal_batch.device), atoms_per_crystal[:-1]]), dim=0)[
+        block_ids]
+
+    # now mod by ucell_num_atoms and add offset
+    unit_cell_to_cluster_index = (in_block % ucell_num_atoms[block_ids]) + apuc_cum[block_ids]
+    # corresponding aunit atom for each atom in each unit cell
+    # aunit_to_unit_cell_index = torch.cat([
+    #     (torch.arange(crystal_batch.num_atoms[ind], device=crystal_batch.device) + crystal_batch.ptr[ind]).repeat(
+    #         crystal_batch.sym_mult[ind])
+    #     for ind in range(crystal_batch.num_graphs)
+    # ])
+    device = crystal_batch.device
+    num_graphs = crystal_batch.num_graphs
+
+    # length of each block before repetition
+    block_lens = crystal_batch.num_atoms  # [G]
+    sym_mult = crystal_batch.sym_mult  # [G]
+    ptrs = crystal_batch.ptr[:-1]  # [G]
+
+    # total elements after repetition
+    #tot_len = torch.sum(block_lens * sym_mult)
+
+    # assign each output element to its graph
+    graph_ids = torch.repeat_interleave(torch.arange(num_graphs, device=device),
+                                        block_lens * sym_mult)
+
+    # within-block index (0..num_atoms[i]-1), repeated for sym_mult[i]
+    in_block = torch.cat([
+        torch.arange(n, device=device).repeat(m)
+        for n, m in zip(block_lens.tolist(), sym_mult.tolist())
     ])
 
-    # corresponding aunit atom for each atom in each unit cell
-    aunit_to_unit_cell_index = torch.cat([
-        (torch.arange(crystal_batch.num_atoms[ind], device=crystal_batch.device) + crystal_batch.ptr[ind]).repeat(
-            crystal_batch.sym_mult[ind])
-        for ind in range(crystal_batch.num_graphs)
-    ])
+    # add ptr offset per graph
+    aunit_to_unit_cell_index = in_block + ptrs[graph_ids]
 
     # build cluster by reindexing unit cells
     cluster_batch = crystal_batch.clone()
@@ -78,13 +117,19 @@ def unit_cell_to_supercell_cluster(crystal_batch, cutoff: float = 6, supercell_s
                                    torch.cumsum(ucell_num_atoms * num_cells, dim=0)]).long()
     cluster_batch.batch = unit_cell_batch.repeat_interleave(translations_per_atom, dim=0)
 
-    cluster_batch.aux_ind = torch.ones_like(cluster_batch.z)
+    #cluster_batch.aux_ind = torch.ones_like(cluster_batch.z)
     cluster_batch.mol_ind = torch.ones_like(cluster_batch.z)
-    for ind in range(cluster_batch.num_graphs):
-        cluster_batch.aux_ind[cluster_batch.ptr[ind]:cluster_batch.ptr[ind] + cluster_batch.num_atoms[ind]] = 0
+    for ind in range(cluster_batch.num_graphs):  # this part is rather slow still
+        #cluster_batch.aux_ind[cluster_batch.ptr[ind]:cluster_batch.ptr[ind] + cluster_batch.num_atoms[ind]] = 0
         cluster_batch.mol_ind[cluster_batch.ptr[ind]:cluster_batch.ptr[ind + 1]] = (
             torch.arange(num_cells[ind] * crystal_batch.sym_mult[ind], device=crystal_batch.device).repeat_interleave(
                 crystal_batch.num_atoms[ind]))
+    cluster_batch.aux_ind = torch.ones_like(cluster_batch.z)
+    mask = torch.cat([
+        torch.arange(cluster_batch.num_atoms[i], device=cluster_batch.device) + cluster_batch.ptr[i]
+        for i in range(cluster_batch.num_graphs)
+    ])
+    cluster_batch.aux_ind[mask] = 0
 
     # we then can further pare by molecule centroid, since our original box calculation is rather permissive
     # get all mol centroids
@@ -379,25 +424,38 @@ def aunit2unit_cell(mol_batch):
     centroids_c = get_batch_centroids(mol_batch.pos,
                                       mol_batch.batch,
                                       mol_batch.num_graphs)
+    centroids_f = mol_batch.aunit_centroid
 
     # repeat each molecule Z times
-    flat_unit_cell_centroids_c = torch.repeat_interleave(centroids_c, symmetry_multiplicity, dim=0)
-    flat_unit_cell_padded_coords_c = torch.repeat_interleave(aunit_padded_coords_c, symmetry_multiplicity, dim=0)
+    # this pattern with shared indexing is faster for larger samples
+    repeat_index = torch.arange(len(symmetry_multiplicity), device=symmetry_multiplicity.device) \
+        .repeat_interleave(symmetry_multiplicity)
 
-    centroids_f = mol_batch.aunit_centroid
-    flat_unit_cell_centroids_f = torch.repeat_interleave(centroids_f, symmetry_multiplicity, dim=0)
+    flat_unit_cell_centroids_c = centroids_c[repeat_index]
+    flat_unit_cell_padded_coords_c = aunit_padded_coords_c[repeat_index]
+    flat_unit_cell_centroids_f = mol_batch.aunit_centroid[repeat_index]
+    flat_fc_transform_list = mol_batch.T_fc[repeat_index]
+    flat_cf_transform_list = mol_batch.T_cf[repeat_index]
 
-    flat_fc_transform_list = torch.repeat_interleave(mol_batch.T_fc, symmetry_multiplicity, dim=0)
-    flat_cf_transform_list = torch.repeat_interleave(mol_batch.T_cf, symmetry_multiplicity, dim=0)
+    #
+    # flat_unit_cell_centroids_c = torch.repeat_interleave(centroids_c, symmetry_multiplicity, dim=0)
+    # flat_unit_cell_padded_coords_c = torch.repeat_interleave(aunit_padded_coords_c, symmetry_multiplicity, dim=0)
+    #
+    # flat_unit_cell_centroids_f = torch.repeat_interleave(centroids_f, symmetry_multiplicity, dim=0)
+    #
+    # flat_fc_transform_list = torch.repeat_interleave(mol_batch.T_fc, symmetry_multiplicity, dim=0)
+    # flat_cf_transform_list = torch.repeat_interleave(mol_batch.T_cf, symmetry_multiplicity, dim=0)
 
     # add 4th dimension as a dummy for affine transforms, should have shape (num_aunits, 4, 4)
     sym_ops = torch.tensor(np.concatenate(mol_batch.symmetry_operators, axis=0),
                            device=centroids_f.device, dtype=torch.float32)
 
     flat_unit_cell_affine_centroids_f = torch.cat(
-        (flat_unit_cell_centroids_f,
-         torch.ones(flat_unit_cell_centroids_f.shape[:-1] + (1,), dtype=torch.float32
-                    ).to(aunit_padded_coords_c.device)), dim=-1)
+        (
+            flat_unit_cell_centroids_f,
+            torch.ones(flat_unit_cell_centroids_f.shape[:-1] + (1,), dtype=torch.float32)
+            .to(aunit_padded_coords_c.device)),
+        dim=-1)
 
     # get all molecule centroids via symmetry ops
     flat_unit_cell_centroids_f = torch.einsum('nij,nj->ni', (sym_ops, flat_unit_cell_affine_centroids_f))[..., :-1]
@@ -406,14 +464,10 @@ def aunit2unit_cell(mol_batch):
     flat_centroids_f_in_cell = flat_unit_cell_centroids_f - torch.floor(flat_unit_cell_centroids_f)
 
     # subtract centroids and apply point symmetry to the molecule coordinates in fractional frame
-    # todo this is too complicated and important to be done on a single line
-    # todo replace this and next fractional transforms with our standard utility
-    flat_rot_coords_f = torch.einsum('nmj,nij->nmi',
-                                     (torch.einsum('mij,mnj->mni',
-                                                   (flat_cf_transform_list,
-                                                    flat_unit_cell_padded_coords_c - flat_unit_cell_centroids_c[:, None,
-                                                                                     :])),
-                                      sym_ops[:, :3, :3]))
+    # todo replace below with our standard transforms
+    centered_padded_coords_c = flat_unit_cell_padded_coords_c - flat_unit_cell_centroids_c[:, None, :]
+    rotated_coords = torch.einsum('mij,mnj->mni', (flat_cf_transform_list, centered_padded_coords_c))
+    flat_rot_coords_f = torch.einsum('nmj,nij->nmi', (rotated_coords, sym_ops[:, :3, :3]))
 
     # translate rotated aunits to their correct position
     padded_unit_cells = torch.einsum('mij,mnj->mni',
