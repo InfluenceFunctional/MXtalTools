@@ -819,7 +819,7 @@ def log_crystal_samples(epoch_stats_dict: Optional[dict] = None, sample_batch: O
     for i in range(len(mols)):
         cp = float(sample_crystals[i].packing_coeff)
         lj_pot = float(sample_crystals[i].lj_pot)
-        filename = f'cp={cp:.2f}_LJ={lj_pot:.1g}.cif'
+        filename = f'cp={cp:.2f}_LJ={lj_pot:.2g}.cif'
         filenames.append(filename)
         ase.io.write(filename, mols[i])
 
