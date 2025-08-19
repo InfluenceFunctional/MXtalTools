@@ -189,22 +189,22 @@ for ind in range(12):
         fig.add_scatter(y=params[:, ind2, ind], showlegend=False, row=row, col=col)
 fig.show()
 
-# import plotly.graph_objects as go
-# fig = go.Figure()
-# for ind in range(lj_pots.shape[-1]):
-#     fig.add_scatter(y=lj_pots[..., ind], marker_color='blue', name='lj', legendgroup='lg',
-#                     showlegend=True if ind == 0 else False)
-# fig.show()
-# 
-# 
-# import plotly.graph_objects as go
-# fig = go.Figure()
-# 
-# for ind in range(lj_pots.shape[-1]):
-#     fig.add_scatter(y=coeffs[..., ind], marker_color='blue', name='packing coeff', legendgroup='lg',
-#                     showlegend=True if ind == 0 else False)
-# fig.update_layout(yaxis_range=[0,1])
-# fig.show()
+import plotly.graph_objects as go
+fig = go.Figure()
+for ind in range(lj_pots.shape[-1]):
+    fig.add_scatter(y=lj_pots[..., ind], marker_color='blue', name='lj', legendgroup='lg',
+                    showlegend=True if ind == 0 else False)
+fig.show()
+
+
+import plotly.graph_objects as go
+fig = go.Figure()
+
+for ind in range(lj_pots.shape[-1]):
+    fig.add_scatter(y=coeffs[..., ind], marker_color='blue', name='packing coeff', legendgroup='lg',
+                    showlegend=True if ind == 0 else False)
+fig.update_layout(yaxis_range=[0,1])
+fig.show()
 
 lj_pot, es_pot, scaled_lj_pot, cluster_batch = crystal_batch.build_and_analyze(return_cluster=True)
 cluster_batch.visualize(mode='convolve with')
