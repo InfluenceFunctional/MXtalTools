@@ -102,9 +102,10 @@ def niggli_hist(stats_dict, sample_sources_list):
     return fig
 
 
-def simple_cell_hist(sample_batch, reference_dist=None, n_kde_points=200, bw_ratio=50, mode='cell'):
+def simple_cell_hist(sample_batch=None, reference_dist=None, n_kde_points=200, bw_ratio=50, mode='cell', samples=None):
     if mode == 'cell':
-        samples = sample_batch.cell_parameters().cpu().detach().numpy()
+        if samples is None:
+            samples = sample_batch.cell_parameters().cpu().detach().numpy()
         custom_ranges = {
             0: [0, float(np.max(samples[:, 0]) * 1.1)],
             1: [0, float(np.max(samples[:, 1]) * 1.1)],
@@ -120,20 +121,22 @@ def simple_cell_hist(sample_batch, reference_dist=None, n_kde_points=200, bw_rat
             11: [0, 2 * np.pi],  # orientation_3
         }
     elif mode == 'latent':
-        samples = sample_batch.cell_params_to_gen_basis().cpu().detach().numpy()
+        if samples is None:
+            samples = sample_batch.cell_params_to_gen_basis().cpu().detach().numpy()
         custom_ranges = {i: [-6.5, 6.5] for i in range(12)}
     else:
         assert False
 
-    if hasattr(sample_batch, 'lj_pot'):
-        if sample_batch.lj_pot is not None:
-            energies = sample_batch.lj_pot
-            good_inds = torch.argwhere(energies <= torch.quantile(energies, 0.1))
-            good_samples = samples[good_inds.flatten()]
+    if sample_batch is not None:
+        if hasattr(sample_batch, 'lj_pot'):
+            if sample_batch.lj_pot is not None:
+                energies = sample_batch.lj_pot
+                good_inds = torch.argwhere(energies <= torch.quantile(energies, 0.1))
+                good_samples = samples[good_inds.flatten()]
+            else:
+                good_samples = None
         else:
             good_samples = None
-    else:
-        good_samples = None
 
     kld_values = []
     lattice_features = ['cell_a', 'cell_b', 'cell_c',
@@ -874,7 +877,7 @@ def generated_cell_scatter_fig(epoch_stats_dict, layout):
 
 
 def simple_cell_scatter_fig(sample_batch, cluster_inds=None, aux_array=None, aux_scalar_name: str = ''):
-    energy = (sample_batch.lj_pot/sample_batch.num_atoms).cpu().detach()
+    energy = (sample_batch.scaled_lj_pot/sample_batch.num_atoms).cpu().detach()
     energy[energy > 0] = np.log(energy[energy > 0])
 
     xy = np.vstack([sample_batch.packing_coeff.cpu().detach(), energy])
