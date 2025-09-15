@@ -97,24 +97,26 @@ def ase_mol_from_crystaldata(crystal_batch,
 
     elif mode == 'unit cell':
         # assume that by construction the first Z molecules are the ones in the unit cell
-        mol_size = crystal_batch.num_atoms[index]
-        num_molecules = int((crystal_batch.ptr[index + 1] - crystal_batch.ptr[index]) / mol_size)
-
-        molecule_centroids = scatter(crystal_batch.pos[atom_inds],
-                                     torch.arange(num_molecules).repeat_interleave(mol_size), dim=0,
-                                     dim_size=num_molecules, reduce='mean')
-
-        centroids_fractional = fractional_transform(molecule_centroids, crystal_batch.T_cf[index])
-        inside_centroids_inds = find_coord_in_box_torch(centroids_fractional, [1.0, 1.0, 1.0])
-
-        inside_inds = torch.cat(
-            [torch.arange(mol_size) + mol_size * inside_centroids_inds[ind]
-             for ind in range(len(inside_centroids_inds))]
-        ).long()
-
-        inside_inds += crystal_batch.ptr[index]
-        atom_inds = inside_inds
-        coords = crystal_batch.pos[inside_inds].cpu().detach().numpy()
+        # mol_size = crystal_batch.num_atoms[index]
+        # num_molecules = int((crystal_batch.ptr[index + 1] - crystal_batch.ptr[index]) / mol_size)
+        #
+        # molecule_centroids = scatter(crystal_batch.pos[atom_inds],
+        #                              torch.arange(num_molecules).repeat_interleave(mol_size), dim=0,
+        #                              dim_size=num_molecules, reduce='mean')
+        #
+        # centroids_fractional = fractional_transform(molecule_centroids, crystal_batch.T_cf[index])
+        # inside_centroids_inds = find_coord_in_box_torch(centroids_fractional, [1.0, 1.0, 1.0])
+        #
+        # inside_inds = torch.cat(
+        #     [torch.arange(mol_size) + mol_size * inside_centroids_inds[ind]
+        #      for ind in range(len(inside_centroids_inds))]
+        # ).long()
+        #
+        # inside_inds += crystal_batch.ptr[index]
+        # atom_inds = inside_inds
+        # coords = crystal_batch.pos[inside_inds].cpu().detach().numpy()
+        atom_inds = torch.argwhere(crystal_batch.unit_cell_batch == index).flatten()
+        coords=crystal_batch.unit_cell_pos[atom_inds]
 
     elif mode == 'inside cell':
         fractional_coords = torch.inner(torch.linalg.inv(crystal_batch.T_fc[index]), crystal_batch.pos[crystal_batch.batch == index]).T
@@ -149,6 +151,10 @@ def ase_mol_from_crystaldata(crystal_batch,
         numbers = crystal_batch.aux_ind[atom_inds].cpu().detach().numpy() + 6
     elif highlight_mol_ind:
         numbers = crystal_batch.mol_ind[atom_inds].cpu().detach().numpy() + 6
+    elif mode == 'unit cell':
+        start = crystal_batch.ptr[index]
+        stop = start + crystal_batch.num_atoms[index] * crystal_batch.sym_mult[index]
+        numbers = crystal_batch.z[start:stop].cpu().detach().numpy()
     else:
         numbers = crystal_batch.z[atom_inds].cpu().detach().numpy()
 
@@ -165,6 +171,7 @@ def ase_mol_from_crystaldata(crystal_batch,
         mol = Atoms(symbols=numbers, positions=coords, cell=cell)
     else:
         mol = Atoms(symbols=numbers, positions=coords)
+        cell = None
 
     if return_crystal:
         cry = ase_crystal(symbols=mol, cell=cell, setting=1, spacegroup=int(crystal_batch.sg_ind[index]))

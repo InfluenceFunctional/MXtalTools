@@ -32,8 +32,9 @@ from mxtaltools.crystal_building.crystal_latent_transforms import CompositeTrans
     StdNormalTransform, enforce_niggli_plane
 from mxtaltools.crystal_building.random_crystal_sampling import sample_aunit_lengths, sample_cell_angles, \
     sample_aunit_orientations, sample_aunit_centroids
-from mxtaltools.crystal_building.utils import get_aunit_positions, aunit2unit_cell, parameterize_crystal_batch, \
-    unit_cell_to_supercell_cluster, align_mol_batch_to_standard_axes, canonicalize_rotvec
+from mxtaltools.crystal_building.utils import get_aunit_positions, parameterize_crystal_batch, \
+    align_mol_batch_to_standard_axes, canonicalize_rotvec, new_aunit2unit_cell, \
+    new_unit_cell_to_supercell_cluster
 from mxtaltools.crystal_search.standalone_crystal_opt import standalone_gradient_descent_optimization
 from mxtaltools.dataset_utils.mol_building import smiles2conformer
 from mxtaltools.dataset_utils.utils import collate_data_list
@@ -523,7 +524,15 @@ class MolCrystalData(MolData):
             self.cell_angles = cell_angles[None, ...]
 
             if not skip_box_analysis:
-                if dummy_box_analysis:
+                if not any([  # if we have the box analysis output, just don't do it
+                    self.T_fc is None,
+                    self.T_cf is None,
+                    self.cell_volume is None,
+                    self.packing_coeff is None,
+                    self.density is None
+                ]):
+                    pass
+                elif dummy_box_analysis:
                     self.T_fc = torch.eye(3, device=self.device)
                     self.T_cf = torch.eye(3, device=self.device)
                     self.cell_volume = torch.ones(1, device=self.device)
@@ -544,7 +553,7 @@ class MolCrystalData(MolData):
 
 
         if aunit_centroid is not None:
-            self.aunit_centroid = aunit_centroid[None, ...]
+            self.aunit_centroid = self.assign_aunit_centroid(aunit_centroid[None, ...])
         if aunit_orientation is not None:
             self.aunit_orientation = aunit_orientation[None, ...]
         if aunit_handedness is not None:
@@ -554,6 +563,10 @@ class MolCrystalData(MolData):
             self.mol_ind = mol_ind
         if aux_ind is not None:
             self.aux_ind = aux_ind
+
+    def assign_aunit_centroid(self, values, eps=1e-4):
+        """never allow this to touch exactly 1"""
+        return values.clip(min=0, max=1-eps)
 
     def set_sg_attrs(self, is_well_defined, nonstandard_symmetry, sg_ind, symmetry_operators):
         if not torch.is_tensor(sg_ind):
@@ -621,9 +634,9 @@ class MolCrystalData(MolData):
 
     def sample_random_aunit_centroids(self):
         if 'Batch' in self.__class__.__name__:
-            aunit_centroid = sample_aunit_centroids(self.num_graphs).to(self.device)
+            aunit_centroid = self.assign_aunit_centroid(sample_aunit_centroids(self.num_graphs).to(self.device))
         else:
-            aunit_centroid = sample_aunit_centroids(1).to(self.device)
+            aunit_centroid = self.assign_aunit_centroid(sample_aunit_centroids(1).to(self.device))
 
         self.aunit_centroid = self.scale_centroid_to_unit_cell(aunit_centroid)
 
@@ -903,9 +916,9 @@ class MolCrystalData(MolData):
         if 'Batch' in self.__class__.__name__:
             if not hasattr(self, 'asym_unit_dict'):
                 self.asym_unit_dict = self.build_asym_unit_dict()
-            return normed_centroid * torch.stack([self.asym_unit_dict[str(int(ind))] for ind in self.sg_ind])
+            return self.assign_aunit_centroid(normed_centroid * torch.stack([self.asym_unit_dict[str(int(ind))] for ind in self.sg_ind]))
         else:
-            return normed_centroid * torch.Tensor(ASYM_UNITS[str(int(self.sg_ind))]).to(self.device)
+            return self.assign_aunit_centroid(normed_centroid * torch.Tensor(ASYM_UNITS[str(int(self.sg_ind))]).to(self.device))
 
     def noise_cell_parameters(self, noise_level: float):
         # standardize
@@ -963,18 +976,33 @@ class MolCrystalData(MolData):
 
     def build_unit_cell(self):
         if 'Batch' in self.__class__.__name__:
-            self.unit_cell_pos = aunit2unit_cell(self)  # keep in numpy format
+            self.unit_cell_pos, self.unit_cell_batch, self.unit_cell_mol_ind = new_aunit2unit_cell(self)
+            #self.unit_cell_pos = aunit2unit_cell(self)
+
+            # for comparison to the new method
+            # self.visualize([0], mode='unit cell')
+            #
+            # ref_cell_list = aunit2unit_cell(self)
+            # e2 = []
+            # for elem in ref_cell_list:
+            #     for thing in elem:
+            #         e2.append(thing)
+            # pp2 = torch.cat(e2)
+            # self.unit_cell_pos = pp2
+            # self.visualize([0], mode='unit cell')
+
         else:
-            self.unit_cell_pos = aunit2unit_cell(collate_data_list([self]))
+            self.unit_cell_pos, self.unit_cell_batch, self.unit_cell_mol_ind  = new_aunit2unit_cell(collate_data_list([self]))
 
     def build_cluster(self, cutoff: float = 6, supercell_size: int = 10):
         if 'Batch' in self.__class__.__name__:
-            return unit_cell_to_supercell_cluster(self, cutoff=cutoff, supercell_size=supercell_size)
+            return new_unit_cell_to_supercell_cluster(self, cutoff=cutoff, supercell_size=supercell_size)
+            #return unit_cell_to_supercell_cluster(self, cutoff=cutoff, supercell_size=supercell_size)
         else:
             crystal_batch = collate_data_list([self])
             crystal_batch.build_unit_cell()
-            return unit_cell_to_supercell_cluster(crystal_batch, supercell_size)
-
+            return new_unit_cell_to_supercell_cluster(crystal_batch, supercell_size)
+            #return unit_cell_to_supercell_cluster(crystal_batch, supercell_size)
     def de_cluster(self):
         # delete cluster information and reset this object as a molecule
         if self.aux_ind is not None:
@@ -1009,10 +1037,10 @@ class MolCrystalData(MolData):
             self.validate_crystal_system()
         return True
 
-    def validate_cell_params_ranges(self):
+    def validate_cell_params_ranges(self, eps=1e-4):
         # assert valid ranges
         assert torch.all(self.aunit_centroid >= 0), "Aunit centroids must be greater than 0"
-        assert torch.all(self.aunit_centroid <= 1), "Aunit centroids must be less than 1"
+        assert torch.all(self.aunit_centroid <= 1-eps), "Aunit centroids must be less than 0.999"
         assert torch.all(self.cell_lengths > 0), "Cell lengths must be positive"
         assert torch.all(self.cell_angles > 0), "Cell angles must be greater than 0"
         assert torch.all(self.cell_angles < torch.pi), "Cell angles must be less than pi"
@@ -1939,6 +1967,14 @@ class MolCrystalData(MolData):
     @property
     def unit_cell_pos(self) -> Any:
         return self['unit_cell_pos'] if 'unit_cell_pos' in self._store else None
+
+    @property
+    def unit_cell_batch(self) -> Any:
+        return self['unit_cell_batch'] if 'unit_cell_pos' in self._store else None
+
+    @property
+    def unit_cell_mol_ind(self) -> Any:
+        return self['unit_cell_mol_ind'] if 'unit_cell_pos' in self._store else None
 
     @property
     def aunit_handedness(self) -> Any:

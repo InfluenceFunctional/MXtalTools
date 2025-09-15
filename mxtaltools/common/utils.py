@@ -361,3 +361,41 @@ def get_plotly_fig_size_mb(fig) -> float:
     # Convert Plotly figure to JSON string
     fig_json = json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
     return sys.getsizeof(fig_json) / (1024 * 1024)
+
+
+def block_repeat_interleave(
+                            lengths: torch.Tensor,
+                            repeats: torch.Tensor) -> torch.Tensor:
+    """
+    Repeat ragged blocks of a flat tensor in parallel on GPU.
+
+    Args:
+        lengths : (num_blocks,) tensor of block lengths.
+        repeats : (num_blocks,) tensor of repeat counts per block.
+
+    Returns:
+        1D tensor with each block repeated blockwise.
+    """
+    device = lengths.device
+    # start offset of each block in flat
+    offsets = torch.cumsum(torch.cat([torch.tensor([0], device=device), lengths[:-1]]), 0)
+
+    # output size contributed per block
+    block_out_sizes = lengths * repeats
+    total_out = block_out_sizes.sum()
+
+    # which block each output element belongs to
+    block_ids = torch.repeat_interleave(torch.arange(len(lengths), device=device),
+                                        block_out_sizes)
+
+    # output start offsets
+    out_offsets = torch.cumsum(torch.cat([torch.tensor([0], device=device),
+                                          block_out_sizes[:-1]]), 0)
+
+    # local position within block (resets with modulo!)
+    local_index = torch.arange(total_out, device=device) - out_offsets[block_ids]
+    pos_in_block = local_index % lengths[block_ids]
+
+    # map back to flat indices
+    src_ids = offsets[block_ids] + pos_in_block
+    return src_ids

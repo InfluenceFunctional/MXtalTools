@@ -237,8 +237,7 @@ def batch_molecule_principal_axes_torch(coords_i: torch.FloatTensor,
     direction = batch_get_furthest_node_vector(coords, batch, num_graphs)
     normed_direction = direction / torch.linalg.norm(direction, dim=1)[:, None]
     overlaps, signs = get_overlaps(Ip, normed_direction)
-    Ip_fin = correct_Ip_directions(Ip, overlaps,
-                                   signs)  # fails for mirror planes, on top of symmetric and spherical tops
+    Ip_fin = correct_Ip_directions(Ip, overlaps, signs)  # fails for mirror planes, on top of symmetric and spherical tops
 
     return Ip_fin, Ipm_fin, I
 
@@ -263,7 +262,7 @@ def batch_molecule_principal_axes_torch(coords_i: torch.FloatTensor,
 
 
 def correct_Ip_directions(Ip, overlaps, signs, overlap_threshold: float = 1e-5):
-    """
+    """ # TODO speed this up for large batches
     Enforce positive overlaps for given inertial principal axes with a given canonical direction, given their overlaps.
 
     Parameters
@@ -278,6 +277,22 @@ def correct_Ip_directions(Ip, overlaps, signs, overlap_threshold: float = 1e-5):
     Ip_fin: torch.tensor(3,3)
         Inertial principal axes with positive overlaps to the given canonical direction
     """
+    handedness = compute_Ip_handedness(Ip)
+    # if the vectors have negative overlap, flip the direction,
+    Ip_fixed = (Ip.permute(0,2,1) * signs[..., None]).permute(0,2,1)
+
+    # if any overlaps are vanishing (up to 32 bit precision),
+    # happens if the cardinal direction is too close to an existing principal axis
+    # determine the direction via the RHR (if two overlaps are vanishing, this will not work)
+    small_overlaps_bool = (overlaps.abs() < overlap_threshold).any(dim=1)
+    # identify the smallest overlap if we need to flip a direction
+    fix_ind = torch.argmin(overlaps.abs(), dim=-1)     # [B]
+
+    left_handed = handedness < 0
+    to_flip_bools = left_handed * small_overlaps_bool
+    Ip_fixed[to_flip_bools, fix_ind[to_flip_bools]] *= -1
+
+
     Ip_fixed_list = []
     for ii, Ip_i in enumerate(Ip):
         # if the vectors have negative overlap, flip the direction,
@@ -294,7 +309,197 @@ def correct_Ip_directions(Ip, overlaps, signs, overlap_threshold: float = 1e-5):
         Ip_fixed_list.append(Ip_fixed)
     Ip_fin = torch.stack(Ip_fixed_list)
     return Ip_fin
+def correct_Ip_directions(Ip, overlaps, signs, overlap_threshold: float = 1e-5):
+    """ # TODO speed this up for large batches
+    Enforce positive overlaps for given inertial principal axes with a given canonical direction, given their overlaps.
 
+    Parameters
+    ----------
+    Ip : torch.tensor(3,3)
+    overlaps : torch.tensor(3)
+    signs : torch.tensor(3)
+    overlap_threshold : float
+
+    Returns
+    -------
+    Ip_fin: torch.tensor(3,3)
+        Inertial principal axes with positive overlaps to the given canonical direction
+    """
+    handedness = compute_Ip_handedness(Ip)
+    # if the vectors have negative overlap, flip the direction,
+    Ip_fixed = (Ip.permute(0,2,1) * signs[..., None]).permute(0,2,1)
+
+    # if any overlaps are vanishing (up to 32 bit precision),
+    # happens if the cardinal direction is too close to an existing principal axis
+    # determine the direction via the RHR (if two overlaps are vanishing, this will not work)
+    small_overlaps_bool = (overlaps.abs() < overlap_threshold).any(dim=1)
+    # identify the smallest overlap if we need to flip a direction
+    fix_ind = torch.argmin(overlaps.abs(), dim=-1)     # [B]
+
+    left_handed = handedness < 0
+    to_flip_bools = left_handed * small_overlaps_bool
+    Ip_fixed[to_flip_bools, fix_ind[to_flip_bools]] *= -1
+
+
+    Ip_fixed_list = []
+    for ii, Ip_i in enumerate(Ip):
+        # if the vectors have negative overlap, flip the direction,
+        Ip_fixed = (Ip_i.T * signs[ii]).T
+        # if any overlaps are vanishing (up to 32 bit precision),
+        # happens if the cardinal direction is too close to an existing principal axis
+        # determine the direction via the RHR (if two overlaps are vanishing, this will not work)
+        if any(torch.abs(overlaps[ii]) < overlap_threshold):
+            # enforce right-handedness in the free vector (vanishing overlap)
+            fix_ind = torch.argmin(torch.abs(overlaps[ii]))  # vector with vanishing overlap
+            if compute_Ip_handedness(Ip_i) < 0:  # if result is not right-handed, swap it
+                Ip_fixed[fix_ind] = -Ip_fixed[fix_ind]
+
+        Ip_fixed_list.append(Ip_fixed)
+    Ip_fin = torch.stack(Ip_fixed_list)
+    return Ip_fin
+def correct_Ip_directions(Ip, overlaps, signs, overlap_threshold: float = 1e-5):
+    """ # TODO speed this up for large batches
+    Enforce positive overlaps for given inertial principal axes with a given canonical direction, given their overlaps.
+
+    Parameters
+    ----------
+    Ip : torch.tensor(3,3)
+    overlaps : torch.tensor(3)
+    signs : torch.tensor(3)
+    overlap_threshold : float
+
+    Returns
+    -------
+    Ip_fin: torch.tensor(3,3)
+        Inertial principal axes with positive overlaps to the given canonical direction
+    """
+    handedness = compute_Ip_handedness(Ip)
+    # if the vectors have negative overlap, flip the direction,
+    Ip_fixed = (Ip.permute(0,2,1) * signs[..., None]).permute(0,2,1)
+
+    # if any overlaps are vanishing (up to 32 bit precision),
+    # happens if the cardinal direction is too close to an existing principal axis
+    # determine the direction via the RHR (if two overlaps are vanishing, this will not work)
+    small_overlaps_bool = (overlaps.abs() < overlap_threshold).any(dim=1)
+    # identify the smallest overlap if we need to flip a direction
+    fix_ind = torch.argmin(overlaps.abs(), dim=-1)     # [B]
+
+    left_handed = handedness < 0
+    to_flip_bools = left_handed * small_overlaps_bool
+    Ip_fixed[to_flip_bools, fix_ind[to_flip_bools]] *= -1
+
+
+    Ip_fixed_list = []
+    for ii, Ip_i in enumerate(Ip):
+        # if the vectors have negative overlap, flip the direction,
+        Ip_fixed = (Ip_i.T * signs[ii]).T
+        # if any overlaps are vanishing (up to 32 bit precision),
+        # happens if the cardinal direction is too close to an existing principal axis
+        # determine the direction via the RHR (if two overlaps are vanishing, this will not work)
+        if any(torch.abs(overlaps[ii]) < overlap_threshold):
+            # enforce right-handedness in the free vector (vanishing overlap)
+            fix_ind = torch.argmin(torch.abs(overlaps[ii]))  # vector with vanishing overlap
+            if compute_Ip_handedness(Ip_i) < 0:  # if result is not right-handed, swap it
+                Ip_fixed[fix_ind] = -Ip_fixed[fix_ind]
+
+        Ip_fixed_list.append(Ip_fixed)
+    Ip_fin = torch.stack(Ip_fixed_list)
+    return Ip_fin
+def correct_Ip_directions(Ip, overlaps, signs, overlap_threshold: float = 1e-5):
+    """ # TODO speed this up for large batches
+    Enforce positive overlaps for given inertial principal axes with a given canonical direction, given their overlaps.
+
+    Parameters
+    ----------
+    Ip : torch.tensor(3,3)
+    overlaps : torch.tensor(3)
+    signs : torch.tensor(3)
+    overlap_threshold : float
+
+    Returns
+    -------
+    Ip_fin: torch.tensor(3,3)
+        Inertial principal axes with positive overlaps to the given canonical direction
+    """
+    handedness = compute_Ip_handedness(Ip)
+    # if the vectors have negative overlap, flip the direction,
+    Ip_fixed = (Ip.permute(0,2,1) * signs[..., None]).permute(0,2,1)
+
+    # if any overlaps are vanishing (up to 32 bit precision),
+    # happens if the cardinal direction is too close to an existing principal axis
+    # determine the direction via the RHR (if two overlaps are vanishing, this will not work)
+    small_overlaps_bool = (overlaps.abs() < overlap_threshold).any(dim=1)
+    # identify the smallest overlap if we need to flip a direction
+    fix_ind = torch.argmin(overlaps.abs(), dim=-1)     # [B]
+
+    left_handed = handedness < 0
+    to_flip_bools = left_handed * small_overlaps_bool
+    Ip_fixed[to_flip_bools, fix_ind[to_flip_bools]] *= -1
+
+
+    Ip_fixed_list = []
+    for ii, Ip_i in enumerate(Ip):
+        # if the vectors have negative overlap, flip the direction,
+        Ip_fixed = (Ip_i.T * signs[ii]).T
+        # if any overlaps are vanishing (up to 32 bit precision),
+        # happens if the cardinal direction is too close to an existing principal axis
+        # determine the direction via the RHR (if two overlaps are vanishing, this will not work)
+        if any(torch.abs(overlaps[ii]) < overlap_threshold):
+            # enforce right-handedness in the free vector (vanishing overlap)
+            fix_ind = torch.argmin(torch.abs(overlaps[ii]))  # vector with vanishing overlap
+            if compute_Ip_handedness(Ip_i) < 0:  # if result is not right-handed, swap it
+                Ip_fixed[fix_ind] = -Ip_fixed[fix_ind]
+
+        Ip_fixed_list.append(Ip_fixed)
+    Ip_fin = torch.stack(Ip_fixed_list)
+    return Ip_fin
+def correct_Ip_directions(Ip, overlaps, signs, overlap_threshold: float = 1e-5):
+    """
+    Enforce positive overlaps for given inertial principal axes with a given canonical direction, given their overlaps.
+
+    Parameters
+    ----------
+    Ip : torch.tensor(3,3)
+    overlaps : torch.tensor(3)
+    signs : torch.tensor(3)
+    overlap_threshold : float
+
+    Returns
+    -------
+    Ip_fin: torch.tensor(3,3)
+        Inertial principal axes with positive overlaps to the given canonical direction
+    """
+    handedness = compute_Ip_handedness(Ip)
+    # if the vectors have negative overlap, flip the direction,
+    Ip_fin = (Ip.permute(0,2,1) * signs[:, None, :]).permute(0,2,1)
+
+    # if any overlaps are vanishing (up to 32 bit precision),
+    # happens if the cardinal direction is too close to an existing principal axis
+    # determine the direction via the RHR (if two overlaps are vanishing, this will not work)
+    small_overlaps_bool = (overlaps.abs() < overlap_threshold).any(dim=1)
+    # identify the smallest overlap if we need to flip a direction
+    fix_ind = torch.argmin(overlaps.abs(), dim=-1)     # [B]
+
+    left_handed = handedness < 0
+    to_flip_bools = left_handed * small_overlaps_bool
+    Ip_fin[to_flip_bools, fix_ind[to_flip_bools]] *= -1
+    #
+    # Ip_fixed_list = []
+    # for ii, Ip_i in enumerate(Ip):
+    #     # if the vectors have negative overlap, flip the direction,
+    #     Ip_fixed = (Ip_i.T * signs[ii]).T
+    #     # if any overlaps are vanishing (up to 32 bit precision),
+    #     # happens if the cardinal direction is too close to an existing principal axis
+    #     # determine the direction via the RHR (if two overlaps are vanishing, this will not work)
+    #     if any(torch.abs(overlaps[ii]) < overlap_threshold):
+    #         # enforce right-handedness in the free vector (vanishing overlap)
+    #         fix_ind = torch.argmin(torch.abs(overlaps[ii]))  # vector with vanishing overlap
+    #         if compute_Ip_handedness(Ip_i) < 0:  # if result is not right-handed, swap it
+    #             Ip_fixed[fix_ind] = -Ip_fixed[fix_ind]
+    #
+    #     Ip_fixed_list.append(Ip_fixed)
+    # Ip_fin = torch.stack(Ip_fixed_list)
+    return Ip_fin
 
 def get_overlaps(Ip, direction):
     """
@@ -310,10 +515,9 @@ def get_overlaps(Ip, direction):
     overlaps : torch.tensor(3)
     signs : torch.tensor(3)
     """
-    overlaps = torch.einsum('nij,nj->ni', (
-        Ip, direction))  # Ip.dot(direction) # check if the principal components point towards or away from the CoG
-    signs = torch.sign(overlaps)  # we want any exactly zero overlaps to come with positive signs
-    signs[signs == 0] = 1
+    overlaps = torch.einsum('nij,nj->ni', (Ip, direction))  # Ip.dot(direction) # check if the principal components point towards or away from the CoG
+    signs = torch.sign(overlaps)
+    signs[signs == 0] = 1  # we want any exactly zero overlaps to come with positive signs
     return overlaps, signs
 
 

@@ -368,7 +368,7 @@ class StdNormalTransform(nn.Module):
         super().__init__()
         self.eps = 1e-6
 
-        self.transforms = nn.ModuleDict({
+        self.transforms = nn.ModuleDict({  # todo parallelize/accelerate these
             'A': BoundedTransform(0.0, 1.0, slope=length_slope, bias=1.15),
             'B': BoundedTransform(0.0, 1.0, slope=length_slope, bias=1.15),
             'C': LogNormalTransform(c_log_mean, c_log_std, exp_min=0.01, exp_max=8),
