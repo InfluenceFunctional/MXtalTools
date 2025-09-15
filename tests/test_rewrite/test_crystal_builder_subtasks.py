@@ -1,6 +1,6 @@
 from mxtaltools.common.config_processing import process_main_config
 from mxtaltools.modeller import Modeller
-from mxtaltools.crystal_building.utils import (aunit2unit_cell, descale_asymmetric_unit,
+from mxtaltools.crystal_building.utils import (aunit2ucell, descale_asymmetric_unit,
                                                align_mol_batch_to_standard_axes, batch_aunit_pose_analysis)
 from scipy.spatial.transform import Rotation
 from mxtaltools.common.geometry_utils import sph2rotvec, rotvec2sph, list_molecule_principal_axes_torch, rotvec2rotmat
@@ -52,12 +52,12 @@ class TestClass:
     # todo doesn't currently work - have to set the pos argument as the canonical conformer which is not necessarily true
     def WIP_build_unit_cell(self):
         test_unit_cells = \
-            aunit2unit_cell(test_crystals.sym_mult.clone(),
-                            [test_crystals.pos[test_crystals.batch == ii] for ii in range(test_crystals.num_graphs)],
-                            test_crystals.T_fc.clone(),
-                            torch.linalg.inv(test_crystals.T_fc),
-                            [torch.Tensor(test_crystals.symmetry_operators[ii]) for ii in range(test_crystals.num_graphs)]
-                            )
+            aunit2ucell(test_crystals.sym_mult.clone(),
+                        [test_crystals.pos[test_crystals.batch == ii] for ii in range(test_crystals.num_graphs)],
+                        test_crystals.T_fc.clone(),
+                        torch.linalg.inv(test_crystals.T_fc),
+                        [torch.Tensor(test_crystals.symmetry_operators[ii]) for ii in range(test_crystals.num_graphs)]
+                        )
 
         disagreements = torch.stack([(test_unit_cells[ii] - test_crystals.unit_cell_pos[ii]).abs().sum() for ii in range(test_crystals.num_graphs)])
         assert disagreements.mean() < 1e-4

@@ -33,8 +33,8 @@ from mxtaltools.crystal_building.crystal_latent_transforms import CompositeTrans
 from mxtaltools.crystal_building.random_crystal_sampling import sample_aunit_lengths, sample_cell_angles, \
     sample_aunit_orientations, sample_aunit_centroids
 from mxtaltools.crystal_building.utils import get_aunit_positions, parameterize_crystal_batch, \
-    align_mol_batch_to_standard_axes, canonicalize_rotvec, new_aunit2unit_cell, \
-    new_unit_cell_to_supercell_cluster
+    align_mol_batch_to_standard_axes, canonicalize_rotvec, aunit2ucell, \
+    ucell2cluster
 from mxtaltools.crystal_search.standalone_crystal_opt import standalone_gradient_descent_optimization
 from mxtaltools.dataset_utils.mol_building import smiles2conformer
 from mxtaltools.dataset_utils.utils import collate_data_list
@@ -976,7 +976,7 @@ class MolCrystalData(MolData):
 
     def build_unit_cell(self):
         if 'Batch' in self.__class__.__name__:
-            self.unit_cell_pos, self.unit_cell_batch, self.unit_cell_mol_ind = new_aunit2unit_cell(self)
+            self.unit_cell_pos, self.unit_cell_batch, self.unit_cell_mol_ind = aunit2ucell(self)
             #self.unit_cell_pos = aunit2unit_cell(self)
 
             # for comparison to the new method
@@ -992,16 +992,16 @@ class MolCrystalData(MolData):
             # self.visualize([0], mode='unit cell')
 
         else:
-            self.unit_cell_pos, self.unit_cell_batch, self.unit_cell_mol_ind  = new_aunit2unit_cell(collate_data_list([self]))
+            self.unit_cell_pos, self.unit_cell_batch, self.unit_cell_mol_ind  = aunit2ucell(collate_data_list([self]))
 
     def build_cluster(self, cutoff: float = 6, supercell_size: int = 10):
         if 'Batch' in self.__class__.__name__:
-            return new_unit_cell_to_supercell_cluster(self, cutoff=cutoff, supercell_size=supercell_size)
+            return ucell2cluster(self, cutoff=cutoff, supercell_size=supercell_size)
             #return unit_cell_to_supercell_cluster(self, cutoff=cutoff, supercell_size=supercell_size)
         else:
             crystal_batch = collate_data_list([self])
             crystal_batch.build_unit_cell()
-            return new_unit_cell_to_supercell_cluster(crystal_batch, supercell_size)
+            return ucell2cluster(crystal_batch, supercell_size)
             #return unit_cell_to_supercell_cluster(crystal_batch, supercell_size)
     def de_cluster(self):
         # delete cluster information and reset this object as a molecule
