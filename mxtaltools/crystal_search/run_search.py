@@ -12,8 +12,8 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from energy_sampling.utils import dict2namespace
-from mxtaltools.common.config_processing import load_yaml
+
+from mxtaltools.common.config_processing import load_yaml, dict2namespace
 from mxtaltools.common.utils import is_cuda_oom
 from mxtaltools.dataset_utils.data_classes import MolCrystalData
 from mxtaltools.dataset_utils.utils import collate_data_list
