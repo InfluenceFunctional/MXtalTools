@@ -19,7 +19,7 @@ from mxtaltools.dataset_utils.data_classes import MolCrystalData
 from mxtaltools.dataset_utils.utils import collate_data_list
 
 
-torch.cuda.set_per_process_memory_fraction(0.99, device=0)
+
 
 def get_initial_state(config, crystal_batch):
     # sample initial parameters
@@ -118,6 +118,10 @@ if __name__ == '__main__':
     config = dict2namespace(load_yaml(config_path))
 
     device = config.device
+    if device == 'cuda':
+        # prevents from dipping into windows virtual vram
+        torch.cuda.set_per_process_memory_fraction(0.99, device=0)
+
     samples_to_optim = init_samples_to_optim(config)
 
     out_path = Path(config.out_dir + f"/{config.run_name}.pt")  # where to save outputs
