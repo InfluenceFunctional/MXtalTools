@@ -47,7 +47,7 @@ if __name__ == '__main__':
         z=atom_types,
         pos=atom_coords,
         x=atom_types,
-        skip_mol_analysis=False,
+        do_mol_analysis=True,
     )
 
     crystal_batch = collate_data_list([MolCrystalData(

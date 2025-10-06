@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch import nn as nn
 
-from mxtaltools.common.geometry_utils import sph2rotvec, rotvec2sph
+from mxtaltools.common.geometry_utils import sph2cart_rotvec, cart2sph_rotvec
 
 
 class AunitTransform(nn.Module):
@@ -322,7 +322,7 @@ class RotationTransform(nn.Module):
         r = self.std_normal_to_rotation(std_r).clip(min=0.01,
                                                     max=torch.pi * 2 - 0.01)  # cannot be allowed to touch extrema exactly
 
-        rotvec = sph2rotvec(torch.cat([theta, phi, r], dim=1))
+        rotvec = sph2cart_rotvec(torch.cat([theta, phi, r], dim=1))
 
         return rotvec
 
@@ -332,7 +332,7 @@ class RotationTransform(nn.Module):
         """
         # convert to spherical coordinates
         # polar, azimuthal, turn
-        theta, phi, r = rotvec2sph(rotvec).split(1, dim=1)
+        theta, phi, r = cart2sph_rotvec(rotvec).split(1, dim=1)
 
         std_theta = self.polar_to_std_normal(theta)
         std_phi = self.azimuth_to_std_normal(phi)
@@ -1207,22 +1207,56 @@ def enforce_niggli_plane(cell_lengths, cell_angles, mode, eps=1e-6):
             ga[bad_inds] = torch.pi - ga[bad_inds]
 
         elif mode == 'shift':
-            # Soft fix via cosine shift (approximate projection)
-            denom = ab + ac + bc + eps
-            shift = (-overlap + eps) / denom
-            shift = torch.where(overlap < -eps, shift, torch.zeros_like(shift))
+            # Project offending points to the nearest point on the zero overlap plane
+            """
+            for ab*cos(gamma) + ac*cos(beta) + bc*cos(alpha)=Ax+By+Cz=overlap as the equation of the plane
+            project from arbitrary point r=(xyz) to the zero-plane
+            The plane normal is N=(ABC). The overlap is N * r.
+            The corrective vector is v=-(N * r)/(N*N)*N
+            
+            Issue with this approach is due to roundtrip cos/arccos float problems, it doesn't perfectly work often in one shot.
+            So we iterate and add a small positive factor.
+            
+            **should** be idempotent, or pretty close
+            """
+            boost = 1e-3
+            for _ in range(20):
+                r = torch.cat([ga_cos, be_cos, al_cos], dim=1)  # (n, 3)
+                N = torch.cat([ab, ac, bc], dim=1)  # (n, 3)
 
-            al_cos = al_cos + shift * (bc / denom)
-            be_cos = be_cos + shift * (ac / denom)
-            ga_cos = ga_cos + shift * (ab / denom)
+                # Compute scalar projection
+                dot = (N * r).sum(dim=1, keepdim=True)
+                norm2 = (N ** 2).sum(dim=1, keepdim=True)
 
-            # Convert back to angles
-            al = torch.arccos(al_cos.clip(-1 + eps, 1 - eps))
-            be = torch.arccos(be_cos.clip(-1 + eps, 1 - eps))
-            ga = torch.arccos(ga_cos.clip(-1 + eps, 1 - eps))
+                # Correction vector
+                shift = -(dot / (norm2 + eps)) * N + boost * N / N.norm(dim=1, keepdim=True)
+
+                # Only apply when overlap < 0
+                mask = (overlap < 0).float()
+                fixed_r = r + mask * shift
+
+                # Convert back to angles
+                ga, be, al = torch.arccos(fixed_r.clip(-1 + eps, 1 - eps)).split(1, dim=1)
+                ga_cos, be_cos, al_cos = ga.cos(), be.cos(), al.cos()
+
+                """"""
+                overlap = ab * ga.cos() + ac * be.cos() + bc * al.cos()
+                if torch.all(overlap >= 0):
+                    break
+
+            # r = torch.cat([ga_cos, be_cos, al_cos], dim=1)
+            # N = torch.cat([ab, ac, bc], dim=1)
+            # shift = -(N*r).sum(dim=1, keepdim=True)/(N.norm(dim=1, keepdim=True)**2 + 1e-12) * N
+            # fix_shift = torch.where(overlap < 0, shift, torch.zeros_like(shift))
+            # fixed_r = r + fix_shift
+            #
+            # ga, be, al = torch.arccos(fixed_r.clip(-1 + eps, 1-eps)).split(1, dim=1)
 
         else:
             raise ValueError(f"Unknown mode '{mode}': use 'mirror' or 'shift'")
+
+    ab, ac, al_cos, bc, be_cos, ga_cos, overlap = compute_niggli_overlap(a, al, b, be, c, ga)
+    assert torch.all(overlap >= 0), "Niggli plane enforcement failed!!"
 
     return torch.cat([al, be, ga], dim=1)
 

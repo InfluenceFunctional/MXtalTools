@@ -6,10 +6,6 @@ from ase.geometry import cell_to_cellpar
 from ase.io import read
 from ase.spacegroup import crystal as ase_crystal
 from ase.visualize import view
-from torch_scatter import scatter
-
-from mxtaltools.crystal_building.utils import find_coord_in_box_torch
-from mxtaltools.common.geometry_utils import fractional_transform
 
 
 def data_batch_to_ase_mols_list(crystaldata_batch,
@@ -96,25 +92,6 @@ def ase_mol_from_crystaldata(crystal_batch,
         coords = crystal_batch.pos[atom_inds].cpu().detach().numpy()
 
     elif mode == 'unit cell':
-        # assume that by construction the first Z molecules are the ones in the unit cell
-        # mol_size = crystal_batch.num_atoms[index]
-        # num_molecules = int((crystal_batch.ptr[index + 1] - crystal_batch.ptr[index]) / mol_size)
-        #
-        # molecule_centroids = scatter(crystal_batch.pos[atom_inds],
-        #                              torch.arange(num_molecules).repeat_interleave(mol_size), dim=0,
-        #                              dim_size=num_molecules, reduce='mean')
-        #
-        # centroids_fractional = fractional_transform(molecule_centroids, crystal_batch.T_cf[index])
-        # inside_centroids_inds = find_coord_in_box_torch(centroids_fractional, [1.0, 1.0, 1.0])
-        #
-        # inside_inds = torch.cat(
-        #     [torch.arange(mol_size) + mol_size * inside_centroids_inds[ind]
-        #      for ind in range(len(inside_centroids_inds))]
-        # ).long()
-        #
-        # inside_inds += crystal_batch.ptr[index]
-        # atom_inds = inside_inds
-        # coords = crystal_batch.pos[inside_inds].cpu().detach().numpy()
         atom_inds = torch.argwhere(crystal_batch.unit_cell_batch == index).flatten()
         coords=crystal_batch.unit_cell_pos[atom_inds]
 
@@ -153,8 +130,8 @@ def ase_mol_from_crystaldata(crystal_batch,
         numbers = crystal_batch.mol_ind[atom_inds].cpu().detach().numpy() + 6
     elif mode == 'unit cell':
         start = crystal_batch.ptr[index]
-        stop = start + crystal_batch.num_atoms[index] * crystal_batch.sym_mult[index]
-        numbers = crystal_batch.z[start:stop].cpu().detach().numpy()
+        stop = start + crystal_batch.num_atoms[index]
+        numbers = crystal_batch.z[start:stop].repeat(crystal_batch.sym_mult[index]).cpu().detach().numpy()
     else:
         numbers = crystal_batch.z[atom_inds].cpu().detach().numpy()
 

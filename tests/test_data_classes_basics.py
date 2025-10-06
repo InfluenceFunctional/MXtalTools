@@ -41,8 +41,7 @@ def test_MolData(device):
     mol_batch = generate_test_mol_batch(device)
 
     # check volume calculation
-    assert torch.all(
-        torch.isclose(mol_batch.volume_calculation(), mol_batch.mol_volume, atol=1)), "Error in mol volume calculation"
+    assert torch.all(torch.isclose(mol_batch.volume_calculation(), mol_batch.mol_volume, atol=1)), "Error in mol volume calculation"
     # check radius calculation
     assert torch.all(torch.isclose(mol_batch.radius_calculation(), mol_batch.radius)), "Error in mol volume calculation"
     # check mass calculation
@@ -55,7 +54,7 @@ def test_MolData(device):
         "Error in recentering calculation"
 
     # test radial calculation
-    mol_batch.construct_radial_graph()  # todo add a test/assertion
+    mol_batch.construct_intra_radial_graph()  # todo add a test/assertion
 
 
 def generate_test_mol_batch(device):
@@ -63,14 +62,21 @@ def generate_test_mol_batch(device):
     num_mols = len(test_smiles)
     mols = [base_molData.from_smiles(test_smiles[ind],
                                      pare_to_size=9,
-                                     skip_mol_analysis=False,
                                      allow_methyl_rotations=True,
                                      compute_partial_charges=True,
                                      minimize=False,
                                      protonate=True,
+                                     do_mol_analysis=False,
                                      ) for ind in range(num_mols)]
     mols = [mol for mol in mols if mol is not None]
     mol_batch = collate_data_list(mols).to(device)
+    mol_batch.mol_analysis()
+    mol_batch.add_graph_attr(mol_batch.mass, 'mass')
+    mol_batch.add_graph_attr(mol_batch.radius, 'radius')
+    mol_batch.add_graph_attr(mol_batch.mol_volume, 'mol_volume')
+
+    mols2 = mol_batch.to_data_list()
+    assert mols2[0].mass == mol_batch.mass[0]
     return mol_batch
 
 
@@ -92,7 +98,7 @@ def test_MolCrystalData(device):
     rotvec_lens = torch.rand(num_mols, device=device) * 2 * torch.pi
     aunit_orientation = aunit_orientation / aunit_orientation.norm(dim=1)[:, None] * rotvec_lens[:, None]
     aunit_handedness = [int(np.random.choice([-1, 1])) for _ in range(num_mols)]  #[1 for _ in range(num_mols)]  #
-    sg_inds = [int(np.random.randint(1, 50, 1)) for _ in range(num_mols)]
+    sg_inds = [int(np.random.randint(1, 50, 1).item()) for _ in range(num_mols)]
 
     mol_batch.noise_positions(1e-2)  # small asymmetry helps crystals behave better down the line
 
@@ -106,6 +112,7 @@ def test_MolCrystalData(device):
             aunit_orientation=aunit_orientation[ind],
             aunit_handedness=aunit_handedness[ind],
             identifier=str(ind),
+            do_box_analysis=True,
         )
         for ind in range(num_mols)
     ]
@@ -167,14 +174,13 @@ def test_MolCrystalData(device):
     """
     cluster_batch = crystal_batch.build_cluster()
     cluster_batch.construct_radial_graph()
-    lj_en, scaled_lj_en = cluster_batch.compute_LJ_energy()
+    lj_en = cluster_batch.compute_LJ_energy()
     es_en = cluster_batch.compute_ES_energy()
     silu_en = cluster_batch.compute_silu_energy()
     cluster_batch.compute_ellipsoidal_overlap()
 
     assert torch.all(torch.isfinite(lj_en)), "NaN LJ potentials"
     assert torch.all(torch.isfinite(es_en)), "NaN electrostatic potentials"
-
 
 test_MolData(device)
 test_MolCrystalData(device)

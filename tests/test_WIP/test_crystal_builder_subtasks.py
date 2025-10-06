@@ -1,9 +1,11 @@
+# todo rewrite
+
 from mxtaltools.common.config_processing import process_main_config
 from mxtaltools.modeller import Modeller
 from mxtaltools.crystal_building.utils import (aunit2ucell, descale_asymmetric_unit,
                                                align_mol_batch_to_standard_axes, batch_aunit_pose_analysis)
 from scipy.spatial.transform import Rotation
-from mxtaltools.common.geometry_utils import sph2rotvec, rotvec2sph, list_molecule_principal_axes_torch, rotvec2rotmat
+from mxtaltools.common.geometry_utils import sph2cart_rotvec, cart2sph_rotvec, list_molecule_principal_axes_torch, rotvec2rotmat
 import numpy as np
 import torch
 
@@ -33,7 +35,7 @@ class TestClass:
         rotations = [Rotation.random() for _ in range(5)]
         rotvecs = torch.stack([torch.Tensor(rotation.as_rotvec()) for rotation in rotations])
 
-        rotvecs2 = sph2rotvec(rotvec2sph(rotvecs))
+        rotvecs2 = sph2cart_rotvec(cart2sph_rotvec(rotvecs))
         assert (rotvecs - rotvecs2).abs().mean() < 1e-4
 
         rotmats = rotvec2rotmat(rotvecs, basis='cartesian')
@@ -42,7 +44,7 @@ class TestClass:
 
         '''check spherical mode'''
         rotations = [Rotation.random() for _ in range(5)]
-        rotvecs = rotvec2sph(torch.stack([torch.Tensor(rotation.as_rotvec()) for rotation in rotations]))
+        rotvecs = cart2sph_rotvec(torch.stack([torch.Tensor(rotation.as_rotvec()) for rotation in rotations]))
         rotmats = rotvec2rotmat(rotvecs, basis='spherical')
         check_rotmats = torch.stack([torch.Tensor(rotation.as_matrix()) for rotation in rotations])
         assert (rotmats - check_rotmats).abs().mean() < 1e-4

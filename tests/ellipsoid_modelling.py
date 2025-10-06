@@ -61,7 +61,7 @@ def test_MolData(device):
         "Error in recentering calculation"
 
     # test radial calculation
-    mol_batch.construct_radial_graph()  # todo add a test/assertion
+    mol_batch.construct_intra_radial_graph()  # todo add a test/assertion
 
 
 def generate_test_mol_batch(device, max_num_mols: Optional[int] = 10000000):
@@ -69,7 +69,7 @@ def generate_test_mol_batch(device, max_num_mols: Optional[int] = 10000000):
     num_mols = min(len(test_smiles), max_num_mols)
     mols = [base_molData.from_smiles(test_smiles[ind],
                                      pare_to_size=9,
-                                     skip_mol_analysis=False,
+                                     do_mol_analysis=True,
                                      allow_methyl_rotations=True,
                                      compute_partial_charges=True,
                                      minimize=False,

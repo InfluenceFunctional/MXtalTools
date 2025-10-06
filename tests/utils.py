@@ -1,4 +1,9 @@
+import os
+
 import torch
+
+from mxtaltools.common.config_processing import process_main_config
+from mxtaltools.modeller import Modeller
 
 # from mxtaltools.modeller import Modeller
 
@@ -26,15 +31,12 @@ r"O=C(CN1CC=CC1)N1CC(=CBr)C1",
 r"CC(F)CCN(C)Cc1sccc1Cl",
 r"CCCCN(C)N(C)CCOCC"
 ]
-#
-# def train_model(config_path, test_user_path):
-#     source_dir = os.getcwd()
-#     os.chdir(source_dir)
-#     user_path = test_user_path
-#     config = process_main_config(user_yaml_path=user_path,
-#                                  main_yaml_path=source_dir + config_path)
-#     modeller = Modeller(config)
-#     modeller.fit_models()
+
+def train_model(config_path, user_path):
+    config = process_main_config(user_yaml_path=user_path,
+                                 main_yaml_path=config_path)
+    modeller = Modeller(config)
+    modeller.fit_models()
 
 
 def check_tensor_similarity(t1, t2, eps=1e-4):

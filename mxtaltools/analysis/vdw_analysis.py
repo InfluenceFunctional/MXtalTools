@@ -8,57 +8,42 @@ from torch_scatter import scatter
 from mxtaltools.models.functions.radial_graph import radius, build_radial_graph
 
 
-def vdw_analysis(vdw_radii: torch.Tensor,
-                 dist_dict: dict,
-                 num_graphs: int,
-                 ):
+def lj_analysis(vdw_radii: torch.Tensor,
+                dist_dict: dict,
+                num_graphs: int,
+                ):
     """
     new version of the vdw_overlap function for analysis of intermolecular contacts
     """
     batch = dist_dict['intermolecular_dist_batch']
-    lj_pot, normed_overlap, overlap = compute_lj_pot(dist_dict, vdw_radii)
+    edgewise_lj_pot = compute_lj_edgewise(dist_dict, vdw_radii)
+    molwise_lj_pot = scatter(edgewise_lj_pot, batch, reduce='sum', dim_size=num_graphs)
 
-    molwise_overlap = scatter(overlap, batch, reduce='sum', dim_size=num_graphs)
-    molwise_normed_overlap = scatter(normed_overlap, batch, reduce='sum', dim_size=num_graphs)
-    molwise_lj_pot = scatter(lj_pot, batch, reduce='sum', dim_size=num_graphs)
+    return molwise_lj_pot
 
-    molwise_loss = scale_molwise_lj_pot(molwise_lj_pot).clip(max=50)
+def vdW_analysis(vdw_radii: torch.Tensor,
+                dist_dict: dict,
+                num_graphs: int,
+                ):
+    """
+    new version of the vdw_overlap function for analysis of intermolecular contacts
+    """
+    batch = dist_dict['intermolecular_dist_batch']
+    vdw_overlap = compute_vdW_overlap(dist_dict, vdw_radii)
+    molwise_vdw_overlap = scatter(vdw_overlap, batch, reduce='sum', dim_size=num_graphs)
 
-    return molwise_overlap, molwise_normed_overlap, molwise_lj_pot, molwise_loss, lj_pot
-
-
-def scale_molwise_lj_pot(vdw_potential: torch.Tensor,
-                         ):
-    rescaled_vdw_loss = vdw_potential.clone()
-    rescaled_vdw_loss[rescaled_vdw_loss > 0] = torch.log(rescaled_vdw_loss[rescaled_vdw_loss > 0] + 1)
-
-    return rescaled_vdw_loss
-
-
-'''
-import torch
-import plotly.graph_objects as go
-xx = torch.linspace(0.001, 5, 1001)
-lj = 4 * (1/xx**12 - 1/xx**6)
-scaled_lj = torch.log(lj+2) / torch.log(torch.Tensor([2])) - 1
-fig = go.Figure()
-#fig.add_scatter(x=xx,y=lj)
-fig.add_scatter(x=xx,y=scaled_lj)
-fig.update_layout(yaxis_range=[-5,10])
-fig.show()
-'''
+    return molwise_vdw_overlap
 
 
-def compute_lj_pot(dist_dict, vdw_radii):
+
+
+def compute_lj_edgewise(dist_dict, vdw_radii):
     dists = dist_dict['intermolecular_dist']
     elements = dist_dict['intermolecular_dist_atoms']
 
     atom_radii = [vdw_radii[elements[0]], vdw_radii[elements[1]]]
     radii_sums = atom_radii[0] + atom_radii[1]
-    # only punish positives (meaning overlaps)
-    overlap = F.relu(radii_sums - dists)
-    # norm overlaps against internuclear distances
-    normed_overlap = F.softplus((radii_sums - dists) / radii_sums, beta=10)
+
     # uniform lennard jones potential
     sigma_r6 = torch.pow(radii_sums / dists, 6)
     sigma_r12 = torch.pow(sigma_r6, 2)
@@ -66,7 +51,17 @@ def compute_lj_pot(dist_dict, vdw_radii):
         4 * 1 * (sigma_r12 - sigma_r6),
         nan=0.0, posinf=1e20, neginf=-1e-20
     )
-    return lj_pot, normed_overlap, overlap
+    return lj_pot
+
+def compute_vdW_overlap(dist_dict, vdw_radii):
+    dists = dist_dict['intermolecular_dist']
+    elements = dist_dict['intermolecular_dist_atoms']
+    # only punish positives (meaning overlaps)
+    atom_radii = [vdw_radii[elements[0]], vdw_radii[elements[1]]]
+    radii_sums = atom_radii[0] + atom_radii[1]
+
+    overlap = F.relu(radii_sums - dists)
+    return overlap
 
 
 def old_compute_num_h_bonds(supercell_data, atom_acceptor_ind, atom_donor_ind, i):
@@ -301,15 +296,14 @@ def get_intermolecular_dists_dict(cluster_batch,
 
 
 def silu_energy(dist_dict,
-                num_graphs,
+                num_graphs: int,
                 vdw_radii,
-                repulsion: Optional[float] = 1.0
+                repulsion: float = 1.0
                 ):
     """
     a shorter range and softer LJ-type energy
     """
-    if repulsion is None:
-        repulsion = 1
+
     dists = dist_dict['intermolecular_dist']
     elements = dist_dict['intermolecular_dist_atoms']
     atom_radii = [vdw_radii[elements[0]], vdw_radii[elements[1]]]

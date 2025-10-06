@@ -20,13 +20,12 @@ from torch_scatter import scatter
 from tqdm import tqdm
 
 from mxtaltools.analysis.crystal_rdf import compute_rdf_distance, crystal_rdf
-from mxtaltools.common.geometry_utils import list_molecule_principal_axes_torch, embed_vector_to_rank3, \
-    cell_vol_angle_factor
+from mxtaltools.common.geometry_utils import list_molecule_principal_axes_torch, embed_vector_to_rank3
 from mxtaltools.common.instantiate_models import instantiate_models
 from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.common.training_utils import flatten_wandb_params, set_lr, \
     init_optimizer, init_scheduler, reload_model, save_checkpoint, slash_batch, make_sequential_directory
-from mxtaltools.common.utils import namespace2dict, smooth_constraint, softplus_shift
+from mxtaltools.common.utils import namespace2dict
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
 from mxtaltools.dataset_utils.construction.parallel_synthesis import otf_synthesize_molecules, otf_synthesize_crystals
@@ -772,13 +771,12 @@ class Modeller:
                         prev_epoch_failed = False
 
                     except (RuntimeError, ValueError) as e:  # if we do hit OOM, slash the batch size
-                        if "CUDA out of memory" in str(
-                                e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
+                        if self.is_cuda_oom(e):
                             test_loader, train_loader, prev_epoch_failed = self.handle_oom(prev_epoch_failed,
                                                                                            test_loader, train_loader)
                         elif "numerical error" in str(e).lower():
                             self.handle_nan(e, epoch)
-                        elif isinstance(e, MemoryError) or "out of memory" in str(e).lower():
+                        elif (isinstance(e, MemoryError) or "out of memory" in str(e).lower()) and ('cuda' not in str(e).lower()):
                             print("Hit OOM, slashing train dataset size")
                             gc.collect()
                             self.config.max_dataset_length *= 0.9
@@ -791,7 +789,17 @@ class Modeller:
                     self.times = {}
                     epoch += 1
 
-                self.logger.polymorph_classification_eval_analysis(test_loader, self.config.mode)
+    def is_cuda_oom(self, e: Exception) -> bool:
+        if isinstance(e, torch.cuda.OutOfMemoryError):
+            return True
+        s = str(e).lower()
+        return (
+                ("cuda" in s and "memory" in s)
+                or ("cublas" in s and "alloc" in s)
+                or ("cusolver" in s and "alloc" in s)
+                or ("out of memory" in s)
+                or ("nonzero is not supported for tensors with more than int_max elements" in s)
+        )
 
     def handle_nan(self, e, epoch):
         print(e)
@@ -803,7 +811,7 @@ class Modeller:
                                     self.models_dict[model_name],
                                     self.optimizers_dict[model_name],
                                     self.config.__dict__[model_name].__dict__,
-                                    self.config.checkpoint_dir_path + f'best_{model_name}' + self.run_identifier + '_crashed',
+                                    self.config.checkpoint_dir_path + f'_best_{model_name}' + self.run_identifier + '_crashed',
                                     self.dataDims)
             raise e
         self.num_naned_epochs += 1
@@ -950,7 +958,7 @@ class Modeller:
     def get_training_mode(self):
         self.train_models_dict = {
             'discriminator': ((self.config.mode in ['gan', 'generator', 'discriminator']) and any(
-                (self.config.discriminator.train_adversarially, self.config.discriminator.train_on_distorted,
+                (self.config.discriminator.train_on_distorted,
                  self.config.discriminator.train_on_randn)))
                              or (self.config.model_paths.discriminator is not None),
             'generator': (self.config.mode in ['gan', 'generator']),
@@ -987,6 +995,9 @@ class Modeller:
                   iteration_override: int = None):
         self.epoch_type = epoch_type
         self.times[epoch_type + "_epoch_start"] = time()
+        if not any(list(self.train_models_dict.values())):
+            print("not training any models! check your config!")
+            assert False
 
         if self.config.mode in ['gan', 'generator']:
             if self.config.model_paths.regressor is not None:
@@ -1272,7 +1283,7 @@ class Modeller:
                     smiles=mol_batch.smiles[ind],
                     identifier=mol_batch.identifier[ind],
                     mol_volume=mol_batch.mol_volume[ind],
-                    skip_mol_analysis=True,
+                    do_mol_analysis=False,
                 ).cpu().detach()
             )
 
@@ -1287,7 +1298,7 @@ class Modeller:
                     identifier=decoding_batch.identifier[ind],
                     mol_volume=decoding_batch.mol_volume[ind],
                     aux_ind=decoding_batch.aux_ind[b2],
-                    skip_mol_analysis=True
+                    do_mol_analysis=False
                 ).cpu().detach()
             )
 
@@ -1314,10 +1325,6 @@ class Modeller:
                                                               rotations,
                                                               self.models_dict['autoencoder'],
                                                               self.config.device)
-
-        # if self.epoch_type == 'test':
-        #     if encoder_equivariance_loss.mean() > 0.01:
-        #         aa = 1
 
         return encoder_equivariance_loss, decoder_equivariance_loss
 
@@ -2202,8 +2209,8 @@ class Modeller:
         stats = {'generator_sample_source': np.array(index_generator_to_use)[None],
                  'real_vdw_penalty': real_scaled_lj_pot.detach(),
                  'fake_vdw_penalty': fake_scaled_lj_pot.detach(),
-                 'real_cell_parameters': crystal_batch.cell_parameters().detach(),
-                 'generated_cell_parameters': fake_crystal_batch.cell_parameters().detach(),
+                 'real_cell_parameters': crystal_batch.zp1_cell_parameters().detach(),
+                 'generated_cell_parameters': fake_crystal_batch.zp1_cell_parameters().detach(),
                  'real_packing_coeff': crystal_batch.packing_coeff.detach(),
                  'fake_packing_coeff': fake_crystal_batch.packing_coeff.detach(),
                  }
@@ -2394,7 +2401,7 @@ class Modeller:
                                                   supercell_size=10,
                                                   align_to_standardized_orientation=False)
         cluster_batch.construct_radial_graph(cutoff=6)
-        # get reference energy
+        # get reference energy  # todo rewrite usage / computes of overlaps here
         (molwise_lj_pot, molwise_scaled_lj_pot, edgewise_lj_pot,
          molwise_overlap, molwise_normed_overlap) = cluster_batch.compute_LJ_energy(return_overlaps=True)
 
@@ -2503,8 +2510,8 @@ class Modeller:
             """build proposed crystal"""
             generator_raw_samples = init_state + generator_proposed_step
             new_crystal_batch = crystal_batch.clone().detach()
-            new_crystal_batch.gen_basis_to_cell_params(generator_raw_samples)  # cleaning implicit in this function
-            gen_basis_sample = new_crystal_batch.cell_params_to_gen_basis()
+            new_crystal_batch.latent_to_cell_params(generator_raw_samples)  # cleaning implicit in this function
+            gen_basis_sample = new_crystal_batch.latent_params()
 
             """analyze new crystal"""
             (molwise_normed_overlap, molwise_scaled_lj_pot, molwise_lj_pot,
@@ -2552,7 +2559,7 @@ class Modeller:
                     'packing_coefficient': new_crystal_batch.packing_coeff.detach(),
                     'ellipsoid_energy': ellipsoid_loss.detach(),
                     'sample_iter': torch.ones(new_crystal_batch.num_graphs) * ind + 1,
-                    'cell_parameters': new_crystal_batch.cell_parameters().detach(),
+                    'cell_parameters': new_crystal_batch.zp1_cell_parameters().detach(),
                     'cell_delta': generator_proposed_step.cpu().detach(),
                 })
                 if ind == self.config.generator.samples_per_iter - 1:  # log sample losses on last iter only
@@ -2607,8 +2614,8 @@ class Modeller:
         target_cps = (torch.randn(mol_batch.num_graphs, device=self.device) * 0.0447 + 0.6226).clip(min=0.45, max=0.95)
         crystal_batch.sample_random_reduced_crystal_parameters(target_packing_coeff=target_cps)
         """analyze random prior sample"""
-        prior_in_gen_basis = crystal_batch.cell_params_to_gen_basis().clone().detach()
-        destandardized_prior = crystal_batch.cell_parameters().clone().detach()
+        prior_in_gen_basis = crystal_batch.latent_params().clone().detach()
+        destandardized_prior = crystal_batch.zp1_cell_parameters().clone().detach()
         return crystal_batch, destandardized_prior, prior_in_gen_basis
 
     def increment_batch_size(self, train_loader, test_loader, extra_test_loader):
@@ -2646,7 +2653,7 @@ class Modeller:
                                     self.models_dict[model_name],
                                     self.optimizers_dict[model_name],
                                     self.config.__dict__[model_name].__dict__,
-                                    self.config.checkpoint_dir_path + f'best_{model_name}' + self.run_identifier,
+                                    self.config.checkpoint_dir_path + f'_best_{model_name}' + self.run_identifier,
                                     self.dataDims)
         self.times['checkpointing_end'] = time()
 

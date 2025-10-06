@@ -62,7 +62,7 @@ def process_dataset_chunks(xyzs_path, chunks_path, n_chunks):
                         x=torch.tensor(molecule_dict['partial_charges'], dtype=torch.float32),
                         y=torch.tensor([float(prop) for prop in props[1:-1]], dtype=torch.float32)[None,
                           :] if 'qm9' in chunks_path.lower() else None,
-                        skip_mol_analysis=False,
+                        do_mol_analysis=True,
                     )
 
                     data_list.append(data)

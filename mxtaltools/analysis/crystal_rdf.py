@@ -163,7 +163,7 @@ def old_crystal_rdf(crystal_batch,
 
 def crystal_rdf(crystal_batch,
                 precomputed_distances_dict=None,
-                rrange: list[int, int] = [0, 10],
+                rrange: Tuple[float, float] = (0, 10),
                 bins: int = 100,
                 mode: str = 'all',
                 elementwise: bool = False,
@@ -174,6 +174,8 @@ def crystal_rdf(crystal_batch,
                 ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     """
     faster rdf calculation
+    technically returns the radial density function, not the dimensionless g(r), as we aren't
+    dividing by the true density in the calculation
     """
     device = crystal_batch.pos.device
     num_graphs = crystal_batch.num_graphs
@@ -220,7 +222,7 @@ def crystal_rdf(crystal_batch,
         shell_volumes = (4 / 3) * torch.pi * ((bin_edges[:-1] + torch.diff(bin_edges)) ** 3 - bin_edges[:-1] ** 3)
         rdf = hist / shell_volumes[None, :] / rdf_density[:, None]  # un-smoothed radial density
         rdf = rdf.reshape(num_graphs, num_pairs, -1)  # sample-wise indexing
-    elif atomwise:  # todo this is only implemented for an identical atom indexing (assumes batch is repetetition of same molecule)
+    elif atomwise:  # todo this is only implemented for an identical atom indexing (assumes batch is repetition of same molecule)
         dists_per_hist, sorted_dists, rdfs_dict = get_atomwise_dists(crystal_batch.z, edges, dists, device,
                                                                      num_graphs,
                                                                      edge_in_crystal_number,
@@ -278,8 +280,8 @@ def get_elementwise_dists(atom_types: torch.LongTensor,
 
     # prebuild pair lists
     elem_pair_list = torch.zeros((num_pairs, len(elements[0])), dtype=torch.bool, device=device)
-    elem1 = elements[0].repeat(num_relevant_elements, 1) == torch.Tensor(relevant_elements)[:, None].to(device)
-    elem2 = elements[1].repeat(num_relevant_elements, 1) == torch.Tensor(relevant_elements)[:, None].to(device)
+    elem1 = elements[0].repeat(num_relevant_elements, 1) == relevant_elements[:, None].to(device)
+    elem2 = elements[1].repeat(num_relevant_elements, 1) == relevant_elements[:, None].to(device)
     ind = 0
     for i, element1 in enumerate(relevant_elements):
         for j, element2 in enumerate(relevant_elements):

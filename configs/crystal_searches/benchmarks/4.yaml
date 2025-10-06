@@ -1,0 +1,61 @@
+device: cuda
+mol_path: D:\crystal_datasets\mini_new_csd.pt
+out_dir: D:\crystal_datasets\opt_outputs
+run_name: test
+
+mol_seed: 0
+opt_seed: 0
+sampling_mode: random # 'all' or 'random'
+mols_to_sample: 200
+num_samples: 5  # per mol, per space group
+
+sgs_to_search: [1, 2, 14, 19] #[1, 2, 14, 19]
+zp_to_search: [1, 2, 4]
+
+batch_size: 2000
+
+init_sample_method: random  # 'random' 'reasonable'
+init_sample_reduced: true  # true or false for niggli vs non-niggli init sampling
+init_target_cp: std  # float, null or 'std' target packing coefficient for initial structure sampling
+
+# Optimization can have multiple stages by duplicating the opt block below and adjusting params
+# the search algo will run consecutive n consecutive optimizations for n the number of list elements
+
+#        these are the valid kwargs to feed to the opt function (from gradient_descent_optimization)
+#        optimizer_func: Optional = torch.optim.SGD,
+#        convergence_eps: Optional[float] = 1e-4,
+#        init_lr: Optional[float] = 1e-1,
+#        max_num_steps: Optional[int] = 500,
+#        show_tqdm: Optional[bool] = False,
+#        grad_norm_clip: Optional[float] = 0.1,
+#        optim_target: Optional[str] = 'lj',
+#        score_model: Optional[torch.nn.Module] = None,
+#        target_packing_coeff: Optional[torch.Tensor] = None,
+#        do_box_restriction: Optional[bool] = False,
+#        cutoff: Optional[float] = None,
+#        compression_factor: Optional[float] = 0,
+#        enforce_niggli: Optional[bool] = False,
+#        supercell_size: Optional[int] = 10,
+#        anneal_lr: Optional[bool] = False,
+opt:
+  - optim_target: 'silu' # lj silu ellipsoid classification_score rdf_score
+    enforce_niggli: true
+    compression_factor: 1.0
+    init_lr: 0.1
+    convergence_eps: 0.0001
+    optimizer_func: 'rprop'
+    anneal_lr: true
+    grad_norm_clip: 0.1
+    show_tqdm: true
+    max_num_steps: 500
+
+  - optim_target: 'lj' # lj silu ellipsoid classification_score rdf_score
+    enforce_niggli: true
+    compression_factor: 0.0
+    init_lr: 1.0
+    convergence_eps: 0.0001
+    optimizer_func: 'sgd'
+    anneal_lr: true
+    grad_norm_clip: 0.01
+    show_tqdm: true
+    max_num_steps: 50

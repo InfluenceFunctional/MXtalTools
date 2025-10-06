@@ -399,3 +399,27 @@ def block_repeat_interleave(
     # map back to flat indices
     src_ids = offsets[block_ids] + pos_in_block
     return src_ids
+
+
+def log_rescale_positive(y: torch.Tensor,
+                         cutoff: float = 0
+                         ):
+    assert cutoff >= 0, "Log rescaling cutoff must be >= 0"
+    return torch.where(
+        y > cutoff,  # where above cutoff
+        cutoff + torch.log(y - cutoff + 1.0),  # return log(1+x)
+        y  # else return x
+    )
+
+
+def is_cuda_oom(e: Exception) -> bool:
+    if isinstance(e, torch.cuda.OutOfMemoryError):
+        return True
+    s = str(e).lower()
+    return (
+            ("cuda" in s and "memory" in s)
+            or ("cublas" in s and "alloc" in s)
+            or ("cusolver" in s and "alloc" in s)
+            or ("out of memory" in s)
+            or ("nonzero is not supported for tensors with more than int_max elements" in s)
+    )

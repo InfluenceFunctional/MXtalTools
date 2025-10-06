@@ -105,7 +105,7 @@ def niggli_hist(stats_dict, sample_sources_list):
 def simple_cell_hist(sample_batch=None, reference_dist=None, n_kde_points=200, bw_ratio=50, mode='cell', samples=None):
     if mode == 'cell':
         if samples is None:
-            samples = sample_batch.cell_parameters().cpu().detach().numpy()
+            samples = sample_batch.zp1_cell_parameters().cpu().detach().numpy()
         custom_ranges = {
             0: [0, float(np.max(samples[:, 0]) * 1.1)],
             1: [0, float(np.max(samples[:, 1]) * 1.1)],
@@ -122,7 +122,7 @@ def simple_cell_hist(sample_batch=None, reference_dist=None, n_kde_points=200, b
         }
     elif mode == 'latent':
         if samples is None:
-            samples = sample_batch.cell_params_to_gen_basis().cpu().detach().numpy()
+            samples = sample_batch.latent_params().cpu().detach().numpy()
         custom_ranges = {i: [-6.5, 6.5] for i in range(12)}
     else:
         assert False
@@ -248,7 +248,7 @@ def simple_cell_hist(sample_batch=None, reference_dist=None, n_kde_points=200, b
 
 def conditional_simple_cell_hist(sample_batch, cond_inds, n_kde_points=200, bw_ratio=50, mode='cell'):
     if mode == 'cell':
-        samples = sample_batch.cell_parameters().cpu().detach().numpy()
+        samples = sample_batch.zp1_cell_parameters().cpu().detach().numpy()
         custom_ranges = {
             0: [0, float(np.max(samples[:, 0]) * 1.1)],
             1: [0, float(np.max(samples[:, 1]) * 1.1)],
@@ -264,7 +264,7 @@ def conditional_simple_cell_hist(sample_batch, cond_inds, n_kde_points=200, bw_r
             11: [0, 2 * np.pi],  # orientation_3
         }
     elif mode == 'latent':
-        samples = sample_batch.cell_params_to_gen_basis().cpu().detach().numpy()
+        samples = sample_batch.latent_params().cpu().detach().numpy()
         custom_ranges = {i: [-6.5, 6.5] for i in range(12)}
     else:
         assert False
@@ -328,7 +328,7 @@ def conditional_simple_cell_hist(sample_batch, cond_inds, n_kde_points=200, bw_r
 
 def simple_latent_hist(sample_batch, samples=None, reference_dist=None):
     if samples is None:
-        samples = sample_batch.cell_params_to_gen_basis().cpu().detach().numpy()
+        samples = sample_batch.latent_params().cpu().detach().numpy()
 
     lattice_features = ['cell_a', 'cell_b', 'cell_c',
                         'cell_alpha', 'cell_beta', 'cell_gamma',

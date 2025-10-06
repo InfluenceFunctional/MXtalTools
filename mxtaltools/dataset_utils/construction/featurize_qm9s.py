@@ -32,12 +32,12 @@ Convert qm9s Data objects to chunks of MolData objects - just a format change
 """
 
 if __name__ == '__main__':
-    chunks_path = r'D:\crystal_datasets\QM9s_chunks'
+    chunks_path = r'D:\crystal_datasets\qm9s_featurized_chunks'
 
     if not os.path.exists(chunks_path):
         os.mkdir(chunks_path)
 
-    qm9s_list = torch.load(r'D:\crystal_datasets\QM9s\qm9s.pt', weights_only=False)
+    qm9s_list = torch.load(r'D:\crystal_datasets\qm9s\qm9s.pt', weights_only=False)
 
     chunks = chunkify(qm9s_list, 100)
     for ind, chunk in enumerate(tqdm.tqdm(chunks)):
@@ -50,7 +50,7 @@ if __name__ == '__main__':
                 identifier=elem.smile,
                 x=torch.zeros(len(elem.z), dtype=torch.float32),  # we won't be packing these, so no need fo featurize
                 # there's a utility in the featurization utils if you want to do this
-                skip_mol_analysis=False,
+                do_mol_analysis=True,
             )
             for key in elem.keys():  # copy over all attributes
                 setattr(data, key, elem[key])

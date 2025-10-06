@@ -56,8 +56,7 @@ def csp_reporting(optimized_samples,
     """
     Compute true distances
     """
-    _, _, _, original_cluster_batch = original_crystal_batch.to(device).build_and_analyze(
-        return_cluster=True, cutoff=6)
+    original_cluster_batch = original_crystal_batch.mol2cluster().to(device)
     real_rdf, rr, _ = crystal_rdf(original_cluster_batch.to(device),
                                   original_cluster_batch.edges_dict,
                                   rrange=[0, 6], bins=2000,
@@ -199,7 +198,7 @@ def batch_compack(best_sample_inds, optimized_samples, original_cluster_batch):
     # generate the crystals in ccdc format
     if not os.path.exists('rmsds.npy'):
         best_crystals_batch = collate_data_list([optimized_samples[ind] for ind in best_sample_inds])
-        _, _, _, best_cluster_batch = best_crystals_batch.to('cpu').build_and_analyze(return_cluster=True)
+        best_cluster_batch = best_crystals_batch.mol2cluster.to('cpu')
         best_crystals = cluster_batch_to_ccdc_crystals(best_cluster_batch, np.arange(best_cluster_batch.num_graphs))
         mol = ase_mol_from_crystaldata(original_cluster_batch, index=0, mode='unit cell')
         mol.info['spacegroup'] = Spacegroup(int(best_cluster_batch.sg_ind[0]), setting=1)

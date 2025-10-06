@@ -43,7 +43,7 @@ def sample_cell_angles(num_samples):
     return angles_prior.sample((num_samples,))
 
 
-def sample_aunit_centroids(num_samples):
+def sample_aunit_centroids(num_samples, z_prime: int=1):
     """
     returns aunit_centroids[n, 3], [x, y, z]
     uniformly distributed on [0,1]
@@ -52,28 +52,31 @@ def sample_aunit_centroids(num_samples):
     meaning it can be converted into a std normal type distribution
     by the inverse operation
     """
-    return torch.rand((num_samples, 3))
+    return torch.rand((num_samples, 3 * z_prime))
 
 
-def sample_aunit_orientations(num_samples):
+def sample_aunit_orientations(num_samples, z_prime: int=1):
     """
     returns aunit_orientations[n, 3], [u, v, w]
     of vectors with random lengths and directions
     """
     # random directions
-    random_vectors = torch.randn(size=(num_samples, 3))
-    norms = random_vectors.norm(dim=1)
+    rvs = []
+    for zp in range(z_prime):
+        random_vectors = torch.randn(size=(num_samples, 3))
+        norms = random_vectors.norm(dim=1)
 
-    # random lengths
-    applied_norms = (torch.randn(num_samples) * norm_std + torch.pi
-                     ).clip(min=-2 * torch.pi * 0.99,
-                            max=2 * torch.pi * 0.99)  # the CSD rotation norms are gaussian-distributed, not uniform
-    random_rotvecs = random_vectors / norms[:, None] * applied_norms[:, None]
+        # random lengths
+        applied_norms = (torch.randn(num_samples) * norm_std + torch.pi
+                         ).clip(min=-2 * torch.pi * 0.99,
+                                max=2 * torch.pi * 0.99)  # the CSD rotation norms are gaussian-distributed, not uniform
+        random_rotvecs = random_vectors / norms[:, None] * applied_norms[:, None]
 
-    # z direction must be positive
-    random_rotvecs[:, 2] = torch.abs(random_rotvecs[:, 2])
+        # z direction must be positive
+        random_rotvecs[:, 2] = torch.abs(random_rotvecs[:, 2])
+        rvs.append(random_rotvecs)
 
-    return random_rotvecs
+    return torch.cat(rvs, dim=1)
 
 
 def std_normal_to_aunit_orientations(vectors):

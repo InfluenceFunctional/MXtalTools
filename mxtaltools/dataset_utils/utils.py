@@ -23,9 +23,17 @@ def collate_data_list(data_list, exclude_unit_cell: bool = True):
     if exclude_unit_cell:
         exclude_keys.append('unit_cell_pos')
 
-    return Batch.from_data_list(data_list,
+    batch = Batch.from_data_list(data_list,
                                 exclude_keys=list(exclude_keys),
                                 )
+
+    if hasattr(batch, 'max_z_prime'):
+        if isinstance(batch.max_z_prime, int):
+            pass
+        else:
+            batch.max_z_prime = int(batch.max_z_prime.amax())
+
+    return batch
 
 
 def quick_combine_dataloaders(dataset, data_loader, batch_size, max_size):

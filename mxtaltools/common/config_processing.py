@@ -140,7 +140,7 @@ def write_non_overlapping_configs(c1, c2):
 
 
 def process_main_config(override_args=None, user_yaml_path=None, main_yaml_path=None, machine=None, append_model_paths=True):
-    """
+    """  # todo rewrite - pick a single pattern, this is a mess
     Combines YAML configuration file, command line arguments and default arguments into
     a single configuration dictionary.
 

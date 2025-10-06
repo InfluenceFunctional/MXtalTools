@@ -10,6 +10,7 @@ from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII, ATOMIC
 from mxtaltools.dataset_utils.construction.featurization_utils import chunkify_path_list, get_qm9_properties, \
     featurize_xyz_molecule
 from mxtaltools.dataset_utils.data_classes import MolData
+from mxtaltools.dataset_utils.utils import collate_data_list
 
 HDonorSmarts = Chem.MolFromSmarts(
     '[$([N;!H0;v3]),$([N;!H0;+1;v4]),$([O,S;H1;+0]),$([n;H1;+0])]')  # from rdkit lipinski https://github.com/rdkit/rdkit/blob/7c6d9cf4e9d95b4daa954f4f094e026093dbc13f/rdkit/Chem/Lipinski.py#L26
@@ -62,10 +63,8 @@ def process_xyzs_to_chunks(xyzs_path, chunks_path, n_chunks):
                         x=torch.tensor(molecule_dict['partial_charges'], dtype=torch.float32),
                         y=torch.tensor([float(prop) for prop in props[1:-1]], dtype=torch.float32)[None,
                           :] if 'qm9' in chunks_path.lower() else None,
-                        skip_mol_analysis=False,
+                        do_mol_analysis=True,
                     )
-
-                    batch = collate_data_batch([mol1, mol2, mol3, mol4])
 
                     data_list.append(data)
 
@@ -77,10 +76,10 @@ def process_xyzs_to_chunks(xyzs_path, chunks_path, n_chunks):
 
 if __name__ == '__main__':
     n_chunks = 100  # too many chunks can cause problems e.g., if some have zero valid entries
-    chunks_path = r'D:/crystal_datasets/QM9_chunks/'  # where you would like processed dataset chunks to be stored before collation into final dataset
+    chunks_path = r'D:/crystal_datasets/qm9_featurized_chunks/'  # where you would like processed dataset chunks to be stored before collation into final dataset
 
     chunk_prefix = ''
-    xyzs_path = r'D:\crystal_datasets\Molecule_Datasets\QM9/'
+    xyzs_path = r'D:\crystal_datasets\qm9_xyz/'
 
     process_xyzs_to_chunks(xyzs_path=xyzs_path,
                            chunks_path=chunks_path,

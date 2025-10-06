@@ -7,19 +7,14 @@ seed: 1
 max_dataset_length: 1000000
 save_dataset: False
 dataset_type: 'crystal'
-regression_target: 'crystal_reduced_volume' # 'crystal_cell_volume' 'crystal_density' 'crystal_packing_coefficient'
-single_molecule_dataset_identifier: null
+regression_target: 'crystal_packing_coefficient' # 'crystal_cell_volume' 'crystal_density' 'crystal_packing_coefficient'
 test_fraction: 0.2
 filter_protons: False
 
 filter_polymorphs: True
 filter_duplicate_molecules: True
-filter_conditions: [['crystal_z_prime','in', [1]],  # NOTE we can currently only process Z' == 1 in models
-                    #['crystal_symmetry_operations_are_nonstandard','in',[False]],
+filter_conditions: [['crystal_z_prime','in', [1]],
                     ['max_atomic_number','range',[1,100]],
                     ['molecule_num_atoms','range',[3,100]],
-                    #['molecule_radius','range',[1,5]],
-                    #['asymmetric_unit_is_well_defined','in',[True]],
                     ['crystal_packing_coefficient', 'range',[0.45, 95]],
-                    #['crystal_space_group_number','in',[2,14,19]]
                     ]

@@ -65,10 +65,10 @@ supercell_size: 5
 
 discriminator:
   # settings
-  train_on_randn: False
-  train_on_distorted: False
-  use_classification_loss: False
-  use_rdf_distance_loss: False
+  train_on_randn: True
+  train_on_distorted: True
+  use_classification_loss: True
+  use_rdf_distance_loss: True
   distortion_magnitude: 0.1 #-1 # -1 for wide range test # noise for distorted generation
 
   # discriminator optimizer and model

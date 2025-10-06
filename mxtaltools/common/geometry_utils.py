@@ -652,7 +652,7 @@ def extract_batching_info(nodes_list, device='cpu'):
     return batch, ptrs
 
 
-def sph2rotvec(angles):
+def sph2cart_rotvec(angles):
     """
     Transform from axis-angle in polar coordinates to rotation vector
 
@@ -693,7 +693,7 @@ def sph2rotvec(angles):
         return None
 
 
-def rotvec2sph(rotvec):
+def cart2sph_rotvec(rotvec):
     """
     transform rotation vector with axis rotvec/norm(rotvec) and angle ||rotvec||
     to spherical coordinates theta, phi and r=||rotvec||
@@ -1538,9 +1538,8 @@ def rotvec2rotmat(mol_rotation: torch.tensor, basis='cartesian'):
         r = torch.linalg.norm(mol_rotation, dim=1)
         unit_vector = mol_rotation / r[:, None]
     elif basis == 'spherical':  # psi, phi, (spherical unit vector) theta (rotation vector)
-        r = mol_rotation[:,
-            -1]  # third dimension in spherical basis is the norm #torch.linalg.norm(mol_rotation, dim=1)
-        mol_rotation = sph2rotvec(mol_rotation)
+        r = mol_rotation[:, -1]  # third dimension in spherical basis is the norm #torch.linalg.norm(mol_rotation, dim=1)
+        mol_rotation = sph2cart_rotvec(mol_rotation)
         unit_vector = mol_rotation / r[:, None]
     else:
         print(f'{basis} is not a valid orientation parameterization!')
@@ -1690,3 +1689,23 @@ def compute_cosine_similarity_matrix(e1, e2):
     :return:
     """
     return torch.einsum('nij, nkj -> nik', e1, e2)
+
+
+def safe_batched_eigh(covs, chunk=10000):
+    out_vals, out_vecs = [], []
+    for i in range(0, covs.shape[0], chunk):
+        cchunk = covs[i:i + chunk]
+        try:
+            ev, evec = torch.linalg.eigh(cchunk)
+        except torch.cuda.OutOfMemoryError:
+            raise
+        except RuntimeError as e:
+            if "CUSOLVER_STATUS_INVALID_VALUE" in str(e):
+                print("Invalid matrix to eigh! Switching to CPU.")
+                ev, evec = torch.linalg.eigh(cchunk.cpu())
+                ev, evec = ev.to(covs.device), evec.to(covs.device)
+            else:
+                raise e
+        out_vals.append(ev)
+        out_vecs.append(evec)
+    return torch.cat(out_vals, dim=0).float(), torch.cat(out_vecs, dim=0).float()

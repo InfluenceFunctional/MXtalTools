@@ -161,6 +161,9 @@ class DataManager:
             self.load_training_dataset(dataset_name)
 
         self.dataset_filtration(filter_conditions, filter_duplicate_molecules, filter_polymorphs)
+        if self.dataset_type == 'crystal':
+            if torch.all(torch.tensor([e.z_prime for e in self.dataset]) == 1):
+                self.remove_zpg1_info()
         self.truncate_and_shuffle_dataset(override_length, do_shuffle=do_shuffle)
         self.misc_dataset = self.extract_misc_stats_and_indices(self.dataset)
         self.dataset_stats = self.misc_dataset['dataset_stats']
@@ -179,6 +182,13 @@ class DataManager:
             idents = [elem.identifier for elem in self.dataset]
             good_ind = idents.index(single_identifier)
             self.dataset = [self.dataset[good_ind] for _ in range(len(self.dataset))]
+
+    def remove_zpg1_info(self):
+        # filter Z'>1 information if not needed
+        for elem in self.dataset:
+            elem.aunit_centroid = elem.aunit_centroid[:, :3]
+            elem.aunit_orientation = elem.aunit_orientation[:, :3]
+            elem.aunit_handedness = elem.aunit_handedness[:, :1]
 
     def compute_edges(self,
                       conv_cutoff: float,
@@ -415,7 +425,7 @@ class DataManager:
             self.mode = 'blind test'
             print("Switching to blind test indexing mode")  # TODO don't believe this does anything anymore
 
-        if 'test' in dataset_name and self.dataset_type == 'crystal':
+        if (('test' in dataset_name) or ('mini' in dataset_name)) and self.dataset_type == 'crystal':
             self.rebuild_crystal_indices()
 
     def process_new_dataset(self,
@@ -489,7 +499,7 @@ class DataManager:
             }
         }
 
-        if self.dataset_type == 'crystal':
+        if self.dataset_type == 'crystal':  # MK assumes Z'=1
             misc_data_dict['dataset_stats'].update({
                 'cell_a': basic_stats(data_batch.cell_lengths[:, 0].float()),
                 'cell_b': basic_stats(data_batch.cell_lengths[:, 1].float()),
@@ -558,7 +568,7 @@ class DataManager:
                 molecules_in_crystals_dict[unique_fps[mapping].tobytes()].append(ind)
         else:
             print("Dataset missing fingerprint information, "
-                  "skipping unique molecule checks")
+                  "using smiles (hopefully canonical!)")
             molecules_in_crystals_dict = None
 
         return molecules_in_crystals_dict
@@ -582,7 +592,7 @@ class DataManager:
                 if item not in crystal_to_identifier.keys():
                     crystal_to_identifier[item] = []
                 crystal_to_identifier[item].append(i)
-        elif self.mode == 'blind_test':  # todo test
+        elif self.mode == 'blind_test':  # NOTE this is almost certainly deprecated / nonfunctional today
             blind_test_targets = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
                                   'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
                                   'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX']
@@ -675,9 +685,7 @@ class DataManager:
 
     def get_condition_values(self, condition_key):  # todo convert from batch back to data lists
         if condition_key == 'crystal_z_prime':
-            values = torch.ones(len(self.dataset))
-            # we're no longer doing this for now
-            #values = torch.tensor([elem.z_prime for elem in self.dataset])
+            values = torch.tensor([elem.z_prime for elem in self.dataset])
         elif condition_key == 'asymmetric_unit_is_well_defined':
             values = torch.tensor([elem.is_well_defined for elem in self.dataset])
         elif condition_key == 'crystal_symmetry_operations_are_nonstandard':

@@ -9,7 +9,7 @@ import torch
 from rdkit import RDLogger
 
 from mxtaltools.common.utils import chunkify
-from mxtaltools.crystal_search.standalone_crystal_opt import sample_about_crystal
+from mxtaltools.crystal_search.crystal_opt_utils import sample_about_crystal
 from mxtaltools.dataset_utils.data_classes import MolData, MolCrystalData
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.utils import embed_crystal_list

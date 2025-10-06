@@ -239,13 +239,13 @@ def process_discriminator_outputs(dataDims, epoch_stats_dict, extra_test_dict=No
     pred_distance_dict = {}
     true_distance_dict = {}
 
-    generator_inds = np.where(epoch_stats_dict['generator_sample_source'] == 2)[0]
+    #generator_inds = np.where(epoch_stats_dict['generator_sample_source'] == 2)[0]
     randn_inds = np.where(epoch_stats_dict['generator_sample_source'] == 1)[0]
     distorted_inds = np.where(epoch_stats_dict['generator_sample_source'] == 0)[0]
 
     scores_dict['CSD'] = epoch_stats_dict['discriminator_real_score']
     scores_dict['Gaussian'] = epoch_stats_dict['discriminator_fake_score'][randn_inds]
-    scores_dict['Generator'] = epoch_stats_dict['discriminator_fake_score'][generator_inds]
+    #scores_dict['Generator'] = epoch_stats_dict['discriminator_fake_score'][generator_inds]
     scores_dict['Distorted'] = epoch_stats_dict['discriminator_fake_score'][distorted_inds]
     #
     # tracking_features_dict['CSD'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'],
@@ -262,22 +262,22 @@ def process_discriminator_outputs(dataDims, epoch_stats_dict, extra_test_dict=No
 
     vdw_penalty_dict['CSD'] = epoch_stats_dict['real_vdw_penalty']
     vdw_penalty_dict['Gaussian'] = epoch_stats_dict['fake_vdw_penalty'][randn_inds]
-    vdw_penalty_dict['Generator'] = epoch_stats_dict['fake_vdw_penalty'][generator_inds]
+    #vdw_penalty_dict['Generator'] = epoch_stats_dict['fake_vdw_penalty'][generator_inds]
     vdw_penalty_dict['Distorted'] = epoch_stats_dict['fake_vdw_penalty'][distorted_inds]
 
     packing_coeff_dict['CSD'] = epoch_stats_dict['real_packing_coeff']
     packing_coeff_dict['Gaussian'] = epoch_stats_dict['fake_packing_coeff'][randn_inds]
-    packing_coeff_dict['Generator'] = epoch_stats_dict['fake_packing_coeff'][generator_inds]
+    #packing_coeff_dict['Generator'] = epoch_stats_dict['fake_packing_coeff'][generator_inds]
     packing_coeff_dict['Distorted'] = epoch_stats_dict['fake_packing_coeff'][distorted_inds]
 
     pred_distance_dict['CSD'] = epoch_stats_dict['discriminator_real_predicted_distance']
     pred_distance_dict['Gaussian'] = epoch_stats_dict['discriminator_fake_predicted_distance'][randn_inds]
-    pred_distance_dict['Generator'] = epoch_stats_dict['discriminator_fake_predicted_distance'][generator_inds]
+    #pred_distance_dict['Generator'] = epoch_stats_dict['discriminator_fake_predicted_distance'][generator_inds]
     pred_distance_dict['Distorted'] = epoch_stats_dict['discriminator_fake_predicted_distance'][distorted_inds]
 
     true_distance_dict['CSD'] = epoch_stats_dict['discriminator_real_true_distance']
     true_distance_dict['Gaussian'] = epoch_stats_dict['discriminator_fake_true_distance'][randn_inds]
-    true_distance_dict['Generator'] = epoch_stats_dict['discriminator_fake_true_distance'][generator_inds]
+    #true_distance_dict['Generator'] = epoch_stats_dict['discriminator_fake_true_distance'][generator_inds]
     true_distance_dict['Distorted'] = epoch_stats_dict['discriminator_fake_true_distance'][distorted_inds]
 
     if len(extra_test_dict) > 0:

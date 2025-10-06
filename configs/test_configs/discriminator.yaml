@@ -1,7 +1,8 @@
 machine: "local"  # or "cluster"
 device: "cpu"  # or "cpu"
 base_config_path: /experiments/base/discriminator.yaml
-dataset_path: /tests/datasets/mini_CSD_dataset.pt
+dataset_name: mini_new_csd.pt
+misc_dataset_name: /tests/datasets/misc_data_for_new_csd.npy' #
 
 min_batch_size: 10
 minimum_epochs: 2

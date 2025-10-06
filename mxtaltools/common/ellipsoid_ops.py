@@ -49,7 +49,7 @@ def compute_cosine_similarity_matrix(e1, e2):
     return torch.einsum('nij, nkj -> nik', e1, e2)
 
 
-def compute_trailing_relative_diffs(record, eps: float = 1e-5):
+def trailing_relative_diffs(record, eps: float = 1e-5):
     cum_vols = torch.cumsum(record, dim=0)
     cum_iters = torch.arange(1, len(record) + 1, device=record.device)
     cum_means = cum_vols / cum_iters
@@ -57,7 +57,7 @@ def compute_trailing_relative_diffs(record, eps: float = 1e-5):
     return rel_diffs
 
 
-def compute_ellipsoid_volume(e):
+def llipsoid_volume(e):
     return 4 / 3 * torch.pi * e.norm(dim=-1).prod(dim=-1)
 
 
@@ -70,7 +70,7 @@ def compute_ellipsoid_overlap(e1,
                               eps: float = 1e-3,
                               max_iters: int = 1000,
                               min_iters: int = 10,
-                              show_tqdm: bool = False
+                              show_tqdm: bool = False,
                               ):
     """
     Compute the volume of the overlapping region between ellipsoids defined by e1, e2
@@ -146,9 +146,9 @@ def compute_ellipsoid_overlap(e1,
                 # AND when the single volume estimates are accurate
 
                 # stable overlap estimate
-                v1_relative_diffs = compute_trailing_relative_diffs(v1_rec)
-                v2_relative_diffs = compute_trailing_relative_diffs(v2_rec)
-                ov_relative_diffs = compute_trailing_relative_diffs(ov_rec)
+                v1_relative_diffs = trailing_relative_diffs(v1_rec)
+                v2_relative_diffs = trailing_relative_diffs(v2_rec)
+                ov_relative_diffs = trailing_relative_diffs(ov_rec)
 
                 criteria1 = v1_relative_diffs[-min(10, min_iters):].abs().mean()
                 criteria2 = v2_relative_diffs[-min(10, min_iters):].abs().mean()

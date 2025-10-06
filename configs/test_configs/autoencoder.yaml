@@ -1,7 +1,7 @@
 machine: "local"  # or "cluster"
 device: "cpu"  # or "cpu"
 base_config_path: /experiments/base/autoencoder.yaml
-dataset_path: /tests/datasets/mini_qm9_dataset.pt
+dataset_name: mini_qm9_dataset.pt
 
 min_batch_size: 10
 minimum_epochs: 2

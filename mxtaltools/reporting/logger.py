@@ -7,7 +7,7 @@ from mxtaltools.dataset_utils.analysis.compare_molecule_dataset_to_otf import an
     property_comparison_fig, distribution_comparison
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.utils import softmax_and_score
-from mxtaltools.reporting.online import detailed_reporting, polymorph_classification_trajectory_analysis
+from mxtaltools.reporting.figures import detailed_reporting
 
 
 class Logger:
@@ -179,7 +179,7 @@ class Logger:
                         commit=commit)
                     self.wandb.log(
                         data={key + '_log_train_loss_distribution': self.wandb.Histogram(np.nan_to_num(
-                            np.log10(np.abs(train_loss)), neginf=0, posinf=0
+                            np.log10(np.abs(train_loss) + 1e-3), neginf=0, posinf=0
                         ))},
                         commit=commit)
 
@@ -190,7 +190,7 @@ class Logger:
                         commit=commit)
                     self.wandb.log(
                         data={key + '_log_test_loss_distribution': self.wandb.Histogram(np.nan_to_num(
-                            np.log10(np.abs(test_loss)), neginf=0, posinf=0
+                            np.log10(np.abs(test_loss) + 1e-3), neginf=0, posinf=0
                         ))},
                         commit=commit)
 
@@ -297,23 +297,23 @@ class Logger:
         self.wandb.log(data=fig_dict, commit=False)
         self.last_logged_dataset_stats = time()
 
-    def polymorph_classification_eval_analysis(self, test_loader, mode):
-        """
-        log analysis of an evaluation dataset
-        Parameters
-        ----------
-        mode
-        test_loader
-
-        Returns
-        -------
-
-        """
-
-        if mode == 'polymorph_classification':
-            assert len(
-                self.config.dataset.dumps_dirs) == 1, "Polymorph classification trajectory analysis only implemented for single trajectory files"
-            polymorph_classification_trajectory_analysis(test_loader, self.test_stats,
-                                                         traj_name=self.config.dataset.dumps_dirs)
-
-            aa = 1
+    # def polymorph_classification_eval_analysis(self, test_loader, mode):  # todo deprecate
+    #     """
+    #     log analysis of an evaluation dataset
+    #     Parameters
+    #     ----------
+    #     mode
+    #     test_loader
+    #
+    #     Returns
+    #     -------
+    #
+    #     """
+    #
+    #     if mode == 'polymorph_classification':
+    #         assert len(
+    #             self.config.dataset.dumps_dirs) == 1, "Polymorph classification trajectory analysis only implemented for single trajectory files"
+    #         polymorph_classification_trajectory_analysis(test_loader, self.test_stats,
+    #                                                      traj_name=self.config.dataset.dumps_dirs)
+    #
+    #         aa = 1
