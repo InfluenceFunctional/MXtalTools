@@ -7,3 +7,4 @@ __pycache__/
 /wandb/
 /bulk_molecule_classification/
 /mxtal_venv_ccdc/
+/tests/datasets/misc_data_for_new_csd.npy
