@@ -1,5 +1,5 @@
 device: cpu
-mol_path: /scratch/mk8347/
+mol_path: /scratch/mk8347/csd_runs/datasets/train_qm9.pt
 out_dir: /scratch/mk8347/crystal_searches/qm9/search1
 run_name: base
 

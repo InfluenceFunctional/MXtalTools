@@ -3,7 +3,7 @@ device: cpu
 init_sample_method: random
 init_sample_reduced: true
 init_target_cp: std
-mol_path: /scratch/mk8347/
+mol_path: /scratch/mk8347/csd_runs/datasets/train_qm9.pt
 mol_seed: 63
 mols_to_sample: 1
 num_samples: 1
