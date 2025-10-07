@@ -95,17 +95,17 @@ class MolCrystalBuilding:
             assert False, "No point in joining batches which area already Z'=1"
 
 
-    def pose_aunit(self, align_to_standardized_orientation: Optional[bool] = True):
+    def pose_aunit(self, std_orientation: Optional[bool] = True):
         if self.is_batch:
             self.pos = get_aunit_positions(
                 self,
-                align_to_standardized_orientation=align_to_standardized_orientation,
+                std_orientation=std_orientation,
                 mol_handedness=self.aunit_handedness,
             )
         else:
             self.pos = get_aunit_positions(
                 collate_data_list([self]),
-                align_to_standardized_orientation=align_to_standardized_orientation,
+                std_orientation=std_orientation,
                 mol_handedness=self.aunit_handedness,
             )
 
@@ -144,18 +144,18 @@ class MolCrystalBuilding:
 
     def mol2cluster(self, cutoff: float = 6,
                     supercell_size: int = 10,
-                    align_to_standardized_orientation: Optional[bool] = True):
+                    std_orientation: Optional[bool] = True):
         if self.z_prime.amax() > 1:
             # if there are any Z'>1 crystals in the batch, we
             # unzip for unit cell generation then re zip
             zp1_batch = self.split_to_zp1_batch()
-            zp1_batch.pose_aunit(align_to_standardized_orientation=align_to_standardized_orientation)
+            zp1_batch.pose_aunit(std_orientation=std_orientation)
             zp1_batch.build_unit_cell()
             zp1_cluster = zp1_batch.build_cluster()
             return self.join_zp1_cluster_batch(zp1_cluster)
 
         else:
-            self.pose_aunit(align_to_standardized_orientation=align_to_standardized_orientation)
+            self.pose_aunit(std_orientation=std_orientation)
             self.build_unit_cell()
             return self.build_cluster(cutoff, supercell_size)
 

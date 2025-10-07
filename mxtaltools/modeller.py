@@ -2399,7 +2399,7 @@ class Modeller:
         # build and analyze crystal
         cluster_batch = crystal_batch.mol2cluster(cutoff=6,
                                                   supercell_size=10,
-                                                  align_to_standardized_orientation=False)
+                                                  std_orientation=False)
         cluster_batch.construct_radial_graph(cutoff=6)
         # get reference energy  # todo rewrite usage / computes of overlaps here
         (molwise_lj_pot, molwise_scaled_lj_pot, edgewise_lj_pot,

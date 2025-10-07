@@ -4,7 +4,7 @@ from scipy.spatial.transform import Rotation
 
 from mxtaltools.common.geometry_utils import batch_compute_mol_radius, compute_mol_radius, batch_compute_mol_mass, \
     compute_mol_mass, batch_compute_molecule_volume, center_mol_batch, apply_rotation_to_batch, rotvec2rotmat, \
-    rotmat2rotvec
+    rotmat2rotvec, batch_molecule_principal_axes_torch
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
 from mxtaltools.crystal_building.utils import align_mol_batch_to_standard_axes, canonicalize_rotvec
 from mxtaltools.dataset_utils.mol_building import smiles2conformer
@@ -125,49 +125,75 @@ class MolDataMethods:
             show_mols=True,
             **vis_kwargs)
 
-    def orient_molecule(self, mode: str,
+    def orient_molecule(self,
+                        mode: str,
                         include_inversion: bool = True,
                         target_handedness: Optional[torch.LongTensor] = None,
                         correct_orientation: bool = False,
+                        override_random_rotations: Optional[torch.Tensor] = None,
                         ):
         if self.is_batch:
-            # always center the molecules
             if correct_orientation:
                 if mode != 'random':
-                    raise RuntimeError("Orientation correction only implemented for random rotations")
+                    # todo test and implement for nonstandard to standard
+                    raise RuntimeError("Orientation correction only implemented for nonstandard rotations")
 
+            # always center the molecules
             self.recenter_molecules()
-            if mode == 'standardized':
-                mol_batch = align_mol_batch_to_standard_axes(self)
+            if mode == 'standardized' or mode=='std' or mode=='standard':
+                mol_batch, std_rotation = align_mol_batch_to_standard_axes(self,
+                                                             handedness=target_handedness,
+                                                                           return_rot=True)
                 self.pos = mol_batch.pos
-            elif mode == 'random':
-                random_rotations = torch.tensor(
-                    Rotation.random(num=self.num_graphs).as_matrix(),
-                    device=self.device, dtype=torch.float32)
-                if include_inversion:
-                    assert not correct_orientation, "Cannot reconstruct rotations through inversion."
-                    invert_inds = torch.randint(2, (self.num_graphs,)) * 2 - 1
-                    random_rotations *= invert_inds[:, None, None]
+                applied_rotation = std_rotation.permute(0, 2, 1)
+            elif mode == 'random':  # technically given the below we can do any applied rotation
+                if override_random_rotations is not None:
+                    random_rotations = override_random_rotations
+                else:
+                    random_rotations = torch.tensor(
+                        Rotation.random(num=self.num_graphs).as_matrix(),
+                        device=self.device, dtype=torch.float32)
+
+                    if include_inversion:
+                        assert not correct_orientation, "Cannot reconstruct rotations through inversion."
+                        invert_inds = torch.randint(2, (self.num_graphs,)) * 2 - 1
+                        random_rotations *= invert_inds[:, None, None]
 
                 self.pos = apply_rotation_to_batch(
                     self.pos,
                     random_rotations,
                     self.batch)
-                if correct_orientation:
-                    # adjust aunit_orientation such that the final orientation is unchanged
-                    # new combined rotation should undo the random rotation, then apply the aunit_orientation
-                    invert_random_rotation = torch.linalg.inv(random_rotations)
-                    new_orientation_matrix = rotvec2rotmat(self.aunit_orientation) @ invert_random_rotation
-                    new_rotvec = rotmat2rotvec(new_orientation_matrix)
-                    new_rotvec_fixed = canonicalize_rotvec(new_rotvec)
-                    self.aunit_orientation = new_rotvec_fixed
-                    # correction is successful when this is small
-                    # (rotvec2rotmat(new_rotvec_fixed) @ random_rotations - rotvec2rotmat(self.aunit_orientation)).abs().sum()
+
+                applied_rotation = random_rotations
+
             else:
-                pass
+                assert False, "Rotation must be standard or random"
+
+            if correct_orientation and hasattr(self, 'aunit_orientation'):
+                assert self.max_z_prime == 1, "Mol orientation should be done on unzipped batches of independent Z'=1 crystals, not mixed Z'>1"
+                # adjust aunit_orientation such that the final orientation is unchanged
+                # new combined rotation should undo the random rotation, then apply the aunit_orientation
+                invert_random_rotation = torch.linalg.inv(applied_rotation)
+                new_orientation_matrix = rotvec2rotmat(self.aunit_orientation) @ invert_random_rotation
+                new_rotvec = rotmat2rotvec(new_orientation_matrix)
+                new_rotvec_fixed = canonicalize_rotvec(new_rotvec)
+                self.aunit_orientation = new_rotvec_fixed
+                # correction is successful when this is small
+                # (rotvec2rotmat(new_rotvec_fixed) @ random_rotations - rotvec2rotmat(self.aunit_orientation)).abs().sum()
+
+            # if correct_embedding and hasattr(self, 'embedding'):
+            #     if self.embedding.shape[1] == 3:  # if it's a vector embedding, we'll also rotate that
+            #         self.embedding = self.rotate_embedding(applied_rotation.permute(0, 2, 1))
 
         else:
             assert False, "molecule orientation not implemented for single samples"
+
+    def rotate_embedding(self, rotations):
+        """
+        NOTE this assumes our standard rotations & representations,
+        i.e., the j dimension are the cartesian axes, the k dimension are feature channels
+        """
+        return torch.einsum('nij, njk -> nik', rotations, self.embedding)
 
     def deprotonate(self):
         """danger - this breaks several batching methods and should be used carefully
@@ -184,3 +210,15 @@ class MolDataMethods:
             else:
                 self.num_atoms = len(self.z)
             self.num_nodes = len(self.z)
+
+    def compute_Ip(self):
+        assert self.is_batch
+
+        principal_axes, principal_moments, _ = batch_molecule_principal_axes_torch(
+            self.pos,
+            self.batch,
+            self.num_graphs,
+            self.num_atoms,
+        )
+
+        return principal_axes, principal_moments

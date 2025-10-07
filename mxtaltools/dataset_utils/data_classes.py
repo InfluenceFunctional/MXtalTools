@@ -204,7 +204,7 @@ class MXtalBase(BaseData):
 # noinspection PyPropertyAccess
 
 
-class MolData(MXtalBase, MolDataMethods):  # todo add method for batch_molecule_compute_principal_axes
+class MolData(MXtalBase, MolDataMethods):
     r"""
     A graph representing a single molecule
     """

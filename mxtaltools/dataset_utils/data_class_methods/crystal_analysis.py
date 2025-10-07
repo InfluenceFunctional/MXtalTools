@@ -124,7 +124,7 @@ class MolCrystalAnalysis:
         return molwise_buckingham_energy
 
     def compute_silu_energy(self,
-                            repulsion: Optional[float] = None,
+                            repulsion: float = 1.0,
                             **kwargs):
         self._pre_compute_checks()
 
@@ -174,7 +174,7 @@ class MolCrystalAnalysis:
                 noise: Optional[float] = None,
                 cutoff: float = 6,
                 supercell_size: int = 10,
-                align_to_standardized_orientation: Optional[bool] = True,
+                std_orientation: Optional[bool] = True,
                 **kwargs
                 ):
         """
@@ -182,7 +182,7 @@ class MolCrystalAnalysis:
         """
         cluster_batch = self.mol2cluster(
             cutoff, supercell_size,
-            align_to_standardized_orientation=align_to_standardized_orientation)
+            std_orientation=std_orientation)
 
         if noise is not None:
             cluster_batch.pos += torch.randn_like(cluster_batch.pos) * noise

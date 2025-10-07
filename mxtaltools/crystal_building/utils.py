@@ -546,7 +546,7 @@ def identify_canonical_asymmetric_unit(T_cf, asym_unit_dict, sg_ind, unit_cell_c
     return canonical_conformer_index, centroids_fractional, well_defined_asym_unit
 
 
-def align_mol_batch_to_standard_axes(mol_batch, handedness=None):
+def align_mol_batch_to_standard_axes(mol_batch, handedness=None, return_rot=False):
     """
     align principal inertial axes of molecules in a crystaldata object to the xyz or xy(-z) axes
     only works for geometric principal axes (all atoms mass = 1)
@@ -574,10 +574,10 @@ def align_mol_batch_to_standard_axes(mol_batch, handedness=None):
     # rotation is p_align = R @ p_orig,
     # R = p_align \ p_orig
 
-    rotation_matrix_list = extract_rotmat(eye, torch.linalg.inv(Ip))
+    std_rotations = extract_rotmat(eye, torch.linalg.inv(Ip))
     mol_batch.recenter_molecules()  # ensures molecules are centered
     mol_batch.pos = apply_rotation_to_batch(mol_batch.pos,
-                                            rotation_matrix_list,
+                                            std_rotations,
                                             mol_batch.batch)
     # test
     # Ip, Ipm, I = batch_molecule_principal_axes_torch(
@@ -587,7 +587,10 @@ def align_mol_batch_to_standard_axes(mol_batch, handedness=None):
     #     mol_batch.num_atoms
     # )
     # assert torch.all(torch.isclose(Ip, eye, atol=1e-4))
-    return mol_batch
+    if return_rot:
+        return mol_batch, std_rotations
+    else:
+        return mol_batch
 
 
 def aunit2ucell(mol_batch):
@@ -693,7 +696,7 @@ def rescale_asymmetric_unit(asym_unit_dict, mol_position, sg_inds):
 
 
 def get_aunit_positions(mol_batch,
-                        align_to_standardized_orientation: bool = True,
+                        std_orientation: bool = True,
                         mol_handedness: OptTensor = None,
                         ) -> Tensor:
     """
@@ -702,7 +705,7 @@ def get_aunit_positions(mol_batch,
     """
     rotations_list = rotvec2rotmat(mol_batch.aunit_orientation[:, :3])
 
-    if align_to_standardized_orientation:  # align canonical conformers principal axes to cartesian axes - not usually done here, but allowed
+    if std_orientation:  # align canonical conformers principal axes to cartesian axes - not usually done here, but allowed
         assert mol_handedness is not None, "Must provide explicit handedness when aligning mol to canonical axes"
         mol_batch = align_mol_batch_to_standard_axes(mol_batch, handedness=mol_handedness[:, :1])
     else:
@@ -713,5 +716,11 @@ def get_aunit_positions(mol_batch,
                                    rotations_list,
                                    mol_batch.batch)
            + fractional_transform(mol_batch.aunit_centroid[:, :3], mol_batch.T_fc)[mol_batch.batch])
+
+    # # ensure embeddings rotate along with the aunit positions
+    # this is a bit risky - leave it for now
+    # if hasattr(mol_batch, 'embedding'):
+    #     if mol_batch.embedding.shape[1] == 3:  # if there is a vector embedding, we should also rotate it
+    #         mol_batch.embedding = torch.einsum('nij, njk -> njk', rotations_list, mol_batch.embedding)
 
     return pos

@@ -116,7 +116,7 @@ def gradient_descent_optimization(
                         return_cluster = True,
                         repulsion=1,
                         surface_padding=0,
-                        align_to_standardized_orientation=True,
+                        std_orientation=True,
                     )
 
                     """
