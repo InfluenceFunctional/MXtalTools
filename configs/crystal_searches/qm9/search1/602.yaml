@@ -1,0 +1,44 @@
+batch_size: 500
+device: cpu
+init_sample_method: random
+init_sample_reduced: true
+init_target_cp: std
+mol_path: /scratch/mk8347/csd_runs/datasets/train_qm9.pt
+mol_seed: 602
+mols_to_sample: 70
+num_samples: 1
+opt:
+- anneal_lr: false
+  compression_factor: 1.0
+  convergence_eps: 0.001
+  enforce_niggli: true
+  grad_norm_clip: 0.1
+  init_lr: 0.001
+  max_num_steps: 500
+  optim_target: silu
+  optimizer_func: rprop
+  show_tqdm: true
+- anneal_lr: true
+  compression_factor: 0.0
+  convergence_eps: 0.0001
+  enforce_niggli: true
+  grad_norm_clip: 0.01
+  init_lr: 0.1
+  max_num_steps: 50
+  optim_target: lj
+  optimizer_func: sgd
+  show_tqdm: false
+opt_seed: 602
+out_dir: /scratch/mk8347/crystal_searches/qm9/search1
+run_name: run_602
+sampling_mode: random
+sgs_to_search:
+- 1
+- 2
+- 9
+- 14
+- 15
+- 19
+- 33
+zp_to_search:
+- 1

@@ -22,9 +22,9 @@ if __name__ == '__main__':
     miner.process_new_dataset(new_dataset_name='qm9_dataset')
 
 
-    'QM9s molecules dataset'
-    miner = DataManager(device='cpu',
-                        datasets_path=r"D:\crystal_datasets/",
-                        chunks_path=r"D:\crystal_datasets/qm9s_featurized_chunks/",
-                        dataset_type='molecule')
-    miner.process_new_dataset(new_dataset_name='qm9s_dataset')
+    # 'QM9s molecules dataset'
+    # miner = DataManager(device='cpu',
+    #                     datasets_path=r"D:\crystal_datasets/",
+    #                     chunks_path=r"D:\crystal_datasets/qm9s_featurized_chunks/",
+    #                     dataset_type='molecule')
+    # miner.process_new_dataset(new_dataset_name='qm9s_dataset')

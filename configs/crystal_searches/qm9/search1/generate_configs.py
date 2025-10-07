@@ -6,7 +6,7 @@ from mxtaltools.common.config_processing import load_yaml
 
 base_config = load_yaml('base.yaml')
 
-num_configs = 100
+num_configs = 1000
 
 """
 sequentially numbered sweep configs
