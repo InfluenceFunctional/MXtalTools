@@ -1,184 +1,149 @@
-import argparse
 import os
 import sys
 
+import numpy as np
 import torch
-import wandb
+from tqdm import tqdm
+
+from examples.crystal_search_reporting import batch_compack, density_funnel, compack_fig
+from mxtaltools.analysis.crystal_rdf import compute_rdf_distance
+import subprocess
 
 sys.path.insert(0, os.path.abspath("../"))
 
-from datetime import datetime
-from mxtaltools.analysis.crystal_rdf import crystal_rdf
+import torch.nn.functional as F
 from mxtaltools.common.sym_utils import init_sym_info
-from mxtaltools.common.training_utils import load_crystal_score_model, load_molecule_scalar_regressor, enable_dropout
+from mxtaltools.common.training_utils import load_crystal_score_model, load_molecule_scalar_regressor
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.utils import softmax_and_score
 
+device = 'cuda'
+dafmuv_path = "D:\crystal_datasets\DAFMUV.pt"
+mini_dataset_path = '../mini_datasets/mini_CSD_dataset.pt'
+score_checkpoint = r"../checkpoints/crystal_score.pt"
+density_checkpoint = r"../checkpoints/cp_regressor.pt"
+opt_path = r"D:\crystal_datasets\opt_outputs\DAFMUV.pt"
+
+batch_size = 1000
+num_samples = 1000
+num_batches = num_samples // batch_size
+sym_info = init_sym_info()
+
+seed = 0
+
 if __name__ == '__main__':
-    with (wandb.init(
-            project="MXtalTools",
-            entity='mkilgour')):
+    torch.set_grad_enabled(False)
+    "Load target molecule and original crystal"
+    dafmuv_data = torch.load(dafmuv_path, weights_only=False)
+    ref_crystal_batch = collate_data_list(dafmuv_data).to(device)
+    ref_computes, ref_cluster_batch = ref_crystal_batch.analyze(
+        computes=['lj'], return_cluster=True, cutoff=10, supercell_size=10)
 
-        # Create the parser
-        parser = argparse.ArgumentParser(description='Process an integer.')
+    "load crystal score model and density prediction model"
+    score_model = load_crystal_score_model(score_checkpoint, device).to(device)
+    score_model.eval()
+    density_model = load_molecule_scalar_regressor(density_checkpoint, device)
+    density_model.eval()
 
-        # Add an argument for the integer
-        parser.add_argument('--seed', type=int, default=0, help='An integer passed from the command line')
+    """
+    Density prediction
+    """
+    target_packing_coeff = (density_model(ref_crystal_batch).flatten() *
+                            density_model.target_std + density_model.target_mean)
+    aunit_volume_pred = ref_crystal_batch.mol_volume / target_packing_coeff  # A^3
+    density_pred = ref_crystal_batch.mass / aunit_volume_pred * 1.6654  # g/cm^3
+    print(f"True cp={float(ref_crystal_batch.packing_coeff):.3f} "
+          f"predicted cp = {float(target_packing_coeff):.3f} "
+          f"error {float(torch.abs(ref_crystal_batch.packing_coeff - target_packing_coeff) / torch.abs(ref_crystal_batch.packing_coeff)):.3f}")
 
-        # Parse the arguments
-        args = parser.parse_args()
-        seed = args.seed
 
-        wandb.run.name = 'crystal_search_' + datetime.today().strftime("%d-%m-%H-%M-%S")
-        device = 'cuda'
-        mini_dataset_path = '../mini_datasets/mini_CSD_dataset.pt'
-        score_checkpoint = r"../checkpoints/crystal_score.pt"
-        density_checkpoint = r"../checkpoints/cp_regressor.pt"
-        visualize = True
 
-        batch_size = 10
-        num_samples = 10
-        num_batches = num_samples // batch_size
-        sym_info = init_sym_info()
 
-        "load and batch batch_size copies of the same molecule"
-        # BIGDOK, CETLAQ, DAFMUV, HEVTIL, DAFMUV
-        example_crystals = torch.load(mini_dataset_path)
-        elem_index = [elem.identifier for elem in example_crystals].index(
-            'DAFMUV')  #.index('ACRLAC06')  #.index('FEDGOK01')
-        original_crystal = collate_data_list([example_crystals[elem_index]]).to(device)
+    """
+    Analyze optimized samples
+    """
+    opt_sample_list = torch.load(opt_path, weights_only=False)
+    batch_size = 25
+    num_batches = len(opt_sample_list) // batch_size + int((len(opt_sample_list) % batch_size) > 0)
+    opt_score, pred_rdf_dist, opt_rdfs, opt_lj_energy, opt_cp = [], [], [], [], []
+    for batch_idx in tqdm(range(num_batches)):
+        opt_crystal_batch = collate_data_list(opt_sample_list[batch_size * batch_idx:batch_size * (1+batch_idx)]).to(device)
+        computes, opt_cluster_batch = opt_crystal_batch.analyze(
+            computes=['lj'], return_cluster=True, cutoff=10, supercell_size=10
+        )
 
-        """load crystal score model and density prediction model"""
-        score_model = load_crystal_score_model(score_checkpoint, device).to(device)
-        score_model.eval()
-        density_model = load_molecule_scalar_regressor(density_checkpoint, device)
-        density_model.eval()
+        model_output = score_model(opt_cluster_batch.to(device), force_edges_rebuild=True).cpu()
+        opt_score.append(softmax_and_score(model_output[:, :2]).cpu())
+        pred_rdf_dist.append(F.softplus(model_output[:, 2]).cpu())
+        rdf, bin_edges, _ = opt_cluster_batch.compute_rdf()
+        opt_rdfs.append(rdf.cpu())
+        opt_lj_energy.append(computes['lj'].cpu())
+        opt_cp.append(opt_crystal_batch.packing_coeff.cpu())
 
-        """
-        Density prediction
-        """
-        num_density_predictions = 50
-        with torch.no_grad():
-            """predict crystal packing coefficient - single-point"""
-            target_packing_coeff = density_model(
-                original_crystal).flatten() * density_model.target_std + density_model.target_mean
-            aunit_volume_pred = original_crystal.mol_volume / target_packing_coeff  # A^3
-            density_pred = original_crystal.mass / aunit_volume_pred * 1.6654  # g/cm^3
+    opt_score = torch.cat(opt_score)
+    pred_rdf_dist = torch.cat(pred_rdf_dist)
+    opt_rdfs = torch.cat(opt_rdfs)
+    opt_lj_energy = torch.cat(opt_lj_energy)
+    opt_cp = torch.cat(opt_cp)
 
-            """get prediction with uncertainty via resampling with dropout"""
-            predictions = []
-            model = enable_dropout(density_model)
-            for _ in range(num_density_predictions):
-                predictions.append(model(original_crystal).flatten() * model.target_std + model.target_mean)
+    """
+    Analyze reference crystal
+    """
+    model_output_ref = score_model(ref_cluster_batch.to(device), force_edges_rebuild=True).cpu()
+    ref_score = softmax_and_score(model_output_ref[:, :2]).cpu()
+    pred_ref_rdf_dist = F.softplus(model_output_ref[:, 2]).cpu()
+    rdf, bin_edges, _ = ref_cluster_batch.compute_rdf()
+    ref_rdf = rdf.cpu()
 
-            predictions = torch.stack(predictions)
-            packing_coeff_mean = predictions.mean(0)
-            packing_coeff_std = predictions.std(0)
+    ref_lj_energy = ref_computes['lj'].cpu()
+    ref_cp = ref_cluster_batch.packing_coeff.cpu()
 
-        print(f"True cp={float(original_crystal.packing_coeff):.3f} "
-              f"predicted cp = {float(target_packing_coeff):.3f} "
-              f"error {float(torch.abs(original_crystal.packing_coeff - target_packing_coeff) / torch.abs(original_crystal.packing_coeff)):.3f}")
+    """
+    Compute true RDF distances
+    """
+    rdf_dists = torch.zeros(len(opt_rdfs), device=opt_rdfs.device, dtype=torch.float32)
+    for i in range(len(opt_rdfs)):
+        rdf_dists[i] = compute_rdf_distance(ref_rdf[0], opt_rdfs[i], bin_edges.to(opt_rdfs.device)) / \
+                       ref_cluster_batch.num_atoms[0]
+    rdf_dists = rdf_dists.cpu()
 
-        """
-        Crystal optimization
-        """
-        optimized_samples = []
-        for batch_ind in range(num_batches):
-            """
-            generate a batch of random crystals for this molecule, 
-            force overlapping molecules apart,
-            do a rigid-body optimization of the crystal parameters
-            analyze resulting crystals
-            """
 
-            print(f'Starting batch {batch_ind}')
-            crystal_batch = collate_data_list([example_crystals[elem_index] for _ in range(batch_size)]).to(device)
+    """
+    COMPACK analysis
+    """
+    best_sample_inds = torch.argwhere((opt_cp > 0.6) * (opt_cp < 0.8)).squeeze()
+    if False: #not os.path.exists('rmsds.npy'):
+        matches, rmsds = batch_compack(best_sample_inds, opt_sample_list, ref_crystal_batch)
+        np.save('rmsds', rmsds)
+        np.save('matches', matches)
+    else:
+        rmsds = np.load('rmsds.npy')
+        matches = np.load('matches.npy')
 
-            crystal_batch.sample_reasonable_random_parameters(
-                target_packing_coeff=target_packing_coeff * 0.75,
-                tolerance=3,
-                max_attempts=500,
-                seed=seed,
-            )
-            opt1_trajectory = (
-                crystal_batch.optimize_crystal_parameters(
-                    optim_target='LJ',
-                    show_tqdm=True,
-                    convergence_eps=1e-6,
-                    #score_model=score_model,
-                    target_packing_coeff=target_packing_coeff,
-                    do_box_restriction=True,
-                    cutoff=10,
-                ))
-            crystal_batch = collate_data_list(opt1_trajectory[-1]).to(device)
-            opt2_trajectory = (
-                crystal_batch.optimize_crystal_parameters(
-                    optim_target='rdf_score',
-                    show_tqdm=True,
-                    convergence_eps=1e-6,
-                    score_model=score_model,
-                    do_box_restriction=False,
-                    cutoff=6,
-                ))
+    all_matched = np.argwhere(matches == 20).flatten()
+    matched_rmsds = rmsds[all_matched]
+    print(all_matched)
+    print(rmsds[all_matched])
 
-            """visualize optimization trajectory"""
-            opt1_trajectory.extend(opt2_trajectory)
+    """
+    Figures
+    """
+    good_inds = torch.argwhere((pred_rdf_dist < 0.015) * (opt_lj_energy < -350)).flatten()
+    density_funnel(pred_rdf_dist[good_inds],
+                   opt_cp[good_inds],
+                   rdf_dists[good_inds],
+                   pred_ref_rdf_dist,
+                   ref_cp,
+                   yaxis_title='Predicted Distance',
+                   write_fig=True)
+    density_funnel(opt_lj_energy[good_inds],
+                   opt_cp[good_inds],
+                   rdf_dists[good_inds],
+                   ref_lj_energy,
+                   ref_cp,
+                   yaxis_title='LJ Energy (Arb Units)',
+                   write_fig=True)
 
-            if False:
-                import plotly.graph_objects as go
+    compack_fig(matches, rmsds, write_fig=True)
 
-                lj_pots = torch.stack(
-                    [torch.tensor([sample.scaled_lj_pot for sample in sample_list]) for sample_list in opt1_trajectory])
-                coeffs = torch.stack(
-                    [torch.tensor([sample.packing_coeff for sample in sample_list]) for sample_list in opt1_trajectory])
-
-                fig = go.Figure()
-                fig.add_scatter(x=coeffs[0, :], y=lj_pots[0, :], mode='markers', marker_size=20, marker_color='grey',
-                                name='Initial State')
-                fig.add_scatter(x=coeffs[-1, :], y=lj_pots[-1, :], mode='markers', marker_size=20, marker_color='black',
-                                name='Final State')
-                for ind in range(coeffs.shape[1]):
-                    fig.add_scatter(x=coeffs[:, ind], y=lj_pots[:, ind], name=f"Run {ind}")
-                fig.update_layout(xaxis_title='Packing Coeff', yaxis_title='Scaled LJ')
-                fig.show()
-
-                fig = go.Figure()
-                for ind in range(lj_pots.shape[-1]):
-                    fig.add_scatter(y=lj_pots[..., ind], marker_color='blue', name='lj', legendgroup='lg',
-                                    showlegend=True if ind == 0 else False)
-                fig.show()
-
-                fig = go.Figure()
-                for ind in range(lj_pots.shape[-1]):
-                    fig.add_scatter(y=coeffs[..., ind], marker_color='blue', name='packing coeff', legendgroup='lg',
-                                    showlegend=True if ind == 0 else False)
-                fig.update_layout(yaxis_range=[0, 1])
-                fig.show()
-
-            """analyze optimized samples"""
-            optimized_crystal_batch = collate_data_list(opt1_trajectory[-1]).to(device)
-            p1, p2, p3, optimized_cluster_batch = (
-                optimized_crystal_batch.build_and_analyze(return_cluster=True,
-                                                          cutoff=10))
-            with torch.no_grad():
-                model_output = score_model(optimized_cluster_batch.to(device), force_edges_rebuild=True).cpu()
-                model_score = softmax_and_score(model_output[:, :2])
-
-                fake_rdf, _, _ = crystal_rdf(optimized_cluster_batch,
-                                             optimized_cluster_batch.edges_dict,
-                                             rrange=[0, 6], bins=2000,
-                                             mode='intermolecular', elementwise=True, raw_density=True,
-                                             cpu_detach=False)
-
-                for ind, sample in enumerate(opt1_trajectory[-1]):
-                    sample.model_output = model_output[ind][None, :].clone().cpu()
-                    sample.rdf = fake_rdf[ind][None, :].clone().cpu()
-                    sample.lj_pot = p1.clone().cpu()
-                    sample.scaled_lj_pot = p3.clone().cpu()
-                    sample.es_pot = p2.clone().cpu()
-
-            optimized_samples.extend(opt1_trajectory[-1])
-            chunks = os.listdir()
-            chunks = [elem for elem in chunks if f'optimized_samples_{elem_index}' in elem]
-            chunk_ind = len(chunks)
-            torch.save(optimized_samples, f'optimized_samples_{elem_index}_{chunk_ind}.pt')
+    aa = 1

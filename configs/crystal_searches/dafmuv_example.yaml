@@ -1,9 +1,8 @@
 device: cuda
-#mol_path: D:\crystal_datasets\mini_new_csd.pt
-mol_path: D:\crystal_datasets\nicotinamide.pt
-#mol_path: D:\crystal_datasets\train_qm9.pt
+mol_path: D:\crystal_datasets\DAFMUV.pt
 out_dir: D:\crystal_datasets\opt_outputs
-run_name: test
+score_model_checkpoint: C:\Users\mikem\Projects\mxt_gfn\mxtaltools\checkpoints\crystal_score.pt
+run_name: DAFMUV
 
 mol_seed: 0
 opt_seed: 0
@@ -11,15 +10,15 @@ sampling_mode: all # 'all' or 'random'
 mols_to_sample: 1
 num_samples: 1000 # per mol, per space group
 
-sgs_to_search: [2]
+sgs_to_search: [33]
 zp_to_search: [1]
 
 batch_size: 1000
 grow_batch_size: false
 
 init_sample_method: random  # 'random' 'reasonable'
-init_sample_reduced: true  # true or false for niggli vs non-niggli init sampling
-init_target_cp: std  # float, null or 'std' target packing coefficient for initial structure sampling
+init_sample_reduced: false  # true or false for niggli vs non-niggli init sampling
+init_target_cp: 0.699  # float, null or 'std' target packing coefficient for initial structure sampling
 
 # Optimization can have multiple stages by duplicating the opt block below and adjusting params
 # the search algo will run consecutive n consecutive optimizations for n the number of list elements
@@ -32,7 +31,6 @@ init_target_cp: std  # float, null or 'std' target packing coefficient for initi
 #        show_tqdm: Optional[bool] = False,
 #        grad_norm_clip: Optional[float] = 0.1,
 #        optim_target: Optional[str] = 'lj',
-#        score_model: Optional[torch.nn.Module] = None,
 #        target_packing_coeff: Optional[torch.Tensor] = None,
 #        do_box_restriction: Optional[bool] = False,
 #        cutoff: Optional[float] = None,
@@ -42,8 +40,9 @@ init_target_cp: std  # float, null or 'std' target packing coefficient for initi
 #        anneal_lr: Optional[bool] = False,
 opt:
   - optim_target: 'silu' # lj silu ellipsoid classification_score rdf_score
-    enforce_niggli: true
+    enforce_niggli: false
     compression_factor: 1.0
+    target_packing_coeff: 0.699
     init_lr: 0.001
     convergence_eps: 0.001
     optimizer_func: 'rprop'  # NOTE rprop is by far the fastest and most reliable
@@ -54,12 +53,25 @@ opt:
 
 
   - optim_target: 'lj' # lj silu ellipsoid classification_score rdf_score
-    enforce_niggli: true
+    enforce_niggli: false
     compression_factor: 0.0
-    init_lr: 0.1
+    target_packing_coeff: 0.699
+    init_lr: 1.0
     convergence_eps: 0.0001
     optimizer_func: 'sgd'  # SGD is good for fine-tuning local opts
     anneal_lr: true
     grad_norm_clip: 0.01
-    show_tqdm: false
+    show_tqdm: true
     max_num_steps: 50
+
+#  - optim_target: 'rdf_score' # lj silu ellipsoid classification_score rdf_score
+#    enforce_niggli: false
+#    compression_factor: 0.0
+#    target_packing_coeff: 0.699
+#    init_lr: 0.001
+#    convergence_eps: 0.0001
+#    optimizer_func: 'rprop'  # SGD is good for fine-tuning local opts
+#    anneal_lr: true
+#    grad_norm_clip: 0.01
+#    show_tqdm: false
+#    max_num_steps: 100

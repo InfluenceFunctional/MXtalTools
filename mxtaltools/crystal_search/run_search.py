@@ -14,11 +14,10 @@ from tqdm import tqdm
 
 
 from mxtaltools.common.config_processing import load_yaml, dict2namespace
+from mxtaltools.common.training_utils import load_crystal_score_model
 from mxtaltools.common.utils import is_cuda_oom
 from mxtaltools.dataset_utils.data_classes import MolCrystalData
 from mxtaltools.dataset_utils.utils import collate_data_list
-
-
 
 
 def get_initial_state(config, crystal_batch):
@@ -149,6 +148,11 @@ if __name__ == '__main__':
 
             for opt_ind, opt_config in enumerate(config.opt):
                 # do optimization in N stages
+                if opt_config['optim_target'] in ['rdf_score', 'classification_score']:
+                    # load up score model if it's needed
+                    score_model = load_crystal_score_model(config.score_model_checkpoint, device).to(device)
+                    score_model.eval()
+                    opt_config['score_model'] = score_model
                 opt_out = crystal_batch.optimize_crystal_parameters(**opt_config)
                 crystal_batch = collate_data_list(opt_out).to(device)
 
@@ -162,8 +166,9 @@ if __name__ == '__main__':
             if cursor >= len(samples_to_optim):
                 finished = True
             else:
-                config.batch_size = int(config.batch_size * 1.2) # keep pushing the batch size between sets
-                print(f"Boosting batch size to {config.batch_size}")
+                if config.grow_batch_size:
+                    config.batch_size = int(config.batch_size * 1.2) # keep pushing the batch size between sets
+                    print(f"Boosting batch size to {config.batch_size}")
 
         except (RuntimeError, ValueError) as e:
             if is_cuda_oom(e):

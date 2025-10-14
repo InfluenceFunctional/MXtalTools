@@ -193,11 +193,14 @@ class MXtalBase(BaseData):
         """
         assert self.is_batch
         zp = int(self.max_z_prime)
-        del self.max_z_prime
-        samples_list = self.to_data_list()
-        for elem in samples_list:
+        is_well_defined = self.is_well_defined.clone()
+        batch_to_listify = self.clone()
+        del batch_to_listify.max_z_prime, batch_to_listify.is_well_defined
+        samples_list = batch_to_listify.to_data_list()
+        for ind, elem in enumerate(samples_list):
             elem.max_z_prime = zp
-
+            elem.is_well_defined = is_well_defined[ind]
+        del batch_to_listify
         return samples_list
 
 

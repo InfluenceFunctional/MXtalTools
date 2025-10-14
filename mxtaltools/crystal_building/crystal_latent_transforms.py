@@ -1244,19 +1244,13 @@ def enforce_niggli_plane(cell_lengths, cell_angles, mode, eps=1e-6):
                 if torch.all(overlap >= 0):
                     break
 
-            # r = torch.cat([ga_cos, be_cos, al_cos], dim=1)
-            # N = torch.cat([ab, ac, bc], dim=1)
-            # shift = -(N*r).sum(dim=1, keepdim=True)/(N.norm(dim=1, keepdim=True)**2 + 1e-12) * N
-            # fix_shift = torch.where(overlap < 0, shift, torch.zeros_like(shift))
-            # fixed_r = r + fix_shift
-            #
-            # ga, be, al = torch.arccos(fixed_r.clip(-1 + eps, 1-eps)).split(1, dim=1)
-
         else:
             raise ValueError(f"Unknown mode '{mode}': use 'mirror' or 'shift'")
 
     ab, ac, al_cos, bc, be_cos, ga_cos, overlap = compute_niggli_overlap(a, al, b, be, c, ga)
-    assert torch.all(overlap >= 0), "Niggli plane enforcement failed!!"
+    #assert torch.all(overlap >= 0), "Niggli plane enforcement failed!!"
+    if torch.any(overlap < 0):
+        print(f"Niggli enforcement failed with overlap of {overlap.amin():3g}")
 
     return torch.cat([al, be, ga], dim=1)
 

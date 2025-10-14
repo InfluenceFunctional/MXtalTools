@@ -874,7 +874,7 @@ class MolCrystalOps:
 
         return fig
 
-    def _collect_sample_dists(self, samples, ref_dist, quantiles):
+    def _collect_sample_dists(self, samples, ref_dist, quantiles, split_by_sg):
         num_dists = 1
         dist_names = ['Samples']
         dists = [samples]
@@ -894,6 +894,12 @@ class MolCrystalOps:
                 dist_names += [f'{q} Quantile']
                 dists.append(samples[energies < np.quantile(energies, q)])
 
+        if split_by_sg:
+            for sg in torch.unique(self.sg_ind):
+                good_inds = self.sg_ind == sg
+                dist_names += [f'SG={int(sg)}']
+                dists.append(samples[good_inds])
+
         return num_dists, dist_names, dists
 
     def plot_batch_cell_params(self, space='real',
@@ -901,14 +907,15 @@ class MolCrystalOps:
                                quantiles: Optional[Iterable[float]] = None,
                                ref_dist: Optional[torch.Tensor] = None,
                                show: bool = True,
-                               return_fig: bool = False,):
+                               return_fig: bool = False,
+                               split_by_sg: bool = False):
         if not self.is_batch:
             print("Cell statistics only works for a batch of crystal data objects")
             return None
 
         lattice_features = self._build_lattice_feats()
         samples = self._get_samples(space)
-        num_dists, dist_names, dists = self._collect_sample_dists(samples, ref_dist, quantiles)
+        num_dists, dist_names, dists = self._collect_sample_dists(samples, ref_dist, quantiles, split_by_sg)
 
         # 1d Histograms
         fig = make_subplots(rows=2 + 2 * self.max_z_prime,

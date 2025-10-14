@@ -149,7 +149,7 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers):
                 """
                 extract pose information (from each Z' structure)
                 # """
-                crystal_batch = collate_data_list(crystals)
+                crystal_batch = collate_data_list(crystals, max_z_prime=1)
 
                 molwise_ucell_coords = crystal_dict['unit_cell_coordinates']
                 if len(crystals) > 1:
@@ -173,7 +173,7 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers):
                     crystal.pos = pos[crystal_batch.batch == ind]
                     crystal.box_analysis()
 
-                rebuild_batch = collate_data_list(crystals)
+                rebuild_batch = collate_data_list(crystals, max_z_prime=1)
                 rebuild_batch.pose_aunit()
                 rebuild_batch.build_unit_cell()
                 aunit_centroid, aunit_orientation, aunit_handedness, is_well_defined, pos = rebuild_batch.reparameterize_unit_cell()
@@ -316,9 +316,19 @@ def crystal_rebuild_checks(aunit_centroid,
 
 
 if __name__ == '__main__':
-    process_cifs_to_chunks(n_chunks=1000,
-                           cifs_path='D:/crystal_datasets/CSD_dump/',
-                           chunks_path='D:/crystal_datasets/CSD_featurized_chunks/',
+    # full dataset processing
+    # process_cifs_to_chunks(n_chunks=1000,
+    #                        cifs_path='D:/crystal_datasets/CSD_dump/',
+    #                        chunks_path='D:/crystal_datasets/CSD_featurized_chunks/',
+    #                        chunk_prefix='',
+    #                        use_filenames_for_identifiers=False,
+    #                        target_identifiers=None,
+    #                        filter_by_targets=False)
+    #
+
+    process_cifs_to_chunks(n_chunks=1,
+                           cifs_path='D:/crystal_datasets/dafmuv/',
+                           chunks_path='D:/crystal_datasets/',
                            chunk_prefix='',
                            use_filenames_for_identifiers=False,
                            target_identifiers=None,

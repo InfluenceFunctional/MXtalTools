@@ -1,107 +1,121 @@
-import torch
+import os
+import subprocess
+import sys
 
-from mxtaltools.analysis.crystal_rdf import crystal_rdf
-from mxtaltools.common.sym_utils import init_sym_info
-from mxtaltools.common.training_utils import load_crystal_score_model, load_molecule_scalar_regressor
+import numpy as np
+import torch
+from tqdm import tqdm
+
+from examples.crystal_search_reporting import batch_compack, density_funnel, compack_fig
+from mxtaltools.analysis.crystal_rdf import compute_rdf_distance
+
+# add MXtalTools to path by relative reference
+sys.path.insert(0, os.path.abspath("../"))
+
+import torch.nn.functional as F
+from mxtaltools.common.training_utils import load_crystal_score_model
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.utils import softmax_and_score
 
-# Parse the arguments
-seed = 1234
+torch.set_grad_enabled(False)
 
 device = 'cuda'
+dafmuv_path = "D:\crystal_datasets\DAFMUV.pt"
 mini_dataset_path = '../mini_datasets/mini_CSD_dataset.pt'
 score_checkpoint = r"../checkpoints/crystal_score.pt"
 density_checkpoint = r"../checkpoints/cp_regressor.pt"
+opt_path = r"D:\crystal_datasets\opt_outputs\DAFMUV.pt"
 
-batch_size = 10
-num_samples = 10
-num_batches = num_samples // batch_size
-sym_info = init_sym_info()
-
-dafmuv_crystal = torch.load(dafmuv_path)
-dafmuv_crystal.to(device)
-
-"""load crystal score model and density prediction model"""
-score_model = load_crystal_score_model(score_checkpoint, device)
+"""
+Load crystal score model
+"""
+score_model = load_crystal_score_model(score_checkpoint, device).to(device)
 score_model.eval()
 
-density_model = load_molecule_scalar_regressor(density_checkpoint, device)
-density_model.eval()
+"""
+Load and analyze reference crystal 
+"""
+dafmuv_data = torch.load(dafmuv_path, weights_only=False)
+ref_crystal_batch = collate_data_list(dafmuv_data).to(device)
+ref_computes, ref_cluster_batch = ref_crystal_batch.analyze(
+    computes=['lj'], return_cluster=True, cutoff=10, supercell_size=10)
+model_output_ref = score_model(ref_cluster_batch.to(device), force_edges_rebuild=True).cpu()
+ref_score = softmax_and_score(model_output_ref[:, :2]).cpu()
+ref_pred_rdfemd = F.softplus(model_output_ref[:, 2]).cpu()
+rdf, bin_edges, _ = ref_cluster_batch.compute_rdf()
+ref_rdf = rdf.cpu()
+
+ref_lj_energy = ref_computes['lj'].cpu()
+ref_cp = ref_cluster_batch.packing_coeff.cpu()
 
 """
-Density prediction
+Run optimization via standalone script & config
 """
-num_density_predictions = 50
-with torch.no_grad():
-    """predict crystal packing coefficient - single-point"""
-    target_packing_coeff = density_model(
-        dafmuv_crystal).flatten() * density_model.target_std + density_model.target_mean
-    aunit_volume_pred = dafmuv_crystal.mol_volume / target_packing_coeff  # A^3
-    density_pred = dafmuv_crystal.mass / aunit_volume_pred * 1.6654  # g/cm^3
+subprocess.run(["python", "run_search.py", "--input", "dafmuv_example.yaml"], check=True)
 
 """
-Crystal optimization
+Analyze optimized samples
 """
-optimized_samples = []
-for batch_ind in range(num_batches):
-    """
-    generate a batch of random crystals for this molecule, 
-    force overlapping molecules apart,
-    do a rigid-body optimization of the crystal parameters
-    analyze resulting crystals
-    """
-
-    print(f'Starting batch {batch_ind}')
-    crystal_batch = collate_data_list([dafmuv_crystal[0] for _ in range(batch_size)]).to(device)
-
-    crystal_batch.sample_reasonable_random_parameters(
-        target_packing_coeff=target_packing_coeff * 0.75,
-        tolerance=3,
-        max_attempts=500,
-        seed=seed,
+opt_sample_list = torch.load(opt_path, weights_only=False)
+batch_size = 25
+num_batches = len(opt_sample_list) // batch_size + int((len(opt_sample_list) % batch_size) > 0)
+opt_score, opt_pred_rdfemd, opt_rdfs, opt_lj_energy, opt_cp = [], [], [], [], []
+for batch_idx in tqdm(range(num_batches)):
+    opt_crystal_batch = collate_data_list(opt_sample_list[batch_size * batch_idx:batch_size * (1 + batch_idx)]).to(
+        device)
+    computes, opt_cluster_batch = opt_crystal_batch.analyze(
+        computes=['lj'], return_cluster=True, cutoff=10, supercell_size=10
     )
-    first_optimization_trajectory = (
-        crystal_batch.optimize_crystal_parameters(
-            optim_target='LJ',
-            show_tqdm=True,
-            convergence_eps=1e-6,
-            target_packing_coeff=target_packing_coeff,
-            do_box_restriction=True,
-            cutoff=10,
-        ))
-    crystal_batch = collate_data_list(first_optimization_trajectory[-1]).to(device)
-    second_optimization_trajectory = (
-        crystal_batch.optimize_crystal_parameters(
-            optim_target='rdf_score',
-            show_tqdm=True,
-            convergence_eps=1e-6,
-            score_model=score_model,
-            do_box_restriction=False,
-            cutoff=6,
-        ))
 
-    """analyze optimized samples"""
-    optimized_crystal_batch = collate_data_list(second_optimization_trajectory[-1]).to(device)
-    p1, p2, p3, optimized_cluster_batch = (
-        optimized_crystal_batch.build_and_analyze(return_cluster=True,
-                                                  cutoff=10))
-    with torch.no_grad():
-        model_output = score_model(optimized_cluster_batch.to(device), force_edges_rebuild=True).cpu()
-        model_score = softmax_and_score(model_output[:, :2])
+    model_output = score_model(opt_cluster_batch.to(device), force_edges_rebuild=True).cpu()
+    opt_score.append(softmax_and_score(model_output[:, :2]).cpu())
+    opt_pred_rdfemd.append(F.softplus(model_output[:, 2]).cpu())
+    rdf, bin_edges, _ = opt_cluster_batch.compute_rdf()
+    opt_rdfs.append(rdf.cpu())
+    opt_lj_energy.append(computes['lj'].cpu())
+    opt_cp.append(opt_crystal_batch.packing_coeff.cpu())
 
-        sample_rdf, _, _ = crystal_rdf(optimized_cluster_batch,
-                                       optimized_cluster_batch.edges_dict,
-                                       rrange=[0, 6], bins=2000,
-                                       mode='intermolecular', elementwise=True, raw_density=True,
-                                       cpu_detach=False)
+opt_score = torch.cat(opt_score)
+opt_pred_rdfemd = torch.cat(opt_pred_rdfemd)
+opt_rdfs = torch.cat(opt_rdfs)
+opt_lj_energy = torch.cat(opt_lj_energy)
+opt_cp = torch.cat(opt_cp)
 
-        for ind, sample in enumerate(second_optimization_trajectory[-1]):
-            sample.model_output = model_output[ind][None, :].clone().cpu()
-            sample.rdf = sample_rdf[ind][None, :].clone().cpu()
-            sample.lj_pot = p1.clone().cpu()
-            sample.scaled_lj_pot = p3.clone().cpu()
-            sample.es_pot = p2.clone().cpu()
+"""
+Compute true RDF distances
+"""
+rdf_dists = torch.zeros(len(opt_rdfs), device=opt_rdfs.device, dtype=torch.float32)
+for i in range(len(opt_rdfs)):
+    rdf_dists[i] = compute_rdf_distance(ref_rdf[0], opt_rdfs[i], bin_edges.to(opt_rdfs.device)) / \
+                   ref_cluster_batch.num_atoms[0]
+rdf_dists = rdf_dists.cpu()
 
-    optimized_samples.extend(second_optimization_trajectory[-1])
-    torch.save(optimized_samples, f'optimized_samples.pt')
+"""
+COMPACK analysis
+"""
+best_sample_inds = torch.argwhere((opt_cp > 0.6) * (opt_cp < 0.8)).squeeze()
+matches, rmsds = batch_compack(best_sample_inds, opt_sample_list, ref_crystal_batch)
+
+all_matched = np.argwhere(matches == 20).flatten()
+matched_rmsds = rmsds[all_matched]
+
+"""
+Figures
+"""
+good_inds = torch.argwhere((opt_pred_rdfemd < 0.015) * (opt_lj_energy < -350)).flatten()
+density_funnel(opt_pred_rdfemd[good_inds],
+               opt_cp[good_inds],
+               rdf_dists[good_inds],
+               ref_pred_rdfemd,
+               ref_cp,
+               yaxis_title='Predicted Distance',
+               write_fig=True)
+density_funnel(opt_lj_energy[good_inds],
+               opt_cp[good_inds],
+               rdf_dists[good_inds],
+               ref_lj_energy,
+               ref_cp,
+               yaxis_title='LJ Energy (Arb Units)',
+               write_fig=True)
+
+compack_fig(matches, rmsds, write_fig=True)

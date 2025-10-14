@@ -1,4 +1,5 @@
 from random import shuffle
+from typing import Optional
 
 import numpy as np
 import torch
@@ -8,7 +9,7 @@ from torch_geometric.data import DataLoader, Batch
 from torch_geometric.loader.dataloader import DataLoader
 
 
-def collate_data_list(data_list, exclude_unit_cell: bool = True):
+def collate_data_list(data_list, exclude_unit_cell: bool = True, max_z_prime: Optional[int] = None):
     if not isinstance(data_list, list):
         data_list = [data_list]
 
@@ -27,11 +28,21 @@ def collate_data_list(data_list, exclude_unit_cell: bool = True):
                                 exclude_keys=list(exclude_keys),
                                 )
 
-    if hasattr(batch, 'max_z_prime'):
-        if isinstance(batch.max_z_prime, int):
-            pass
+    # if hasattr(batch, 'max_z_prime'):
+    #     if isinstance(batch.max_z_prime, int):
+    #         pass
+    # else:
+    if 'crystal' in batch.__str__().lower():
+        if max_z_prime is not None:
+            batch.max_z_prime = max_z_prime
         else:
-            batch.max_z_prime = int(batch.max_z_prime.amax())
+            batch.max_z_prime = int(batch.z_prime.amax())
+
+        if hasattr(batch, 'aunit_centroid'):
+            batch.aunit_centroid = batch.aunit_centroid[:, :3 * batch.max_z_prime]
+            batch.aunit_orientation = batch.aunit_orientation[:, :3 * batch.max_z_prime]
+            batch.aunit_handedness = batch.aunit_handedness[:, :batch.max_z_prime]
+            assert batch.aunit_centroid.shape[1] == 3 * batch.max_z_prime, "Batch max z prime must agree with parameterization"
 
     return batch
 

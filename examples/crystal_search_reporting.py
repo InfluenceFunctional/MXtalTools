@@ -142,7 +142,7 @@ def csp_reporting(optimized_samples,
     aa = 1
 
 
-def compack_fig(matches, rmsds, rdfs):
+def compack_fig(matches, rmsds, write_fig):
     fontsize = 26
     fig = go.Figure()
     fig.add_scatter(x=matches[matches > 4], y=rmsds[matches > 4],
@@ -166,8 +166,8 @@ def compack_fig(matches, rmsds, rdfs):
             colorscale='bluered',
             colorbar=dict(
                 title='log RDF EMD',
-                titlefont_size=18,
-                tickfont_size=18,
+                #titlefont_size=18,
+                #tickfont_size=18,
                 # x=1
             )
         ),
@@ -191,66 +191,36 @@ def compack_fig(matches, rmsds, rdfs):
         margin=dict(t=100)  # Increase top margin to make space
     )
     fig.show()
-    fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\mxt_code\compack_fig.png', width=900, height=900)
+    if write_fig:
+        fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\mxt_code\compack_fig.png', width=900, height=900)
 
 
 def batch_compack(best_sample_inds, optimized_samples, original_cluster_batch):
     # generate the crystals in ccdc format
-    if not os.path.exists('rmsds.npy'):
-        best_crystals_batch = collate_data_list([optimized_samples[ind] for ind in best_sample_inds])
-        best_cluster_batch = best_crystals_batch.mol2cluster.to('cpu')
-        best_crystals = cluster_batch_to_ccdc_crystals(best_cluster_batch, np.arange(best_cluster_batch.num_graphs))
-        mol = ase_mol_from_crystaldata(original_cluster_batch, index=0, mode='unit cell')
-        mol.info['spacegroup'] = Spacegroup(int(best_cluster_batch.sg_ind[0]), setting=1)
-        mol.write('DAFMUV.cif')
-        #ref_crystal = CrystalReader('DAFMUV.cif')[0]
+    best_crystals_batch = collate_data_list([optimized_samples[ind] for ind in best_sample_inds])
+    best_cluster_batch = best_crystals_batch.mol2cluster().to('cpu')
+    _ = cluster_batch_to_ccdc_crystals(best_cluster_batch, np.arange(best_cluster_batch.num_graphs))
+    mol = ase_mol_from_crystaldata(original_cluster_batch, index=0, mode='unit cell')
+    mol.info['spacegroup'] = Spacegroup(int(best_cluster_batch.sg_ind[0]), setting=1)
+    mol.write('DAFMUV.cif')
 
-        print("Computing RMSD20s")
-        pool = mp.Pool(8)
-        results = []
-        for ind in range(len(best_sample_inds)):
-            results.append(
-                pool.apply_async(
-                    single_compack_run,
-                    (ind,)
-                )
+    print(f"Running COMPACK on {len(best_sample_inds)} crystals")
+    pool = mp.Pool(8)
+    results = []
+    for ind in range(len(best_sample_inds)):
+        results.append(
+            pool.apply_async(
+                single_compack_run,
+                (ind,)
             )
-        pool.close()
-        pool.join()
-        results = [res.get() for res in results]
-        matches = np.array([res[1] for res in results])
-        rmsds = np.array([res[0] for res in results])
-        np.save('rmsds', rmsds)
-        np.save('matches', matches)
-    else:
-        rmsds = np.load('rmsds.npy')
-        matches = np.load('matches.npy')
-    # similarity_engine = PackingSimilarity()
-    # similarity_engine.settings.distance_tolerance = 0.4
-    # similarity_engine.settings.angle_tolerance = 40
-    # similarity_engine.settings.allow_molecular_differences = True
-    # similarity_engine.settings.packing_shell_size = 20
-    # if os.path.exists('rmsds_1k.npy'):
-    #     rmsds = list(np.load('rmsds_1k.npy'))
-    #     matches = list(np.load('matches_1k.npy'))
-    # else:
-    #     rmsds = []
-    #     matches = []
-    # for ind, crystal in tqdm(enumerate(best_crystals)):
-    #     if ind >= len(rmsds):
-    #         try:
-    #             result = similarity_engine.compare(ref_crystal, crystal)
-    #             print(f"RMSD = {result.rmsd:.3f} Å, {result.nmatched_molecules} mols matched")
-    #             rmsds.append(result.rmsd)
-    #             matches.append(result.nmatched_molecules)
-    #             np.save('rmsds_1k', rmsds)
-    #             np.save('matches_1k', matches)
-    #         except AttributeError:
-    #             rmsds.append(0)
-    #             matches.append(0)
-    #             np.save('rmsds_1k', rmsds)
-    #             np.save('matches_1k', matches)
-    #             print("analysis failed")
+        )
+    pool.close()
+    pool.join()
+    results = [res.get() for res in results]
+    matches = np.array([res[1] for res in results])
+    rmsds = np.array([res[0] for res in results])
+
+
     return matches, rmsds
 
 
@@ -363,21 +333,11 @@ def distance_fig(c_dists, model_score, noisy_c_dists, noisy_model_score, noisy_r
     fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\mxt_code\distance_fig.png', width=1920, height=800)
 
 
-def density_funnel(model_score, packing_coeff, rdf_dists, ref_model_score, ref_packing_coeff):
+def density_funnel(model_score, packing_coeff, rdf_dists, ref_model_score, ref_packing_coeff, yaxis_title,
+                   write_fig: bool=True):
     fontsize = 26
-    good_inds = torch.argwhere((packing_coeff > 0.55) * (model_score > 0) * (packing_coeff < 0.9)).squeeze()
-    # fig = make_subplots(rows=1, cols=2, subplot_titles=["(a)", "(b)"],
-    #                     horizontal_spacing=0.125)
+    good_inds = torch.argwhere((packing_coeff > 0.55) * (packing_coeff < 0.9)).squeeze()
     fig = go.Figure()
-    # fig.add_scatter(x=packing_coeff.cpu(), y=model_score.cpu(),
-    #                 mode='markers', marker_size=12,
-    #                 marker_color=rdf_dists.clip(max=torch.quantile(rdf_dists, 0.99)).log10().cpu().detach(),  # 'blue',
-    #                 marker_colorbar=dict(title=dict(text="log RDF EMD")),
-    #                 marker_colorscale='bluered', opacity=0.6, marker_line_width=1,
-    #                 marker_line_color='white',
-    #                 name='Optimized Samples',
-    #                 marker_coloraxis='coloraxis2',
-    #                 row=1, col=1)
     fig.add_scatter(x=packing_coeff[good_inds].cpu(), y=model_score[good_inds].cpu(),
                     mode='markers', marker_size=12,
                     showlegend=True,
@@ -390,43 +350,22 @@ def density_funnel(model_score, packing_coeff, rdf_dists, ref_model_score, ref_p
                     marker_coloraxis='coloraxis2',
                     #row=1, col=2
                     )
-    # fig.add_scatter(x=noisy_packing_coeff.cpu(), y=noisy_model_score.cpu(),
-    #                 mode='markers', marker_size=12,
-    #                 opacity=0.75,
-    #                 marker_color='green',
-    #                 name='Noised Ground Truth',
-    #                 row=1, col=2)
+
     fig.add_scatter(x=ref_packing_coeff.cpu(), y=ref_model_score.cpu(), mode='markers', marker_color='yellow',
                     marker_size=25, marker_line_color='black', marker_line_width=2,
                     name='Experimental Sample')
-    fig.add_scatter(x=ref_packing_coeff.cpu(), y=ref_model_score.cpu(), mode='markers', marker_color='yellow',
-                    marker_size=25, marker_line_color='black', marker_line_width=2,
-                    showlegend=False,
-                    #row=1, col=2,
-                    name='Experimental Sample')
-    # fig.update_layout(xaxis1_title='Packing Coefficient', yaxis1_title='Model Score',
-    #                   xaxis1_range=[0, 1]
-    #                   )
-    fig.update_layout(xaxis1_title='Packing Coefficient', yaxis1_title='Model Score',
+    fig.update_layout(xaxis1_title='Packing Coefficient', yaxis1_title=yaxis_title,
                       )
     fig.update_annotations(font=dict(size=fontsize))
     fig.update_layout(font_size=fontsize)
     fig.update_layout(
-        # coloraxis1=dict(
-        #     colorscale='bluered',
-        #     colorbar=dict(
-        #         title='log RDF EMD',
-        #         titlefont_size=18,
-        #         tickfont_size=18,
-        #         x=0.45  # default position
-        #     )
-        # ),
+
         coloraxis2=dict(
             colorscale='bluered',
             colorbar=dict(
                 title='log RDF EMD',
-                titlefont_size=18,
-                tickfont_size=18,
+                #titlefont_size=18,
+                #tickfont_size=18,
                 x=1  # shift it to the right so it doesn't overlap
             )
         )
@@ -451,8 +390,8 @@ def density_funnel(model_score, packing_coeff, rdf_dists, ref_model_score, ref_p
     )
 
     fig.show()
-
-    fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\mxt_code\density_funnel.png', width=1000, height=800)
+    if write_fig:
+        fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\mxt_code\density_funnel.png', width=1000, height=800)
 
 
 if __name__ == '__main__':
