@@ -122,7 +122,8 @@ def simple_cell_hist(sample_batch=None, reference_dist=None, n_kde_points=200, b
         }
     elif mode == 'latent':
         if samples is None:
-            samples = sample_batch.latent_params().cpu().detach().numpy()
+            del sample_batch.latent_transform
+            samples = sample_batch.latent_params(override_mode='wrapped').cpu().detach().numpy()
         custom_ranges = {i: [-6.5, 6.5] for i in range(12)}
     else:
         assert False
@@ -264,7 +265,8 @@ def conditional_simple_cell_hist(sample_batch, cond_inds, n_kde_points=200, bw_r
             11: [0, 2 * np.pi],  # orientation_3
         }
     elif mode == 'latent':
-        samples = sample_batch.latent_params().cpu().detach().numpy()
+        del sample_batch.latent_transform
+        samples = sample_batch.latent_params(override_mode='wrapped').cpu().detach().numpy()
         custom_ranges = {i: [-6.5, 6.5] for i in range(12)}
     else:
         assert False
@@ -323,76 +325,6 @@ def conditional_simple_cell_hist(sample_batch, cond_inds, n_kde_points=200, bw_r
         ),
         margin=dict(l=50, r=50, t=50, b=50)
     )
-    return fig
-
-
-def simple_latent_hist(sample_batch, samples=None, reference_dist=None):
-    if samples is None:
-        samples = sample_batch.latent_params().cpu().detach().numpy()
-
-    lattice_features = ['cell_a', 'cell_b', 'cell_c',
-                        'cell_alpha', 'cell_beta', 'cell_gamma',
-                        'aunit_x', 'aunit_y', 'aunit_z',
-                        'orientation_1', 'orientation_2', 'orientation_3']
-    # 1d Histograms
-    n_crystal_features = 12
-    bw = 50
-    colors = ['red', 'blue']
-    fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)
-    for i in range(n_crystal_features):
-        row = i // 3 + 1
-        col = i % 3 + 1
-        if reference_dist is not None:
-            fig.add_trace(go.Violin(
-                x=reference_dist[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
-                meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / bw), points=False,
-                name='Reference', legendgroup='Reference',
-                showlegend=True if ((i == 0) and reference_dist is not None) else False,
-                line_color=colors[1],
-            ),
-                row=row, col=col
-            )
-        fig.add_trace(go.Violin(
-            x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
-            meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / bw), points=False,
-            name='Samples', legendgroup='Samples',
-            showlegend=True if ((i == 0) and reference_dist is not None) else False,
-            line_color=colors[0],
-        ),
-            row=row, col=col
-        )
-
-    custom_ranges = {
-        0: [-6.5, 6.5],  # for cell_a
-        1: [-6.5, 6.5],  # for cell_b
-        2: [-6.5, 6.5],  # for cell_c
-        3: [-6.5, 6.5],  # for cell_alpha
-        4: [-6.5, 6.5],  # for cell_beta
-        5: [-6.5, 6.5],  # for cell_gamma
-        6: [-6.5, 6.5],  # for aunit_x
-        7: [-6.5, 6.5],  # for aunit_y
-        8: [-6.5, 6.5],  # for aunit_z
-        9: [-6.5, 6.5],  # orientation_1
-        10: [-6.5, 6.5],  # orientation_2
-        11: [-6.5, 6.5],  # orientation_3
-    }
-
-    for i in range(n_crystal_features):
-        row = i // 3 + 1
-        col = i % 3 + 1
-        fig.update_xaxes(range=custom_ranges[i], row=row, col=col)
-
-    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
-    fig.update_layout(
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.05,
-            xanchor="center",
-            x=0.5
-        )
-    )
-    #fig.update_traces(opacity=0.5)
     return fig
 
 

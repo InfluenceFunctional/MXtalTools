@@ -14,7 +14,7 @@ from mxtaltools.crystal_building.crystal_latent_transforms import CompositeTrans
     StdNormalTransform, enforce_niggli_plane
 from mxtaltools.crystal_building.random_crystal_sampling import sample_aunit_lengths, sample_cell_angles, \
     sample_aunit_orientations, sample_aunit_centroids
-from mxtaltools.crystal_building.utils import parameterize_crystal_batch, canonicalize_rotvec
+from mxtaltools.crystal_building.utils import parameterize_crystal_batch
 from mxtaltools.crystal_search.crystal_opt_utils import gradient_descent_optimization
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.utils import get_mol_embedding_for_proxy, enforce_1d_bound
@@ -93,10 +93,7 @@ class MolCrystalOps:
                     else:  # nodewise tensor → concat
                         setattr(self, key, torch.cat(vals, dim=0))
 
-
-
-
-            #setattr(self, 'aunit_batch',
+            # setattr(self, 'aunit_batch',
             #        torch.arange(len(molecule)).repeat_interleave(torch.tensor([m['num_atoms'] for m in molecule])))
 
         else:
@@ -104,7 +101,7 @@ class MolCrystalOps:
             for key, value in mol_dict.items():
                 setattr(self, key, value)
 
-            #setattr(self, 'aunit_batch', torch.zeros(self.num_atoms))
+            # setattr(self, 'aunit_batch', torch.zeros(self.num_atoms))
 
     def box_analysis(self):
         self.T_fc, self.T_cf, self.cell_volume = (
@@ -143,9 +140,11 @@ class MolCrystalOps:
 
     def sample_random_aunit_orientations(self):
         if self.is_batch:
-            self.aunit_orientation = sample_aunit_orientations(self.num_graphs, z_prime=self.max_z_prime).to(self.device)
+            self.aunit_orientation = sample_aunit_orientations(
+                self.num_graphs, z_prime=self.max_z_prime).to(self.device)
         else:
-            self.aunit_orientation = sample_aunit_orientations(1,  z_prime=self.max_z_prime).to(self.device)
+            self.aunit_orientation = sample_aunit_orientations(
+                1, z_prime=self.max_z_prime).to(self.device)
 
     def sample_random_aunit_centroids(self):
         if self.is_batch:
@@ -204,12 +203,18 @@ class MolCrystalOps:
         )
         self.box_analysis()
 
-    def latent_to_cell_params(self, std_normal: torch.tensor):
-        if not hasattr(self, 'asym_unit_dict'):
-            self.asym_unit_dict = self.build_asym_unit_dict()
+    def latent_to_cell_params(self,
+                              std_normal: torch.tensor,
+                              override_mode: Optional[str] = None, ):
+        """
+        Transform from latent space to physical crystal parameters
+        :param override_mode:
+        :param std_normal:
+        :return:
+        """
 
         if not hasattr(self, 'latent_transform'):
-            self.init_latent_transform()
+            self.init_latent_transform(override_mode=override_mode)
 
         self.set_cell_parameters(
             self.latent_transform.inverse(std_normal.clip(min=-6, max=6), self.sg_ind, self.radius)
@@ -224,34 +229,49 @@ class MolCrystalOps:
 
     def init_latent_transform(self,
                               c_log_mean=0.3,
-                              c_log_std=0.25):
+                              c_log_std=0.25,
+                              override_mode: Optional[str] = None):
         if not hasattr(self, 'asym_unit_dict'):
             self.asym_unit_dict = self.build_asym_unit_dict()
+
+        if override_mode is not None:
+            rot_mode = override_mode
+        elif hasattr(self, 'rot_mode'):
+            rot_mode = self.rot_mode
+        else:
+            rot_mode = 'linear'
 
         self.latent_transform = CompositeTransform([
             AunitTransform(asym_unit_dict=self.asym_unit_dict),
             NiggliTransform(),
             StdNormalTransform(c_log_mean=c_log_mean,
-                               c_log_std=c_log_std),
-            # SquashingTransform(min_val=-6,
-            #                    max_val=6,
-            #                    threshold=5.99,
-            #                    ),
+                               c_log_std=c_log_std,
+                               rot_mode=rot_mode),
         ])
 
-    def latent_params(self):
-        if not hasattr(self, 'asym_unit_dict'):
-            self.asym_unit_dict = self.build_asym_unit_dict()
-
+    def latent_params(self,
+                      override_mode: Optional[str] = None):
+        """
+        Transform cell parameters from physical space to latent.
+        :return:
+        """
+        assert self.max_z_prime == 1, "Latent transform not yet written for Z'>1 crystals."
         if not hasattr(self, 'latent_transform'):
-            self.init_latent_transform()
+            self.init_latent_transform(override_mode=override_mode)
 
-        std_cell_params = self.latent_transform.forward(self.zp1_cell_parameters(), self.sg_ind, self.radius).clip(min=-6,
-                                                                                                                   max=6)
-        assert torch.isfinite(std_cell_params).all()
+        std_cell_params = self.latent_transform.forward(self.zp1_cell_parameters(),
+                                                        self.sg_ind,
+                                                        self.radius).clip(min=-6,
+                                                                          max=6)
         return std_cell_params
 
     def sample_reduced_box_vectors(self, target_packing_coeff: Optional[float] = None):
+        """
+        Sample box vectors in niggil-reduced basis from a random prior.
+        Optionally target a particular packing coefficient.
+        :param target_packing_coeff:
+        :return:
+        """
 
         if not hasattr(self, 'latent_transform'):
             self.init_latent_transform()
@@ -433,7 +453,8 @@ class MolCrystalOps:
             return self.assign_aunit_centroid(normed_centroid * scales.repeat(1, self.max_z_prime))
         else:
             return self.assign_aunit_centroid(
-                normed_centroid * torch.Tensor(ASYM_UNITS[str(int(self.sg_ind))]).to(self.device).repeat(self.max_z_prime))
+                normed_centroid * torch.Tensor(ASYM_UNITS[str(int(self.sg_ind))]).to(self.device).repeat(
+                    self.max_z_prime))
 
     def noise_cell_parameters(self, noise_level: float):
         # standardize
@@ -612,17 +633,16 @@ class MolCrystalOps:
                     x_center=torch.pi,
                     mode=mode
                 )
-                new_orientation.append(self.aunit_orientation[:, 3 * zp:3*zp+2])
+                new_orientation.append(self.aunit_orientation[:, 3 * zp:3 * zp + 2])
                 new_orientation.append(fixed_z[:, None])
             self.aunit_orientation = torch.cat(new_orientation, dim=1)
 
         new_orientation = []
         for zp in range(self.max_z_prime):
-            norm = torch.linalg.norm(self.aunit_orientation[:, zp*3:3+zp*3], dim=1)
+            norm = torch.linalg.norm(self.aunit_orientation[:, zp * 3:3 + zp * 3], dim=1)
             new_norm = enforce_1d_bound(norm, x_span=0.999 * torch.pi, x_center=torch.pi, mode=mode)  # MUST be nonzero
-            new_orientation.append(self.aunit_orientation[:, zp*3:3+zp*3] / norm[:, None] * new_norm[:, None])
+            new_orientation.append(self.aunit_orientation[:, zp * 3:3 + zp * 3] / norm[:, None] * new_norm[:, None])
         self.aunit_orientation = torch.cat(new_orientation, dim=1)
-
 
         # enforce agreement with crystal system
         self.cell_lengths, self.cell_angles = enforce_crystal_system(self.cell_lengths,
@@ -634,12 +654,11 @@ class MolCrystalOps:
         if canonicalize_orientations:  # converts the vector to its duplicate in the upper half-plane
             new_orientation = []
             for zp in range(self.max_z_prime):
-                new_orientation.append(self.aunit_orientation[:, zp*3:3+zp*3])
+                new_orientation.append(self.aunit_orientation[:, zp * 3:3 + zp * 3])
             self.aunit_orientation = torch.cat(new_orientation, dim=1)
 
         # update cell vectors
         self.box_analysis()
-
 
     def enforce_niggli_box(self, mode, apply_plane_shift: bool = False):
         # enforce the scaling factor b/c and a/b in the range [0, 1]
@@ -844,9 +863,9 @@ class MolCrystalOps:
                 5: [-6.5, 6.5],  # for cell_gamma
             }
             for ind in range(self.max_z_prime * 6):
-                custom_ranges.update({ind: [-6.5, 6.5]})
+                custom_ranges.update({6 + ind: [-6.5, 6.5]})
 
-            for i in range(6+self.max_z_prime*6):
+            for i in range(6 + self.max_z_prime * 6):
                 row = i // 3 + 1
                 col = i % 3 + 1
                 fig.update_xaxes(range=custom_ranges[i], row=row, col=col)
@@ -861,9 +880,9 @@ class MolCrystalOps:
                 5: [-6.5, 6.5],  # for cell_gamma
             }
             for ind in range(self.max_z_prime * 6):
-                custom_ranges.update({ind: [-6.5, 6.5]})
+                custom_ranges.update({6 + ind: [-6.5, 6.5]})
 
-            for i in range(6+self.max_z_prime*6):
+            for i in range(6 + self.max_z_prime * 6):
                 row = i // 3 + 1
                 col = i % 3 + 1
                 fig.update_xaxes(range=custom_ranges[i], row=row, col=col)
@@ -938,7 +957,6 @@ class MolCrystalOps:
         else:
             return None
 
-
     def _get_color_set(self, n):
         from plotly.colors import qualitative
         import plotly.colors as pc
@@ -981,8 +999,9 @@ class MolCrystalOps:
     def set_cell_parameters(self,
                             cell_parameters,
                             skip_box_analysis: bool = False):
-        assert cell_parameters.shape[1] == 6 + self.max_z_prime * 6, (f"For crystal batch with max z_prime={self.max_z_prime},"
-                                                                      f"require {6 + self.max_z_prime * 6} cell params.")
+        assert cell_parameters.shape[1] == 6 + self.max_z_prime * 6, (
+            f"For crystal batch with max z_prime={self.max_z_prime},"
+            f"require {6 + self.max_z_prime * 6} cell params.")
 
         self.cell_lengths = cell_parameters[:, :3]
         self.cell_angles = cell_parameters[:, 3:6]
@@ -1031,7 +1050,6 @@ class MolCrystalOps:
         out = torch.ones(shape, dtype=val.dtype) * pad_val
         out[:, :val.shape[-1]] = val
         return out
-
 
     def reset_sg_info(self, sg_ind):
         if isinstance(sg_ind, int):

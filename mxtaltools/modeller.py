@@ -1010,7 +1010,8 @@ class Modeller:
             self.cr_epoch(data_loader, update_weights, iteration_override)
 
         if self.train_models_dict['generator']:
-            self.generator_epoch(data_loader, update_weights, iteration_override)
+            #self.generator_epoch(data_loader, update_weights, iteration_override)
+            assert False, "Generator workflow needs to be updated!"
 
         elif self.config.mode == 'regression':
             self.regression_epoch(data_loader, update_weights, iteration_override)
@@ -1984,43 +1985,43 @@ class Modeller:
         del data_loader
 
         return embedding_data_loader
-
-    def generator_epoch(self,
-                        data_loader=None,
-                        update_weights=True,
-                        iteration_override=None):
-        if not hasattr(self, 'ellipsoid_scale'):
-            self.init_generator_curriculum()
-
-        if update_weights:
-            self.models_dict['generator'].train(True)
-        else:
-            self.models_dict['generator'].eval()
-
-        self.models_dict['autoencoder'].eval()
-
-        for step, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
-            data = data.to(self.config.device)
-
-            if step % self.config.logger.stats_reporting_frequency == 0:
-                skip_stats = False
-            elif step == len(data_loader) - 1:
-                skip_stats = False
-            else:
-                skip_stats = True
-            '''
-            train_generator
-            '''
-            self.generator_step(data, step, update_weights, skip_stats)
-
-            if iteration_override is not None:
-                if step >= iteration_override:
-                    break  # stop training early
-
-            if step % 10 == 0 and self.epoch_type == 'train' and step > 0:
-                self.anneal_generator_curriculum()
-
-        self.logger.concatenate_stats_dict(self.epoch_type)
+    #
+    # def generator_epoch(self,
+    #                     data_loader=None,
+    #                     update_weights=True,
+    #                     iteration_override=None):
+    #     if not hasattr(self, 'ellipsoid_scale'):
+    #         self.init_generator_curriculum()
+    #
+    #     if update_weights:
+    #         self.models_dict['generator'].train(True)
+    #     else:
+    #         self.models_dict['generator'].eval()
+    #
+    #     self.models_dict['autoencoder'].eval()
+    #
+    #     for step, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
+    #         data = data.to(self.config.device)
+    #
+    #         if step % self.config.logger.stats_reporting_frequency == 0:
+    #             skip_stats = False
+    #         elif step == len(data_loader) - 1:
+    #             skip_stats = False
+    #         else:
+    #             skip_stats = True
+    #         '''
+    #         train_generator
+    #         '''
+    #         self.generator_step(data, step, update_weights, skip_stats)
+    #
+    #         if iteration_override is not None:
+    #             if step >= iteration_override:
+    #                 break  # stop training early
+    #
+    #         if step % 10 == 0 and self.epoch_type == 'train' and step > 0:
+    #             self.anneal_generator_curriculum()
+    #
+    #     self.logger.concatenate_stats_dict(self.epoch_type)
 
     def init_generator_curriculum(self):
         self.step_size = self.config.generator.step_size
@@ -2443,141 +2444,142 @@ class Modeller:
         ellipsoid_loss = (normed_ellipsoid_overlap ** 2).clip(max=2)
 
         return vdw_loss, density_loss, ellipsoid_loss
-
-    def generator_step(self, mol_batch, step, update_weights, skip_stats):
-        """
-        execute a complete training step for the generator
-        get sample losses, do reporting, update gradients
-        - sample a random prior
-        - encode molecule batch
-        - push prior through generator to standardized crystal sample, conditioned on molecules
-        - clean generated params
-        - build crystal
-        - score crystal
-        - backprop score
-        """
-        """Initialize random crystal batch"""
-        crystal_batch, destandardized_prior, prior_in_gen_basis = self.get_generator_prior_sample(mol_batch)
-
-        (molwise_normed_overlap, molwise_scaled_lj_pot, molwise_lj_pot,
-         normed_ellipsoid_overlap, silu_pot, cluster_batch) = self.analyze_generator_samples(crystal_batch)
-        vdw_loss, density_loss, ellipsoid_loss = self.generator_losses(cluster_batch, silu_pot,
-                                                                       normed_ellipsoid_overlap)
-        prior_sample_loss = (self.ellipsoid_loss_coefficient * ellipsoid_loss +
-                             self.vdw_loss_coefficient * vdw_loss +
-                             self.density_loss_coefficient * density_loss)
-
-        with torch.no_grad():
-            vector_embedding = self.models_dict['autoencoder'].encode(mol_batch.clone())
-            scalar_embedding = self.models_dict['autoencoder'].scalarizer(vector_embedding)
-
-        stats = {
-            'prior': destandardized_prior.detach(),
-            'mol_radius': crystal_batch.radius.detach(),
-            'generated_space_group_numbers': crystal_batch.sg_ind.detach(),
-        }
-
-        # sample step sizes randomly between [0, max], with global step size step_rands
-        step_rands = torch.rand((crystal_batch.num_graphs, 1), device=crystal_batch.device)
-        length_scale_tensor = self.step_size * self.length_scale * step_rands
-        angle_scale_tensor = self.step_size * self.angle_scale * step_rands
-        position_scale_tensor = self.step_size * self.position_scale * step_rands
-        orientation_scale_tensor = self.step_size * self.orientation_scale * step_rands
-
-        """sample from model"""
-        for ind in range(self.config.generator.samples_per_iter):
-            if ind == 0:
-                init_state = prior_in_gen_basis.detach().clone()
-                prev_sample_loss = prior_sample_loss.detach().clone()
-            else:
-                init_state = gen_basis_sample.detach().clone()
-                prev_sample_loss = sample_loss.detach().clone()
-
-            # get proposed step
-            (generator_proposed_step,
-             prev_prediction,
-             current_prediction) = self.models_dict['generator'](
-                x=scalar_embedding,
-                v=vector_embedding,
-                sg_ind_list=crystal_batch.sg_ind,
-                max_length_step=length_scale_tensor,
-                max_angle_step=angle_scale_tensor,
-                max_position_step=position_scale_tensor,
-                max_orientation_step=orientation_scale_tensor,
-                prior=init_state
-            )
-
-            """build proposed crystal"""
-            generator_raw_samples = init_state + generator_proposed_step
-            new_crystal_batch = crystal_batch.clone().detach()
-            new_crystal_batch.latent_to_cell_params(generator_raw_samples)  # cleaning implicit in this function
-            gen_basis_sample = new_crystal_batch.latent_params()
-
-            """analyze new crystal"""
-            (molwise_normed_overlap, molwise_scaled_lj_pot, molwise_lj_pot,
-             normed_ellipsoid_overlap, silu_pot, cluster_batch) = self.analyze_generator_samples(new_crystal_batch)
-            vdw_loss, density_loss, ellipsoid_loss = self.generator_losses(cluster_batch, silu_pot,
-                                                                           normed_ellipsoid_overlap)
-            prior_loss = self.compute_prior_loss(angle_scale_tensor, generator_proposed_step, length_scale_tensor,
-                                                 orientation_scale_tensor, position_scale_tensor)
-
-            sample_loss = (self.ellipsoid_loss_coefficient * ellipsoid_loss +
-                           self.vdw_loss_coefficient * vdw_loss +
-                           self.density_loss_coefficient * density_loss)
-            assert torch.sum(torch.isnan(sample_loss)) == 0
-            """get model loss"""
-            aux_loss_1 = F.smooth_l1_loss(prev_prediction.flatten(), prev_sample_loss.flatten(), reduction='none')
-            aux_loss_2 = F.smooth_l1_loss(current_prediction.flatten(), sample_loss.flatten().detach(),
-                                          reduction='none')
-            step_loss = (sample_loss - prev_sample_loss)
-            opt_loss = self.step_loss_coefficient * step_loss.clip(max=1) + self.prior_loss_coefficient * prior_loss
-            generator_losses = opt_loss + aux_loss_1 + aux_loss_2
-            generator_loss = generator_losses.mean()
-
-            if update_weights:
-                self.optimizers_dict['generator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
-                generator_loss.backward()  # back-propagation
-                # torch.nn.utils.clip_grad_value_(self.models_dict['generator'].parameters(),
-                #                                 10)
-                torch.nn.utils.clip_grad_norm_(self.models_dict['generator'].parameters(),
-                                               self.config.gradient_norm_clip)  # gradient clipping
-
-                self.optimizers_dict['generator'].step()  # update parameters
-
-            self.logger.update_current_losses('generator', self.epoch_type,
-                                              generator_loss.data.detach().cpu().numpy(),
-                                              generator_losses.detach().cpu().numpy())
-
-            if not skip_stats:
-                stats.update({
-                    'prior_loss': prior_loss.detach(),
-                    'step_size': generator_proposed_step.norm(dim=1).detach(),
-                    'aux_loss_1': aux_loss_1.detach(),
-                    'aux_loss_2': aux_loss_2.detach(),
-                    'per_mol_scaled_LJ_energy': molwise_scaled_lj_pot.detach(),
-                    'per_mol_normed_overlap': molwise_normed_overlap.detach(),
-                    'packing_coefficient': new_crystal_batch.packing_coeff.detach(),
-                    'ellipsoid_energy': ellipsoid_loss.detach(),
-                    'sample_iter': torch.ones(new_crystal_batch.num_graphs) * ind + 1,
-                    'cell_parameters': new_crystal_batch.zp1_cell_parameters().detach(),
-                    'cell_delta': generator_proposed_step.cpu().detach(),
-                })
-                if ind == self.config.generator.samples_per_iter - 1:  # log sample losses on last iter only
-                    stats.update({
-                        'density_loss': density_loss.detach(),
-                        'step_loss': step_loss.detach(),
-                        'generator_vdw_loss': vdw_loss.detach(),
-                        'ellipsoid_loss': ellipsoid_loss.detach(),
-                    })
-                if step == 0:
-                    stats['generator_samples'] = cluster_batch.clone().detach()
-
-                dict_of_tensors_to_cpu_numpy(stats)
-
-                self.logger.update_stats_dict(self.epoch_type,
-                                              stats.keys(),
-                                              stats.values(),
-                                              mode='extend')
+    #
+    # def generator_step(self, mol_batch, step, update_weights, skip_stats):
+    #     """
+    #     execute a complete training step for the generator
+    #     get sample losses, do reporting, update gradients
+    #     - sample a random prior
+    #     - encode molecule batch
+    #     - push prior through generator to standardized crystal sample, conditioned on molecules
+    #     - clean generated params
+    #     - build crystal
+    #     - score crystal
+    #     - backprop score
+    #     """
+    #     """Initialize random crystal batch"""
+    #     crystal_batch, destandardized_prior, prior_in_gen_basis = self.get_generator_prior_sample(mol_batch)
+    #
+    #     (molwise_normed_overlap, molwise_scaled_lj_pot, molwise_lj_pot,
+    #      normed_ellipsoid_overlap, silu_pot, cluster_batch) = self.analyze_generator_samples(crystal_batch)
+    #     vdw_loss, density_loss, ellipsoid_loss = self.generator_losses(cluster_batch, silu_pot,
+    #                                                                    normed_ellipsoid_overlap)
+    #     prior_sample_loss = (self.ellipsoid_loss_coefficient * ellipsoid_loss +
+    #                          self.vdw_loss_coefficient * vdw_loss +
+    #                          self.density_loss_coefficient * density_loss)
+    #
+    #     with torch.no_grad():
+    #         vector_embedding = self.models_dict['autoencoder'].encode(mol_batch.clone())
+    #         scalar_embedding = self.models_dict['autoencoder'].scalarizer(vector_embedding)
+    #
+    #     stats = {
+    #         'prior': destandardized_prior.detach(),
+    #         'mol_radius': crystal_batch.radius.detach(),
+    #         'generated_space_group_numbers': crystal_batch.sg_ind.detach(),
+    #     }
+    #
+    #     # sample step sizes randomly between [0, max], with global step size step_rands
+    #     step_rands = torch.rand((crystal_batch.num_graphs, 1), device=crystal_batch.device)
+    #     length_scale_tensor = self.step_size * self.length_scale * step_rands
+    #     angle_scale_tensor = self.step_size * self.angle_scale * step_rands
+    #     position_scale_tensor = self.step_size * self.position_scale * step_rands
+    #     orientation_scale_tensor = self.step_size * self.orientation_scale * step_rands
+    #
+    #     """sample from model"""
+    #     for ind in range(self.config.generator.samples_per_iter):
+    #         if ind == 0:
+    #             init_state = prior_in_gen_basis.detach().clone()
+    #             prev_sample_loss = prior_sample_loss.detach().clone()
+    #         else:
+    #             init_state = gen_basis_sample.detach().clone()
+    #             prev_sample_loss = sample_loss.detach().clone()
+    #
+    #         # get proposed step
+    #         (generator_proposed_step,
+    #          prev_prediction,
+    #          current_prediction) = self.models_dict['generator'](
+    #             x=scalar_embedding,
+    #             v=vector_embedding,
+    #             sg_ind_list=crystal_batch.sg_ind,
+    #             max_length_step=length_scale_tensor,
+    #             max_angle_step=angle_scale_tensor,
+    #             max_position_step=position_scale_tensor,
+    #             max_orientation_step=orientation_scale_tensor,
+    #             prior=init_state
+    #         )
+    #
+    #         """build proposed crystal"""
+    #         generator_raw_samples = init_state + generator_proposed_step
+    #         new_crystal_batch = crystal_batch.clone().detach()
+    #         # TODO this needs to be rewritten -probably this whole mode honestly
+    #         new_crystal_batch.latent_to_cell_params(generator_raw_samples)  # cleaning implicit in this function
+    #         gen_basis_sample = new_crystal_batch.latent_params()
+    #
+    #         """analyze new crystal"""
+    #         (molwise_normed_overlap, molwise_scaled_lj_pot, molwise_lj_pot,
+    #          normed_ellipsoid_overlap, silu_pot, cluster_batch) = self.analyze_generator_samples(new_crystal_batch)
+    #         vdw_loss, density_loss, ellipsoid_loss = self.generator_losses(cluster_batch, silu_pot,
+    #                                                                        normed_ellipsoid_overlap)
+    #         prior_loss = self.compute_prior_loss(angle_scale_tensor, generator_proposed_step, length_scale_tensor,
+    #                                              orientation_scale_tensor, position_scale_tensor)
+    #
+    #         sample_loss = (self.ellipsoid_loss_coefficient * ellipsoid_loss +
+    #                        self.vdw_loss_coefficient * vdw_loss +
+    #                        self.density_loss_coefficient * density_loss)
+    #         assert torch.sum(torch.isnan(sample_loss)) == 0
+    #         """get model loss"""
+    #         aux_loss_1 = F.smooth_l1_loss(prev_prediction.flatten(), prev_sample_loss.flatten(), reduction='none')
+    #         aux_loss_2 = F.smooth_l1_loss(current_prediction.flatten(), sample_loss.flatten().detach(),
+    #                                       reduction='none')
+    #         step_loss = (sample_loss - prev_sample_loss)
+    #         opt_loss = self.step_loss_coefficient * step_loss.clip(max=1) + self.prior_loss_coefficient * prior_loss
+    #         generator_losses = opt_loss + aux_loss_1 + aux_loss_2
+    #         generator_loss = generator_losses.mean()
+    #
+    #         if update_weights:
+    #             self.optimizers_dict['generator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
+    #             generator_loss.backward()  # back-propagation
+    #             # torch.nn.utils.clip_grad_value_(self.models_dict['generator'].parameters(),
+    #             #                                 10)
+    #             torch.nn.utils.clip_grad_norm_(self.models_dict['generator'].parameters(),
+    #                                            self.config.gradient_norm_clip)  # gradient clipping
+    #
+    #             self.optimizers_dict['generator'].step()  # update parameters
+    #
+    #         self.logger.update_current_losses('generator', self.epoch_type,
+    #                                           generator_loss.data.detach().cpu().numpy(),
+    #                                           generator_losses.detach().cpu().numpy())
+    #
+    #         if not skip_stats:
+    #             stats.update({
+    #                 'prior_loss': prior_loss.detach(),
+    #                 'step_size': generator_proposed_step.norm(dim=1).detach(),
+    #                 'aux_loss_1': aux_loss_1.detach(),
+    #                 'aux_loss_2': aux_loss_2.detach(),
+    #                 'per_mol_scaled_LJ_energy': molwise_scaled_lj_pot.detach(),
+    #                 'per_mol_normed_overlap': molwise_normed_overlap.detach(),
+    #                 'packing_coefficient': new_crystal_batch.packing_coeff.detach(),
+    #                 'ellipsoid_energy': ellipsoid_loss.detach(),
+    #                 'sample_iter': torch.ones(new_crystal_batch.num_graphs) * ind + 1,
+    #                 'cell_parameters': new_crystal_batch.zp1_cell_parameters().detach(),
+    #                 'cell_delta': generator_proposed_step.cpu().detach(),
+    #             })
+    #             if ind == self.config.generator.samples_per_iter - 1:  # log sample losses on last iter only
+    #                 stats.update({
+    #                     'density_loss': density_loss.detach(),
+    #                     'step_loss': step_loss.detach(),
+    #                     'generator_vdw_loss': vdw_loss.detach(),
+    #                     'ellipsoid_loss': ellipsoid_loss.detach(),
+    #                 })
+    #             if step == 0:
+    #                 stats['generator_samples'] = cluster_batch.clone().detach()
+    #
+    #             dict_of_tensors_to_cpu_numpy(stats)
+    #
+    #             self.logger.update_stats_dict(self.epoch_type,
+    #                                           stats.keys(),
+    #                                           stats.values(),
+    #                                           mode='extend')
 
     def compute_prior_loss(self, angle_scale_tensor, generator_proposed_step, length_scale_tensor,
                            orientation_scale_tensor, position_scale_tensor):
