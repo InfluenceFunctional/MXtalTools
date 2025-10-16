@@ -42,11 +42,11 @@ def lightweight_one_sided_violin(data, n_points=100, bandwidth_factor=1.0, data_
 
     # Create evaluation points
     if data_min is not None:
-        data_min = max(data_min, data.min())
+        pass
     else:
         data_min = data.min()
     if data_max is not None:
-        data_max = min(data_max, data.max())
+        pass
     else:
         data_max = data.max()
 

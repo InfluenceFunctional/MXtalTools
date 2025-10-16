@@ -139,7 +139,7 @@ def simple_cell_hist(sample_batch=None, reference_dist=None, n_kde_points=200, b
         else:
             good_samples = None
 
-    kld_values = []
+    #kld_values = []
     lattice_features = ['cell_a', 'cell_b', 'cell_c',
                         'cell_alpha', 'cell_beta', 'cell_gamma',
                         'aunit_x', 'aunit_y', 'aunit_z',
@@ -178,20 +178,20 @@ def simple_cell_hist(sample_batch=None, reference_dist=None, n_kde_points=200, b
                     legendgroup='Reference',
                     showlegend=True if i == 0 else False,
                 ), row=row, col=col)
-                # Interpolate to common x-grid
-                x_common = np.linspace(*custom_ranges[i], n_kde_points)
-                y_ref_interp = np.interp(x_common, x_ref, y_ref, left=0, right=0)
-                y_samp_interp = np.interp(x_common, x_samp, y_samp, left=0, right=0)
-
-                # Normalize
-                dx = x_common[1] - x_common[0]
-                P = y_ref_interp / (np.sum(y_ref_interp) * dx + 1e-12)
-                Q = y_samp_interp / (np.sum(y_samp_interp) * dx + 1e-12)
-
-                # Compute KLD (P || Q)
-                epsilon = 1e-8
-                kl = np.sum(P * np.log((P + epsilon) / (Q + epsilon))) * dx
-                kld_values.append(kl)
+                # # Interpolate to common x-grid
+                # x_common = np.linspace(*custom_ranges[i], n_kde_points)
+                # y_ref_interp = np.interp(x_common, x_ref, y_ref, left=0, right=0)
+                # y_samp_interp = np.interp(x_common, x_samp, y_samp, left=0, right=0)
+                #
+                # # Normalize
+                # dx = x_common[1] - x_common[0]
+                # P = y_ref_interp / (np.sum(y_ref_interp) * dx + 1e-12)
+                # Q = y_samp_interp / (np.sum(y_samp_interp) * dx + 1e-12)
+                #
+                # # Compute KLD (P || Q)
+                # epsilon = 1e-8
+                # kl = np.sum(P * np.log((P + epsilon) / (Q + epsilon))) * dx
+                # kld_values.append(kl)
 
         if len(x_samp) > 0:
             fig.add_trace(go.Scatter(
@@ -244,7 +244,7 @@ def simple_cell_hist(sample_batch=None, reference_dist=None, n_kde_points=200, b
         ),
         margin=dict(l=50, r=50, t=50, b=50)
     )
-    return fig, np.array(kld_values)
+    return fig#, np.array(kld_values)
 
 
 def conditional_simple_cell_hist(sample_batch, cond_inds, n_kde_points=200, bw_ratio=50, mode='cell'):
