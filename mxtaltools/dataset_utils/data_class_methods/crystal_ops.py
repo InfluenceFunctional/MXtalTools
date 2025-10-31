@@ -1,23 +1,26 @@
 from typing import Optional, Union, Iterable
 
 import numpy as np
+import pandas as pd
+import plotly.express as px
 import plotly.graph_objects as go
 import torch
 from plotly.subplots import make_subplots
 
 from mxtaltools.common.geometry_utils import enforce_crystal_system, batch_cell_vol_torch, \
     batch_compute_fractional_transform
-from mxtaltools.common.utils import softplus_shift
+from mxtaltools.common.utils import softplus_shift, log_rescale_positive, get_point_density
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE
 from mxtaltools.crystal_building.crystal_latent_transforms import CompositeTransform, AunitTransform, NiggliTransform, \
-    StdNormalTransform, enforce_niggli_plane
+    enforce_niggli_plane, UnitTransform
 from mxtaltools.crystal_building.random_crystal_sampling import sample_aunit_lengths, sample_cell_angles, \
     sample_aunit_orientations, sample_aunit_centroids
-from mxtaltools.crystal_building.utils import parameterize_crystal_batch
+from mxtaltools.crystal_building.utils import parameterize_crystal_batch, canonicalize_aunit_order, canonicalize_rotvec
 from mxtaltools.crystal_search.crystal_opt_utils import gradient_descent_optimization
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.utils import get_mol_embedding_for_proxy, enforce_1d_bound
+from mxtaltools.reporting.utils import lightweight_one_sided_violin
 
 
 # noinspection PyAttributeOutsideInit
@@ -110,7 +113,8 @@ class MolCrystalOps:
         try:
             self.T_cf = torch.linalg.inv(self.T_fc)
         except:
-            aa = 1
+            assert False, "This is a debugging flag!"
+
         self.packing_coeff = self.mol_volume * self.sym_mult / self.cell_volume
         self.density = self.mass * self.sym_mult / self.cell_volume * 1.66054  # conversion from D/A^3 to g/cm^3
 
@@ -205,7 +209,7 @@ class MolCrystalOps:
 
     def latent_to_cell_params(self,
                               std_normal: torch.tensor,
-                              override_mode: Optional[str] = None, ):
+                              ):
         """
         Transform from latent space to physical crystal parameters
         :param override_mode:
@@ -214,10 +218,14 @@ class MolCrystalOps:
         """
 
         if not hasattr(self, 'latent_transform'):
-            self.init_latent_transform(override_mode=override_mode)
+            self.init_latent_transform()
 
+        min_vals = -torch.ones(std_normal.shape[-1], dtype=torch.float32, device=self.device)
+        min_vals[:2] = -0.99
+
+        max_vals = torch.ones(std_normal.shape[-1], dtype=torch.float32, device=self.device)
         self.set_cell_parameters(
-            self.latent_transform.inverse(std_normal.clip(min=-6, max=6), self.sg_ind, self.radius)
+            self.latent_transform.inverse(std_normal.clamp(min=min_vals, max=max_vals), self.sg_ind, self.radius)
         )
 
         self.cell_lengths, self.cell_angles = enforce_crystal_system(
@@ -227,42 +235,28 @@ class MolCrystalOps:
         )
         self.box_analysis()
 
-    def init_latent_transform(self,
-                              c_log_mean=0.3,
-                              c_log_std=0.25,
-                              override_mode: Optional[str] = None):
+    def init_latent_transform(self):
         if not hasattr(self, 'asym_unit_dict'):
             self.asym_unit_dict = self.build_asym_unit_dict()
 
-        if override_mode is not None:
-            rot_mode = override_mode
-        elif hasattr(self, 'rot_mode'):
-            rot_mode = self.rot_mode
-        else:
-            rot_mode = 'linear'
-
         self.latent_transform = CompositeTransform([
-            AunitTransform(asym_unit_dict=self.asym_unit_dict),
+            AunitTransform(asym_unit_dict=self.asym_unit_dict, max_z_prime=self.max_z_prime),
             NiggliTransform(),
-            StdNormalTransform(c_log_mean=c_log_mean,
-                               c_log_std=c_log_std,
-                               rot_mode=rot_mode),
+            UnitTransform(max_z_prime=self.max_z_prime),
         ])
 
-    def latent_params(self,
-                      override_mode: Optional[str] = None):
+    def latent_params(self):
         """
         Transform cell parameters from physical space to latent.
         :return:
         """
-        assert self.max_z_prime == 1, "Latent transform not yet written for Z'>1 crystals."
         if not hasattr(self, 'latent_transform'):
-            self.init_latent_transform(override_mode=override_mode)
+            self.init_latent_transform()
 
-        std_cell_params = self.latent_transform.forward(self.zp1_cell_parameters(),
+        self.canonicalize_zp_aunits()  # latent space is always in the canonical ordering
+        std_cell_params = self.latent_transform.forward(self.full_cell_parameters(),
                                                         self.sg_ind,
-                                                        self.radius).clip(min=-6,
-                                                                          max=6)
+                                                        self.radius).clip(min=-1, max=1)
         return std_cell_params
 
     def sample_reduced_box_vectors(self, target_packing_coeff: Optional[float] = None):
@@ -840,64 +834,55 @@ class MolCrystalOps:
         orientation_means = torch.tensor([[0, 0, torch.pi / 2]], dtype=torch.float32, device=self.device)
         return std_aunit_orientation * orientation_stds + orientation_means
 
-    def _build_lattice_feats(self):
+    def _build_feature_labels(self):
         lattice_features = ['a length', 'b length', 'c length',
                             'alpha', 'beta', 'gamma']
         for zp in range(self.max_z_prime):
             lattice_features.extend([
                 f'aunit{zp} x', f'aunit{zp} y', f'aunit{zp} z',
             ])
+        for zp in range(self.max_z_prime):
             lattice_features.extend([
                 f'orientation{zp} 1', f'orientation{zp} 2', f'orientation{zp} 2'
             ])
         return lattice_features
 
-    def _set_cell_ranges(self, space, fig):
+    def _set_cell_ranges(self, space, samples):
         if space == 'latent':
             custom_ranges = {
-                0: [-6.5, 6.5],  # for cell_a
-                1: [-6.5, 6.5],  # for cell_b
-                2: [-6.5, 6.5],  # for cell_c
-                3: [-6.5, 6.5],  # for cell_alpha
-                4: [-6.5, 6.5],  # for cell_beta
-                5: [-6.5, 6.5],  # for cell_gamma
+                0: [-1.1, 1.1],  # for cell_a
+                1: [-1.1, 1.1],  # for cell_b
+                2: [-1.1, 1.1],  # for cell_c
+                3: [-1.1, 1.1],  # for cell_alpha
+                4: [-1.1, 1.1],  # for cell_beta
+                5: [-1.1, 1.1],  # for cell_gamma
             }
             for ind in range(self.max_z_prime * 6):
-                custom_ranges.update({6 + ind: [-6.5, 6.5]})
+                custom_ranges.update({6 + ind: [-1.1, 1.1]})
 
-            for i in range(6 + self.max_z_prime * 6):
-                row = i // 3 + 1
-                col = i % 3 + 1
-                fig.update_xaxes(range=custom_ranges[i], row=row, col=col)
-
-        elif space == 'stdandard':
+        elif space == 'standard':
             custom_ranges = {
-                0: [-6.5, 6.5],  # for cell_a
-                1: [-6.5, 6.5],  # for cell_b
-                2: [-6.5, 6.5],  # for cell_c
-                3: [-6.5, 6.5],  # for cell_alpha
-                4: [-6.5, 6.5],  # for cell_beta
-                5: [-6.5, 6.5],  # for cell_gamma
+                0: [-1.1, 1.1],  # for cell_a
+                1: [-1.1, 1.1],  # for cell_b
+                2: [-1.1, 1.1],  # for cell_c
+                3: [-1.1, 1.1],  # for cell_alpha
+                4: [-1.1, 1.1],  # for cell_beta
+                5: [-1.1, 1.1],  # for cell_gamma
             }
             for ind in range(self.max_z_prime * 6):
-                custom_ranges.update({6 + ind: [-6.5, 6.5]})
+                custom_ranges.update({6 + ind: [-1.1, 1.1]})
 
-            for i in range(6 + self.max_z_prime * 6):
-                row = i // 3 + 1
-                col = i % 3 + 1
-                fig.update_xaxes(range=custom_ranges[i], row=row, col=col)
+        else:
+            custom_ranges = {ind: [np.amin(samples[:, ind]), np.amax(samples[:, ind])]
+                             for ind in range(samples.shape[1])}
 
+        return custom_ranges
 
-        elif space == 'real':
-            pass
-
-        return fig
-
-    def _collect_sample_dists(self, samples, ref_dist, quantiles, split_by_sg):
+    def _collect_sample_dists(self, samples, ref_dist, quantiles, split_by_sg, split_by_zp):
         num_dists = 1
-        dist_names = ['Samples']
-        dists = [samples]
-        if ref_dist is not None:
+        dists = []
+        dist_names = []
+        if ref_dist is not None: # this should be first
             assert ref_dist.shape[1] == samples.shape[1]
             num_dists += 1
             dist_names += ['Reference']
@@ -905,6 +890,9 @@ class MolCrystalOps:
                 dists.append(ref_dist.cpu().detach().numpy())
             else:
                 dists.append(ref_dist)
+
+        dist_names.append('Samples')
+        dists.append(samples)
 
         if quantiles is not None:
             energies = self.lj_pot.cpu().detach().numpy()
@@ -918,8 +906,75 @@ class MolCrystalOps:
                 good_inds = self.sg_ind == sg
                 dist_names += [f'SG={int(sg)}']
                 dists.append(samples[good_inds])
+                num_dists += 1
+
+        if split_by_zp:
+            for zp in torch.unique(self.z_prime):
+                good_inds = self.z_prime == zp
+                dist_names += [f"Z'={int(zp)}"]
+                dists.append(samples[good_inds])
+                num_dists += 1
 
         return num_dists, dist_names, dists
+
+    def plot_batch_density_funnel(self,
+                                  renderer: Optional[str] = None,
+                                  show: bool = True,
+                                  return_fig: bool = False,
+                                  split_by_sg: bool = False,
+                                  split_by_zp: bool = False,
+                                  ):
+
+        energy = (log_rescale_positive(self.lj_pot) / self.num_atoms).cpu().detach()
+        energy[energy > 0] = np.log(energy[energy > 0])
+
+        xy = np.vstack([self.packing_coeff.cpu().detach(), energy])
+        try:
+            z = get_point_density(xy, bins=25)
+        except:
+            z = np.ones(xy.shape[1])
+
+        scatter_dict = {'energy': energy,
+                        'packing_coefficient': self.packing_coeff.cpu().detach(),
+                        }
+        if split_by_sg:
+            if split_by_zp:
+                print("Cannot split by both z prime and space group!")
+            color_tag = 'Space Group'
+            scatter_dict.update({'Space Group': [str(int(sg)) for sg in self.sg_ind]})
+        elif split_by_zp:
+            color_tag = "Z'"
+            scatter_dict.update({"Z'": [str(int(zp)) for zp in self.z_prime]})
+        else:
+            color_tag = 'Point Density'
+            scatter_dict.update({'Point Density': z})
+
+            #todo add zp splitting
+
+        opacity = max(0.25, 1 - self.num_graphs / 5e4)
+        df = pd.DataFrame.from_dict(scatter_dict)
+
+        fig = px.scatter(df,
+                         x='packing_coefficient', y='energy',
+                         color=color_tag,
+                         marginal_x='violin', marginal_y='violin',
+                         color_discrete_sequence=px.colors.qualitative.Set3 if color_tag == 'Space Group' else None,
+                         opacity=opacity
+                         )
+
+        fig.update_layout(yaxis_title='Energy', xaxis_title='Packing Coeff')
+        fig.update_layout(yaxis_range=[np.amin(df['energy']) - 3,
+                                       min(500, np.amax(df['energy']) + np.ptp(df['energy']) * 0.1)],
+                          xaxis_range=[max(0, np.amin(df['packing_coefficient']) * 0.9),
+                                       min(2, np.amax(df['packing_coefficient']) * 1.1)],
+                          )
+
+        if show:
+            fig.show(renderer=renderer)
+
+        if return_fig:
+            return fig
+        return None
 
     def plot_batch_cell_params(self, space='real',
                                renderer: Optional[str] = None,
@@ -927,28 +982,48 @@ class MolCrystalOps:
                                ref_dist: Optional[torch.Tensor] = None,
                                show: bool = True,
                                return_fig: bool = False,
-                               split_by_sg: bool = False):
+                               split_by_sg: bool = False,
+                               split_by_zp: bool = False,
+                               n_kde: int = 200,
+                               bw_factor: float = 0.05):
         if not self.is_batch:
             print("Cell statistics only works for a batch of crystal data objects")
             return None
 
-        lattice_features = self._build_lattice_feats()
+        lattice_features = self._build_feature_labels()
         samples = self._get_samples(space)
-        num_dists, dist_names, dists = self._collect_sample_dists(samples, ref_dist, quantiles, split_by_sg)
-
+        num_dists, dist_names, dists = self._collect_sample_dists(samples, ref_dist, quantiles, split_by_sg, split_by_zp)
+        # delete or NaN unused higher Z' elements
         # 1d Histograms
         fig = make_subplots(rows=2 + 2 * self.max_z_prime,
                             cols=3,
                             subplot_titles=lattice_features)
         colors = self._get_color_set(num_dists)
+        ranges = self._set_cell_ranges(space, samples)
         for i in range(len(lattice_features)):
             for j in range(num_dists):
                 self._add_violin(
-                    fig, dists[j], dist_names[j], colors[j], i
+                    fig, dists[j][:, i], dist_names[j], colors[j], i, ranges[i],
+                    n_kde, bw_factor
                 )
 
-        self._set_cell_ranges(space, fig)
-        fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
+        fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                          violinmode='overlay',
+                          legend=dict(
+                              orientation="h",
+                              yanchor="bottom",
+                              y=1.05,
+                              xanchor="center",
+                              x=0.5
+                          ),
+                          margin=dict(l=50, r=50, t=50, b=50)
+                          )
+
+        for i in range(6 + self.max_z_prime * 6):
+            row = i // 3 + 1
+            col = i % 3 + 1
+            fig.update_xaxes(range=ranges[i], row=row, col=col)
+
         fig.update_traces(opacity=0.5)
         if show:
             fig.show(renderer=renderer)
@@ -968,29 +1043,45 @@ class MolCrystalOps:
         else:
             return pc.n_colors('rgb(0,0,255)', 'rgb(255,0,0)', n, colortype='rgb')
 
-    def _add_violin(self, fig, samples, name, color, column_index):
+    def _add_violin(self, fig, samples, name, color, column_index,ranges, n_kde, bw_factor):
         row = column_index // 3 + 1
         col = column_index % 3 + 1
-        fig.add_trace(go.Violin(
-            x=samples[:, column_index],
-            y=[0 for _ in range(len(samples))],
-            side='positive',
-            orientation='h',
-            width=4,
-            showlegend=True if column_index == 0 else False,
-            name=name, legendgroup=name,
-            meanline_visible=True,
-            bandwidth=float(np.ptp(samples[:, column_index]) / 100),
-            points=False,
-            line_color=color,
-        ),
-            row=row, col=col
-        )
+        x_samp, y_samp = lightweight_one_sided_violin(samples,
+                                                      n_kde,
+                                                      bandwidth_factor=bw_factor,
+                                                      data_min=ranges[0],
+                                                      data_max=ranges[1])
+        fig.add_scatter(
+                    x=x_samp,
+                    y=y_samp,
+                    mode='lines',
+                    fill='toself',  #'tonexty' if i == 0 else 'tonexty',  # Fill to next y (which is 0)
+                    fillcolor=color,
+                    line=dict(color=color, width=1),
+                    name=name,
+                    legendgroup=name,
+                    showlegend=True if column_index == 0 else False,
+                row=row, col=col)
+        # fig.add_trace(go.Violin(
+        #     x=samples[:, column_index],
+        #     y=[0 for _ in range(len(samples))],
+        #     side='positive',
+        #     orientation='h',
+        #     width=4,
+        #     showlegend=True if column_index == 0 else False,
+        #     name=name, legendgroup=name,
+        #     meanline_visible=True,
+        #     bandwidth=float(np.ptp(samples[:, column_index]) / 100),
+        #     points=False,
+        #     line_color=color,
+        # ),
+        #     row=row, col=col
+        # )
 
     def _get_samples(self, space):
         if space == 'real':
             samples = self.full_cell_parameters().detach().cpu().numpy()
-        elif space == 'latent':  # todo implement full latent method
+        elif space == 'latent':
             samples = self.latent_params().detach().cpu().numpy()
         elif space == 'standard':  # todo implement full std method
             samples = self.zp1_std_cell_parameters().detach().cpu().numpy()
@@ -1067,3 +1158,16 @@ class MolCrystalOps:
             [len(sym_ops) for sym_ops in self.symmetry_operators],
             dtype=torch.long, device=self.device
         )
+
+    def canonicalize_zp_aunits(self):
+        if self.is_batch:
+            self.aunit_centroid, self.aunit_orientation, self.aunit_handedness = canonicalize_aunit_order(self)
+        else:
+            self.aunit_centroid, self.aunit_orientation, self.aunit_handedness = canonicalize_aunit_order(
+                collate_data_list([self], max_z_prime=self.max_z_prime))
+
+    def canonicalize_orientation(self):
+        flat_rotvecs = self.aunit_orientation.reshape(self.num_graphs * self.max_z_prime, 3)
+        fixed_flat_rotvecs = canonicalize_rotvec(flat_rotvecs)
+        fixed_rotvecs = fixed_flat_rotvecs.reshape(self.num_graphs, self.max_z_prime * 3)
+        self.aunit_orientation = fixed_rotvecs

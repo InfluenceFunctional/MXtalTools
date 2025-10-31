@@ -57,6 +57,8 @@ def init_samples_to_optim(config):
     Load and select molecules to optimize
     """
     mol_list = torch.load(config.mol_path, weights_only=False)
+    if not isinstance(mol_list, list):
+        mol_list = [mol_list]
     if config.sampling_mode == 'all':
         mols_to_optim = mol_list
     elif config.sampling_mode == 'random':
@@ -110,7 +112,8 @@ if __name__ == '__main__':
     args = parse_args()  # call config with "python run_search.py --config /path/to/config.yaml
     source_dir = Path(__file__).resolve().parent.parent.parent
     if args.config is None:
-        config_path = source_dir / 'configs' / 'crystal_searches' / 'base.yaml'
+        #config_path = source_dir / 'configs' / 'crystal_searches' / 'base.yaml'
+        config_path = source_dir / 'configs' / 'crystal_searches' / 'acridine.yaml'
     else:
         config_path = Path(args.config)
 
@@ -184,3 +187,20 @@ if __name__ == '__main__':
                 raise e
 
     print(f"Sampling complete! Optimized a total of {len(opt_outs)} crystal samples.")
+
+    # batch = collate_data_list(opt_outs)
+    # batch.plot_batch_cell_params(space='real', quantiles=[0.1, 0.5], split_by_sg=True)
+    #
+    # batch.plot_batch_density_funnel(split_by_sg=True)
+
+    aa = 1
+"""
+
+
+batch = collate_data_list(opt_outs)
+batch.plot_batch_cell_params(space='real', quantiles=[0.1, 0.5])
+
+batch.plot_batch_density_funnel()
+
+
+"""

@@ -118,13 +118,13 @@ def simple_cell_hist(sample_batch=None, reference_dist=None, n_kde_points=200, b
             8: [0, 1],  # for aunit_z
             9: [-2 * np.pi, 2 * np.pi],  # orientation_1
             10: [-2 * np.pi, 2 * np.pi],  # orientation_2
-            11: [0, 2 * np.pi],  # orientation_3
+            11: [-2 * np.pi, 2 * np.pi],  # orientation_3
         }
     elif mode == 'latent':
         if samples is None:
             del sample_batch.latent_transform
-            samples = sample_batch.latent_params(override_mode='wrapped').cpu().detach().numpy()
-        custom_ranges = {i: [-6.5, 6.5] for i in range(12)}
+            samples = sample_batch.latent_params().cpu().detach().numpy()
+        custom_ranges = {i: [-1.1, 1.1] for i in range(12)}
     else:
         assert False
 
@@ -266,8 +266,8 @@ def conditional_simple_cell_hist(sample_batch, cond_inds, n_kde_points=200, bw_r
         }
     elif mode == 'latent':
         del sample_batch.latent_transform
-        samples = sample_batch.latent_params(override_mode='wrapped').cpu().detach().numpy()
-        custom_ranges = {i: [-6.5, 6.5] for i in range(12)}
+        samples = sample_batch.latent_params().cpu().detach().numpy()
+        custom_ranges = {i: [-1.1, 1.1] for i in range(12)}
     else:
         assert False
 
@@ -277,8 +277,12 @@ def conditional_simple_cell_hist(sample_batch, cond_inds, n_kde_points=200, bw_r
                         'orientation_1', 'orientation_2', 'orientation_3']
 
     n_crystal_features = 12
-    colors = n_colors('rgb(255,0,0)', 'rgb(0, 0, 255)', len(torch.unique(cond_inds)) + 1, colortype='rgb')
-    fill_colors = n_colors('rgba(255,0,0, 0.5)', 'rgba(0, 0, 255, 0.5)', len(torch.unique(cond_inds)) + 1, colortype='rgb')
+    colors = n_colors('rgb(68, 1, 84)', 'rgb(253, 231, 37)', len(torch.unique(cond_inds)) + 1, colortype='rgb')
+    fill_colors = n_colors('rgb(68, 1, 84)', 'rgb(253, 231, 37)', len(torch.unique(cond_inds)) + 1,
+                           colortype='rgb')
+    alpha = 0.3
+    #colors = [c.replace('rgb', 'rgba').replace(')', f', {alpha})') for c in colors]
+    fill_colors = [c.replace('rgb', 'rgba').replace(')', f', {alpha})') for c in fill_colors]
 
     fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)
 

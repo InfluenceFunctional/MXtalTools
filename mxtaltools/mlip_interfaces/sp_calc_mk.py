@@ -16,7 +16,7 @@ import os
 import numpy as np
 
 from mxtaltools.dataset_utils.mol_building import extract_mol_info, embed_mol
-from mxtaltools.mace_sp.utils import SPMaceCalculator
+from mxtaltools.mlip_interfaces.mace_utils import SPMaceCalculator
 
 # Set PyTorch CUDA options if needed
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"

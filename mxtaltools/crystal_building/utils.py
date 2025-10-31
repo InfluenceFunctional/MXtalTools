@@ -472,7 +472,7 @@ def extract_aunit_orientation(mol_batch,
 def canonicalize_rotvec(rotvecs: torch.Tensor):
     """
     since the direction of the axis is arbitrary, (x,y,z) is the same rotation as (-x,-y,-z),
-    we can improve specificity of the model by constraining the axis to a half-sphere.
+    we can obtain uniqueness constraining the axis to a half-sphere.
     Here we will take the +z direction as 'canonical'
 
     Swap the direction and take 2pi-norm to recapture the identical rotation.
@@ -724,3 +724,30 @@ def get_aunit_positions(mol_batch,
     #         mol_batch.embedding = torch.einsum('nij, njk -> njk', rotations_list, mol_batch.embedding)
 
     return pos
+
+def canonicalize_aunit_order(batch):
+    # canonical aunit ordering according to distance to the origin, with x, y, z, tiebreak
+    # TODO implement tiebreak
+    per_aunit_centroids = batch.aunit_centroid.reshape(batch.num_graphs, batch.max_z_prime, 3)
+    # mask out elements with lower z prime than max
+    idx = torch.arange(batch.max_z_prime, device=batch.device)[None, ...]
+    mask = (idx >= (batch.z_prime[..., None]))[..., None].expand(-1, -1, 3)
+    per_aunit_centroids[mask] = 1  # this will put lower Z' options always at the end
+    origin_dists = per_aunit_centroids.norm(dim=2)
+    canonical_order = origin_dists.argsort(dim=1)
+    canonical_order_exp = canonical_order.unsqueeze(-1).expand(-1, -1, 3)  # [n, k, 3]
+    per_aunit_centroids[mask] = 0.5  # this is the placeholder value for 'not being used'
+    sorted_centroids = torch.gather(per_aunit_centroids, dim=1, index=canonical_order_exp)
+
+    aunit_centroid = sorted_centroids.reshape(batch.num_graphs, batch.max_z_prime * 3)
+
+    # also reorder the orientations accordingly
+    per_aunit_orient = batch.aunit_orientation.reshape(batch.num_graphs, batch.max_z_prime, 3)
+    per_aunit_orient[mask] = torch.pi/2  # this places all unused samples in the same state
+    canonical_order_exp = canonical_order.unsqueeze(-1).expand(-1, -1, 3)  # [n, k, 3]
+    sorted_orient = torch.gather(per_aunit_orient, dim=1, index=canonical_order_exp)
+    aunit_orientation = sorted_orient.reshape(batch.num_graphs, batch.max_z_prime * 3)
+
+    aunit_handedness = torch.gather(batch.aunit_handedness, dim=1, index=canonical_order)
+    return aunit_centroid, aunit_orientation, aunit_handedness
+

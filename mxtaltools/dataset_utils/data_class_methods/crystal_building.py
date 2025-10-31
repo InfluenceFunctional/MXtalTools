@@ -48,9 +48,12 @@ class MolCrystalBuilding:
 
         zp1_batch.aunit_centroid = self.aunit_centroid[rep_index.unsqueeze(1), col_base]
         zp1_batch.aunit_orientation = self.aunit_orientation[rep_index.unsqueeze(1), col_base]
-        zp1_batch.aunit_handedness=self.aunit_handedness[rep_index.unsqueeze(1), col_base2]
+        zp1_batch.aunit_handedness = self.aunit_handedness[rep_index.unsqueeze(1), col_base2]
 
         return zp1_batch
+
+    def join_zp1_aunit_batch(self, zp1_batch):
+        self.pos = zp1_batch.pos
 
     def join_zp1_ucell_batch(self, zp1_batch):
         atoms_per_ucell = self.num_atoms * self.sym_mult
@@ -145,7 +148,7 @@ class MolCrystalBuilding:
     def mol2cluster(self, cutoff: float = 6,
                     supercell_size: int = 10,
                     std_orientation: Optional[bool] = True):
-        if self.z_prime.amax() > 1:
+        if self.max_z_prime > 1:
             # if there are any Z'>1 crystals in the batch, we
             # unzip for unit cell generation then re zip
             zp1_batch = self.split_to_zp1_batch()
@@ -155,7 +158,9 @@ class MolCrystalBuilding:
             return self.join_zp1_cluster_batch(zp1_cluster)
 
         else:
-            self.pose_aunit(std_orientation=std_orientation)
-            self.build_unit_cell()
-            return self.build_cluster(cutoff, supercell_size)
+            # split batches here to avoid silently mutating the original crystal
+            zp1_batch = self.clone()
+            zp1_batch.pose_aunit(std_orientation=std_orientation)
+            zp1_batch.build_unit_cell()
+            return zp1_batch.build_cluster(cutoff, supercell_size)
 

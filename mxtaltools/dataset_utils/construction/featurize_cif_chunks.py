@@ -113,9 +113,15 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers):
                     )
                     mols.append(mol)
 
+                if len(mols) > 1:
+                    if not torch.all(torch.stack([mol.z for mol in mols]).diff(dim=0) == 0):
+                        # if there are any indexing differences between molecules, our pipeline will fail,
+                        # as it is currently laid out
+                        continue
+
                 identical = cocrystal_check(crystal_dict, mols)
                 if not identical:
-                    continue  # MK I don't even want to deal with cocrystals right now
+                    continue  # MK I can't deal with cocrystals right now
 
                 z_prime = torch.tensor(int(crystal_dict['z_prime']), dtype=torch.long)
                 # generate and parameterize separately the Z' equivalents
@@ -177,8 +183,12 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers):
                 rebuild_batch.pose_aunit()
                 rebuild_batch.build_unit_cell()
                 aunit_centroid, aunit_orientation, aunit_handedness, is_well_defined, pos = rebuild_batch.reparameterize_unit_cell()
-                rebuild_successful = crystal_rebuild_checks(aunit_centroid, aunit_handedness, aunit_orientation,
-                                                            crystal, rebuild_batch, crystal_dict, is_well_defined, pos,
+                rebuild_successful = crystal_rebuild_checks(aunit_centroid,
+                                                            aunit_handedness,
+                                                            aunit_orientation,
+                                                            rebuild_batch,
+                                                            crystal_dict,
+                                                            is_well_defined,
                                                             )
                 if rebuild_successful:
                     if z_prime > 1:
@@ -231,7 +241,7 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers):
                             aunit_orientation=aunit_orientation.flatten(),
                             aunit_centroid=aunit_centroid.flatten(),
                             aunit_handedness=aunit_handedness.flatten(),
-                            identifier=rebuild_batch.identifier,
+                            identifier=rebuild_batch.identifier[0],
                             nonstandard_symmetry=any(rebuild_batch.nonstandard_symmetry),
                             symmetry_operators=rebuild_batch.symmetry_operators[0],
                             z_prime=torch.ones(1, dtype=torch.long),
@@ -278,18 +288,17 @@ def cocrystal_check(crystal_dict, mols):
 def crystal_rebuild_checks(aunit_centroid,
                            aunit_handedness,
                            aunit_orientation,
-                           crystal,
                            crystal_batch,
                            crystal_dict,
                            is_well_defined,
-                           pos):
+                           ):
     rebuild_successful = False
     # check reparameterization
     if not torch.all(crystal_batch.is_well_defined == torch.tensor(is_well_defined,dtype=torch.bool)):
         return False
     if not torch.all(torch.isclose(crystal_batch.aunit_centroid, aunit_centroid, rtol=1e-2)):
         return False
-    if not torch.all(crystal_batch.aunit_handedness == aunit_handedness):
+    if not torch.all(crystal_batch.aunit_handedness.flatten() == aunit_handedness.flatten()):
         return False
     if not torch.all(torch.isclose(crystal_batch.aunit_orientation, aunit_orientation, rtol=1e-02)):
         return False
@@ -298,13 +307,15 @@ def crystal_rebuild_checks(aunit_centroid,
     # TODO consider adding Z' by Z' check as well
     # extracted from CIF via CCDC
     uc_orig = torch.tensor(np.concatenate(crystal_dict['unit_cell_coordinates']), dtype=torch.float32)
+    uc_atoms = torch.tensor(np.concatenate(crystal_dict['unit_cell_atomic_numbers']), dtype=torch.long)
     # rebuilt from parameters
     uc_build = crystal_batch.unit_cell_pos
     distmat = torch.cdist(uc_orig, uc_build)
 
     nearest_neighbors = np.argmin(distmat, axis=1)
     nn_dists = distmat[torch.arange(len(distmat)), nearest_neighbors]
-    if (nn_dists.amax() < 5e-2) and (nn_dists.mean() < 1e-2):  # every atom matched
+    matched_atom_types = uc_atoms == crystal_batch.z.repeat(crystal_batch.sym_mult[0])[nearest_neighbors]
+    if (nn_dists.amax() < 5e-2) and (nn_dists.mean() < 1e-2) and torch.all(matched_atom_types):  # every atom matched
         try:
             crystal_batch.validate_cell_params(check_crystal_system=True)
             rebuild_successful = True
@@ -313,6 +324,14 @@ def crystal_rebuild_checks(aunit_centroid,
     else:  # one failure mode is if the CCDC puts the molecules outside the box, because it computes centrids probably with protons when available, but we don't
         pass
     return rebuild_successful
+
+""" visual comparison
+from ase import Atoms
+from ase.visualize import view
+m1 = Atoms(positions=uc_orig.numpy(), symbols=np.concatenate(crystal_dict['unit_cell_atomic_numbers']))
+m2 = Atoms(positions=uc_build.numpy(), symbols=crystal_batch.z.repeat(4))
+view([m1, m2])
+"""
 
 
 if __name__ == '__main__':
@@ -326,12 +345,20 @@ if __name__ == '__main__':
     #                        filter_by_targets=False)
     #
 
+    # process_cifs_to_chunks(n_chunks=1,
+    #                        cifs_path='D:/crystal_datasets/dafmuv/',
+    #                        chunks_path='D:/crystal_datasets/',
+    #                        chunk_prefix='',
+    #                        use_filenames_for_identifiers=False,
+    #                        target_identifiers=None,
+    #                        filter_by_targets=False)
+
+
     process_cifs_to_chunks(n_chunks=1,
-                           cifs_path='D:/crystal_datasets/dafmuv/',
+                           cifs_path='D:/crystal_datasets/acridine/',
                            chunks_path='D:/crystal_datasets/',
                            chunk_prefix='',
                            use_filenames_for_identifiers=False,
                            target_identifiers=None,
                            filter_by_targets=False)
-
 

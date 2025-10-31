@@ -947,7 +947,7 @@ def coor_trans_matrix_np(opt, v, a, return_vol=False):
     vol = np.sign(val) * v[0] * v[1] * v[2] * np.sqrt(np.abs(val))  # technically a signed quanitity
 
     ''' Setting the transformation matrix '''
-    m = np.zeros((3, 3), dtype=np.float_)
+    m = np.zeros((3, 3), dtype=np.float64)
     if opt == 'c_to_f':
         ''' Converting from cartesian to fractional '''
         m[0, 0] = 1.0 / v[0]

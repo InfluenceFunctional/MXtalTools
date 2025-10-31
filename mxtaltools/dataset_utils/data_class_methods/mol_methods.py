@@ -8,6 +8,8 @@ from mxtaltools.common.geometry_utils import batch_compute_mol_radius, compute_m
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
 from mxtaltools.crystal_building.utils import align_mol_batch_to_standard_axes, canonicalize_rotvec
 from mxtaltools.dataset_utils.mol_building import smiles2conformer
+from mxtaltools.dataset_utils.utils import collate_data_list
+from mxtaltools.mlip_interfaces.uma_utils import compute_molecule_uma_on_mxt_batch
 from mxtaltools.models.functions.radial_graph import build_radial_graph
 
 
@@ -133,11 +135,6 @@ class MolDataMethods:
                         override_random_rotations: Optional[torch.Tensor] = None,
                         ):
         if self.is_batch:
-            if correct_orientation:
-                if mode != 'random':
-                    # todo test and implement for nonstandard to standard
-                    raise RuntimeError("Orientation correction only implemented for nonstandard rotations")
-
             # always center the molecules
             self.recenter_molecules()
             if mode == 'standardized' or mode=='std' or mode=='standard':
@@ -145,7 +142,7 @@ class MolDataMethods:
                                                              handedness=target_handedness,
                                                                            return_rot=True)
                 self.pos = mol_batch.pos
-                applied_rotation = std_rotation.permute(0, 2, 1)
+                applied_rotation = std_rotation#.permute(0, 2, 1)  # different basis, unfortunately
             elif mode == 'random':  # technically given the below we can do any applied rotation
                 if override_random_rotations is not None:
                     random_rotations = override_random_rotations
@@ -156,7 +153,7 @@ class MolDataMethods:
 
                     if include_inversion:
                         assert not correct_orientation, "Cannot reconstruct rotations through inversion."
-                        invert_inds = torch.randint(2, (self.num_graphs,)) * 2 - 1
+                        invert_inds = torch.randint(2, (self.num_graphs,), device=random_rotations.device) * 2 - 1
                         random_rotations *= invert_inds[:, None, None]
 
                 self.pos = apply_rotation_to_batch(
@@ -177,13 +174,11 @@ class MolDataMethods:
                 new_orientation_matrix = rotvec2rotmat(self.aunit_orientation) @ invert_random_rotation
                 new_rotvec = rotmat2rotvec(new_orientation_matrix)
                 new_rotvec_fixed = canonicalize_rotvec(new_rotvec)
-                self.aunit_orientation = new_rotvec_fixed
                 # correction is successful when this is small
-                # (rotvec2rotmat(new_rotvec_fixed) @ random_rotations - rotvec2rotmat(self.aunit_orientation)).abs().sum()
-
-            # if correct_embedding and hasattr(self, 'embedding'):
-            #     if self.embedding.shape[1] == 3:  # if it's a vector embedding, we'll also rotate that
-            #         self.embedding = self.rotate_embedding(applied_rotation.permute(0, 2, 1))
+                # err = (rotvec2rotmat(new_rotvec_fixed) @ applied_rotation - rotvec2rotmat(
+                #     self.aunit_orientation)).abs().sum(dim=(1, 2))
+                # print(err.mean())
+                self.aunit_orientation = new_rotvec_fixed
 
         else:
             assert False, "molecule orientation not implemented for single samples"
@@ -222,3 +217,14 @@ class MolDataMethods:
         )
 
         return principal_axes, principal_moments
+
+    def compute_molecule_uma(self,
+                            predictor,
+                            std_orientation: bool=True,
+                            ):
+        if self.is_batch:
+            return compute_molecule_uma_on_mxt_batch(self,
+                                            predictor)
+        else:
+            return compute_molecule_uma_on_mxt_batch(collate_data_list(self),
+                                            predictor)

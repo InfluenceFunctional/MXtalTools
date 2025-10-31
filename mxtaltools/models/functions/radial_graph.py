@@ -230,6 +230,7 @@ def build_radial_graph(pos: torch.FloatTensor,
 
 
         # disaggregate within-aunit intermolecular edges from genuine intramolecular edges
+        # necessary for Z'>1 structures
         intra_edge = mol_ind[edge_index[0]] == mol_ind[edge_index[1]]
         if torch.any(~intra_edge):
             # if there are any within aunit intra edges

@@ -334,7 +334,7 @@ def process_smiles_to_crystal_opt(lines: list,
 
 def add_mace_energy(samples):
     # calculating crystal mace energies
-    from mxtaltools.mace_sp.utils import SPMaceCalculator
+    from mxtaltools.mlip_interfaces.mace_utils import SPMaceCalculator
     calculator = SPMaceCalculator('cpu')
     for s_ind, sample in enumerate(samples):
         try:

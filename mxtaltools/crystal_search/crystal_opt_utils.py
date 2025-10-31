@@ -51,8 +51,7 @@ def gradient_descent_optimization(
 ):
     """
     do a local optimization via gradient descent on some score function
-    """
-
+    """  # todo implement wrapping over periodic DoF
 
     if cutoff is None:
         # lennard jones need 10 angstroms to nicely converge

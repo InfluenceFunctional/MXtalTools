@@ -59,7 +59,10 @@ def lightweight_one_sided_violin(data, n_points=100, bandwidth_factor=1.0, data_
     y_vals = kde(x_vals)
 
     # Normalize for consistent width (optional)
-    y_vals = y_vals / y_vals.max() * 2  # Scale to max width of 2
+    y_vals = y_vals / (1e-3 + y_vals.max() * 2)  # Scale to max width of 2
+
+    x_vals = np.concatenate([[x_vals[0]], x_vals, [x_vals[-1]]])
+    y_vals = np.concatenate([[0], y_vals, [0]])
 
     return x_vals, y_vals
 

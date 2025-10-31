@@ -196,8 +196,6 @@ class MXtalBase(BaseData):
         is_well_defined = self.is_well_defined.clone()
         batch_to_listify = self.clone()
         del batch_to_listify.max_z_prime, batch_to_listify.is_well_defined
-        if hasattr(batch_to_listify, 'rot_mode'):
-            del batch_to_listify.rot_mode
 
         samples_list = batch_to_listify.to_data_list()
         for ind, elem in enumerate(samples_list):

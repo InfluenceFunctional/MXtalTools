@@ -8,33 +8,43 @@ from mxtaltools.common.geometry_utils import sph2cart_rotvec, cart2sph_rotvec
 
 
 class AunitTransform(nn.Module):
-    def __init__(self, asym_unit_dict):
+    def __init__(self, asym_unit_dict, max_z_prime: int = 1):
         super().__init__()
         self.asym_unit_dict = asym_unit_dict
+        self.max_z_prime = max_z_prime
 
     def forward(self, cell_parameters, sg_inds):
-        cell_lengths, cell_angles, cell_centroids, cell_orientations = cell_parameters.split(3, dim=1)
-        auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds])
-        # aunit_lengths = cell_lengths * auvs
-        aunit_centroids = cell_centroids / auvs.to(cell_centroids.device)
+        box_params, aunit_params = torch.tensor_split(cell_parameters, [6], dim=1)
+        aunit_centroids, cell_orientations = aunit_params.split(3 * self.max_z_prime, dim=1)
+
+        auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds]).to(aunit_centroids.device)
+        # this is the parallel way to do it over multiple Z'
+        aunit_centroids = (
+                aunit_centroids
+                .reshape(-1, self.max_z_prime, 3)  # [n, max_z', 3]
+                / auvs.unsqueeze(1)  # [n, 1, 3] → broadcast over Z′
+        ).reshape(-1, 3 * self.max_z_prime)  # back to [n, 3 * max_z']
 
         return torch.cat([
-            cell_lengths,
-            cell_angles,
+            box_params,
             aunit_centroids,
             cell_orientations
         ], dim=1)
 
     def inverse(self, cell_parameters, sg_inds):
-        cell_lengths, cell_angles, aunit_centroids, cell_orientations = cell_parameters.split(3, dim=1)
-        auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds])
-        #cell_lengths = aunit_lengths / auvs
-        cell_centroids = aunit_centroids * auvs
+        box_params, aunit_params = torch.tensor_split(cell_parameters, [6], dim=1)
+        aunit_centroids, cell_orientations = aunit_params.split(3 * self.max_z_prime, dim=1)
+        auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds]).to(aunit_centroids.device)
+        # cell_lengths = aunit_lengths * auvs
+        aunit_centroids = (
+                aunit_centroids
+                .reshape(-1, self.max_z_prime, 3)  # [n, max_z', 3]
+                * auvs.unsqueeze(1)  # [n, 1, 3] → broadcast over Z′
+        ).reshape(-1, 3 * self.max_z_prime)  # back to [n, 3 * max_z']
 
         return torch.cat([
-            cell_lengths,
-            cell_angles,
-            cell_centroids,
+            box_params,
+            aunit_centroids,
             cell_orientations
         ], dim=1)
 
@@ -52,11 +62,13 @@ class NiggliTransform(nn.Module):  # todo small roundtrip disagreement in here
         super().__init__()
         self.eps = 1e-6
 
-    def forward(self, aunit_params, mol_radii):
+    def forward(self, params, mol_radii):
         """
         Reduce physical aunit parameters to a niggli-normed basis
         """
-        a, b, c, al, be, ga, u, v, w, x, y, z = aunit_params.split(1, dim=1)
+        box_params = params[:, :6]
+        aunit_params = params[:, 6:]
+        a, b, c, al, be, ga = box_params.split(1, dim=1)
 
         c_normed = c / 2 / mol_radii.clip(min=1.0)[:, None]
 
@@ -79,8 +91,28 @@ class NiggliTransform(nn.Module):  # todo small roundtrip disagreement in here
         return torch.cat([
             a_scale, b_scale, c_normed,
             al_scaled, be_scaled, ga_scaled,
+            aunit_params],
+            dim=1)
+
+    """
+    samples = torch.cat([
+            a_scale, b_scale, c_normed,
+            al_scaled, be_scaled, ga_scaled,
             u, v, w, x, y, z
         ], dim=1)
+    
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    
+    fig = make_subplots(rows=4, cols=3)
+    for ind in range(12):
+        ss = samples[:, ind]
+        if ind in [0, 1, 3, 4, 5]:
+            ss=ss.clip(min=-1, max=1)
+        fig.add_histogram(x=ss, nbinsx=50, row=ind // 3 + 1, col = ind % 3 + 1)
+    fig.show()
+    
+    """
 
     def inverse(self, niggli_params, mol_radii):
         """
@@ -89,10 +121,10 @@ class NiggliTransform(nn.Module):  # todo small roundtrip disagreement in here
         :param mol_radii:
         :return:
         """
+        box_params = niggli_params[:, :6]
+        aunit_params = niggli_params[:, 6:]
         (a_scale, b_scale, c_normed,
-         al_scaled, be_scaled, ga_scaled,
-         u, v, w,
-         x, y, z) = niggli_params.split(1, dim=1)
+         al_scaled, be_scaled, ga_scaled) = box_params.split(1, dim=1)
         # denormalize c
         c = c_normed * 2 * mol_radii[:, None]
         # descale a and b
@@ -115,8 +147,7 @@ class NiggliTransform(nn.Module):  # todo small roundtrip disagreement in here
         return torch.cat(
             [a, b, c,
              al, be, ga,
-             u, v, w,
-             x, y, z],
+             aunit_params],
             dim=1)
 
 
@@ -254,12 +285,12 @@ class LogNormalTransform(nn.Module):
         self.exp_min = exp_min
         self.exp_max = exp_max
 
-    def forward(self, latent: torch.Tensor) -> torch.Tensor:
+    def inverse(self, latent: torch.Tensor) -> torch.Tensor:
         """Maps latent to log-normal physical variable"""
         return torch.exp(
             (latent * self.std_log + self.mean_log).clip(min=np.log(self.exp_min), max=np.log(self.exp_max)))
 
-    def inverse(self, value: torch.Tensor) -> torch.Tensor:
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
         """Maps log-normal physical value to latent"""
         return (torch.log(value.clip(min=self.eps)) - self.mean_log) / self.std_log
 
@@ -267,7 +298,7 @@ class LogNormalTransform(nn.Module):
 class RotationTransform(nn.Module):
     def __init__(self,
                  eps: float = 1e-6,
-                 mode: str = 'linear', # linear or wrapped
+                 mode: str = 'linear',  # linear or wrapped
                  ):
         super().__init__()
         self.eps = eps
@@ -335,13 +366,13 @@ class RotationTransform(nn.Module):
         """
         std_theta, std_phi, std_r = latent.split(1, dim=1)
 
-        theta = self.std_normal_to_polar(std_theta)  #.clip(min=0, max=torch.pi / 2)
+        theta = self.std_normal_to_polar(std_theta)  # .clip(min=0, max=torch.pi / 2)
         if self.mode == 'wrapped':
-            phi = self.uniform_to_azimuth(std_phi)  #.clip(min=-torch.pi, max=torch.pi)
+            phi = self.uniform_to_azimuth(std_phi)  # .clip(min=-torch.pi, max=torch.pi)
             r = self.std_normal_to_rotation(std_r).clip(min=0.01,
                                                         max=torch.pi * 2 - 0.01)  # cannot be allowed to touch extrema exactly
         elif self.mode == 'linear':
-            phi = self.std_normal_to_azimuth(std_phi)  #.clip(min=-torch.pi, max=torch.pi)
+            phi = self.std_normal_to_azimuth(std_phi)  # .clip(min=-torch.pi, max=torch.pi)
             r = self.std_normal_to_rotation(std_r).clip(min=0.01,
                                                         max=torch.pi * 2 - 0.01)  # cannot be allowed to touch extrema exactly
 
@@ -385,54 +416,172 @@ class ProbitTransform(nn.Module):
         return self.normal.cdf(z)
 
 
-class StdNormalTransform(nn.Module):
-    def __init__(self,
-                 length_slope: float = 1.0,
-                 angle_slope: float = 1.0,
-                 c_log_mean: float = 0.4, #1.0,  #0.4, #0.24,
-                 c_log_std: float = 0.36,  #0.3618,
-                 rot_mode: str = 'linear',
-                 ):
+#
+# class StdNormalTransform(nn.Module):
+#     def __init__(self,
+#                  length_slope: float = 1.0,
+#                  angle_slope: float = 1.0,
+#                  c_log_mean: float = 0.24,
+#                  c_log_std: float = 0.24,  # 0.3618,
+#                  rot_mode: str = 'linear',
+#                  ):
+#         super().__init__()
+#         self.eps = 1e-6
+#
+#         self.transforms = nn.ModuleDict({  # todo parallelize/accelerate these
+#             'A': BoundedTransform(0.0, 1.0, slope=length_slope, bias=1.15),
+#             'B': BoundedTransform(0.0, 1.0, slope=length_slope, bias=1.15),
+#             'C': LogNormalTransform(c_log_mean, c_log_std, exp_min=0.01, exp_max=8),
+#
+#             'cos_alpha': BoundedTransform(-1.0, 1.0, slope=angle_slope),
+#             'cos_beta': BoundedTransform(-1.0, 1.0, slope=angle_slope),
+#             'cos_gamma': BoundedTransform(-1.0, 1.0, slope=angle_slope),
+#
+#             'centroid_u': ProbitTransform(),
+#             'centroid_v': ProbitTransform(),
+#             'centroid_w': ProbitTransform(),
+#         })
+#         self.rotation_transform = RotationTransform(
+#             mode=rot_mode,
+#         )
+#
+#     def forward(self, niggli_params):
+#         """
+#         Convert niggli parameters to standard normal basisq
+#         """
+#         params = torch.stack(
+#             [self.transforms[key].inverse(niggli_params[:, ind])
+#              for ind, key in enumerate(self.transforms.keys())]).T
+#         return torch.cat(
+#             [params, self.rotation_transform.inverse(niggli_params[:, 9:])],
+#             dim=1
+#         )
+#
+#     def inverse(self, std_params):
+#         params = torch.stack(
+#             [self.transforms[key](std_params[:, ind])
+#              for ind, key in enumerate(self.transforms.keys())]).T
+#         return torch.cat(
+#             [params, self.rotation_transform(std_params[:, 9:])],
+#             dim=1
+#         )
+
+
+class UnitToPMUnit(nn.Module):
+    def __init__(self, eps: float = 1e-6):
         super().__init__()
-        self.eps = 1e-6
 
-        self.transforms = nn.ModuleDict({  # todo parallelize/accelerate these
-            'A': BoundedTransform(0.0, 1.0, slope=length_slope, bias=1.15),
-            'B': BoundedTransform(0.0, 1.0, slope=length_slope, bias=1.15),
-            'C': LogNormalTransform(c_log_mean, c_log_std, exp_min=0.01, exp_max=8),
+    def inverse(self, u: torch.Tensor) -> torch.Tensor:
+        return u * 0.5 + 0.5
 
-            'cos_alpha': BoundedTransform(-1.0, 1.0, slope=angle_slope),
-            'cos_beta': BoundedTransform(-1.0, 1.0, slope=angle_slope),
-            'cos_gamma': BoundedTransform(-1.0, 1.0, slope=angle_slope),
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        return (z - 0.5) * 2
 
-            'centroid_u': ProbitTransform(),
-            'centroid_v': ProbitTransform(),
-            'centroid_w': ProbitTransform(),
-        })
-        self.rotation_transform = RotationTransform(
-            mode=rot_mode,
-        )
+
+class ThetaTransform(nn.Module):
+    def __init__(self, eps: float = 1e-6):
+        super().__init__()
+
+    def inverse(self, u: torch.Tensor) -> torch.Tensor:
+        return (1 / 4) * torch.pi * u + torch.pi / 4
+
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        return (z - torch.pi / 4) / torch.pi * 4
+
+
+class PhiTransform(nn.Module):
+    def __init__(self, eps: float = 1e-6):
+        super().__init__()
+
+    def inverse(self, u: torch.Tensor) -> torch.Tensor:
+        return u * torch.pi
+
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        return z / torch.pi
+
+
+class RTransform(nn.Module):
+    def __init__(self, eps: float = 1e-6):
+        super().__init__()
+
+    def inverse(self, u: torch.Tensor) -> torch.Tensor:
+        return u * torch.pi + torch.pi
+
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        return (z - torch.pi) / torch.pi
+
+
+class UnitTransform(nn.Module):
+    def __init__(self, max_z_prime: int = 1):
+        super().__init__()
+        self.max_z_prime = max_z_prime
+        self.transforms = [
+            UnitToPMUnit(),  # a/b
+            UnitToPMUnit(),  # b/c
+            LogNormalTransform(std_log=2,
+                               mean_log=0.25,
+                               exp_min=0.01, exp_max=4),  # c (normed)
+            IdentityTransform(),  # alpha
+            IdentityTransform(),  # beta
+            IdentityTransform(),  # gamma
+        ]
+        for zp in range(max_z_prime):
+            self.transforms.extend([
+                UnitToPMUnit(),  # u
+                UnitToPMUnit(),  # w
+                UnitToPMUnit(),  # v
+            ])
+        for zp in range(max_z_prime):
+            self.transforms.extend([
+                ThetaTransform(),  # theta
+                PhiTransform(),  # phi
+                RTransform(),  # r
+            ])
 
     def forward(self, niggli_params):
         """
-        Convert niggli parameters to standard normal basisq
+        Convert niggli parameters to uniform latent basis
         """
+        box_params, aunit_params = torch.tensor_split(niggli_params, [6], dim=1)
+        aunit_centroids, cell_orientations = aunit_params.split(3 * self.max_z_prime, dim=1)
+        sph_rotvec = cart2sph_rotvec(cell_orientations.reshape(len(cell_orientations) * self.max_z_prime, 3)).reshape(
+            len(cell_orientations), self.max_z_prime * 3)
+        rot_params = torch.cat([box_params, aunit_centroids, sph_rotvec], dim=1)
+
         params = torch.stack(
-            [self.transforms[key].inverse(niggli_params[:, ind])
-             for ind, key in enumerate(self.transforms.keys())]).T
-        return torch.cat(
-            [params, self.rotation_transform.inverse(niggli_params[:, 9:])],
-            dim=1
-        )
+            [transform.forward(rot_params[:, ind])
+             for ind, transform in enumerate(self.transforms)]).T
+
+        return params
 
     def inverse(self, std_params):
+        """
+        Convert uniform latent basis to niggli space
+        :param std_params:
+        :return:
+        """
         params = torch.stack(
-            [self.transforms[key](std_params[:, ind])
-             for ind, key in enumerate(self.transforms.keys())]).T
-        return torch.cat(
-            [params, self.rotation_transform(std_params[:, 9:])],
-            dim=1
-        )
+            [transform.inverse(std_params[:, ind])
+             for ind, transform in enumerate(self.transforms)]).T
+
+        box_params, aunit_params = torch.tensor_split(params, [6], dim=1)
+        aunit_centroids, cell_orientations = aunit_params.split(3 * self.max_z_prime, dim=1)
+        sph_rotvec = sph2cart_rotvec(cell_orientations.reshape(len(cell_orientations) * self.max_z_prime, 3)).reshape(
+            len(cell_orientations), self.max_z_prime * 3)
+        rot_params = torch.cat([box_params, aunit_centroids, sph_rotvec], dim=1)
+
+        return rot_params
+
+
+class IdentityTransform(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, z):
+        return z
+
+    def inverse(self, z):
+        return z
 
 
 class CompositeTransform(nn.Module):
@@ -448,6 +597,7 @@ class CompositeTransform(nn.Module):
                 x = transform.forward(x, mol_radii)
             else:
                 x = transform.forward(x)
+
         return x
 
     def inverse(self, x, sg_inds, mol_radii):
@@ -523,7 +673,7 @@ def enforce_niggli_plane(cell_lengths, cell_angles, mode, eps=1e-6):
             raise ValueError(f"Unknown mode '{mode}': use 'mirror' or 'shift'")
 
     ab, ac, al_cos, bc, be_cos, ga_cos, overlap = compute_niggli_overlap(a, al, b, be, c, ga)
-    #assert torch.all(overlap >= 0), "Niggli plane enforcement failed!!"
+    # assert torch.all(overlap >= 0), "Niggli plane enforcement failed!!"
     if torch.any(overlap < 0):
         print(f"Niggli enforcement failed with overlap of {overlap.amin():3g}")
 
