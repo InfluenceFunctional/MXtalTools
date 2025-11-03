@@ -9,7 +9,7 @@ from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
 from mxtaltools.crystal_building.utils import align_mol_batch_to_standard_axes, canonicalize_rotvec
 from mxtaltools.dataset_utils.mol_building import smiles2conformer
 from mxtaltools.dataset_utils.utils import collate_data_list
-from mxtaltools.mlip_interfaces.uma_utils import compute_molecule_uma_on_mxt_batch
+# from mxtaltools.mlip_interfaces.uma_utils import compute_molecule_uma_on_mxt_batch
 from mxtaltools.models.functions.radial_graph import build_radial_graph
 
 
@@ -218,13 +218,13 @@ class MolDataMethods:
 
         return principal_axes, principal_moments
 
-    def compute_molecule_uma(self,
-                            predictor,
-                            std_orientation: bool=True,
-                            ):
-        if self.is_batch:
-            return compute_molecule_uma_on_mxt_batch(self,
-                                            predictor)
-        else:
-            return compute_molecule_uma_on_mxt_batch(collate_data_list(self),
-                                            predictor)
+    # def compute_molecule_uma(self,
+    #                         predictor,
+    #                         std_orientation: bool=True,
+    #                         ):
+    #     if self.is_batch:
+    #         return compute_molecule_uma_on_mxt_batch(self,
+    #                                         predictor)
+    #     else:
+    #         return compute_molecule_uma_on_mxt_batch(collate_data_list(self),
+    #                                         predictor)
