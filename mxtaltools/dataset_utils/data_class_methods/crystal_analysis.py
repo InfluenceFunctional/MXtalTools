@@ -8,7 +8,7 @@ from mxtaltools.analysis.vdw_analysis import get_intermolecular_dists_dict, lj_a
 from mxtaltools.common.utils import log_rescale_positive
 from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.dataset_utils.utils import collate_data_list
-from mxtaltools.mlip_interfaces.uma_utils import compute_crystal_uma_on_mxt_batch
+#from mxtaltools.mlip_interfaces.uma_utils import compute_crystal_uma_on_mxt_batch
 from mxtaltools.models.functions.radial_graph import build_radial_graph
 
 
@@ -197,18 +197,18 @@ class MolCrystalAnalysis:
         else:
             return results
 
-    def compute_crystal_uma(self,
-                            predictor,
-                            std_orientation: bool=True,
-                            ):
-        if self.is_batch:
-            return compute_crystal_uma_on_mxt_batch(self,
-                                                    std_orientation,
-                                                    predictor)
-        else:
-            return compute_crystal_uma_on_mxt_batch(collate_data_list(self),
-                                                    std_orientation,
-                                                    predictor)
+    # def compute_crystal_uma(self,
+    #                         predictor,
+    #                         std_orientation: bool=True,
+    #                         ):
+    #     if self.is_batch:
+    #         return compute_crystal_uma_on_mxt_batch(self,
+    #                                                 std_orientation,
+    #                                                 predictor)
+    #     else:
+    #         return compute_crystal_uma_on_mxt_batch(collate_data_list(self),
+    #                                                 std_orientation,
+    #                                                 predictor)
 
     def compute_rdf(self,
                     cutoff: float = 6,
