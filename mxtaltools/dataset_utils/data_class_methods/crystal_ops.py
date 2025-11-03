@@ -843,7 +843,7 @@ class MolCrystalOps:
             ])
         for zp in range(self.max_z_prime):
             lattice_features.extend([
-                f'orientation{zp} 1', f'orientation{zp} 2', f'orientation{zp} 2'
+                f'ori{zp} 1', f'ori{zp} 2', f'ori{zp} 3'
             ])
         return lattice_features
 
@@ -878,7 +878,7 @@ class MolCrystalOps:
 
         return custom_ranges
 
-    def _collect_sample_dists(self, samples, ref_dist, quantiles, split_by_sg, split_by_zp):
+    def _collect_sample_dists(self, samples, ref_dist, quantiles, split_by_sg, split_by_zp, aux_dists):
         num_dists = 1
         dists = []
         dist_names = []
@@ -915,6 +915,12 @@ class MolCrystalOps:
                 dists.append(samples[good_inds])
                 num_dists += 1
 
+        if aux_dists is not None:
+            for ind, aux_dist in enumerate(aux_dists):
+                dist_names += [f'Aux {ind}']
+                dists.append(aux_dist)
+                num_dists += 1
+
         return num_dists, dist_names, dists
 
     def plot_batch_density_funnel(self,
@@ -949,8 +955,6 @@ class MolCrystalOps:
             color_tag = 'Point Density'
             scatter_dict.update({'Point Density': z})
 
-            #todo add zp splitting
-
         opacity = max(0.25, 1 - self.num_graphs / 5e4)
         df = pd.DataFrame.from_dict(scatter_dict)
 
@@ -963,10 +967,10 @@ class MolCrystalOps:
                          )
 
         fig.update_layout(yaxis_title='Energy', xaxis_title='Packing Coeff')
-        fig.update_layout(yaxis_range=[np.amin(df['energy']) - 3,
-                                       min(500, np.amax(df['energy']) + np.ptp(df['energy']) * 0.1)],
+        fig.update_layout(yaxis_range=[np.amin(df['energy']) + np.ptp(df['energy']) * 0.1,
+                                       min(10, np.amax(df['energy']) + np.ptp(df['energy']) * 0.1)],
                           xaxis_range=[max(0, np.amin(df['packing_coefficient']) * 0.9),
-                                       min(2, np.amax(df['packing_coefficient']) * 1.1)],
+                                       min(1, np.amax(df['packing_coefficient']) * 1.1)],
                           )
 
         if show:
@@ -980,6 +984,7 @@ class MolCrystalOps:
                                renderer: Optional[str] = None,
                                quantiles: Optional[Iterable[float]] = None,
                                ref_dist: Optional[torch.Tensor] = None,
+                               aux_dists: Optional[list] = None,
                                show: bool = True,
                                return_fig: bool = False,
                                split_by_sg: bool = False,
@@ -992,7 +997,7 @@ class MolCrystalOps:
 
         lattice_features = self._build_feature_labels()
         samples = self._get_samples(space)
-        num_dists, dist_names, dists = self._collect_sample_dists(samples, ref_dist, quantiles, split_by_sg, split_by_zp)
+        num_dists, dist_names, dists = self._collect_sample_dists(samples, ref_dist, quantiles, split_by_sg, split_by_zp, aux_dists)
         # delete or NaN unused higher Z' elements
         # 1d Histograms
         fig = make_subplots(rows=2 + 2 * self.max_z_prime,
@@ -1025,6 +1030,78 @@ class MolCrystalOps:
             fig.update_xaxes(range=ranges[i], row=row, col=col)
 
         fig.update_traces(opacity=0.5)
+        if show:
+            fig.show(renderer=renderer)
+        if return_fig:
+            return fig
+        else:
+            return None
+
+    def plot_batch_staircase(self, space='real',
+                             renderer=None,
+                             show=True,
+                             return_fig=False,
+                             mode='contour',
+                             cmap='jet',
+                             nbins=25,
+                             colorbar=False,
+                             ):
+
+        labels = self._build_feature_labels()
+        samples = self._get_samples(space)
+        if torch.is_tensor(samples):
+            samples = samples.detach().cpu().numpy()
+        N, D = samples.shape
+
+        # Create D×D subplots (upper triangle empty)
+        fig = make_subplots(
+            rows=D, cols=D,
+            horizontal_spacing=0.005, vertical_spacing=0.005,
+            shared_xaxes=True, shared_yaxes=True,
+        )
+
+        # Loop over lower triangle
+        for i in range(D):
+            for j in range(D):
+                if j >= i:
+                    continue  # keep lower triangle only
+
+                x = samples[:, j]
+                y = samples[:, i]
+
+                if mode == 'contour':
+                    trace = go.Histogram2dContour(
+                        x=x, y=y,
+                        ncontours=12,
+                        colorscale=cmap,
+                        showscale=colorbar and (i == D - 1 and j == 0),
+                        contours=dict(coloring='fill', showlines=False),
+                        nbinsx=nbins,
+                        nbinsy=nbins,
+                    )
+                elif mode == 'heatmap':
+                    trace = go.Histogram2d(
+                        x=x, y=y,
+                        nbinsx=nbins, nbinsy=nbins,
+                        colorscale=cmap,
+                        showscale=colorbar and (i == D - 1 and j == 0),
+                    )
+                else:
+                    raise ValueError("mode must be 'contour' or 'heatmap'")
+                fig.add_trace(trace, row=i + 1, col=j + 1)
+
+        for i in range(D):
+            fig.update_xaxes(title_text=labels[i], row=D, col=i + 1)
+            fig.update_yaxes(title_text=labels[i], row=i + 1, col=1)
+        fig.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            margin=dict(l=20, r=20, t=20, b=20),
+            # height=1000,
+            # width=1000,
+            showlegend=False,
+        )
+
         if show:
             fig.show(renderer=renderer)
         if return_fig:
@@ -1154,6 +1231,9 @@ class MolCrystalOps:
 
         # reset symmetries will always be standard
         self.nonstandard_symmetry[:] = False
+
+        self.symmetry_operators = [np.stack(SYM_OPS[int(ind)]) for ind in self.sg_ind]
+
         self.sym_mult = torch.tensor(
             [len(sym_ops) for sym_ops in self.symmetry_operators],
             dtype=torch.long, device=self.device
