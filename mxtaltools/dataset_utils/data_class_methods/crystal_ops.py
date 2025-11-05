@@ -208,24 +208,24 @@ class MolCrystalOps:
         self.box_analysis()
 
     def latent_to_cell_params(self,
-                              std_normal: torch.tensor,
+                              latents: torch.tensor,
                               ):
         """
         Transform from latent space to physical crystal parameters
         :param override_mode:
-        :param std_normal:
+        :param latents:
         :return:
         """
 
         if not hasattr(self, 'latent_transform'):
             self.init_latent_transform()
 
-        min_vals = -torch.ones(std_normal.shape[-1], dtype=torch.float32, device=self.device)
-        min_vals[:2] = -0.99
+        min_vals = -torch.ones(latents.shape[-1], dtype=torch.float32, device=self.device)
+        min_vals[:3] = -0.95  # DO NOT allow micro cells to be instantiated
 
-        max_vals = torch.ones(std_normal.shape[-1], dtype=torch.float32, device=self.device)
+        max_vals = torch.ones(latents.shape[-1], dtype=torch.float32, device=self.device)
         self.set_cell_parameters(
-            self.latent_transform.inverse(std_normal.clamp(min=min_vals, max=max_vals), self.sg_ind, self.radius)
+            self.latent_transform.inverse(latents.clamp(min=min_vals, max=max_vals), self.sg_ind, self.radius)
         )
 
         self.cell_lengths, self.cell_angles = enforce_crystal_system(
@@ -967,7 +967,7 @@ class MolCrystalOps:
                          )
 
         fig.update_layout(yaxis_title='Energy', xaxis_title='Packing Coeff')
-        fig.update_layout(yaxis_range=[np.amin(df['energy']) + np.ptp(df['energy']) * 0.1,
+        fig.update_layout(yaxis_range=[np.amin(df['energy']) - np.ptp(df['energy']) * 0.1,
                                        min(10, np.amax(df['energy']) + np.ptp(df['energy']) * 0.1)],
                           xaxis_range=[max(0, np.amin(df['packing_coefficient']) * 0.9),
                                        min(1, np.amax(df['packing_coefficient']) * 1.1)],
