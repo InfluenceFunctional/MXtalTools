@@ -835,16 +835,24 @@ class MolCrystalOps:
         return std_aunit_orientation * orientation_stds + orientation_means
 
     def _build_feature_labels(self):
-        lattice_features = ['a length', 'b length', 'c length',
-                            'alpha', 'beta', 'gamma']
-        for zp in range(self.max_z_prime):
+        lattice_features = ['a', 'b', 'c',
+                            r'$\alpha$', r'$\beta$', r'$\gamma$']
+        if self.max_z_prime == 1:
             lattice_features.extend([
-                f'aunit{zp} x', f'aunit{zp} y', f'aunit{zp} z',
+                f'u', f'v', f'w',
             ])
-        for zp in range(self.max_z_prime):
             lattice_features.extend([
-                f'ori{zp} 1', f'ori{zp} 2', f'ori{zp} 3'
+                f'x', f'y', f'z'
             ])
+        else:
+            for zp in range(self.max_z_prime):
+                lattice_features.extend([
+                    f'aunit{zp} u', f'aunit{zp} v', f'aunit{zp} w',
+                ])
+            for zp in range(self.max_z_prime):
+                lattice_features.extend([
+                    f'x{zp}', f'y{zp}', f'z{zp}'
+                ])
         return lattice_features
 
     def _set_cell_ranges(self, space, samples):
@@ -961,18 +969,67 @@ class MolCrystalOps:
         fig = px.scatter(df,
                          x='packing_coefficient', y='energy',
                          color=color_tag,
+                         color_continuous_scale=px.colors.cyclical.IceFire,
                          marginal_x='violin', marginal_y='violin',
                          color_discrete_sequence=px.colors.qualitative.Set3 if color_tag == 'Space Group' else None,
                          opacity=opacity
                          )
 
         fig.update_layout(yaxis_title='Energy', xaxis_title='Packing Coeff')
-        fig.update_layout(yaxis_range=[np.amin(df['energy']) - np.ptp(df['energy']) * 0.1,
-                                       min(10, np.amax(df['energy']) + np.ptp(df['energy']) * 0.1)],
-                          xaxis_range=[max(0, np.amin(df['packing_coefficient']) * 0.9),
-                                       min(1, np.amax(df['packing_coefficient']) * 1.1)],
+        fig.update_layout(yaxis_range=[np.amin(df['energy']) - np.ptp(df['energy']) * 0.05,
+                                       min(10, np.amax(df['energy']) + np.ptp(df['energy']) * 0.05)],
+                          xaxis_range=[max(0, np.amin(df['packing_coefficient']) * 0.95),
+                                       min(1, np.amax(df['packing_coefficient']) * 1.05)],
                           )
 
+        fig.update_layout(
+            xaxis_title=r"Packing coefficient",
+            yaxis_title=r"Energy, /Arb Units)",
+        )
+        fig.update_traces(
+            marker=dict(
+                size=5,
+                line=dict(width=0.3, color='rgba(0,0,0,0.3)'),
+                opacity=opacity,
+            )
+        )
+        if color_tag == 'Point Density':
+            fig.update_layout(coloraxis_colorbar=dict(
+                title="Point Density (Normed)",
+                tickfont=dict(size=10),
+                title_font=dict(size=11),
+            ))
+        fig.update_traces(selector=dict(type='violin'), spanmode='hard')
+        fig.update_traces(selector=dict(type='violin'), line=dict(width=0.6, color='black'))
+        fig.update_layout(
+            font=dict(family="Helvetica", size=12),
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            margin=dict(l=60, r=20, t=40, b=50),
+        )
+        fig.update_xaxes(
+            showgrid=True,
+            gridcolor='rgba(0,0,0,0.15)',
+            gridwidth=0.8,
+            zeroline=False,
+            showline=True,
+            linewidth=1,
+            linecolor='black',
+            mirror=True,
+            row=1, col=1  # target the main scatter subplot
+        )
+
+        fig.update_yaxes(
+            showgrid=True,
+            gridcolor='rgba(0,0,0,0.15)',
+            gridwidth=0.8,
+            zeroline=False,
+            showline=True,
+            linewidth=1,
+            linecolor='black',
+            mirror=True,
+            row=1, col=1  # target the main scatter subplot
+        )
         if show:
             fig.show(renderer=renderer)
 
@@ -1019,17 +1076,28 @@ class MolCrystalOps:
                               yanchor="bottom",
                               y=1.05,
                               xanchor="center",
-                              x=0.5
+                              x=0.5,
+                              bgcolor='rgba(0,0,0,0)',
+
                           ),
-                          margin=dict(l=50, r=50, t=50, b=50)
+                          margin=dict(l=40, r=20, t=50, b=50),
+                          font=dict(family="Helvetica", size=12, color='black'),
                           )
 
         for i in range(6 + self.max_z_prime * 6):
             row = i // 3 + 1
             col = i % 3 + 1
             fig.update_xaxes(range=ranges[i], row=row, col=col)
-
-        fig.update_traces(opacity=0.5)
+        fig.update_xaxes(
+            showgrid=False, zeroline=False, ticks='outside',
+            tickwidth=1, mirror=True
+        )
+        # fig.update_yaxes(
+        #     showgrid=False, zeroline=False, ticks='outside',
+        #     tickwidth=1, mirror=True
+        # )
+        if len(dists) > 1:
+            fig.update_traces(opacity=0.5)
         if show:
             fig.show(renderer=renderer)
         if return_fig:
@@ -1042,7 +1110,7 @@ class MolCrystalOps:
                              show=True,
                              return_fig=False,
                              mode='contour',
-                             cmap='jet',
+                             cmap='icefire',
                              nbins=25,
                              colorbar=False,
                              ):
@@ -1072,10 +1140,11 @@ class MolCrystalOps:
                 if mode == 'contour':
                     trace = go.Histogram2dContour(
                         x=x, y=y,
-                        ncontours=12,
+                        ncontours=32,
                         colorscale=cmap,
                         showscale=colorbar and (i == D - 1 and j == 0),
-                        contours=dict(coloring='fill', showlines=False),
+                        contours=dict(coloring='fill', showlines=False, start=0, end=None, size=None),
+                        line=dict(smoothing=0.85, width=0),
                         nbinsx=nbins,
                         nbinsy=nbins,
                     )
@@ -1101,7 +1170,14 @@ class MolCrystalOps:
             # width=1000,
             showlegend=False,
         )
-
+        fig.update_layout(
+            font=dict(family="Helvetica", size=12),
+            paper_bgcolor='white',
+            plot_bgcolor='white',
+            margin=dict(l=30, r=30, t=20, b=30),
+        )
+        fig.update_xaxes(showgrid=False, zeroline=False, ticks='outside', tickwidth=1)
+        fig.update_yaxes(showgrid=False, zeroline=False, ticks='outside', tickwidth=1)
         if show:
             fig.show(renderer=renderer)
         if return_fig:
@@ -1134,26 +1210,12 @@ class MolCrystalOps:
                     mode='lines',
                     fill='toself',  #'tonexty' if i == 0 else 'tonexty',  # Fill to next y (which is 0)
                     fillcolor=color,
-                    line=dict(color=color, width=1),
+                    line=dict(color=color, width=1.2),
                     name=name,
                     legendgroup=name,
                     showlegend=True if column_index == 0 else False,
                 row=row, col=col)
-        # fig.add_trace(go.Violin(
-        #     x=samples[:, column_index],
-        #     y=[0 for _ in range(len(samples))],
-        #     side='positive',
-        #     orientation='h',
-        #     width=4,
-        #     showlegend=True if column_index == 0 else False,
-        #     name=name, legendgroup=name,
-        #     meanline_visible=True,
-        #     bandwidth=float(np.ptp(samples[:, column_index]) / 100),
-        #     points=False,
-        #     line_color=color,
-        # ),
-        #     row=row, col=col
-        # )
+
 
     def _get_samples(self, space):
         if space == 'real':
