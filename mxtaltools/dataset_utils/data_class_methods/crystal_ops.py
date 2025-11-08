@@ -882,7 +882,23 @@ class MolCrystalOps:
 
         else:
             custom_ranges = {ind: [np.amin(samples[:, ind]), np.amax(samples[:, ind])]
-                             for ind in range(samples.shape[1])}
+                             for ind in range(3)}
+            custom_ranges.update(
+                {3: [np.pi/4, 3/2*np.pi],
+                 4: [np.pi / 4, 3 / 2 * np.pi],
+                 5: [np.pi / 4, 3 / 2 * np.pi]
+                 }
+            )
+            for ind in range(self.max_z_prime):
+                custom_ranges.update({
+                    6 + ind * 6 + 0: [0, 1.1],
+                    6 + ind * 6 + 1: [0, 1.1],
+                    6 + ind * 6 + 2: [0, 1.1],
+                    6 + ind * 6 + 3: [-2*np.pi, 2*np.pi],
+                    6 + ind * 6 + 4: [-2*np.pi, 2*np.pi],
+                    6 + ind * 6 + 5: [0, 2*np.pi],
+                                      })
+
 
         return custom_ranges
 
@@ -984,7 +1000,7 @@ class MolCrystalOps:
 
         fig.update_layout(
             xaxis_title=r"Packing coefficient",
-            yaxis_title=r"Energy, /Arb Units)",
+            yaxis_title=r"Energy, /Arb Units",
         )
         fig.update_traces(
             marker=dict(
