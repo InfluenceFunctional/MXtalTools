@@ -162,7 +162,7 @@ class MXtalBase(BaseData):
     def to_batch(data_list):
         return collate_data_list(data_list)
 
-    def add_graph_attr(self, values: torch.Tensor, name: str):
+    def add_graph_attr(self, values: torch.Tensor, name: str, slice_dict = None, inc_dict=None):
         """
         Attach a per-graph attribute to this Batch so it survives to_data_list().
 
@@ -181,8 +181,15 @@ class MXtalBase(BaseData):
         setattr(self, name, values)
 
         # Tell PyG how to split it back into Data objects
-        self._slice_dict[name] = torch.arange(0, num_graphs + 1, 1, device=self.device)
-        self._inc_dict[name] = torch.zeros(num_graphs, dtype=torch.long, device=self.device)
+        if slice_dict is not None:
+            self._slice_dict[name] = slice_dict
+        else:
+            self._slice_dict[name] = torch.arange(0, num_graphs + 1, 1, device=self.device)
+
+        if inc_dict is not None:
+            self._inc_dict[name] = inc_dict
+        else:
+            self._inc_dict[name] = torch.zeros(num_graphs, dtype=torch.long, device=self.device)
 
         return self
 

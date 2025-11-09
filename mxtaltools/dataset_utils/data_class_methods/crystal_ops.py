@@ -885,8 +885,8 @@ class MolCrystalOps:
                              for ind in range(3)}
             custom_ranges.update(
                 {3: [np.pi/4, 3/2*np.pi],
-                 4: [np.pi / 4, 3 / 2 * np.pi],
-                 5: [np.pi / 4, 3 / 2 * np.pi]
+                 4: [np.pi / 4, 3 / 4 * np.pi],
+                 5: [np.pi / 4, 3 / 4 * np.pi]
                  }
             )
             for ind in range(self.max_z_prime):
@@ -1299,7 +1299,9 @@ class MolCrystalOps:
 
     def reset_sg_info(self, sg_ind):
         if isinstance(sg_ind, int):
-            sg_ind_list = torch.ones_like(self.sg_ind) * sg_ind
+            sg_ind_list = torch.ones_like(self.sg_ind, device=self.device) * sg_ind
+        elif isinstance(sg_ind, list):
+            sg_ind_list = torch.tensor(sg_ind, dtype=torch.long, device=self.device)
         elif torch.is_tensor(sg_ind):
             sg_ind_list = sg_ind * 1
         else:
