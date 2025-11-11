@@ -193,6 +193,24 @@ class MXtalBase(BaseData):
 
         return self
 
+    def add_node_attr(self, values: torch.Tensor, name: str, num_nodes_per_graph):
+        """
+        Attach a per-node attribute to this Batch so it survives to_data_list().
+        """
+        if not self.is_batch:
+            raise TypeError("add_node_attr only works on Batch objects")
+
+        # concat all node tensors already; now define slices
+        setattr(self, name, values)
+
+        self._slice_dict[name] = torch.cumsum(
+            torch.tensor([0] + list(num_nodes_per_graph)), dim=0
+        ).to(torch.long).to(values.device)
+
+        self._inc_dict[name] = torch.zeros(len(num_nodes_per_graph),
+                                           dtype=torch.long, device=values.device)
+
+
     def batch_to_list(self):
         """
         Needed some custom logic to wrap around PyG default to_data_list
@@ -207,7 +225,7 @@ class MXtalBase(BaseData):
         samples_list = batch_to_listify.to_data_list()
         for ind, elem in enumerate(samples_list):
             elem.max_z_prime = zp
-            elem.is_well_defined = is_well_defined[ind]
+            elem.is_well_defined = is_well_defined[ind].unsqueeze(0)
         del batch_to_listify
         return samples_list
 

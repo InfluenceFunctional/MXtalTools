@@ -314,3 +314,9 @@ def silu_energy(dist_dict,
     molwise_silu_energy = scatter(edgewise_potentials, dist_dict['intermolecular_dist_batch'],
                                   reduce='sum', dim_size=num_graphs)
     return molwise_silu_energy
+
+def lj_quadratic_rep(dists, sigma=1.0, eps=1.0):
+    lj = 4*eps*((sigma/dists)**12 - (sigma/dists)**6)
+    # Quadratic wall below sigma
+    rep = 24*eps*((dists - sigma)**2 / sigma**2 - (dists - sigma)/sigma)
+    return torch.where(dists < sigma, rep, lj)

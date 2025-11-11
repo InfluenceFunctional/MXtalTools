@@ -20,6 +20,8 @@ def collate_data_list(data_list, exclude_unit_cell: bool = True, max_z_prime: Op
                     'density_energy',
                     'lj_energy',
                     'bounding_energy',
+                    'es_pot',
+                    'gfn_energy',
                     ]
     if exclude_unit_cell:
         exclude_keys.append('unit_cell_pos')
@@ -43,6 +45,8 @@ def collate_data_list(data_list, exclude_unit_cell: bool = True, max_z_prime: Op
             batch.aunit_orientation = batch.aunit_orientation[:, :3 * batch.max_z_prime]
             batch.aunit_handedness = batch.aunit_handedness[:, :batch.max_z_prime]
             assert batch.aunit_centroid.shape[1] == 3 * batch.max_z_prime, "Batch max z prime must agree with parameterization"
+        if not hasattr(batch, 'symmetry_operators'):
+            batch.reset_sg_info(batch.sg_ind)
 
     return batch
 

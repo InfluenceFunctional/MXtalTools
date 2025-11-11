@@ -95,16 +95,25 @@ class MolCrystalOps:
                         setattr(self, key, torch.stack(vals).sum())
                     else:  # nodewise tensor → concat
                         setattr(self, key, torch.cat(vals, dim=0))
-
-            # setattr(self, 'aunit_batch',
-            #        torch.arange(len(molecule)).repeat_interleave(torch.tensor([m['num_atoms'] for m in molecule])))
-
         else:
             mol_dict = molecule.to_dict()
+            n_graphs, n_nodes = molecule.num_graphs, molecule.num_nodes
+            nodes_per_graph = molecule.num_atoms
+            slice_dict = torch.arange(0, n_graphs + 1, 1, device=molecule.device)
+            inc_dict = torch.zeros(n_graphs, dtype=torch.long, device=molecule.device)
             for key, value in mol_dict.items():
-                setattr(self, key, value)
+                if not torch.is_tensor(value):
+                    value = torch.tensor(value, device=self.device, dtype=torch.long if isinstance(value, int) else torch.float32)
 
-            # setattr(self, 'aunit_batch', torch.zeros(self.num_atoms))
+                if len(value) == n_graphs:
+                    self.add_graph_attr(value, key, slice_dict=slice_dict, inc_dict=inc_dict)
+                elif len(value) == n_nodes:
+                    if key != 'batch':
+                        self.add_node_attr(value, key, num_nodes_per_graph=nodes_per_graph)
+                    else:
+                        setattr(self, key, value)
+                else:
+                    setattr(self, key, value)  # batch and ptr come through here for data batch objects
 
     def box_analysis(self):
         self.T_fc, self.T_cf, self.cell_volume = (
@@ -1307,17 +1316,20 @@ class MolCrystalOps:
         else:
             raise TypeError("sg_ind must be a tensor or an integer")
 
-        self.sg_ind = sg_ind_list
+        self.add_graph_attr(sg_ind_list, 'sg_ind')
 
         # reset symmetries will always be standard
-        self.nonstandard_symmetry[:] = False
+        self.add_graph_attr(torch.zeros(self.num_graphs, dtype=torch.bool, device=self.device),
+                            'nonstandard_symmetry')
 
         self.symmetry_operators = [np.stack(SYM_OPS[int(ind)]) for ind in self.sg_ind]
 
-        self.sym_mult = torch.tensor(
+        sym_mult = torch.tensor(
             [len(sym_ops) for sym_ops in self.symmetry_operators],
             dtype=torch.long, device=self.device
         )
+
+        self.add_graph_attr(sym_mult, 'sym_mult')
 
     def canonicalize_zp_aunits(self):
         if self.is_batch:
