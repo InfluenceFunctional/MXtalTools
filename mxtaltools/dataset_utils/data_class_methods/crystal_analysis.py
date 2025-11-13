@@ -4,7 +4,7 @@ import torch
 
 from mxtaltools.analysis.crystal_rdf import crystal_rdf
 from mxtaltools.analysis.vdw_analysis import get_intermolecular_dists_dict, lj_analysis, electrostatic_analysis, \
-    buckingham_energy, silu_energy, vdW_analysis
+    buckingham_energy, silu_energy, vdW_analysis, qlj_analysis
 from mxtaltools.common.utils import log_rescale_positive
 from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.dataset_utils.utils import collate_data_list
@@ -60,6 +60,7 @@ class MolCrystalAnalysis:
     def _init_computes(self):
         if not hasattr(self, 'computes'):
             self.computes = {'lj': self.compute_LJ_energy,
+                             'qlj': self.compute_qLJ_energy,
                              'es': self.compute_ES_energy,
                              'bh': self.compute_buckingham_energy,
                              'silu': self.compute_silu_energy,
@@ -74,6 +75,20 @@ class MolCrystalAnalysis:
         if self.is_batch:
             molwise_lj_pot \
                 = lj_analysis(self.vdw_radii_tensor,
+                              self.edges_dict,
+                              self.num_graphs,
+                              )
+        else:
+            raise NotImplementedError("LJ energies not implemented for single crystals")
+
+        return molwise_lj_pot
+
+    def compute_qLJ_energy(self, **kwargs):
+        self._pre_compute_checks()
+
+        if self.is_batch:
+            molwise_lj_pot \
+                = qlj_analysis(self.vdw_radii_tensor,
                               self.edges_dict,
                               self.num_graphs,
                               )

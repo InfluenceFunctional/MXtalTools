@@ -95,7 +95,7 @@ class MolCrystalOps:
                         setattr(self, key, torch.stack(vals).sum())
                     else:  # nodewise tensor → concat
                         setattr(self, key, torch.cat(vals, dim=0))
-        else:
+        elif molecule.is_batch:
             mol_dict = molecule.to_dict()
             n_graphs, n_nodes = molecule.num_graphs, molecule.num_nodes
             nodes_per_graph = molecule.num_atoms
@@ -114,6 +114,11 @@ class MolCrystalOps:
                         setattr(self, key, value)
                 else:
                     setattr(self, key, value)  # batch and ptr come through here for data batch objects
+        elif not self.is_batch:
+            mol_dict = molecule.to_dict()
+            for key, value in mol_dict.items():
+                setattr(self, key, value)
+
 
     def box_analysis(self):
         self.T_fc, self.T_cf, self.cell_volume = (

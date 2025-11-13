@@ -8,62 +8,6 @@ from torch_scatter import scatter
 from mxtaltools.models.functions.radial_graph import radius, build_radial_graph
 
 
-def lj_analysis(vdw_radii: torch.Tensor,
-                dist_dict: dict,
-                num_graphs: int,
-                ):
-    """
-    new version of the vdw_overlap function for analysis of intermolecular contacts
-    """
-    batch = dist_dict['intermolecular_dist_batch']
-    edgewise_lj_pot = compute_lj_edgewise(dist_dict, vdw_radii)
-    molwise_lj_pot = scatter(edgewise_lj_pot, batch, reduce='sum', dim_size=num_graphs)
-
-    return molwise_lj_pot
-
-def vdW_analysis(vdw_radii: torch.Tensor,
-                dist_dict: dict,
-                num_graphs: int,
-                ):
-    """
-    new version of the vdw_overlap function for analysis of intermolecular contacts
-    """
-    batch = dist_dict['intermolecular_dist_batch']
-    vdw_overlap = compute_vdW_overlap(dist_dict, vdw_radii)
-    molwise_vdw_overlap = scatter(vdw_overlap, batch, reduce='sum', dim_size=num_graphs)
-
-    return molwise_vdw_overlap
-
-
-
-
-def compute_lj_edgewise(dist_dict, vdw_radii):
-    dists = dist_dict['intermolecular_dist']
-    elements = dist_dict['intermolecular_dist_atoms']
-
-    atom_radii = [vdw_radii[elements[0]], vdw_radii[elements[1]]]
-    radii_sums = atom_radii[0] + atom_radii[1]
-
-    # uniform lennard jones potential
-    sigma_r6 = torch.pow(radii_sums / dists, 6)
-    sigma_r12 = torch.pow(sigma_r6, 2)
-    lj_pot = torch.nan_to_num(
-        4 * 1 * (sigma_r12 - sigma_r6),
-        nan=0.0, posinf=1e20, neginf=-1e-20
-    )
-    return lj_pot
-
-def compute_vdW_overlap(dist_dict, vdw_radii):
-    dists = dist_dict['intermolecular_dist']
-    elements = dist_dict['intermolecular_dist_atoms']
-    # only punish positives (meaning overlaps)
-    atom_radii = [vdw_radii[elements[0]], vdw_radii[elements[1]]]
-    radii_sums = atom_radii[0] + atom_radii[1]
-
-    overlap = F.relu(radii_sums - dists)
-    return overlap
-
-
 def old_compute_num_h_bonds(supercell_data, atom_acceptor_ind, atom_donor_ind, i):
     """
     compute the number of hydrogen bonds, up to a loose range (3.3 angstroms), and non-directionally
@@ -315,8 +259,86 @@ def silu_energy(dist_dict,
                                   reduce='sum', dim_size=num_graphs)
     return molwise_silu_energy
 
-def lj_quadratic_rep(dists, sigma=1.0, eps=1.0):
-    lj = 4*eps*((sigma/dists)**12 - (sigma/dists)**6)
+
+def quadratic_edgewise_lj_energy(vdw_radii: torch.Tensor,
+                                 dist_dict: dict,
+                                 ):
+    lj = compute_lj_edgewise(dist_dict, vdw_radii)
+    dists = dist_dict['intermolecular_dist']
+    elements = dist_dict['intermolecular_dist_atoms']
+    atom_radii = [vdw_radii[elements[0]], vdw_radii[elements[1]]]
+    radii_sums = atom_radii[0] + atom_radii[1]
+
     # Quadratic wall below sigma
-    rep = 24*eps*((dists - sigma)**2 / sigma**2 - (dists - sigma)/sigma)
-    return torch.where(dists < sigma, rep, lj)
+    rep = 24 * 1 * ((dists - radii_sums) ** 2 / radii_sums ** 2 - (dists - radii_sums) / radii_sums)
+    return torch.where(dists < radii_sums, rep, lj)
+
+
+def qlj_analysis(vdw_radii: torch.Tensor,
+                 dist_dict: dict,
+                 num_graphs: int,
+                 ):
+    """
+    new version of the vdw_overlap function for analysis of intermolecular contacts
+    """
+    batch = dist_dict['intermolecular_dist_batch']
+    edgewise_lj_pot = quadratic_edgewise_lj_energy(vdw_radii, dist_dict)
+    molwise_lj_pot = scatter(edgewise_lj_pot, batch, reduce='sum', dim_size=num_graphs)
+
+    return molwise_lj_pot
+
+
+def lj_analysis(vdw_radii: torch.Tensor,
+                dist_dict: dict,
+                num_graphs: int,
+                ):
+    """
+    new version of the vdw_overlap function for analysis of intermolecular contacts
+    """
+    batch = dist_dict['intermolecular_dist_batch']
+    edgewise_lj_pot = compute_lj_edgewise(dist_dict, vdw_radii)
+    molwise_lj_pot = scatter(edgewise_lj_pot, batch, reduce='sum', dim_size=num_graphs)
+
+    return molwise_lj_pot
+
+
+def vdW_analysis(vdw_radii: torch.Tensor,
+                 dist_dict: dict,
+                 num_graphs: int,
+                 ):
+    """
+    new version of the vdw_overlap function for analysis of intermolecular contacts
+    """
+    batch = dist_dict['intermolecular_dist_batch']
+    vdw_overlap = compute_vdW_overlap(dist_dict, vdw_radii)
+    molwise_vdw_overlap = scatter(vdw_overlap, batch, reduce='sum', dim_size=num_graphs)
+
+    return molwise_vdw_overlap
+
+
+def compute_lj_edgewise(dist_dict, vdw_radii):
+    dists = dist_dict['intermolecular_dist']
+    elements = dist_dict['intermolecular_dist_atoms']
+
+    atom_radii = [vdw_radii[elements[0]], vdw_radii[elements[1]]]
+    radii_sums = atom_radii[0] + atom_radii[1]
+
+    # uniform lennard jones potential
+    sigma_r6 = torch.pow(radii_sums / dists, 6)
+    sigma_r12 = torch.pow(sigma_r6, 2)
+    lj_pot = torch.nan_to_num(
+        4 * 1 * (sigma_r12 - sigma_r6),
+        nan=0.0, posinf=1e20, neginf=-1e-20
+    )
+    return lj_pot
+
+
+def compute_vdW_overlap(dist_dict, vdw_radii):
+    dists = dist_dict['intermolecular_dist']
+    elements = dist_dict['intermolecular_dist_atoms']
+    # only punish positives (meaning overlaps)
+    atom_radii = [vdw_radii[elements[0]], vdw_radii[elements[1]]]
+    radii_sums = atom_radii[0] + atom_radii[1]
+
+    overlap = F.relu(radii_sums - dists)
+    return overlap

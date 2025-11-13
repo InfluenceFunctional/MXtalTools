@@ -5,10 +5,10 @@ import rdkit.Chem.AllChem as AllChem
 import torch
 from rdkit import Chem as Chem
 from rdkit import rdBase
-from rdkit.Chem import Descriptors, rdMolDescriptors
+from rdkit.Chem import rdMolDescriptors
 from scipy.spatial.distance import cdist
 
-from mxtaltools.common.geometry_utils import compute_principal_axes_np, coor_trans_matrix_np
+from mxtaltools.common.geometry_utils import coor_trans_matrix_np
 from mxtaltools.common.utils import chunkify
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ELECTRONEGATIVITY, PERIOD, GROUP, VDW_RADII, ATOMIC_SYMBOLS, \
@@ -115,7 +115,8 @@ def extract_crystal_data(identifier, crystal, unit_cell):
     assert len(crystal_dict['unit_cell_coordinates']) == int(crystal_dict['symmetry_multiplicity'] * crystal_dict[
         'z_prime']), "crystal multiplicity error in unit cell packing"
 
-    if crystal_dict['space_group_number'] != 0:  # sometimes the sg number is broken, but if not, assign a consistent canonical SG symbol
+    if crystal_dict[
+        'space_group_number'] != 0:  # sometimes the sg number is broken, but if not, assign a consistent canonical SG symbol
         crystal_dict['space_group_symbol'] = SPACE_GROUPS[crystal_dict['space_group_number']]
     else:  # in which case, try reverse assigning the number, given the space group
         crystal_dict['space_group_number'] = sg_numbers[crystal_dict['space group symbol']]
@@ -238,7 +239,9 @@ def get_partial_charges(rd_mol):
 def crystal_filter(crystal,
                    max_heavy_atoms=1000,
                    protonation_state='deprotonated',
-                   max_atomic_number=1000):
+                   max_atomic_number=1000,
+                   max_z_prime: int = 100,
+                   ):
     """
     apply checks to see if this is a valid crystal to be featurized and put in the dataset
     disorder
@@ -254,52 +257,53 @@ def crystal_filter(crystal,
     failed packing
     failed to be recognized by RDKit
     """
-    passed_crystal_checks = True
-    passed_molecule_checks = True
     # crystal checks
     if crystal.has_disorder:
-        return False, None, None
+        return False, None, None, "Disordered"
     if crystal.molecule.is_polymeric:
-        return False, None, None
+        return False, None, None, "Polymer"
     if len(crystal.molecule.atoms) == 0:
-        return False, None, None
+        return False, None, None, "No atoms"
     if not crystal.molecule.all_atoms_have_sites:
-        return False, None, None
+        return False, None, None, "Missing sites"
     # TODO note the CSD convention for z_prime is such that it doesn't count cocrystals as multiple molecules
     # therefore the below two filters always kill cocrystals, which show up with more components than z_prime
     # consider relaxing / reprocessing in the future. Though we must be careful
-    if len(crystal.asymmetric_unit_molecule.components) != crystal.z_prime:  # can relax this if we build our own reference cells
-        return False, None, None
-    if len(crystal.molecule.components) != crystal.z_prime:
-        return False, None, None
+
+
     if crystal.z_prime < 1:
-        return False, None, None
+        return False, None, None, "Z' < 1"
+    if crystal.z_prime > max_z_prime:
+        return False, None, None, "Z' > max_z_prime"
     if int(crystal.z_prime) != crystal.z_prime:  # integer z-prime only
-        return False, None, None
+        return False, None, None, "Z' not integer"
     # if int(crystal.z_prime) != 1: # Z'=1 only
     #     return False, None, None
     if len(crystal.molecule.components) == 0:
-        return False, None, None
+        return False, None, None, "No components"
     if any([len(component.atoms) == 0 for component in crystal.molecule.components]):
-        return False, None, None
+        return False, None, None, "Not all components have atoms"
     if len(crystal.asymmetric_unit_molecule.heavy_atoms) != len(
             crystal.molecule.heavy_atoms):  # could make this done Z'-by-Z'
-        return False, None, None
-
+        return False, None, None, "Aunit and mol heavy atoms disagree"
+    if len(crystal.molecule.components) != crystal.z_prime:
+        return False, None, None, "Z' != mol components"
+    if len(crystal.asymmetric_unit_molecule.components) != crystal.z_prime:  # can relax this if we build our own reference cells
+        return False, None, None, "Z' != components"  # todo this flags a huge number of failures - re-check it
 
     try:  # some entries have invalid SG information, and this will fail
         _ = crystal.spacegroup_number_and_setting
     except RuntimeError:
-        return False, None, None
+        return False, None, None, "Invalid SG"
 
-    try: # sometimes packing fails
+    try:  # sometimes packing fails
         unit_cell = crystal.packing(box_dimensions=((0, 0, 0), (1, 1, 1)), inclusion='CentroidIncluded')
     except RuntimeError:
-        return False, None, None
+        return False, None, None, "Packing failed"
 
     # crystal has to have the right number of molecules
     if len(unit_cell.components) != int(len(crystal.symmetry_operators) * crystal.z_prime):
-        return False, None, None
+        return False, None, None, "Components != Z"
 
     for zp in range(int(crystal.z_prime)):  # confirm unit cell symmetry images have each the right number of atoms
         l1 = len(crystal.molecule.components[zp].heavy_atoms)
@@ -307,7 +311,7 @@ def crystal_filter(crystal,
         for z in range(mult):
             l2 = len(unit_cell.components[zp * mult + z].heavy_atoms)
             if l1 != l2:
-                return False, None, None
+                return False, None, None, "Symmetry images unequal sizes"
 
     # molecule check via RDKit. If RDKit doesn't see it as a real molecule, don't accept it to the dataset.
     rd_mols = []
@@ -316,53 +320,39 @@ def crystal_filter(crystal,
                                     sanitize=True,
                                     removeHs=True if protonation_state == 'deprotonated' else False)
         if mol is None:
-            passed_molecule_checks = False
+            return False, None, None, "Failed RDKit embedding"
         else:
             try:
                 # number of heavy atoms
                 num_heavy_atoms = mol.GetNumHeavyAtoms()
                 if num_heavy_atoms > max_heavy_atoms:
-                    passed_molecule_checks = False
-                    continue
+                    return False, None, None, "Too many heavy atoms"
 
                 # largest atomic number
                 atomic_numbers = np.asarray([atom.GetAtomicNum() for atom in mol.GetAtoms()])
                 if np.max(atomic_numbers) > max_atomic_number:
-                    passed_molecule_checks = False
-                    continue
+                    return False, None, None, "Too many atoms"
 
-                if protonation_state == 'protonated':
+                if protonation_state == 'protonated':  # this block may still need work
                     mol_formula = rdMolDescriptors.CalcMolFormula(mol)
 
                     # correct number of hydrogens
-                    H_index = mol_formula.index('H')
-                    inds = []
-                    for ind in range(1, 3 + 1):
-                        try:
-                            value = int(mol_formula[ind + H_index])
-                            inds.append(mol_formula[ind + H_index])
-                        except ValueError:
-                            break
+                    if 'H' in mol_formula:
+                        H_count = mol.GetNumAtoms() - mol.GetNumHeavyAtoms()
 
-                    if len(inds) == 0:
-                        passed_molecule_checks = False  # zero or one hydrogens
-                        continue
+                        num_expected_hydrogens = H_count
+                        num_actual_hydrogens = np.sum(atomic_numbers == 1)
 
-                    num_expected_hydrogens = int(''.join(inds))
-                    num_actual_hydrogens = np.sum(atomic_numbers == 1)
+                        if not num_expected_hydrogens == num_actual_hydrogens:
+                            return False, None, None, "Wrong number of hydrogens"
 
-                    if not num_expected_hydrogens == num_actual_hydrogens:
-                        passed_molecule_checks = False
-                        continue
+                if protonation_state == 'deprotonated':
+                    rd_mols.append(Chem.RemoveAllHs(mol))
+                else:
+                    rd_mols.append(mol)
 
-                if passed_molecule_checks:
-                    if protonation_state == 'deprotonated':
-                        rd_mols.append(Chem.RemoveAllHs(mol))
-                    else:
-                        rd_mols.append(mol)
-
-            except:
-                passed_molecule_checks = False
+            except Exception as e:
+                return False, None, None, f"Unknown RDKit error {str(e)}"
 
     # do this last as it's expensive
     for component in crystal.molecule.components:  # check for overlapping atoms or unconnected fragments
@@ -372,9 +362,9 @@ def crystal_filter(crystal,
         min_interatomic_distance = distmat.min(1)
         # if any atoms are too close, or have no neighbors, in a very generous range (3 angstroms and 0.9 angstroms)
         if any(min_interatomic_distance > 3) or any(min_interatomic_distance < 0.9):
-            return False, None, None
+            return False, None, None, "Overlapping molecules"
 
-    return all([passed_molecule_checks, passed_crystal_checks]), unit_cell, rd_mols
+    return True, unit_cell, rd_mols, None
 
 
 def chunkify_path_list(cifs_list, n_chunks, do_shuffle=True):
@@ -443,7 +433,7 @@ def custom_molecule_partial_charges(types, coords):
         conf.SetAtomPosition(i, (x, y, z))
 
     mol.AddConformer(conf)
-    Chem.SanitizeMol(mol) # we don't have to add implicit Hs as this whole workflow is protonated
+    Chem.SanitizeMol(mol)  # we don't have to add implicit Hs as this whole workflow is protonated
 
     return get_partial_charges(mol)
 
@@ -471,4 +461,3 @@ def get_qm9_properties(text):
         "heat_capacity_STP": float(props[15]),
     }
     return molecule_dict, props
-
