@@ -9,12 +9,13 @@ from torch_geometric.data import DataLoader, Batch
 from torch_geometric.loader.dataloader import DataLoader
 
 
-def collate_data_list(data_list, exclude_unit_cell: bool = True, max_z_prime: Optional[int] = None):
+def collate_data_list(data_list, exclude_unit_cell: bool = True,
+                      max_z_prime: Optional[int] = None, exclude_keys: Optional[list] = None):
     if not isinstance(data_list, list):
         data_list = [data_list]
 
-    # Optionally exclude known keys
-    exclude_keys = ['edges_dict',
+    # Optionally exclude known keys  # todo this really needs to be fixed up
+    exclude_keys_i = ['edges_dict',
                     'niggli_energy',
                     'core_energy',
                     'density_energy',
@@ -23,11 +24,14 @@ def collate_data_list(data_list, exclude_unit_cell: bool = True, max_z_prime: Op
                     'es_pot',
                     'gfn_energy',
                     ]
+    if exclude_keys is not None:
+        exclude_keys_i.extend(exclude_keys)
+
     if exclude_unit_cell:
-        exclude_keys.append('unit_cell_pos')
+        exclude_keys_i.append('unit_cell_pos')
 
     batch = Batch.from_data_list(data_list,
-                                exclude_keys=list(exclude_keys),
+                                exclude_keys=list(exclude_keys_i),
                                 )
 
     # if hasattr(batch, 'max_z_prime'):

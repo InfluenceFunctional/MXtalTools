@@ -102,10 +102,15 @@ class MolCrystalOps:
             slice_dict = torch.arange(0, n_graphs + 1, 1, device=molecule.device)
             inc_dict = torch.zeros(n_graphs, dtype=torch.long, device=molecule.device)
             for key, value in mol_dict.items():
+                if isinstance(value, dict) or isinstance(value, torch.nn.Module):
+                    continue
+
                 if not torch.is_tensor(value):
                     value = torch.tensor(value, device=self.device, dtype=torch.long if isinstance(value, int) else torch.float32)
 
-                if len(value) == n_graphs:
+                if len(value.size()) == 0:  # batch variables
+                    setattr(self, key, value)
+                elif len(value) == n_graphs:
                     self.add_graph_attr(value, key, slice_dict=slice_dict, inc_dict=inc_dict)
                 elif len(value) == n_nodes:
                     if key != 'batch':
