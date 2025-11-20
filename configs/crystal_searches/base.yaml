@@ -1,17 +1,17 @@
 device: cuda
 #mol_path: D:\crystal_datasets\mini_new_csd.pt
-mol_path: D:\crystal_datasets\nicotinamide.pt
+mol_path: D:\crystal_datasets\protonated_nicoam\protonated_nonstandard_nicotinamide.pkl
 #mol_path: D:\crystal_datasets\train_qm9.pt
 out_dir: D:\crystal_datasets\opt_outputs
-run_name: test
+run_name: nic_14_zp1
 
 mol_seed: 0
 opt_seed: 0
 sampling_mode: all # 'all' or 'random'
 mols_to_sample: 1
-num_samples: 1000 # per mol, per space group
+num_samples: 10000 # per mol, per space group
 
-sgs_to_search: [2]
+sgs_to_search: [14]
 zp_to_search: [1]
 
 batch_size: 1000
@@ -41,7 +41,7 @@ init_target_cp: std  # float, null or 'std' target packing coefficient for initi
 #        supercell_size: Optional[int] = 10,
 #        anneal_lr: Optional[bool] = False,
 opt:
-  - optim_target: 'silu' # lj silu ellipsoid classification_score rdf_score
+  - optim_target: 'silu' # lj qlj silu ellipsoid classification_score rdf_score
     enforce_niggli: true
     compression_factor: 1.0
     init_lr: 0.001

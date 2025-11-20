@@ -2,13 +2,14 @@ import warnings
 
 import numpy as np
 import torch
+from rdkit import Chem
 from torch import Tensor
 from torch_geometric.typing import OptTensor
 from torch_scatter import scatter
 
 from mxtaltools.common.geometry_utils import compute_Ip_handedness, rotvec2rotmat, batch_molecule_principal_axes_torch, \
     extract_rotmat, apply_rotation_to_batch, rotmat2rotvec, \
-    fractional_transform, center_mol_batch
+    fractional_transform, center_batch
 from mxtaltools.common.utils import block_repeat_interleave
 
 
@@ -408,7 +409,11 @@ def parameterize_crystal_batch(crystal_batch,
     well_defined_asym_unit_list = []
     for i, (T_cf, sg_ind) in enumerate(zip(crystal_batch.T_cf, crystal_batch.sg_ind)):
         unit_cell_coords = crystal_batch.unit_cell_pos[crystal_batch.unit_cell_batch == i]
-        unit_cell_coords = unit_cell_coords.reshape(crystal_batch.sym_mult[i], crystal_batch.num_atoms[i], 3)
+        unit_cell_atom_types = crystal_batch.z[crystal_batch.batch == i].repeat(crystal_batch.sym_mult[i])
+        # filter for heavy only
+        num_heavy_atoms = sum(crystal_batch.z[crystal_batch.batch == i] > 1)
+        heavy_ucell_coords = unit_cell_coords[unit_cell_atom_types > 1]
+        heavy_ucell_coords = heavy_ucell_coords.reshape(crystal_batch.sym_mult[i], num_heavy_atoms, 3)
         (canonical_conformer_index,
          centroids_fractional,
          well_defined_asym_unit) = (
@@ -416,8 +421,9 @@ def parameterize_crystal_batch(crystal_batch,
                 T_cf,
                 asym_unit_dict,
                 sg_ind,
-                unit_cell_coords))
+                heavy_ucell_coords))
 
+        unit_cell_coords = unit_cell_coords.reshape(crystal_batch.sym_mult[i], crystal_batch.num_atoms[i], 3)
         canonical_conformer_coords_list.append(unit_cell_coords[canonical_conformer_index[0]])
         mol_position_list.append(centroids_fractional[canonical_conformer_index[0]])
         well_defined_asym_unit_list.extend([well_defined_asym_unit])
@@ -449,7 +455,9 @@ def extract_aunit_orientation(mol_batch,
         mol_batch.pos,
         mol_batch.batch,
         mol_batch.num_graphs,
-        mol_batch.num_atoms
+        mol_batch.num_atoms,
+        heavy_atoms_only=True,
+        atom_types = mol_batch.z
     )
 
     handedness_list = compute_Ip_handedness(Ip).long()
@@ -555,7 +563,9 @@ def align_mol_batch_to_standard_axes(mol_batch, handedness=None, return_rot=Fals
         mol_batch.pos,
         mol_batch.batch,
         mol_batch.num_graphs,
-        mol_batch.num_atoms
+        mol_batch.num_atoms,
+        heavy_atoms_only=True,
+        atom_types=mol_batch.z
     )
 
     eye = torch.tile(torch.eye(3,
@@ -642,10 +652,13 @@ def aunit2ucell(mol_batch):
     centroids_f_in_cell = ucell_centroids_f - torch.floor(ucell_centroids_f)
 
     # subtract centroids and apply point symmetry to the molecule coordinates in fractional frame
-    centered_coords_c = center_mol_batch(unit_cell_coords_c,
-                                         unit_cell_batch,
-                                         mol_batch.num_graphs,
-                                         atoms_per_unit_cell)
+    centered_coords_c = center_batch(unit_cell_coords_c,
+                                     unit_cell_batch,
+                                     mol_batch.num_graphs,
+                                     atoms_per_unit_cell,
+                                     center_on_heavy_atoms=True,
+                                     atom_types=mol_batch.z[ucell_node2mol_node])
+
     centered_coords_f = fractional_transform(centered_coords_c,
                                              cf_transform_list[unit_cell_batch])
     rot_coords_f = torch.einsum('nj,nij->ni', (centered_coords_f, molwise_sym_ops[ucell_node2ucell_mol, :3, :3]))
@@ -750,4 +763,49 @@ def canonicalize_aunit_order(batch):
 
     aunit_handedness = torch.gather(batch.aunit_handedness, dim=1, index=canonical_order)
     return aunit_centroid, aunit_orientation, aunit_handedness
+
+
+def protonate_mol(atom_types, coords):
+    """
+    atom_types : list/array of atomic numbers
+    coords     : (N,3) float array in Å
+    returns: (new_atom_types, new_coords) with added hydrogens
+    """
+
+    # 1. Build an RDKit mol without sanitization
+    mol = Chem.RWMol()
+    for Z in atom_types:
+        mol.AddAtom(Chem.Atom(int(Z)))
+
+    # 2. Add a conformer with your coords
+    conf = Chem.Conformer(len(atom_types))
+    for i, (x, y, z) in enumerate(coords):
+        conf.SetAtomPosition(i, (float(x), float(y), float(z)))
+    mol = mol.GetMol()
+    Chem.SanitizeMol(mol, sanitizeOps=Chem.SanitizeFlags.SANITIZE_ADJUSTHS)
+    mol.AddConformer(conf, assignId=True)
+
+    # 3. Add hydrogens (fast, valence-based)
+    molH = Chem.AddHs(mol, addCoords=True)
+
+    # If your input had 3D coordinates, this preserves heavy atom positions
+    # and places hydrogens using RDKit's built-in valence geometry rules.
+    # No re-embedding needed for most molecules.
+
+    # 4. Extract arrays back out
+    confH = molH.GetConformer()
+    n = molH.GetNumAtoms()
+
+    new_coords = np.array([list(confH.GetAtomPosition(i)) for i in range(n)], dtype=float)
+    new_atom_types = np.array([molH.GetAtomWithIdx(i).GetAtomicNum() for i in range(n)], dtype=int)
+
+    return new_atom_types, new_coords
+
+    """
+    
+    m1 = Atoms(positions=coords, numbers=atom_types)
+    m2 = Atoms(positions=new_coords, numbers=new_atom_types)
+    view([m1, m2])
+    
+    """
 

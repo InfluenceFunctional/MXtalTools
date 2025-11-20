@@ -1,14 +1,17 @@
 from typing import Optional
+
 import torch
 from scipy.spatial.transform import Rotation
+from torch_scatter import scatter
 
 from mxtaltools.common.geometry_utils import batch_compute_mol_radius, compute_mol_radius, batch_compute_mol_mass, \
-    compute_mol_mass, batch_compute_molecule_volume, center_mol_batch, apply_rotation_to_batch, rotvec2rotmat, \
+    compute_mol_mass, batch_compute_molecule_volume, center_batch, apply_rotation_to_batch, rotvec2rotmat, \
     rotmat2rotvec, batch_molecule_principal_axes_torch
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII
 from mxtaltools.crystal_building.utils import align_mol_batch_to_standard_axes, canonicalize_rotvec
 from mxtaltools.dataset_utils.mol_building import smiles2conformer
 from mxtaltools.dataset_utils.utils import collate_data_list
+from mxtaltools.mlip_interfaces.uma_utils import compute_molecule_uma_on_mxt_batch
 # from mxtaltools.mlip_interfaces.uma_utils import compute_molecule_uma_on_mxt_batch
 from mxtaltools.models.functions.radial_graph import build_radial_graph
 
@@ -70,11 +73,19 @@ class MolDataMethods:
                                              )
         self.edge_index = self.edges_dict['edge_index']
 
-    def radius_calculation(self):
+    def radius_calculation(self, heavy_atoms_only: bool = True):
         if self.is_batch:
-            return batch_compute_mol_radius(self.pos, self.batch, self.num_graphs, self.num_atoms)
+            if heavy_atoms_only:
+                heavies_per_graph = scatter(self.z > 1, self.batch,
+                                            reduce='sum', dim=0, dim_size = self.num_graphs).long()
+                return batch_compute_mol_radius(self.pos[self.z>1],
+                                                self.batch[self.z>1],
+                                                self.num_graphs,
+                                                heavies_per_graph)
+            else:
+                return batch_compute_mol_radius(self.pos, self.batch, self.num_graphs, self.num_atoms)
         else:
-            return compute_mol_radius(self.pos)
+            return compute_mol_radius(self.pos[self.z > 1])
 
     def mass_calculation(self):
         masses_tensor = torch.tensor(list(ATOM_WEIGHTS.values()), device=self.z.device, dtype=torch.float32)
@@ -102,9 +113,14 @@ class MolDataMethods:
                 1,
                 vdw_radii_tensor)[0]
 
-    def recenter_molecules(self):
+    def recenter_molecules(self, center_on_heavy_atoms=True):
         if self.is_batch:
-            self.pos = center_mol_batch(self.pos, self.batch, self.num_graphs, self.num_atoms)
+            self.pos = center_batch(self.pos,
+                                    self.batch,
+                                    self.num_graphs,
+                                    self.num_atoms,
+                                    center_on_heavy_atoms,
+                                    self.z)
         else:
             self.pos -= self.pos.mean(0)
 
@@ -137,12 +153,12 @@ class MolDataMethods:
         if self.is_batch:
             # always center the molecules
             self.recenter_molecules()
-            if mode == 'standardized' or mode=='std' or mode=='standard':
+            if mode == 'standardized' or mode == 'std' or mode == 'standard':
                 mol_batch, std_rotation = align_mol_batch_to_standard_axes(self,
-                                                             handedness=target_handedness,
+                                                                           handedness=target_handedness,
                                                                            return_rot=True)
                 self.pos = mol_batch.pos
-                applied_rotation = std_rotation#.permute(0, 2, 1)  # different basis, unfortunately
+                applied_rotation = std_rotation  # .permute(0, 2, 1)  # different basis, unfortunately
             elif mode == 'random':  # technically given the below we can do any applied rotation
                 if override_random_rotations is not None:
                     random_rotations = override_random_rotations
@@ -214,16 +230,18 @@ class MolDataMethods:
             self.batch,
             self.num_graphs,
             self.num_atoms,
+            heavy_atoms_only=True,
+            atom_types=self.z
         )
 
         return principal_axes, principal_moments
 
-    # def compute_molecule_uma(self,
-    #                         predictor,
-    #                         ):
-    #     if self.is_batch:
-    #         return compute_molecule_uma_on_mxt_batch(self,
-    #                                         predictor)
-    #     else:
-    #         return compute_molecule_uma_on_mxt_batch(collate_data_list(self),
-    #                                         predictor)
+    def compute_molecule_uma(self,
+                            predictor,
+                            ):
+        if self.is_batch:
+            return compute_molecule_uma_on_mxt_batch(self,
+                                            predictor)
+        else:
+            return compute_molecule_uma_on_mxt_batch(collate_data_list(self),
+                                            predictor)

@@ -409,6 +409,8 @@ def get_mol_embedding_for_proxy(crystal_batch,
             crystal_batch.batch,
             crystal_batch.num_graphs,
             crystal_batch.num_atoms,
+            heavy_atoms_only=True,
+            atom_types=crystal_batch.z
         )
 
         s_embedding = s_embedding_i / ipm_means[None, :]
@@ -420,6 +422,8 @@ def get_mol_embedding_for_proxy(crystal_batch,
             crystal_batch.batch,
             crystal_batch.num_graphs,
             crystal_batch.num_atoms,
+            heavy_atoms_only=True,
+            atom_types=crystal_batch.z
         )
         v_embedding = torch.zeros_like(Ip)
 

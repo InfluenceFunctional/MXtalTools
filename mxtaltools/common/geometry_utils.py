@@ -210,7 +210,8 @@ def batch_molecule_principal_axes_torch(coords_i: torch.FloatTensor,
                                         batch: torch.LongTensor,
                                         num_graphs: int,
                                         nodes_per_graph: torch.LongTensor,
-                                        skip_centring: bool = False):
+                                        heavy_atoms_only: bool = True,
+                                        atom_types: Optional[torch.LongTensor] = None,):
     """
     Parallel computation of principal inertial axes from a list of coordinate lists.
 
@@ -226,15 +227,19 @@ def batch_molecule_principal_axes_torch(coords_i: torch.FloatTensor,
     I : list(torch.tensor(3,3))
     """
 
-    if not skip_centring:
-        coords = center_mol_batch(coords_i, batch, num_graphs, nodes_per_graph)
-    else:
-        coords = coords_i
+    coords = center_batch(coords_i, batch, num_graphs, nodes_per_graph,
+                          center_on_heavy_atoms=heavy_atoms_only, atom_types=atom_types)
 
-    Ip, Ipm_fin, I = scatter_compute_Ip(coords, batch)
+    if heavy_atoms_only:
+        mask = atom_types > 1
+        Ip, Ipm_fin, I = scatter_compute_Ip(coords[mask], batch[mask])
+        direction = batch_get_furthest_node_vector(coords[mask], batch[mask], num_graphs)
+
+    else:
+        Ip, Ipm_fin, I = scatter_compute_Ip(coords, batch)
+        direction = batch_get_furthest_node_vector(coords, batch, num_graphs)
 
     # cardinal direction is vector from CoM to the farthest atom
-    direction = batch_get_furthest_node_vector(coords, batch, num_graphs)
     normed_direction = direction / torch.linalg.norm(direction, dim=1)[:, None]
     overlaps, signs = get_overlaps(Ip, normed_direction)
     Ip_fin = correct_Ip_directions(Ip, overlaps, signs)  # fails for mirror planes, on top of symmetric and spherical tops
@@ -604,11 +609,13 @@ def scatter_compute_Ip(all_coords, batch,
 
     try:
         Ipm_c, Ip_c = torch.linalg.eigh(inertial_tensor)
-    except RuntimeError:
+    except RuntimeError as e:
         if 'cuda' in str(inertial_tensor.device):
             Ipm_c, Ip_c = torch.linalg.eigh(inertial_tensor.cpu())
             Ipm_c = Ipm_c.to('cuda')
             Ip_c = Ip_c.to('cuda')
+        else:
+            assert False, "Ipm error"
     Ipms, Ip_o = torch.real(Ipm_c), torch.real(Ip_c)
 
     #Ip_o, Ipms, _ = torch.linalg.svd(inertial_tensor)  # superior numerical stability, yet equivalent for symmetric positive semi-definite
@@ -1487,7 +1494,8 @@ def compute_mol_radius(coords: torch.FloatTensor) -> Tensor:
 def batch_compute_mol_radius(coords: torch.FloatTensor,
                              batch: torch.LongTensor,
                              num_graphs: int,
-                             nodes_per_graph: torch.LongTensor) -> Tensor:
+                             nodes_per_graph: torch.LongTensor,
+                             ) -> Tensor:
     """
     compute centroid for each molecule
     then the distance of all atoms to the centroid
@@ -1505,12 +1513,18 @@ def get_batch_centroids(coords: torch.FloatTensor,
     return scatter(coords, batch, dim=0, dim_size=num_graphs, reduce='mean')
 
 
-def center_mol_batch(coords: torch.FloatTensor,
-                     batch: torch.LongTensor,
-                     num_graphs: int,
-                     nodes_per_graph: torch.LongTensor,
-                     ) -> Tensor:
-    centroids = get_batch_centroids(coords, batch, num_graphs)
+def center_batch(coords: torch.FloatTensor,
+                 batch: torch.LongTensor,
+                 num_graphs: int,
+                 nodes_per_graph: torch.LongTensor,
+                 center_on_heavy_atoms: bool = False,
+                 atom_types: Optional[torch.LongTensor] = None,
+                 ) -> Tensor:
+    if center_on_heavy_atoms:
+        mask = atom_types > 1
+        centroids = get_batch_centroids(coords[mask], batch[mask], num_graphs)
+    else:
+        centroids = get_batch_centroids(coords, batch, num_graphs)
     coords_out = coords - centroids.repeat_interleave(nodes_per_graph, 0)
     return coords_out
 

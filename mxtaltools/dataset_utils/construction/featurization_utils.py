@@ -74,7 +74,7 @@ def get_crystal_sym_ops(crystal):
     return sym_elements
 
 
-def extract_crystal_data(identifier, crystal, unit_cell):
+def extract_crystal_data(identifier, crystal, reduced_crystal, unit_cell):
     """
     crystal is a csd crystal object loaded from cif file or directly from csd
     extracts key information for crystal modelling
@@ -85,31 +85,31 @@ def extract_crystal_data(identifier, crystal, unit_cell):
     # extract crystal features
     crystal_dict['z_prime'] = crystal.z_prime
     crystal_dict['z_value'] = crystal.z_value
-    crystal_dict['symmetry_operators'] = get_crystal_sym_ops(crystal)
+    crystal_dict['symmetry_operators'] = get_crystal_sym_ops(reduced_crystal)
     crystal_dict['symmetry_multiplicity'] = len(crystal_dict['symmetry_operators'])
     assert (crystal.z_value // crystal.z_prime) == crystal_dict['symmetry_multiplicity']
-    crystal_dict['space_group_number'], crystal_dict['space_group_setting'] = crystal.spacegroup_number_and_setting
-    crystal_dict['lattice_a'], crystal_dict['lattice_b'], crystal_dict['lattice_c'] = np.asarray(crystal.cell_lengths,
+    crystal_dict['space_group_number'], crystal_dict['space_group_setting'] = reduced_crystal.spacegroup_number_and_setting
+    crystal_dict['lattice_a'], crystal_dict['lattice_b'], crystal_dict['lattice_c'] = np.asarray(reduced_crystal.cell_lengths,
                                                                                                  dtype=float)
     crystal_dict['lattice_alpha'], crystal_dict['lattice_beta'], crystal_dict['lattice_gamma'] = np.asarray(
-        crystal.cell_angles, dtype=float) / 180 * np.pi
+        reduced_crystal.cell_angles, dtype=float) / 180 * np.pi
     # NOTE this calls a (probably mol volume) calculation which is by far the heaviest part of this function
     # it differs from the below method by usually less than 1% but sometimes up to 5%. Molecule volume in general is not straightforward to accurately estimate
     # crystal_dict['packing_coefficient'] = crystal.packing_coefficient
 
     crystal_dict['fc_transform'], crystal_dict['cell_volume'] = (
-        coor_trans_matrix_np('f_to_c', np.asarray(crystal.cell_lengths), np.asarray(crystal.cell_angles) / 180 * np.pi,
+        coor_trans_matrix_np('f_to_c', np.asarray(reduced_crystal.cell_lengths), np.asarray(reduced_crystal.cell_angles) / 180 * np.pi,
                              return_vol=True))
 
     # this uses a pattern over the asymmetric unit molecule, which is sometimes different from the 'molecule' molecule
     # e.g., extra (erroneous or dubious) atoms in silly places
     # currently, we just toss such structures in the filter
     crystal_dict['unit_cell_coordinates'] = [
-        np.asarray([np.asarray(heavy_atom.coordinates) for heavy_atom in component.heavy_atoms]) for component in
+        np.asarray([np.asarray(atom.coordinates) for atom in component.atoms]) for component in
         unit_cell.components]
     # crystal_dict['unit_cell_fractional_coordinates'] = [np.asarray([heavy_atom.fractional_coordinates for heavy_atom in component.heavy_atoms]) for component in unit_cell.components]
     crystal_dict['unit_cell_atomic_numbers'] = [
-        np.asarray([heavy_atom.atomic_number for heavy_atom in component.heavy_atoms]) for component in
+        np.asarray([atom.atomic_number for atom in component.atoms]) for component in
         unit_cell.components]
     # confirm packing above has correct number of components
     assert len(crystal_dict['unit_cell_coordinates']) == int(crystal_dict['symmetry_multiplicity'] * crystal_dict[
@@ -128,6 +128,38 @@ def extract_crystal_data(identifier, crystal, unit_cell):
 
 
 def featurize_molecule(crystal, rd_mol, component_num, protonation_state='deprotonated'):
+    """
+    extract atom & molecule-scale features
+    """
+
+    molecule_dict = {}
+
+    # extract a single asymmetric unit features (not necessarily the canonical unit)
+    component = crystal.molecule.components[component_num]  # opt for Z': int>= 1 systems
+    if protonation_state == 'protonated':
+        molecule_dict['atom_coordinates'] = np.asarray([atom.coordinates for atom in component.atoms])
+        molecule_dict['atom_atomic_numbers'] = np.asarray([atom.atomic_number for atom in component.atoms])
+    elif protonation_state == 'deprotonated':
+        molecule_dict['atom_coordinates'] = np.asarray([atom.coordinates for atom in component.heavy_atoms])
+        molecule_dict['atom_atomic_numbers'] = np.asarray([atom.atomic_number for atom in component.heavy_atoms])
+
+    if protonation_state == 'deprotonated':
+        assert sum(np.asarray(molecule_dict['atom_atomic_numbers']) == 1) == 0
+
+    '''molecule-wise features'''
+    molecule_dict['molecule_fingerprint'] = fingerprint_generator.GetFingerprintAsNumPy(rd_mol)
+    molecule_dict['molecule_smiles'] = Chem.MolToSmiles(rd_mol, canonical=True)
+
+    charges = get_partial_charges(rd_mol)
+    if np.all(np.isfinite(charges)):
+        molecule_dict['atom_partial_charge'] = charges
+    else:
+        molecule_dict['atom_partial_charge'] = np.zeros_like(charges)
+
+    return molecule_dict
+
+
+def old_featurize_molecule(crystal, rd_mol, component_num, protonation_state='deprotonated'):
     """
     extract atom & molecule-scale features
     """
@@ -229,7 +261,6 @@ def featurize_molecule(crystal, rd_mol, component_num, protonation_state='deprot
 
     return molecule_dict
 
-
 def get_partial_charges(rd_mol):
     AllChem.ComputeGasteigerCharges(rd_mol)
     return np.array([float(atom.GetProp('_GasteigerCharge')) for atom in rd_mol.GetAtoms()])
@@ -237,6 +268,7 @@ def get_partial_charges(rd_mol):
 
 # noinspection PyUnreachableCode
 def crystal_filter(crystal,
+                   reduced_crystal,
                    max_heavy_atoms=1000,
                    protonation_state='deprotonated',
                    max_atomic_number=1000,
@@ -270,7 +302,6 @@ def crystal_filter(crystal,
     # therefore the below two filters always kill cocrystals, which show up with more components than z_prime
     # consider relaxing / reprocessing in the future. Though we must be careful
 
-
     if crystal.z_prime < 1:
         return False, None, None, "Z' < 1"
     if crystal.z_prime > max_z_prime:
@@ -279,25 +310,25 @@ def crystal_filter(crystal,
         return False, None, None, "Z' not integer"
     # if int(crystal.z_prime) != 1: # Z'=1 only
     #     return False, None, None
-    if len(crystal.molecule.components) == 0:
+    if len(reduced_crystal.molecule.components) == 0:
         return False, None, None, "No components"
     if any([len(component.atoms) == 0 for component in crystal.molecule.components]):
         return False, None, None, "Not all components have atoms"
-    if len(crystal.asymmetric_unit_molecule.heavy_atoms) != len(
+    if len(reduced_crystal.asymmetric_unit_molecule.heavy_atoms) != len(
             crystal.molecule.heavy_atoms):  # could make this done Z'-by-Z'
         return False, None, None, "Aunit and mol heavy atoms disagree"
-    if len(crystal.molecule.components) != crystal.z_prime:
+    if len(reduced_crystal.molecule.components) != crystal.z_prime:
         return False, None, None, "Z' != mol components"
-    if len(crystal.asymmetric_unit_molecule.components) != crystal.z_prime:  # can relax this if we build our own reference cells
-        return False, None, None, "Z' != components"  # todo this flags a huge number of failures - re-check it
+    if len(reduced_crystal.asymmetric_unit_molecule.components) != crystal.z_prime:  # can relax this if we build our own reference cells
+        return False, None, None, "Z' != components"
 
     try:  # some entries have invalid SG information, and this will fail
-        _ = crystal.spacegroup_number_and_setting
+        _ = reduced_crystal.spacegroup_number_and_setting
     except RuntimeError:
         return False, None, None, "Invalid SG"
 
     try:  # sometimes packing fails
-        unit_cell = crystal.packing(box_dimensions=((0, 0, 0), (1, 1, 1)), inclusion='CentroidIncluded')
+        unit_cell = reduced_crystal.packing(box_dimensions=((0, 0, 0), (1, 1, 1)), inclusion='CentroidIncluded')
     except RuntimeError:
         return False, None, None, "Packing failed"
 
@@ -306,8 +337,8 @@ def crystal_filter(crystal,
         return False, None, None, "Components != Z"
 
     for zp in range(int(crystal.z_prime)):  # confirm unit cell symmetry images have each the right number of atoms
-        l1 = len(crystal.molecule.components[zp].heavy_atoms)
-        mult = len(crystal.symmetry_operators)
+        l1 = len(reduced_crystal.molecule.components[zp].heavy_atoms)
+        mult = len(reduced_crystal.symmetry_operators)
         for z in range(mult):
             l2 = len(unit_cell.components[zp * mult + z].heavy_atoms)
             if l1 != l2:
@@ -315,7 +346,7 @@ def crystal_filter(crystal,
 
     # molecule check via RDKit. If RDKit doesn't see it as a real molecule, don't accept it to the dataset.
     rd_mols = []
-    for component in crystal.molecule.components:
+    for component in reduced_crystal.molecule.components:
         mol = Chem.MolFromMol2Block(component.to_string('mol2'),
                                     sanitize=True,
                                     removeHs=True if protonation_state == 'deprotonated' else False)
@@ -355,14 +386,14 @@ def crystal_filter(crystal,
                 return False, None, None, f"Unknown RDKit error {str(e)}"
 
     # do this last as it's expensive
-    for component in crystal.molecule.components:  # check for overlapping atoms or unconnected fragments
+    for component in reduced_crystal.molecule.components:  # check for overlapping atoms or unconnected fragments
         coords = np.asarray([np.asarray(heavy_atom.coordinates) for heavy_atom in component.heavy_atoms])
         distmat = cdist(coords, coords)
         np.fill_diagonal(distmat, 100)
         min_interatomic_distance = distmat.min(1)
         # if any atoms are too close, or have no neighbors, in a very generous range (3 angstroms and 0.9 angstroms)
         if any(min_interatomic_distance > 3) or any(min_interatomic_distance < 0.9):
-            return False, None, None, "Overlapping molecules"
+            return False, None, None, "Unphysical molecules"
 
     return True, unit_cell, rd_mols, None
 

@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import tqdm
 from ccdc import io
+from rdkit import Chem
 
 from mxtaltools.constants.space_group_info import SYM_OPS
 from mxtaltools.dataset_utils.construction.featurization_utils import extract_crystal_data, featurize_molecule, \
@@ -73,40 +74,56 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers, protonation_s
             print(f"Starting entry {ind} with {len(reader)} entries")
 
         for crystal_ind in range(len(reader)):  # one cif file may have many crystals in it
+            "instantiate ccdc crystal"
             try:
-                crystal = reader[crystal_ind]
+                csd_crystal = reader[crystal_ind]
+                # Z and Z' do NOT copy into the reduced crystal for some reason, so we keep boty
+                reduced_crystal = csd_crystal
+                #reduced_crystal = csd_crystal.generate_reduced_crystal(csd_crystal)  # todo this breaks the symmetry settings - we still have to figure out how to do it nicely
+                if protonation_state == 'protonated':
+                    reduced_crystal.assign_bonds()
+                    reduced_crystal.add_hydrogens()
+                elif protonation_state == 'deprotonated':
+                    reduced_crystal.assign_bonds()
+                    reduced_crystal.remove_hydrogens()
+
             except RuntimeError:  # some crystals fail to load due to timeout in refine_bonds
                 error_codes.append("Reader timeout")
-
                 continue  # skip this crystal
 
-            passed_filter, unit_cell, rd_mols, failure_mode = crystal_filter(crystal,
-                                                               max_heavy_atoms=100,
-                                                               protonation_state=protonation_state,
-                                                               max_atomic_number=100, max_z_prime=max_z_prime)
+            "crystal checks & rdkit mol"
+            passed_filter, unit_cell, rd_mols, failure_mode = crystal_filter(
+                csd_crystal,
+                reduced_crystal,
+                max_heavy_atoms=100,
+                protonation_state=protonation_state,  # always deprotonate here
+                max_atomic_number=100, max_z_prime=max_z_prime)
             if failure_mode is not None:
                 error_codes.append(failure_mode)
                 failed_checks_counter += 1
                 continue
 
             if use_filenames_for_identifiers:  # filename includes BT target, group name, any built-in identifications, and an extra index for safety
-                identifier = cif_path.split('.cif')[0] + '_' + crystal.identifier + '_' + str(crystal_ind)
+                identifier = cif_path.split('.cif')[0] + '_' + csd_crystal.identifier + '_' + str(crystal_ind)
             else:
-                identifier = crystal.identifier
+                identifier = csd_crystal.identifier
 
             # get crystal information
-            crystal_dict = extract_crystal_data(identifier, crystal, unit_cell)
+            crystal_dict = extract_crystal_data(identifier, csd_crystal, reduced_crystal, unit_cell)
 
             # get molecule information
             molecules = []
             for i_c, rd_mol in enumerate(rd_mols):  # one crystal may have Z' molecules
-                molecules.append(featurize_molecule(crystal, rd_mol, component_num=i_c,
-                                                    protonation_state=protonation_state))
+                molecules.append(featurize_molecule(reduced_crystal, rd_mol,
+                                                    component_num=i_c,
+                                                    protonation_state=protonation_state
+                                                    # always deprotonate here - add protons in post-processing only
+                                                    ))
 
             # check for custom metrics in the CIF text
             crystal_dict = extract_custom_cif_data(cif_path, crystal_dict)
 
-            ### parameterize the crystal pose & symmetry parameters
+            "check sym ops"
             try:
                 sym_ops_are_standard = np.all(np.stack(SYM_OPS[crystal_dict['space_group_number']]) == np.stack(
                     crystal_dict['symmetry_operators']))
@@ -117,6 +134,7 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers, protonation_s
 
             sym_ops = np.stack(crystal_dict['symmetry_operators'])
 
+            "instantiate molecules"
             mols = []
             for m in molecules:
                 mol = MolData(
@@ -134,27 +152,26 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers, protonation_s
                     error_codes.append("Non-identical cocrystals are not supported")
                     continue  # MK I can't deal with cocrystals right now
 
-
-
             """
             extract pose information (from each Z' structure)
             """
             # generate and parameterize separately the Z' equivalents
             z_prime = torch.tensor(int(crystal_dict['z_prime']), dtype=torch.long)
-            zp1_crystals = init_zp1_crystals(crystal_dict, mols, sym_ops, sym_ops_are_standard)
+            zp1_crystals = init_zp1_crystals(
+                crystal_dict, mols, sym_ops, sym_ops_are_standard)
             aunit_centroid, aunit_handedness, aunit_orientation, crystal_batch, is_well_defined, pos = extract_zp1_pose_info(
                 crystal_dict, z_prime, zp1_crystals)
 
             """
             rebuild the crystal with these parameters to confirm correct reconstruction
             """
-            for ind, crystal in enumerate(zp1_crystals):
-                crystal.aunit_centroid[:, :3] = aunit_centroid[ind][None, ...]
-                crystal.aunit_orientation[:, :3] = aunit_orientation[ind][None, ...]
-                crystal.aunit_handedness[:, :1] = aunit_handedness[ind]
-                crystal.is_well_defined = torch.tensor(is_well_defined, dtype=torch.bool)[ind]
-                crystal.pos = pos[crystal_batch.batch == ind]
-                crystal.box_analysis()
+            for ind, zp1_crystal in enumerate(zp1_crystals):
+                zp1_crystal.aunit_centroid[:, :3] = aunit_centroid[ind][None, ...]
+                zp1_crystal.aunit_orientation[:, :3] = aunit_orientation[ind][None, ...]
+                zp1_crystal.aunit_handedness[:, :1] = aunit_handedness[ind]
+                zp1_crystal.is_well_defined = torch.tensor(is_well_defined, dtype=torch.bool)[ind]
+                zp1_crystal.pos = pos[crystal_batch.batch == ind]
+                zp1_crystal.box_analysis()
 
             rebuild_batch = collate_data_list(zp1_crystals, max_z_prime=1)
             rebuild_batch.pose_aunit()
@@ -186,7 +203,7 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers, protonation_s
                 mol.mol_volume = torch.stack([m.mol_volume for m in mols]).sum()
                 mol.radius = torch.stack([m.radius for m in mols]).sum()
 
-                crystal = MolCrystalData(
+                zp1_crystal = MolCrystalData(
                     molecule=mol,
                     sg_ind=rebuild_batch.sg_ind[0],
                     cell_lengths=rebuild_batch.cell_lengths[0],
@@ -205,7 +222,7 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers, protonation_s
                         torch.stack([m.num_atoms for m in mols])),
                 )
 
-                data_list.append(crystal)
+                data_list.append(zp1_crystal)
             else:
                 mol = MolData(
                     z=rebuild_batch.z,
@@ -215,7 +232,7 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers, protonation_s
                     fingerprint=rebuild_batch.fingerprint,
                     do_mol_analysis=True,  # combine manually below
                 )
-                crystal = MolCrystalData(
+                zp1_crystal = MolCrystalData(
                     molecule=mol,
                     sg_ind=rebuild_batch.sg_ind[0],
                     cell_lengths=rebuild_batch.cell_lengths[0],
@@ -232,8 +249,7 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers, protonation_s
                     max_z_prime=max_z_prime,
                     mol_ind=torch.zeros(len(mol.z), dtype=torch.long),
                 )
-                data_list.append(crystal)
-
+                data_list.append(zp1_crystal)
 
     print(f"Cell reconstruction failed {failed_parameterization_counter} times out of {len(chunk)}")
     print(f"Crystal filtered {failed_checks_counter} times out of {len(chunk)}")
@@ -316,6 +332,7 @@ def cocrystal_check(mols):
 
     return True
 
+
 def crystal_rebuild_checks(aunit_centroid,
                            aunit_handedness,
                            aunit_orientation,
@@ -367,14 +384,14 @@ view([m1, m2])
 
 if __name__ == '__main__':
     # full dataset processing
-    process_cifs_to_chunks(n_chunks=1000,
-                           cifs_path='D:/crystal_datasets/CSD_dump/',
-                           chunks_path='D:/crystal_datasets/CSD_featurized_chunks/',
-                           chunk_prefix='',
-                           use_filenames_for_identifiers=False,
-                           target_identifiers=None,
-                           filter_by_targets=False,
-                           protonation_state='deprotonated')
+    # process_cifs_to_chunks(n_chunks=1000,
+    #                        cifs_path='D:/crystal_datasets/CSD_dump/',
+    #                        chunks_path='D:/crystal_datasets/CSD_featurized_chunks/',
+    #                        chunk_prefix='',
+    #                        use_filenames_for_identifiers=False,
+    #                        target_identifiers=None,
+    #                        filter_by_targets=False,
+    #                        protonation_state='deprotonated')
 
     # process_cifs_to_chunks(n_chunks=1,
     #                        cifs_path='D:/crystal_datasets/dafmuv/',
@@ -395,11 +412,11 @@ if __name__ == '__main__':
     #                        filter_by_targets=False,
     #                        protonation_state='deprotonated')
 
-    # process_cifs_to_chunks(n_chunks=1,
-    #                        cifs_path='D:/crystal_datasets/CSD_dump/',
-    #                        chunks_path='D:/crystal_datasets/protonated_nicoam/',
-    #                        chunk_prefix='',
-    #                        use_filenames_for_identifiers=False,
-    #                        target_identifiers=['NICOAM','NICOAM17'],
-    #                        filter_by_targets=True,
-    #                        protonation_state='deprotonated')
+    process_cifs_to_chunks(n_chunks=1,
+                           cifs_path='D:/crystal_datasets/CSD_dump/',
+                           chunks_path='D:/crystal_datasets/protonated_nicoam/',
+                           chunk_prefix='',
+                           use_filenames_for_identifiers=False,
+                           target_identifiers=['NICOAM', 'NICOAM17'],
+                           filter_by_targets=True,
+                           protonation_state='protonated')

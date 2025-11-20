@@ -11,6 +11,7 @@ from torch_geometric.data.storage import (BaseStorage, EdgeStorage,
 from torch_geometric.typing import OptTensor
 from torch_sparse import SparseTensor
 
+from mxtaltools.constants.space_group_info import SPACE_GROUP_NAMES
 from mxtaltools.dataset_utils.data_class_methods.crystal_analysis import MolCrystalAnalysis
 from mxtaltools.dataset_utils.data_class_methods.crystal_building import MolCrystalBuilding
 from mxtaltools.dataset_utils.data_class_methods.crystal_ops import MolCrystalOps
@@ -344,6 +345,8 @@ class MolCrystalData(  # order crystal ops first to overwrite any mol ops
     def __init__(self,
                  molecule: Optional[Union[list,MolData]] = None,
                  sg_ind: Optional[Union[int, torch.Tensor]] = None,
+                 sg_name: Optional[str] = None,
+                 z_prime: Optional[torch.Tensor] = None,
                  cell_lengths: Optional[torch.Tensor] = None,
                  cell_angles: Optional[torch.Tensor] = None,
                  aunit_centroid: Optional[torch.Tensor] = None,
@@ -355,7 +358,6 @@ class MolCrystalData(  # order crystal ops first to overwrite any mol ops
                  is_well_defined: Optional[bool] = True,
                  aux_ind: Optional[torch.Tensor] = None,
                  mol_ind: Optional[torch.Tensor] = None,
-                 z_prime: Optional[torch.Tensor] = None,
                  do_box_analysis: Optional[bool] = False,
                  max_z_prime: Optional[int] = 1,
                  **kwargs):
@@ -397,7 +399,14 @@ class MolCrystalData(  # order crystal ops first to overwrite any mol ops
 
         # functions / analysis
         # will raise error if sg_ind is None, but then, it can't be a real crystal
-        if sg_ind is not None:
+        if sg_ind is not None or sg_name is not None:
+            if sg_name is not None:
+                valid_sgs = list(SPACE_GROUP_NAMES.keys())
+                if sg_name in valid_sgs:
+                    sg_ind = SPACE_GROUP_NAMES[sg_name]
+                else:
+                    raise ValueError(f"{sg_name} is not in the set of canonical space group names!"
+                                     f"{valid_sgs}")
             self.set_symmetry_attrs(nonstandard_symmetry=nonstandard_symmetry,
                                     sg_ind=sg_ind,
                                     symmetry_operators=symmetry_operators,

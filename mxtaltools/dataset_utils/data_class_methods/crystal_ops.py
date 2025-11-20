@@ -241,6 +241,9 @@ class MolCrystalOps:
 
         min_vals = -torch.ones(latents.shape[-1], dtype=torch.float32, device=self.device)
         min_vals[:3] = -0.95  # DO NOT allow micro cells to be instantiated
+        # also do not allow rotation length = 0 to be instantiated
+        for ind in range(self.max_z_prime):
+            min_vals[5 + 6 * (1+ind)] = -0.99
 
         max_vals = torch.ones(latents.shape[-1], dtype=torch.float32, device=self.device)
         self.set_cell_parameters(
@@ -291,7 +294,9 @@ class MolCrystalOps:
 
         # use the latent transform for lengths and angles sampling, as its more stable and better tested
         # we can still use the old samplers for aunit params
-        temp_params = self.latent_transform.inverse(torch.randn((self.num_graphs, 12), device=self.device),
+        # latent space is defined on [-1,1]
+        rands = (torch.rand((self.num_graphs, 6 + 6 * self.max_z_prime), device=self.device) - 0.5) * 2
+        temp_params = self.latent_transform.inverse(rands,
                                                     self.sg_ind,
                                                     self.radius)
         cell_lengths = temp_params[:, :3]

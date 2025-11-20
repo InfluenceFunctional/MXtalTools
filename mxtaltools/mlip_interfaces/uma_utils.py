@@ -7,9 +7,11 @@ import torch
 
 def compute_crystal_uma_on_mxt_batch(batch,
                                      std_orientation: bool = True,
-                                     predictor: Optional = None):
+                                     predictor: Optional = None,
+                                     pbc: bool = True):
     data_list = []
     batch.pose_aunit(std_orientation=std_orientation)
+    assert torch.sum(torch.isnan(batch.pos)) == 0
     batch.build_unit_cell()
     cell_params = torch.cat([batch.cell_lengths, batch.cell_angles * 90 / (torch.pi / 2)], dim=1).cpu().detach().numpy()
 
@@ -21,7 +23,7 @@ def compute_crystal_uma_on_mxt_batch(batch,
             positions=pos.cpu().detach().numpy(),
         )
         atoms.set_cell(Cell.fromcellpar(cell_params[ind]))
-        pbc_flag = True
+        pbc_flag = pbc
         atoms.set_pbc(pbc_flag)
         crystal = AtomicData.from_ase(atoms, task_name='omc')
         data_list.append(crystal)
@@ -29,6 +31,7 @@ def compute_crystal_uma_on_mxt_batch(batch,
     uma_batch = atomicdata_list_to_batch(data_list)
 
     out = predictor.predict(uma_batch)  # output in total eV per sample
+    assert torch.sum(torch.isnan(batch.pos)) == 0
 
     return out['energy']
 
@@ -55,13 +58,13 @@ def compute_molecule_uma_on_mxt_batch(batch,
 
     return out['energy']
 
-def init_uma_crystal_predictor(model_path):
+def init_uma_crystal_predictor(model_path, device):
     predictor = pretrained_mlip.load_predict_unit(
         model_path,
         inference_settings='default',
-        overrides={"backbone": {#"always_use_pbc": True,
+        overrides={"backbone": {"always_use_pbc": True,
                                 "direct_forces": True}},
-        device="cuda",
+        device=device,
     )
     predictor.inference_mode.compile = False
     predictor.inference_mode.tf32 = True
@@ -97,41 +100,3 @@ def init_uma_mol_predictor(model_path):
         t for t in predictor.dataset_to_tasks["omol"] if "energy" in t.name
     ]
     return predictor
-
-def scale_uma_to_silu_range(uma_energy):
-    """
-    Scales uma energy in kJ/mol to units of our SiLU potential
-    uma_en.append((cry_en/batch.sym_mult)/96.485)  # eV/atom to kJ/mol lattice energy
-    uma_fixed = (uma - uma.mean())/uma.std() * lj.std() + lj.mean()
-
-    conversion values extracted from 10k CSD crystals evaluated under both metrics,
-    with excellent resulting range overlap
-    :param uma_energy:
-    :return:
-    """
-    uma_mean = -2.2629
-    uma_std = 1.0233
-    silu_mean = -5.0319
-    silu_std = 1.8549
-
-    return (uma_energy - uma_mean)/uma_std* silu_std + silu_mean
-
-
-def scale_uma_to_lj_range(uma_energy):
-    """
-    Scales uma energy in kJ/mol to units of our LJ potential
-    uma_en.append((cry_en/batch.sym_mult)/96.485)  # eV/atom to kJ/mol lattice energy
-    uma_fixed = (uma - uma.mean())/uma.std() * lj.std() + lj.mean()
-
-    note LJ energy has a longer range, comes with a 10 angstrom cutoff, as compared to SiLU at 6
-    conversion values extracted from 10k CSD crystals evaluated under both metrics,
-    with excellent resulting range overlap
-    :param uma_energy:
-    :return:
-    """
-    uma_mean = -2.2629
-    uma_std = 1.0233
-    lj_mean = -16.4616
-    lj_std = 5.0916
-
-    return (uma_energy - uma_mean)/uma_std* lj_std + lj_mean

@@ -5,7 +5,7 @@ from typing import Optional
 import torch
 from torch_scatter import scatter
 
-from mxtaltools.common.geometry_utils import safe_batched_eigh, compute_cosine_similarity_matrix, center_mol_batch, \
+from mxtaltools.common.geometry_utils import safe_batched_eigh, compute_cosine_similarity_matrix, center_batch, \
     compute_ellipsoid_volume
 from mxtaltools.models.functions.radial_graph import asymmetric_radius_graph
 from mxtaltools.models.modules.components import ResidualMLP
@@ -178,10 +178,11 @@ class MolCrystalEllipsoidOps:
                                   num_necessary_mols,
                                   subset_pos, tot_mol_index_subset):
         # get principal axes
-        centered_mol_pos = center_mol_batch(subset_pos,
-                                            tot_mol_index_subset,
-                                            num_graphs=len(molwise_batch_subset),
-                                            nodes_per_graph=atoms_per_necessary_mol)
+        centered_mol_pos = center_batch(subset_pos,
+                                        tot_mol_index_subset,
+                                        num_graphs=len(molwise_batch_subset),
+                                        nodes_per_graph=atoms_per_necessary_mol,
+                                        )
         if centered_mol_pos.requires_grad or (add_noise > 0):
             coords_to_compute = centered_mol_pos + torch.randn_like(centered_mol_pos) * cov_eps
         else:

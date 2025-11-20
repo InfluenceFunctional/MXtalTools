@@ -20,6 +20,7 @@ def get_annealing_factor(start_value, stop_value, total_time, step_iters):
     assert stop_value > 0, "Setting final value as zero breaks this module"
     return (stop_value / start_value) ** (1 / (total_time / step_iters))
 
+
 class CrystalParams(nn.Module):
     def __init__(self, init_sample):
         super().__init__()
@@ -29,6 +30,7 @@ class CrystalParams(nn.Module):
 
     def stacked(self):
         return torch.stack(list(self.params), dim=0)
+
 
 def gradient_descent_optimization(
         init_sample: torch.Tensor,
@@ -56,7 +58,7 @@ def gradient_descent_optimization(
     if cutoff is None:
         # lennard jones need 10 angstroms to nicely converge
         # other metrics only need 6
-        cutoff = 10 if 'lj' in optim_target.lower() else 6
+        cutoff = 10 if optim_target.lower() in ['lj', 'qlj'] else 6
 
     energy_computes = ['lj']
     min_num_steps = 50
@@ -64,6 +66,8 @@ def gradient_descent_optimization(
 
     if optim_target.lower() == 'silu':
         energy_computes.append('silu')
+    elif optim_target.lower() == 'qlj':
+        energy_computes.append('qlj')
     elif optim_target.lower() == 'ellipsoid':
         energy_computes.append('ellipsoid')
 
@@ -81,7 +85,8 @@ def gradient_descent_optimization(
     scheduler1 = optim.lr_scheduler.MultiplicativeLR(optimizer,
                                                      lr_lambda=lambda epoch: lr_factor)
 
-    params_record = torch.zeros((max_num_steps, init_crystal_batch.num_graphs, init_sample.shape[-1]), dtype=torch.float32)
+    params_record = torch.zeros((max_num_steps, init_crystal_batch.num_graphs, init_sample.shape[-1]),
+                                dtype=torch.float32)
 
     if optim_target.lower() == 'ellipsoid':
         init_crystal_batch.load_ellipsoid_model()
@@ -90,10 +95,10 @@ def gradient_descent_optimization(
         ellipsoid_model.eval()
 
     f_steps = 0
-    did_finetune=False
+    did_finetune = False
     records = None
     converged = torch.zeros(init_crystal_batch.num_graphs, dtype=torch.bool)
-    #torch.autograd.set_detect_anomaly(True)  # for debugging
+    # torch.autograd.set_detect_anomaly(True)  # for debugging
     try:
         with (torch.enable_grad()):
             with tqdm(total=max_num_steps, disable=not show_tqdm) as pbar:
@@ -102,17 +107,17 @@ def gradient_descent_optimization(
                     optimizer.zero_grad(set_to_none=True)
                     crystal_batch = init_crystal_batch.clone().detach()  # this is necessary to not retain lots of intermediate tensors
                     crystal_batch.set_cell_parameters(param_module.stacked(),
-                                                      skip_box_analysis=True) # we will do box analysis in the next step, after cleanup
+                                                      skip_box_analysis=True)  # we will do box analysis in the next step, after cleanup
                     crystal_batch.clean_cell_parameters(
                         enforce_niggli=enforce_niggli,  # enforce niggli parameters in [0,1]
                         mode='hard',
                         canonicalize_orientations=True,
                     )
                     outputs, cluster_batch = crystal_batch.analyze(
-                        computes = energy_computes,
-                        cutoff = cutoff,
-                        supercell_size = supercell_size,
-                        return_cluster = True,
+                        computes=energy_computes,
+                        cutoff=cutoff,
+                        supercell_size=supercell_size,
+                        return_cluster=True,
                         repulsion=1,
                         surface_padding=0,
                         std_orientation=True,
@@ -121,7 +126,8 @@ def gradient_descent_optimization(
                     """
                     record some stats
                     """
-                    params_record[s_ind] = crystal_batch.full_cell_parameters().detach().cpu()  # must put this before the .backward()
+                    params_record[
+                        s_ind] = crystal_batch.full_cell_parameters().detach().cpu()  # must put this before the .backward()
                     if records is None:
                         records = {key: [] for key in outputs}
                         records['cp'] = []
@@ -160,15 +166,16 @@ def gradient_descent_optimization(
         if is_cuda_oom(e):
             if s_ind > 0:
                 records = {k: torch.stack(v) for k, v in records.items()}
-                best_sample_ind = torch.argmin(records['loss'], dim=0).flatten()  # pick the best sample from each trajectory
+                best_sample_ind = torch.argmin(records['loss'],
+                                               dim=0).flatten()  # pick the best sample from each trajectory
                 best_samples = torch.stack([params_record[best_sample_ind[ind], ind] for ind in range(num_samples)])
                 torch.save(best_samples, 'opt_intermediates.pt')
             raise e
 
     # return the optimized samples
-    #crystal_batch.add_graph_attr(outputs['lj'].detach(), 'lj_pot')
-    #crystal_batch.add_graph_attr(crystal_batch.packing_coeff.detach(), 'packing_coeff')
-    #samples_list = crystal_batch.cpu().detach().batch_to_list()
+    # crystal_batch.add_graph_attr(outputs['lj'].detach(), 'lj_pot')
+    # crystal_batch.add_graph_attr(crystal_batch.packing_coeff.detach(), 'packing_coeff')
+    # samples_list = crystal_batch.cpu().detach().batch_to_list()
 
     records = {k: torch.stack(v) for k, v in records.items()}
     """
@@ -247,6 +254,7 @@ def traj_fig(x, y, names=[None, None], yrange=None, xrange=None):
     fig.update_layout(xaxis_title=names[0], yaxis_title=names[1], xaxis_range=xrange, yaxis_range=yrange)
     fig.show()
 
+
 """
 
 # params trajectories
@@ -260,6 +268,8 @@ for ind in range(12):
 fig.show()
 
 """
+
+
 def ema_trajectory(traj: torch.Tensor, alpha: float = 0.1) -> torch.Tensor:
     """
     Vectorized EMA along time (dim=0).
@@ -275,12 +285,16 @@ def ema_trajectory(traj: torch.Tensor, alpha: float = 0.1) -> torch.Tensor:
 
     return numer / denom
 
+
 def compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model):
     if optim_target.lower() == 'lj':
         loss = outputs['lj']
 
     elif optim_target.lower() == 'silu':
         loss = outputs['silu']
+
+    elif optim_target.lower() == 'qlj':
+        loss = outputs['qlj']
 
     elif optim_target.lower() == 'inter_overlaps':  # force molecules apart by separating their centroids
         loss = inter_overlap_loss(cluster_batch, crystal_batch)
@@ -313,11 +327,9 @@ def compute_auxiliary_loss(cluster_batch, compression_factor, do_box_restriction
 
     if enforce_niggli:
         negative_overlap = F.relu(-outputs['niggli'] + 0.01)
-        loss = loss + 100*negative_overlap**2  # severely penalize negative niggli overlaps
+        loss = loss + 100 * negative_overlap ** 2  # severely penalize negative niggli overlaps
 
     return loss
-
-
 
 
 def inter_overlap_loss(cluster_batch, crystal_batch):
