@@ -237,6 +237,8 @@ class MolCrystalAnalysis:
         else:
             diffuse_batch = collate_data_list(self)
 
+        # evaluate a diffuse P1 cell
+        diffuse_batch.reset_sg_info(sg_ind=1)  # big P1 cells
         diffuse_batch.cell_lengths *= 100
         diffuse_batch.box_analysis()
         return compute_crystal_uma_on_mxt_batch(diffuse_batch,
