@@ -68,6 +68,7 @@ def init_uma_crystal_predictor(model_path, device):
     )
     predictor.inference_mode.compile = False
     predictor.inference_mode.tf32 = True
+    #predictor.inference_mode.activation_checkpointing=False
 
     # # some savings if we do energy-only
     # # don't do this if you want forces and stresses

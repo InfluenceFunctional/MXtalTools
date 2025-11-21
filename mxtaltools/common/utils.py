@@ -404,10 +404,9 @@ def block_repeat_interleave(
 def log_rescale_positive(y: torch.Tensor,
                          cutoff: float = 0
                          ):
-    assert cutoff >= 0, "Log rescaling cutoff must be >= 0"
     return torch.where(
         y > cutoff,  # where above cutoff
-        cutoff + torch.log(y - cutoff + 1.0),  # return log(1+x)
+        cutoff + torch.log1p(y - cutoff),  # return log(1+x)
         y  # else return x
     )
 
