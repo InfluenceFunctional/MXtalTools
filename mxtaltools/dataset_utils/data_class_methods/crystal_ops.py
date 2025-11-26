@@ -1332,20 +1332,29 @@ class MolCrystalOps:
         else:
             raise TypeError("sg_ind must be a tensor or an integer")
 
-        self.add_graph_attr(sg_ind_list, 'sg_ind')
+        if self.is_batch:
+            self.add_graph_attr(sg_ind_list, 'sg_ind')
+            # reset symmetries will always be standard
+            self.add_graph_attr(torch.zeros(self.num_graphs, dtype=torch.bool, device=self.device),
+                                'nonstandard_symmetry')
 
-        # reset symmetries will always be standard
-        self.add_graph_attr(torch.zeros(self.num_graphs, dtype=torch.bool, device=self.device),
-                            'nonstandard_symmetry')
+        else:
+            setattr(self, 'sg_ind', sg_ind_list)
+            setattr(self, 'nonstandard_symmetry', False)
 
-        self.symmetry_operators = [np.stack(SYM_OPS[int(ind)]) for ind in self.sg_ind]
+        if self.is_batch:
+            self.symmetry_operators = [np.stack(SYM_OPS[int(ind)]) for ind in self.sg_ind]
+            sym_mult = torch.tensor(
+                [len(sym_ops) for sym_ops in self.symmetry_operators],
+                dtype=torch.long, device=self.device
+            )
+            self.add_graph_attr(sym_mult, 'sym_mult')
 
-        sym_mult = torch.tensor(
-            [len(sym_ops) for sym_ops in self.symmetry_operators],
-            dtype=torch.long, device=self.device
-        )
+        else:
+            self.symmetry_operators = np.stack(SYM_OPS[int(self.sg_ind)])
+            setattr(self, 'sym_mult', torch.tensor(
+                len(self.symmetry_operators), dtype=torch.long, device=self.device)[None])
 
-        self.add_graph_attr(sym_mult, 'sym_mult')
 
     def canonicalize_zp_aunits(self):
         if self.is_batch:
