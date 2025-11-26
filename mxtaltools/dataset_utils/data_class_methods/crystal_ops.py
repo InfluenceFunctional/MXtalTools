@@ -246,6 +246,7 @@ class MolCrystalOps:
             min_vals[5 + 6 * (1+ind)] = -0.99
 
         max_vals = torch.ones(latents.shape[-1], dtype=torch.float32, device=self.device)
+        max_vals[0:2] = 1-1e-4  # don't let it explicitly touch 1 or it can make an effective orthorhombic cell, and really pisses off ASE
         self.set_cell_parameters(
             self.latent_transform.inverse(latents.clamp(min=min_vals, max=max_vals), self.sg_ind, self.radius)
         )

@@ -10,20 +10,25 @@ from torch_geometric.loader.dataloader import DataLoader
 
 
 def collate_data_list(data_list, exclude_unit_cell: bool = True,
-                      max_z_prime: Optional[int] = None, exclude_keys: Optional[list] = None):
+                      max_z_prime: Optional[int] = None,
+                      exclude_keys: Optional[list] = None,
+                      skip_default_exclusion: bool = False):
     if not isinstance(data_list, list):
         data_list = [data_list]
 
     # Optionally exclude known keys  # todo this really needs to be fixed up
-    exclude_keys_i = ['edges_dict',
-                    'niggli_energy',
-                    'core_energy',
-                    'density_energy',
-                    'lj_energy',
-                    'bounding_energy',
-                    'es_pot',
-                    'gfn_energy',
-                    ]
+    if not skip_default_exclusion:
+        exclude_keys_i = ['edges_dict',
+                        'niggli_energy',
+                        'core_energy',
+                        'density_energy',
+                        'lj_energy',
+                        'bounding_energy',
+                        'es_pot',
+                        'gfn_energy',
+                        ]
+    else:
+        exclude_keys_i = []
     if exclude_keys is not None:
         exclude_keys_i.extend(exclude_keys)
 

@@ -10,6 +10,11 @@ def compute_crystal_uma_on_mxt_batch(batch,
                                      predictor: Optional = None,
                                      pbc: bool = True):
     data_list = []
+    "UMA sometimes fails on ultra-dense cells, so we'll manually prevent that. These are obviously terrible cells anyway."
+    bad_inds = torch.argwhere(batch.packing_coeff > 10)
+    if len(bad_inds) > 0:
+        batch.cell_lengths[bad_inds] *= 2
+        batch.box_analysis()
     batch.pose_aunit(std_orientation=std_orientation)
     assert torch.sum(torch.isnan(batch.pos)) == 0
     batch.build_unit_cell()

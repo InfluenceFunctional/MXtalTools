@@ -218,7 +218,7 @@ class MolCrystalAnalysis:
                             std_orientation: bool=True,
                             ):
         if self.is_batch:
-            return compute_crystal_uma_on_mxt_batch(self,
+            return compute_crystal_uma_on_mxt_batch(self.clone(),
                                                     std_orientation,
                                                     predictor)
         else:

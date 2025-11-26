@@ -17,6 +17,53 @@ from mxtaltools.models.task_models.autoencoder_models import Mo3ENet
 from mxtaltools.models.task_models.crystal_models import MolecularCrystalModel
 from mxtaltools.models.task_models.regression_models import MoleculeScalarRegressor
 
+class OOMRetry:
+    """
+    Purely functional OOM handler.
+    Expects a *mutable reference* to batch size, e.g. [batch_size].
+    On OOM: scales bs_ref[0] *= factor, cleans CUDA, retries.
+    """
+
+    def __init__(self, bs_ref, factor=0.75, min_bs=1, context=""):
+        self.bs_ref = bs_ref
+        self.factor = factor
+        self.min_bs = min_bs
+        self.context = context
+
+    def __enter__(self):
+        self._orig = self.bs_ref[0]
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is None:
+            return False  # nothing happened
+
+        msg = str(exc).lower()
+        if exc_type is RuntimeError and "out of memory" in msg:
+            old = self.bs_ref[0]
+            new = max(self.min_bs, int(old * self.factor))
+            self.bs_ref[0] = new
+
+            print(f"[OOMRetry:{self.context}] {old} → {new} due to OOM")
+
+            if new <= self.min_bs:
+                print(f"[OOMRetry:{self.context}] minimum batch reached; re-raising")
+                return False
+
+            # cleanup
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                try:
+                    torch.cuda.ipc_collect()
+                except Exception:
+                    pass
+
+            return True  # suppress exception → retry the block
+
+        return False
+
 
 def update_stats_dict(dictionary: dict, keys, values, mode='append'):
     """
