@@ -192,6 +192,8 @@ def init_samples_to_optim(config):
         rng = np.random.RandomState(config.mol_seed)
         inds = rng.randint(0, len(mol_list), config.mols_to_sample)
         mols_to_optim = [mol_list[ind] for ind in inds]
+    elif config.sampling_mode == 'ordered':
+        mols_to_optim = [elem for elem in mol_list[:config.mols_to_sample]]
     else:
         assert False, "Sampling mode must be 'all' or 'random"
     """

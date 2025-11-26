@@ -408,8 +408,7 @@ if __name__ == '__main__':
     "load and batch batch_size copies of the same molecule"
     # BIGDOK, CETLAQ, DAFMUV, HEVTIL, DAFMUV
     example_crystals = torch.load(mini_dataset_path)
-    elem_index = [elem.identifier for elem in example_crystals].index(
-        'DAFMUV')  # .index('ACRLAC06')  #.index('FEDGOK01')
+    elem_index = [elem.identifier for elem in example_crystals].index('DAFMUV')  # .index('ACRLAC06')  #.index('FEDGOK01')
     original_crystal = example_crystals[elem_index]
     optimized_samples = []
     for elem in chunk_paths:

@@ -29,7 +29,7 @@ if __name__ == '__main__':
 
     device = config.device
     if device == 'cuda':
-        # prevents from dipping into windows virtual vram
+        # prevents from dipping into windows virtual vram which is super slow
         torch.cuda.set_per_process_memory_fraction(0.99, device=0)
 
     samples_to_optim = init_samples_to_optim(config)
