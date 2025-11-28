@@ -5,16 +5,33 @@ from fairchem.core.calculate import pretrained_mlip
 from fairchem.core.datasets.atomic_data import AtomicData, atomicdata_list_to_batch
 import torch
 
+def safe_predict_uma(predictor, uma_batch):
+    try:
+        torch.cuda.synchronize()              # flush prior kernels
+        out = predictor.predict(uma_batch)    # this launches UMA kernels
+        torch.cuda.synchronize()              # force errors to surface *here*
+        return out, False                     # False = no failure
+
+    except RuntimeError as e:
+        print("UMA error")
+        print(str(e))
+        # reset the cuda context fully
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+        return None, True                 # signal failure
+
+
 def compute_crystal_uma_on_mxt_batch(batch,
                                      std_orientation: bool = True,
                                      predictor: Optional = None,
                                      pbc: bool = True):
     data_list = []
     "UMA sometimes fails on ultra-dense cells, so we'll manually prevent that. These are obviously terrible cells anyway."
-    bad_inds = torch.argwhere(batch.packing_coeff > 10)
-    if len(bad_inds) > 0:
-        batch.cell_lengths[bad_inds] *= 2
-        batch.box_analysis()
+    while sum(batch.packing_coeff > 10) > 0:
+        bad_inds = torch.argwhere(batch.packing_coeff > 10)
+        if len(bad_inds) > 0:
+            batch.cell_lengths[bad_inds] *= 2
+            batch.box_analysis()
     batch.pose_aunit(std_orientation=std_orientation)
     assert torch.sum(torch.isnan(batch.pos)) == 0
     batch.build_unit_cell()
@@ -35,10 +52,13 @@ def compute_crystal_uma_on_mxt_batch(batch,
 
     uma_batch = atomicdata_list_to_batch(data_list)
 
-    out = predictor.predict(uma_batch)  # output in total eV per sample
-    assert torch.sum(torch.isnan(batch.pos)) == 0
+    out, crashed = safe_predict_uma(predictor, uma_batch)
+    if crashed:
+        energy = torch.zeros(batch.num_graphs, dtype=torch.float32, device=batch.device)
+    else:
+        energy = out['energy']
 
-    return out['energy']
+    return energy
 
 
 def compute_molecule_uma_on_mxt_batch(batch,
@@ -59,9 +79,13 @@ def compute_molecule_uma_on_mxt_batch(batch,
 
     uma_batch = atomicdata_list_to_batch(data_list)
 
-    out = predictor.predict(uma_batch)  # output in total eV per sample
+    out, crashed = safe_predict_uma(predictor, uma_batch)
+    if crashed:
+        energy = torch.zeros(batch.num_graphs, dtype=torch.float32, device=batch.device)
+    else:
+        energy = out['energy']
 
-    return out['energy']
+    return energy
 
 def init_uma_crystal_predictor(model_path, device):
     predictor = pretrained_mlip.load_predict_unit(
