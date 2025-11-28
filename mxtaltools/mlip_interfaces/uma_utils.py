@@ -5,6 +5,9 @@ from fairchem.core.calculate import pretrained_mlip
 from fairchem.core.datasets.atomic_data import AtomicData, atomicdata_list_to_batch
 import torch
 
+from mxtaltools.common.utils import is_cuda_oom
+
+
 def safe_predict_uma(predictor, uma_batch):
     try:
         torch.cuda.synchronize()              # flush prior kernels
@@ -13,12 +16,15 @@ def safe_predict_uma(predictor, uma_batch):
         return out, False                     # False = no failure
 
     except RuntimeError as e:
-        print("UMA error")
-        print(str(e))
-        # reset the cuda context fully
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-        return None, True                 # signal failure
+        if not is_cuda_oom(e):
+            print("UMA error")
+            print(str(e))
+            # reset the cuda context fully
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            return None, True                 # signal failure
+        else:
+            raise e
 
 
 def compute_crystal_uma_on_mxt_batch(batch,
