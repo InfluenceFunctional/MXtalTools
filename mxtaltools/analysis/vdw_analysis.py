@@ -274,6 +274,31 @@ def quadratic_edgewise_lj_energy(vdw_radii: torch.Tensor,
     return torch.where(dists < radii_sums, rep, lj)
 
 
+def exponential_edgewise_lj_energy(vdw_radii: torch.Tensor,
+                                   dist_dict: dict,
+                                   k_factor: float = 2.5 # controls stiffness. 2.5 yields E[r=0]=98
+                                   ):
+    lj = compute_lj_edgewise(dist_dict, vdw_radii)
+    dists = dist_dict['intermolecular_dist']
+    elements = dist_dict['intermolecular_dist_atoms']
+    atom_radii = [vdw_radii[elements[0]], vdw_radii[elements[1]]]
+    radii_sums = atom_radii[0] + atom_radii[1]
+
+
+    V0 = torch.zeros_like(dists)  # LJ(sigma) = +1 * epsilon
+    F0 = -24.0 / radii_sums  # dV_LJ/dr at sigma
+
+    # Build exponential parameters (smooth match)
+    k = k_factor / radii_sums  # stiffness
+    A = -F0 / k
+    B = V0 - A
+
+    # Exponential core
+    rep = A * torch.exp(-k * (dists - radii_sums)) + B
+
+    return torch.where(dists < radii_sums, rep, lj)
+
+
 def qlj_analysis(vdw_radii: torch.Tensor,
                  dist_dict: dict,
                  num_graphs: int,
@@ -283,6 +308,16 @@ def qlj_analysis(vdw_radii: torch.Tensor,
     """
     batch = dist_dict['intermolecular_dist_batch']
     edgewise_lj_pot = quadratic_edgewise_lj_energy(vdw_radii, dist_dict)
+    molwise_lj_pot = scatter(edgewise_lj_pot, batch, reduce='sum', dim_size=num_graphs)
+
+    return molwise_lj_pot
+
+def elj_analysis(vdw_radii: torch.Tensor,
+                 dist_dict: dict,
+                 num_graphs: int,
+                 stiffness: float = 2.5):
+    batch = dist_dict['intermolecular_dist_batch']
+    edgewise_lj_pot = exponential_edgewise_lj_energy(vdw_radii, dist_dict, stiffness)
     molwise_lj_pot = scatter(edgewise_lj_pot, batch, reduce='sum', dim_size=num_graphs)
 
     return molwise_lj_pot

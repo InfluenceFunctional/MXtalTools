@@ -4,7 +4,7 @@ import torch
 
 from mxtaltools.analysis.crystal_rdf import crystal_rdf
 from mxtaltools.analysis.vdw_analysis import get_intermolecular_dists_dict, lj_analysis, electrostatic_analysis, \
-    buckingham_energy, silu_energy, vdW_analysis, qlj_analysis
+    buckingham_energy, silu_energy, vdW_analysis, qlj_analysis, elj_analysis
 from mxtaltools.common.utils import log_rescale_positive
 from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.dataset_utils.utils import collate_data_list
@@ -62,6 +62,7 @@ class MolCrystalAnalysis:
         if not hasattr(self, 'computes'):
             self.computes = {'lj': self.compute_LJ_energy,
                              'qlj': self.compute_qLJ_energy,
+                             'elj': self.compute_eLJ_energy,
                              'es': self.compute_ES_energy,
                              'bh': self.compute_buckingham_energy,
                              'silu': self.compute_silu_energy,
@@ -90,9 +91,24 @@ class MolCrystalAnalysis:
         if self.is_batch:
             molwise_lj_pot \
                 = qlj_analysis(self.vdw_radii_tensor,
-                              self.edges_dict,
-                              self.num_graphs,
-                              )
+                               self.edges_dict,
+                               self.num_graphs,
+                               )
+        else:
+            raise NotImplementedError("LJ energies not implemented for single crystals")
+
+        return molwise_lj_pot
+
+    def compute_eLJ_energy(self, repulsion: Optional[float] = 2.5, **kwargs):
+        self._pre_compute_checks()
+
+        if self.is_batch:
+            molwise_lj_pot \
+                = elj_analysis(self.vdw_radii_tensor,
+                               self.edges_dict,
+                               self.num_graphs,
+                               stiffness=repulsion,
+                               )
         else:
             raise NotImplementedError("LJ energies not implemented for single crystals")
 
@@ -215,7 +231,7 @@ class MolCrystalAnalysis:
 
     def compute_crystal_uma(self,
                             predictor,
-                            std_orientation: bool=True,
+                            std_orientation: bool = True,
                             ):
         if self.is_batch:
             return compute_crystal_uma_on_mxt_batch(self.clone(),
@@ -227,10 +243,9 @@ class MolCrystalAnalysis:
                                                     predictor)
 
     def compute_lattice_gas_phase_uma(self,
-                            predictor,
-                            std_orientation: bool=True,
-                            ):
-
+                                      predictor,
+                                      std_orientation: bool = True,
+                                      ):
 
         if self.is_batch:
             diffuse_batch = self.clone()
@@ -245,7 +260,6 @@ class MolCrystalAnalysis:
                                                 std_orientation,
                                                 predictor,
                                                 pbc=False)
-
 
     def compute_rdf(self,
                     cutoff: float = 6,
