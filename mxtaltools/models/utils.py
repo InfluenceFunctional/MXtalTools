@@ -480,9 +480,9 @@ def embed_crystal_list(
     for ind in range(len(crystal_list)):
         crystal_list[ind].embedding = embeddings[None, ind]
         if redo_crystal_analysis:
-            crystal_list[ind].lj_pot = lj_pots[ind].cpu()
+            crystal_list[ind].lj = lj_pots[ind].cpu()
             crystal_list[ind].es_pot = es_pots[ind].cpu()
-            crystal_list[ind].scaled_lj_pot = scaled_lj_pots[ind].cpu()
+            crystal_list[ind].scaled_lj = scaled_lj_pots[ind].cpu()
             crystal_list[ind].bh_pot = bh_pots[ind].cpu()
 
     return crystal_list

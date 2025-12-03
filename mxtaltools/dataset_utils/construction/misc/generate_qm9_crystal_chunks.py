@@ -97,7 +97,7 @@ if __name__ == '__main__':
         import plotly.graph_objects as go
 
         lj_pots = torch.stack(
-            [torch.tensor([sample.scaled_lj_pot for sample in sample_list]) for sample_list in opt1_trajectory])
+            [torch.tensor([sample.scaled_lj for sample in sample_list]) for sample_list in opt1_trajectory])
         coeffs = torch.stack(
             [torch.tensor([sample.packing_coeff for sample in sample_list]) for sample_list in opt1_trajectory])
 

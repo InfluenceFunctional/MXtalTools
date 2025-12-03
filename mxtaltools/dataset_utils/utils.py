@@ -19,14 +19,19 @@ def collate_data_list(data_list, exclude_unit_cell: bool = True,
     # Optionally exclude known keys  # todo this really needs to be fixed up
     if not skip_default_exclusion:
         exclude_keys_i = ['edges_dict',
-                        'niggli_energy',
-                        'core_energy',
-                        'density_energy',
-                        'lj_energy',
-                        'bounding_energy',
-                        'es_pot',
-                        'gfn_energy',
-                        ]
+                          'niggli_energy',
+                          'core_energy',
+                          'density_energy',
+                          'lj_energy',
+                          'bounding_energy',
+                          'es_pot',
+                          'gfn_energy',
+                          'lj_pot',
+                          'normed_lj_pot',
+                          'qlj_pot',
+                          'elj_pot',
+                          'silu_pot',
+                          ]
     else:
         exclude_keys_i = []
     if exclude_keys is not None:
@@ -36,8 +41,8 @@ def collate_data_list(data_list, exclude_unit_cell: bool = True,
         exclude_keys_i.append('unit_cell_pos')
 
     batch = Batch.from_data_list(data_list,
-                                exclude_keys=list(exclude_keys_i),
-                                )
+                                 exclude_keys=list(exclude_keys_i),
+                                 )
 
     # if hasattr(batch, 'max_z_prime'):
     #     if isinstance(batch.max_z_prime, int):
@@ -53,7 +58,8 @@ def collate_data_list(data_list, exclude_unit_cell: bool = True,
             batch.aunit_centroid = batch.aunit_centroid[:, :3 * batch.max_z_prime]
             batch.aunit_orientation = batch.aunit_orientation[:, :3 * batch.max_z_prime]
             batch.aunit_handedness = batch.aunit_handedness[:, :batch.max_z_prime]
-            assert batch.aunit_centroid.shape[1] == 3 * batch.max_z_prime, "Batch max z prime must agree with parameterization"
+            assert batch.aunit_centroid.shape[
+                       1] == 3 * batch.max_z_prime, "Batch max z prime must agree with parameterization"
         if not hasattr(batch, 'symmetry_operators'):
             batch.reset_sg_info(batch.sg_ind)
 

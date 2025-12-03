@@ -99,8 +99,8 @@ for batch_ind in range(num_batches):
         for ind, sample in enumerate(second_optimization_trajectory[-1]):
             sample.model_output = model_output[ind][None, :].clone().cpu()
             sample.rdf = sample_rdf[ind][None, :].clone().cpu()
-            sample.lj_pot = p1.clone().cpu()
-            sample.scaled_lj_pot = p3.clone().cpu()
+            sample.lj = p1.clone().cpu()
+            sample.scaled_lj = p3.clone().cpu()
             sample.es_pot = p2.clone().cpu()
 
     optimized_samples.extend(second_optimization_trajectory[-1])

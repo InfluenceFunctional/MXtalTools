@@ -129,9 +129,9 @@ def simple_cell_hist(sample_batch=None, reference_dist=None, n_kde_points=200, b
         assert False
 
     if sample_batch is not None:
-        if hasattr(sample_batch, 'lj_pot'):
-            if sample_batch.lj_pot is not None:
-                energies = sample_batch.lj_pot
+        if hasattr(sample_batch, 'lj'):
+            if sample_batch.lj is not None:
+                energies = sample_batch.lj
                 good_inds = torch.argwhere(energies <= torch.quantile(energies, 0.1))
                 good_samples = samples[good_inds.flatten()]
             else:
@@ -757,7 +757,7 @@ def log_crystal_samples(epoch_stats_dict: Optional[dict] = None, sample_batch: O
     filenames = []
     for i in range(len(mols)):
         cp = float(sample_crystals[i].packing_coeff)
-        lj_pot = float(sample_crystals[i].lj_pot)
+        lj_pot = float(sample_crystals[i].lj)
         filename = f'cp={cp:.2f}_LJ={lj_pot:.2g}.cif'
         filenames.append(filename)
         ase.io.write(filename, mols[i])
@@ -813,7 +813,7 @@ def generated_cell_scatter_fig(epoch_stats_dict, layout):
 
 
 def simple_cell_scatter_fig(sample_batch, cluster_inds=None, aux_array=None, aux_scalar_name: str = ''):
-    energy = (sample_batch.scaled_lj_pot/sample_batch.num_atoms).cpu().detach()
+    energy = (sample_batch.scaled_lj/sample_batch.num_atoms).cpu().detach()
     energy[energy > 0] = np.log(energy[energy > 0])
 
     xy = np.vstack([sample_batch.packing_coeff.cpu().detach(), energy])

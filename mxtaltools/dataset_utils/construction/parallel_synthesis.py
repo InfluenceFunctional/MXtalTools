@@ -293,7 +293,7 @@ def process_smiles_to_crystal_opt(lines: list,
         samples = optimization_trajectory[-1]
 
         # filter unbound states
-        samples = [sample for sample in samples if sample.scaled_lj_pot < 3]
+        samples = [sample for sample in samples if sample.scaled_lj < 3]
 
         # sample noisily about optimized minima
         nearby_samples = sample_about_crystal(samples,
@@ -304,7 +304,7 @@ def process_smiles_to_crystal_opt(lines: list,
         for ind in range(post_scramble_each):
             samples.extend(nearby_samples[ind])
 
-        samples = [sample for sample in samples if sample.scaled_lj_pot < 3]  # filter bound states
+        samples = [sample for sample in samples if sample.scaled_lj < 3]  # filter bound states
 
         # do embedding
         if do_embedding:

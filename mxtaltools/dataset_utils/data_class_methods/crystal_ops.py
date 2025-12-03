@@ -106,7 +106,14 @@ class MolCrystalOps:
                     continue
 
                 if not torch.is_tensor(value):
-                    value = torch.tensor(value, device=self.device, dtype=torch.long if isinstance(value, int) else torch.float32)
+                    if isinstance(value, list) and len(value) > 0 and isinstance(value[0], np.ndarray):
+                        value = np.asarray(value)
+
+                    value = torch.as_tensor(
+                        value,
+                        device=self.device,
+                        dtype=torch.long if isinstance(value, int) else torch.float32,
+                    )
 
                 if len(value.size()) == 0:  # batch variables
                     setattr(self, key, value)
@@ -927,7 +934,7 @@ class MolCrystalOps:
 
         return custom_ranges
 
-    def _collect_sample_dists(self, samples, ref_dist, quantiles, split_by_sg, split_by_zp, aux_dists):
+    def _collect_sample_dists(self, samples, ref_dist, quantiles, split_by_sg, split_by_zp, aux_dists, override_energy=None):
         num_dists = 1
         dists = []
         dist_names = []
@@ -944,7 +951,10 @@ class MolCrystalOps:
         dists.append(samples)
 
         if quantiles is not None:
-            energies = self.lj_pot.cpu().detach().numpy()
+            if override_energy is not None:
+                energies = override_energy
+            else:
+                energies = self.lj.cpu().detach().numpy()
             for q in quantiles:
                 num_dists += 1
                 dist_names += [f'{q} Quantile']
@@ -978,10 +988,14 @@ class MolCrystalOps:
                                   return_fig: bool = False,
                                   split_by_sg: bool = False,
                                   split_by_zp: bool = False,
+                                  override_energy: torch.Tensor = None,
+                                  color_flag: torch.Tensor = None,
                                   ):
 
-        energy = (log_rescale_positive(self.lj_pot) / self.num_atoms).cpu().detach()
-        energy[energy > 0] = np.log(energy[energy > 0])
+        if override_energy is None:
+            energy = (log_rescale_positive(self.lj) / self.num_atoms).cpu().detach()
+        else:
+            energy = (log_rescale_positive(override_energy) / self.num_atoms).cpu().detach()
 
         xy = np.vstack([self.packing_coeff.cpu().detach(), energy])
         try:
@@ -992,17 +1006,23 @@ class MolCrystalOps:
         scatter_dict = {'energy': energy,
                         'packing_coefficient': self.packing_coeff.cpu().detach(),
                         }
-        if split_by_sg:
-            if split_by_zp:
-                print("Cannot split by both z prime and space group!")
-            color_tag = 'Space Group'
-            scatter_dict.update({'Space Group': [str(int(sg)) for sg in self.sg_ind]})
-        elif split_by_zp:
-            color_tag = "Z'"
-            scatter_dict.update({"Z'": [str(int(zp)) for zp in self.z_prime]})
+        if color_flag is not None:
+            color_tag = 'Custom Flag'
+            scatter_dict.update({'Custom Flag': color_flag})
+            cscale = px.colors.qualitative.Dark24
         else:
-            color_tag = 'Point Density'
-            scatter_dict.update({'Point Density': z})
+            cscale = px.colors.cyclical.IceFire
+            if split_by_sg:
+                if split_by_zp:
+                    print("Cannot split by both z prime and space group!")
+                color_tag = 'Space Group'
+                scatter_dict.update({'Space Group': [str(int(sg)) for sg in self.sg_ind]})
+            elif split_by_zp:
+                color_tag = "Z'"
+                scatter_dict.update({"Z'": [str(int(zp)) for zp in self.z_prime]})
+            else:
+                color_tag = 'Point Density'
+                scatter_dict.update({'Point Density': z})
 
         opacity = max(0.25, 1 - self.num_graphs / 5e4)
         df = pd.DataFrame.from_dict(scatter_dict)
@@ -1010,7 +1030,7 @@ class MolCrystalOps:
         fig = px.scatter(df,
                          x='packing_coefficient', y='energy',
                          color=color_tag,
-                         color_continuous_scale=px.colors.cyclical.IceFire,
+                         color_continuous_scale=cscale,
                          marginal_x='violin', marginal_y='violin',
                          color_discrete_sequence=px.colors.qualitative.Set3 if color_tag == 'Space Group' else None,
                          opacity=opacity
@@ -1088,14 +1108,15 @@ class MolCrystalOps:
                                split_by_sg: bool = False,
                                split_by_zp: bool = False,
                                n_kde: int = 200,
-                               bw_factor: float = 0.05):
+                               bw_factor: float = 0.05,
+                               override_energy: Optional[torch.Tensor] = None,):
         if not self.is_batch:
             print("Cell statistics only works for a batch of crystal data objects")
             return None
 
         lattice_features = self._build_feature_labels()
         samples = self._get_samples(space)
-        num_dists, dist_names, dists = self._collect_sample_dists(samples, ref_dist, quantiles, split_by_sg, split_by_zp, aux_dists)
+        num_dists, dist_names, dists = self._collect_sample_dists(samples, ref_dist, quantiles, split_by_sg, split_by_zp, aux_dists, override_energy)
         # delete or NaN unused higher Z' elements
         # 1d Histograms
         fig = make_subplots(rows=2 + 2 * self.max_z_prime,

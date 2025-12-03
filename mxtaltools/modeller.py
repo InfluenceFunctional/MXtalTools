@@ -1620,7 +1620,7 @@ class Modeller:
             ind = 0
             for elem in otf_dataset:
                 embedding[ind] = elem.embedding.cpu().detach()
-                lj_pot[ind] = elem.scaled_lj_pot.cpu().detach()
+                lj_pot[ind] = elem.scaled_lj.cpu().detach()
                 es_pot[ind] = elem.es_pot.cpu().detach()
                 ind += 1
             ens = lj_pot + self.config.proxy_discriminator.electrostatic_scaling_factor * es_pot
@@ -2624,7 +2624,7 @@ class Modeller:
         self.times['batch_resizing_start'] = time()
         if self.config.grow_batch_size:
             if (train_loader.batch_size < len(train_loader.dataset)) and (
-                    train_loader.batch_size < self.config.max_batch_size):  # if the batch is smaller than the dataset
+                    train_loader.batch_size < self.config.max_fwd_batch_size):  # if the batch is smaller than the dataset
                 increment = max(4,
                                 int(train_loader.batch_size * self.config.batch_growth_increment))  # increment batch size
                 train_loader, test_loader = (

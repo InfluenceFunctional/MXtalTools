@@ -68,7 +68,7 @@ class MolCrystalAnalysis:
                              'silu': self.compute_silu_energy,
                              'vdw': self.compute_vdW_overlap,
                              'ellipsoid': self.compute_ellipsoidal_overlap,
-                             'niggli': self.compute_niggli_overlap
+                             'niggli_overlap': self.compute_niggli_overlap
                              }
 
     def compute_LJ_energy(self, **kwargs):
@@ -192,14 +192,14 @@ class MolCrystalAnalysis:
         cluster_batch.construct_radial_graph(cutoff=cutoff)
 
         outputs = cluster_batch.compute(requests=['lj', 'es'])
-        self.lj_pot = outputs['lj']
+        self.lj = outputs['lj']
         self.es_pot = outputs['es']
-        self.scaled_lj_pot = log_rescale_positive(self.lj_pot)
+        self.scaled_lj = log_rescale_positive(self.lj)
 
         if return_cluster:
-            return self.lj_pot, self.es_pot, self.scaled_lj_pot, cluster_batch
+            return self.lj, self.es_pot, self.scaled_lj, cluster_batch
         else:
-            return self.lj_pot, self.es_pot, self.scaled_lj_pot
+            return self.lj, self.es_pot, self.scaled_lj
 
     def analyze(self,
                 computes: list,
@@ -208,6 +208,7 @@ class MolCrystalAnalysis:
                 cutoff: float = 6,
                 supercell_size: int = 10,
                 std_orientation: Optional[bool] = True,
+                assign_outputs: Optional[bool] = False,
                 **kwargs
                 ):
         """
@@ -223,6 +224,10 @@ class MolCrystalAnalysis:
         cluster_batch.construct_radial_graph(cutoff=cutoff)
 
         results = cluster_batch.compute(requests=computes, **kwargs)
+
+        if assign_outputs:
+            for key, value in results.items():
+                self.add_graph_attr(value, key)
 
         if return_cluster:
             return results, cluster_batch

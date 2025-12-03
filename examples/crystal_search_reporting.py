@@ -50,7 +50,7 @@ def csp_reporting(optimized_samples,
     packing_coeff = optimized_crystal_batch.packing_coeff
     model_score = softmax_and_score(optimized_crystal_batch.model_output[:, :2])
     rdf_dist_pred = F.softplus(optimized_crystal_batch.model_output[:, 2])
-    scaled_lj_pot = optimized_crystal_batch.scaled_lj_pot
+    scaled_lj_pot = optimized_crystal_batch.scaled_lj
     fake_rdfs = optimized_crystal_batch.rdf
 
     """

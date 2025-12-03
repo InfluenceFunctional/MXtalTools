@@ -11,7 +11,7 @@ from mxtaltools.dataset_utils.data_classes import MolCrystalData
 
 def rdf_clustering(packing_coeff, rdf, rdf_cutoff, rr, samples, vdw, num_cpus=None):
     """cluster samples according to rdf distances"""
-    #rdf_dists = compute_rdf_distmat(rdf, rr)
+    # rdf_dists = compute_rdf_distmat(rdf, rr)
     if num_cpus is not None:
         rdf_dists = compute_rdf_distmat_parallel(rdf, rr, num_cpus, 50)
     else:
@@ -47,7 +47,8 @@ def cell_clustering(cell_params_cutoff, packing_coeff, rdf, samples, vdw, norm_f
         randoms = np.random.choice(num_samples, size=num_samples, replace=False)
         for ind in range(num_chunks):  # subsample and cluster
             chunk_inds = randoms[ind * chunk_size:(ind + 1) * chunk_size]
-            dists = torch.cdist(samples[chunk_inds]/ (norm_factors + 1e-4)[None, :], samples[chunk_inds]/(norm_factors + 1e-4)[None, :])
+            dists = torch.cdist(samples[chunk_inds] / (norm_factors + 1e-4)[None, :],
+                                samples[chunk_inds] / (norm_factors + 1e-4)[None, :])
             good_inds, n_clusters, cluster_inds = agglomerative_cluster(
                 vdw[chunk_inds],
                 threshold=cell_params_cutoff,
@@ -145,7 +146,6 @@ def coarse_crystal_filter(lj_record, lj_cutoff, packing_coeff_record, packing_cu
     return bad_inds, good_inds
 
 
-
 def get_initial_state(config, crystal_batch, device):
     # sample initial parameters
     if config.init_target_cp == 'std':
@@ -209,7 +209,8 @@ def init_samples_to_optim(config):
             for s_ind in range(config.num_samples):
                 for zp in config.zp_to_search:
                     opt_sample = MolCrystalData(
-                        molecule=[mol.clone() for _ in range(zp)] if zp > 1 else mol.clone(),  # duplicate molecules here
+                        molecule=[mol.clone() for _ in range(zp)] if zp > 1 else mol.clone(),
+                        # duplicate molecules here
                         sg_ind=sg,
                         aunit_handedness=ones1,
                         cell_lengths=ones3,

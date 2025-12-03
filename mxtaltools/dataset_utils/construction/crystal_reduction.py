@@ -15,7 +15,7 @@ if __name__ == "__main__":
     clusters.construct_radial_graph(cutoff=6)
     rdfs, bins, _ = clusters.compute_rdf()
     dists = compute_rdf_distance(rdfs[None,0], rdfs[None,1], bins)
-    outs = clusters.compute(['lj','silu','niggli','qlj'])
+    outs = clusters.compute(['lj','silu','niggli_overlap','qlj'])
 
     #metric tensor distance
     ref_metric_tensor = (batch.T_fc[0] @ batch.T_fc[0]).cpu()

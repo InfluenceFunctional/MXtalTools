@@ -128,7 +128,7 @@ if __name__ == '__main__':
                 import plotly.graph_objects as go
 
                 lj_pots = torch.stack(
-                    [torch.tensor([sample.scaled_lj_pot for sample in sample_list]) for sample_list in opt1_trajectory])
+                    [torch.tensor([sample.scaled_lj for sample in sample_list]) for sample_list in opt1_trajectory])
                 coeffs = torch.stack(
                     [torch.tensor([sample.packing_coeff for sample in sample_list]) for sample_list in opt1_trajectory])
 
@@ -173,8 +173,8 @@ if __name__ == '__main__':
                 for ind, sample in enumerate(opt1_trajectory[-1]):
                     sample.model_output = model_output[ind][None, :].clone().cpu()
                     sample.rdf = fake_rdf[ind][None, :].clone().cpu()
-                    sample.lj_pot = p1.clone().cpu()
-                    sample.scaled_lj_pot = p3.clone().cpu()
+                    sample.lj = p1.clone().cpu()
+                    sample.scaled_lj = p3.clone().cpu()
                     sample.es_pot = p2.clone().cpu()
 
             optimized_samples.extend(opt1_trajectory[-1])

@@ -3,7 +3,7 @@ device: cuda
 mol_path: D:\crystal_datasets\protonated_nicoam\nicoam0.pkl
 #mol_path: D:\crystal_datasets\train_qm9.pt
 out_dir: D:\crystal_datasets\opt_outputs
-run_name: nic_2_zp1
+run_name: new_nic_2_zp1
 
 mol_seed: 0
 opt_seed: 0
@@ -19,7 +19,7 @@ grow_batch_size: false
 
 init_sample_method: random  # 'random' 'reasonable'
 init_sample_reduced: true  # true or false for niggli vs non-niggli init sampling
-init_target_cp: std  # float, null or 'std' target packing coefficient for initial structure sampling
+init_target_cp: 0.1 #std  # float, null or 'std' target packing coefficient for initial structure sampling
 
 # Optimization can have multiple stages by duplicating the opt block below and adjusting params
 # the search algo will run consecutive n consecutive optimizations for n the number of list elements
@@ -41,11 +41,11 @@ init_target_cp: std  # float, null or 'std' target packing coefficient for initi
 #        supercell_size: Optional[int] = 10,
 #        anneal_lr: Optional[bool] = False,
 opt:
-  - optim_target: 'silu' # lj qlj silu ellipsoid classification_score rdf_score
+  - optim_target: 'silu' # lj qlj elj silu ellipsoid classification_score rdf_score
     enforce_niggli: true
     compression_factor: 1.0
-    init_lr: 0.001
-    convergence_eps: 0.001
+    init_lr: 0.01
+    convergence_eps: 0.01
     optimizer_func: 'rprop'  # NOTE rprop is by far the fastest and most reliable
     anneal_lr: false
     grad_norm_clip: 0.1
@@ -56,10 +56,10 @@ opt:
   - optim_target: 'lj' # lj silu ellipsoid classification_score rdf_score
     enforce_niggli: true
     compression_factor: 0.0
-    init_lr: 0.1
+    init_lr: 0.01
     convergence_eps: 0.0001
-    optimizer_func: 'sgd'  # SGD is good for fine-tuning local opts
-    anneal_lr: true
-    grad_norm_clip: 0.01
+    optimizer_func: 'rprop'  # SGD is good for fine-tuning local opts
+    anneal_lr: false
+    grad_norm_clip: 0.1
     show_tqdm: false
-    max_num_steps: 50
+    max_num_steps: 100

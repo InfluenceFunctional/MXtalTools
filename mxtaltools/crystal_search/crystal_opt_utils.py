@@ -68,11 +68,13 @@ def gradient_descent_optimization(
         energy_computes.append('silu')
     elif optim_target.lower() == 'qlj':
         energy_computes.append('qlj')
+    elif optim_target.lower() == 'elj':
+        energy_computes.append('elj')
     elif optim_target.lower() == 'ellipsoid':
         energy_computes.append('ellipsoid')
 
     if enforce_niggli:  # we enforce positive niggli planes by an energy-like call
-        energy_computes.append('niggli')
+        energy_computes.append('niggli_overlap')
 
     param_module = CrystalParams(init_sample)  # <-- init_sample shape [n, 6 + max_z_prime * 6]
 
@@ -172,11 +174,6 @@ def gradient_descent_optimization(
                 torch.save(best_samples, 'opt_intermediates.pt')
             raise e
 
-    # return the optimized samples
-    # crystal_batch.add_graph_attr(outputs['lj'].detach(), 'lj_pot')
-    # crystal_batch.add_graph_attr(crystal_batch.packing_coeff.detach(), 'packing_coeff')
-    # samples_list = crystal_batch.cpu().detach().batch_to_list()
-
     records = {k: torch.stack(v) for k, v in records.items()}
     """
     Pull out and re-analyze the best samples from each trajectory
@@ -194,7 +191,7 @@ def gradient_descent_optimization(
         repulsion=1,
         surface_padding=0,
     )
-    crystal_batch.add_graph_attr(outputs['lj'].detach(), 'lj_pot')
+    crystal_batch.add_graph_attr(outputs['lj'].detach(), 'lj')
     crystal_batch.add_graph_attr(crystal_batch.packing_coeff.detach(), 'packing_coeff')
     samples_list = crystal_batch.batch_to_list()
 
@@ -210,6 +207,9 @@ def gradient_descent_optimization(
     traj_fig(timesteps, (records['cp']), names=['time', 'cp'])
     traj_fig(records['cp'], log_rescale_positive(records['lj']), names=['cp', 'lj'])
     
+    crystal_batch.plot_batch_cell_params()
+    crystal_batch.plot_batch_density_funnel()
+
     """
     return samples_list, records
 
@@ -296,6 +296,9 @@ def compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_mode
     elif optim_target.lower() == 'qlj':
         loss = outputs['qlj']
 
+    elif optim_target.lower() == 'elj':
+        loss = outputs['elj']
+
     elif optim_target.lower() == 'inter_overlaps':  # force molecules apart by separating their centroids
         loss = inter_overlap_loss(cluster_batch, crystal_batch)
 
@@ -326,7 +329,7 @@ def compute_auxiliary_loss(cluster_batch, compression_factor, do_box_restriction
         loss = loss + aunit_lengths.sum(dim=1) * compression_factor
 
     if enforce_niggli:
-        negative_overlap = F.relu(-outputs['niggli'] + 0.01)
+        negative_overlap = F.relu(-outputs['niggli_overlap'] + 0.01)
         loss = loss + 100 * negative_overlap ** 2  # severely penalize negative niggli overlaps
 
     return loss
@@ -366,8 +369,8 @@ def inter_overlap_loss(cluster_batch, crystal_batch):
 """ # viz sample distribution
 
 import plotly.graph_objects as go
-ljs = torch.tensor([elem.scaled_lj_pot for elem in opt_samples[:len(samples_record[0])]])
-ljs2 = torch.tensor([elem.scaled_lj_pot for elem in opt_samples])
+ljs = torch.tensor([elem.scaled_lj for elem in opt_samples[:len(samples_record[0])]])
+ljs2 = torch.tensor([elem.scaled_lj for elem in opt_samples])
 fig = go.Figure()
 fig.add_histogram(x=ljs, nbinsx=100, histnorm='probability density')
 fig.add_histogram(x=ljs2, nbinsx=100, histnorm='probability density')
@@ -403,11 +406,11 @@ def sample_about_crystal(opt_samples: Union[list],
             silu_energy = cluster_batch.compute_silu_energy()
 
         for si, sample in enumerate(samples_list):
-            sample.lj_pot = lj_pot[si]
-            sample.scaled_lj_pot = scaled_lj_pot[si]
+            sample.lj = lj_pot[si]
+            sample.scaled_lj = scaled_lj_pot[si]
             sample.es_pot = es_pot[si]
             if do_silu_pot:
-                sample.silu_pot = silu_energy[si]
+                sample.silu = silu_energy[si]
 
         samples_record.append(samples_list)
 
@@ -418,10 +421,10 @@ def sample_about_crystal(opt_samples: Union[list],
 import plotly.graph_objects as go
 fig = go.Figure()
 lj_pots = torch.stack(
-    [torch.tensor([sample.scaled_lj_pot for sample in sample_list]) for sample_list in samples_record])
+    [torch.tensor([sample.scaled_lj for sample in sample_list]) for sample_list in samples_record])
 es_pots = torch.stack([torch.tensor([sample.es_pot for sample in sample_list]) for sample_list in samples_record])
 orig_batch = collate_data_list(opt_samples)
-lj_pots = torch.cat([orig_batch.scaled_lj_pot[None, :], lj_pots], dim=0)
+lj_pots = torch.cat([orig_batch.scaled_lj[None, :], lj_pots], dim=0)
 es_pots = torch.cat([orig_batch.es_pot[None, :], es_pots], dim=0)
 for ind in range(lj_pot.shape[-1]):
     fig.add_scatter(y=lj_pots[..., ind], marker_color='blue', name='lj', legendgroup='lg',
@@ -460,8 +463,8 @@ def scramble_resample(post_scramble_each, samples_record):  # deprecated
         samples_list = crystal_batch.detach().cpu().batch_to_list()
 
         for si, sample in enumerate(samples_list):
-            sample.lj_pot = lj_pot[si]
-            sample.scaled_lj_pot = scaled_lj_pot[si]
+            sample.lj = lj_pot[si]
+            sample.scaled_lj = scaled_lj_pot[si]
             sample.es_pot = es_pot[si]
 
         resampled_record.append(samples_list)
