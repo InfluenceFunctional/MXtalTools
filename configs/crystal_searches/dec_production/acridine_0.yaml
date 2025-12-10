@@ -3,7 +3,7 @@ device: cuda
 grow_batch_size: false
 init_sample_method: random
 init_target_cp: 0.1
-mol_path: /scratch/mk8347/csd_runs/datasets/nicotinamide/acridine.pkl
+mol_path: /scratch/mk8347/csd_runs/datasets/acridine/acridine.pkl
 mol_seed: 0
 mols_to_sample: 1
 num_samples: 10000
