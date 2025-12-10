@@ -1,20 +1,18 @@
 device: cuda
-#mol_path: D:\crystal_datasets\mini_new_csd.pt
-mol_path: D:\crystal_datasets\protonated_nicoam\nicoam0.pkl
-#mol_path: D:\crystal_datasets\train_qm9.pt
-out_dir: D:\crystal_datasets\opt_outputs
-run_name: reduced_nic_sg2_zp2
+mol_path: /scratch/mk8347/csd_runs/datasets/nicotinamide/protonated_nicotinamide.pkl
+out_dir: /scratch/mk8347/csd_runs/datasets/nicotinamide
+run_name: nic_prod_dataset
 
 mol_seed: 0
 opt_seed: 0
 sampling_mode: all # 'all' or 'random' or 'ordered'
 mols_to_sample: 1
-num_samples: 5000 # per mol, per space group
+num_samples: 5000 # per mol, per space group, per Zp
 
-sgs_to_search: [2]
-zp_to_search: [2]
+sgs_to_search: [ 2,4,9,14, 15, 19, 33, 61 ]
+zp_to_search: [ 1, 2 ]
 
-batch_size: 1000
+batch_size: 5000
 grow_batch_size: false
 
 init_sample_method: random  # 'random' 'reasonable'

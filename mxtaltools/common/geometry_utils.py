@@ -233,7 +233,8 @@ def batch_molecule_principal_axes_torch(coords_i: torch.FloatTensor,
     if heavy_atoms_only:
         mask = atom_types > 1
         Ip, Ipm_fin, I = scatter_compute_Ip(coords[mask], batch[mask])
-        direction = batch_get_furthest_node_vector(coords[mask], batch[mask], num_graphs)  # todo ON NEXT REPARAMETERIZATION SET THIS TO A MORE STABLE ANCHOR like median atom or some inner product
+        direction = batch_get_furthest_node_vector(coords[mask], batch[mask],
+                                                   num_graphs)  # todo ON NEXT REPARAMETERIZATION SET THIS TO A MORE STABLE ANCHOR like median atom or some inner product
 
     else:
         Ip, Ipm_fin, I = scatter_compute_Ip(coords, batch)
@@ -1125,7 +1126,7 @@ def enforce_crystal_system(lattice_lengths,
     """
     enforce physical bounds on cell parameters
     https://en.wikipedia.org/wiki/Crystal_system
-    """  # todo double check these limits
+    """  # todo vectorize this function, and clean it up in general
 
     if symmetries_dict is None:
         symmetries_dict = init_sym_info()
@@ -1153,13 +1154,15 @@ def enforce_crystal_system(lattice_lengths,
             fixed_angles[i] = torch.stack((
                 pi_tensor.clone() / 2, angles[1], pi_tensor.clone() / 2,
             ), dim=- 1)
+
         elif lattice.lower() == 'orthorhombic':  # fix all angles at pi/2
             fixed_lengths[i] = lengths * 1
             fixed_angles[i] = torch.stack((
                 pi_tensor.clone() / 2, pi_tensor.clone() / 2, pi_tensor.clone() / 2,
             ), dim=- 1)
-        elif lattice.lower() == 'tetragonal':  # fix all angles pi/2 and take the mean of a & b vectors
-            mean_tensor = torch.mean(lengths[0:2])
+
+        elif lattice.lower() == 'tetragonal':  # fix all angles pi/2 and a=b
+            mean_tensor = lengths[0]* 1
             fixed_lengths[i] = torch.stack((
                 mean_tensor, mean_tensor, lengths[2] * 1,
             ), dim=- 1)
@@ -1169,10 +1172,10 @@ def enforce_crystal_system(lattice_lengths,
             ), dim=- 1)
 
         elif lattice.lower() == 'hexagonal':
-            # mean of ab, c is free
+            # a=b
             # alpha beta are pi/2, gamma is 2pi/3
 
-            mean_tensor = torch.mean(lengths[0:2])
+            mean_tensor = lengths[0]* 1
             fixed_lengths[i] = torch.stack((
                 mean_tensor, mean_tensor, lengths[2] * 1,
             ), dim=- 1)
@@ -1187,18 +1190,18 @@ def enforce_crystal_system(lattice_lengths,
             # mean of abc vector lengths
             # mean of all angles
 
-            mean_tensor = torch.mean(lengths)
+            mean_tensor = lengths[0]* 1
             fixed_lengths[i] = torch.stack((
                 mean_tensor, mean_tensor, mean_tensor,
             ), dim=- 1)
 
-            mean_angle = torch.mean(angles)
+            mean_angle = angles[0]
             fixed_angles[i] = torch.stack((
                 mean_angle, mean_angle, mean_angle,
             ), dim=- 1)
 
         elif lattice.lower() == 'cubic':  # all angles 90 all lengths equal
-            mean_tensor = torch.mean(lengths)
+            mean_tensor = lengths[0] * 1
             fixed_lengths[i] = torch.stack((
                 mean_tensor, mean_tensor, mean_tensor,
             ), dim=- 1)

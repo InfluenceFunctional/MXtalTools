@@ -47,7 +47,7 @@ def gradient_descent_optimization(
         do_box_restriction: Optional[bool] = False,
         cutoff: Optional[float] = None,
         compression_factor: Optional[float] = 0,
-        enforce_niggli: Optional[bool] = False,
+        enforce_reduced: Optional[bool] = False,
         supercell_size: Optional[int] = 10,
         anneal_lr: Optional[bool] = False,
 ):
@@ -72,9 +72,14 @@ def gradient_descent_optimization(
         energy_computes.append('elj')
     elif optim_target.lower() == 'ellipsoid':
         energy_computes.append('ellipsoid')
+    elif optim_target.lower() == 'reduce':
+        energy_computes.append('reduction_en')
 
-    if enforce_niggli:  # we enforce positive niggli planes by an energy-like call
-        energy_computes.append('niggli_overlap')
+    if enforce_reduced:  # use an energy based penalty to enforce sampling in the reduced subspace
+        energy_computes.append('reduction_en')
+        std_margin = 0.01
+    else:
+        std_margin = 0
 
     param_module = CrystalParams(init_sample)  # <-- init_sample shape [n, 6 + max_z_prime * 6]
 
@@ -96,8 +101,6 @@ def gradient_descent_optimization(
         ellipsoid_model = ellipsoid_model.to(init_crystal_batch.device)
         ellipsoid_model.eval()
 
-    f_steps = 0
-    did_finetune = False
     records = None
     converged = torch.zeros(init_crystal_batch.num_graphs, dtype=torch.bool)
     # torch.autograd.set_detect_anomaly(True)  # for debugging
@@ -105,13 +108,12 @@ def gradient_descent_optimization(
         with (torch.enable_grad()):
             with tqdm(total=max_num_steps, disable=not show_tqdm) as pbar:
                 s_ind = 0
-                while (f_steps <= 10) and (s_ind < (max_num_steps - 1)):
+                while (s_ind < (max_num_steps - 1)) and not converged.all():
                     optimizer.zero_grad(set_to_none=True)
                     crystal_batch = init_crystal_batch.clone().detach()  # this is necessary to not retain lots of intermediate tensors
                     crystal_batch.set_cell_parameters(param_module.stacked(),
                                                       skip_box_analysis=True)  # we will do box analysis in the next step, after cleanup
                     crystal_batch.clean_cell_parameters(
-                        enforce_niggli=enforce_niggli,  # enforce niggli parameters in [0,1]
                         mode='hard',
                         canonicalize_orientations=True,
                     )
@@ -123,6 +125,7 @@ def gradient_descent_optimization(
                         repulsion=1,
                         surface_padding=0,
                         std_orientation=True,
+                        margin=std_margin,
                     )
 
                     """
@@ -136,14 +139,14 @@ def gradient_descent_optimization(
                         records['loss'] = []
                     for key, value in outputs.items():
                         records[key].append(value.detach().cpu())
-                    records['cp'].append(cluster_batch.packing_coeff.detach().cpu())
+                    records['cp'].append(crystal_batch.packing_coeff.detach().cpu())
 
                     """
                     loss and backprop
                     """
                     loss = compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model)
                     loss = compute_auxiliary_loss(cluster_batch, compression_factor,
-                                                  do_box_restriction, loss, target_packing_coeff, enforce_niggli,
+                                                  do_box_restriction, loss, target_packing_coeff, enforce_reduced,
                                                   outputs)
                     records['loss'].append(loss.detach().cpu())
                     loss_to_backprop = loss[~converged].mean()  # save some effort in backprop
@@ -159,11 +162,11 @@ def gradient_descent_optimization(
                     scheduler1.step()  # shrink
 
                     s_ind += 1
-                    if s_ind % 10 == 0:
-                        pbar.update(10)
+                    if s_ind % 50 == 0:
+                        pbar.update(50)
                     if s_ind >= min(max_num_steps, max(50, min_num_steps)):
-                        converged, f_steps = check_convergence(params_record, s_ind, convergence_eps,
-                                                               did_finetune, optimizer, init_lr)
+                        converged = check_convergence(params_record, s_ind, convergence_eps,
+                                                               optimizer, init_lr)
     except (RuntimeError, ValueError) as e:
         if is_cuda_oom(e):
             if s_ind > 0:
@@ -195,9 +198,9 @@ def gradient_descent_optimization(
     crystal_batch.add_graph_attr(crystal_batch.packing_coeff.detach(), 'packing_coeff')
     samples_list = crystal_batch.batch_to_list()
 
-    if enforce_niggli:
-        overlaps = crystal_batch.compute_niggli_overlap()
-        samples_list = [elem for i, elem in enumerate(samples_list) if overlaps[i] >= 0]
+    if enforce_reduced:
+        penalty = crystal_batch.compute_cell_reduction_penalty()
+        samples_list = [elem for i, elem in enumerate(samples_list) if penalty[i] < 1e-3]
     """
     # analyze trajectory information, if we want
     
@@ -209,7 +212,9 @@ def gradient_descent_optimization(
     
     crystal_batch.plot_batch_cell_params()
     crystal_batch.plot_batch_density_funnel()
-
+    import plotly.graph_objects as go
+    penalty = crystal_batch.compute_cell_reduction_penalty()
+    go.Figure(go.Histogram(x=(penalty+1e-6).log10().cpu().detach().numpy())).show()
     """
     return samples_list, records
 
@@ -287,7 +292,7 @@ def ema_trajectory(traj: torch.Tensor, alpha: float = 0.1) -> torch.Tensor:
 
 
 def compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model):
-    if optim_target.lower() == 'lj':
+    if optim_target.lower() == 'lj':  # todo obviate this with analysis keys
         loss = outputs['lj']
 
     elif optim_target.lower() == 'silu':
@@ -310,11 +315,15 @@ def compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_mode
 
     elif optim_target.lower() == 'ellipsoid':
         loss = outputs['ellipsoid']
+
+    elif optim_target.lower() == 'reduce':
+        loss = outputs['reduction_en']
+
     return loss
 
 
 def compute_auxiliary_loss(cluster_batch, compression_factor, do_box_restriction,
-                           loss, target_packing_coeff, enforce_niggli, outputs):
+                           loss, target_packing_coeff, enforce_reduced, outputs):
     if target_packing_coeff is not None:
         cp_loss = (cluster_batch.packing_coeff - target_packing_coeff) ** 2
         loss = loss + cp_loss
@@ -328,9 +337,9 @@ def compute_auxiliary_loss(cluster_batch, compression_factor, do_box_restriction
         aunit_lengths = cluster_batch.scale_lengths_to_aunit()
         loss = loss + aunit_lengths.sum(dim=1) * compression_factor
 
-    if enforce_niggli:
-        negative_overlap = F.relu(-outputs['niggli_overlap'] + 0.01)
-        loss = loss + 100 * negative_overlap ** 2  # severely penalize negative niggli overlaps
+    if enforce_reduced:
+        penalty = F.relu(outputs['reduction_en'])
+        loss = loss + 10000 * penalty  # severely punish reduction violations
 
     return loss
 
@@ -379,43 +388,6 @@ fig.show()
 """
 
 
-def sample_about_crystal(opt_samples: Union[list],
-                         noise_level: float,
-                         num_samples: int,
-                         cutoff: Optional[float] = 10,
-                         enforce_niggli: Optional[bool] = False,
-                         do_silu_pot: Optional[bool] = False
-                         ):
-    samples_record = []
-    for ind in range(num_samples):
-        if isinstance(opt_samples, list):
-            crystal_batch = collate_data_list(opt_samples)
-        else:
-            crystal_batch = opt_samples.clone()
-
-        crystal_batch.noise_cell_parameters(noise_level)
-        crystal_batch.clean_cell_parameters(
-            enforce_niggli=enforce_niggli,
-            mode='hard',
-        )
-        lj_pot, es_pot, scaled_lj_pot, cluster_batch = crystal_batch.build_and_analyze(
-            cutoff=cutoff, return_cluster=True)
-        samples_list = crystal_batch.detach().cpu().batch_to_list()
-
-        if do_silu_pot:
-            silu_energy = cluster_batch.compute_silu_energy()
-
-        for si, sample in enumerate(samples_list):
-            sample.lj = lj_pot[si]
-            sample.scaled_lj = scaled_lj_pot[si]
-            sample.es_pot = es_pot[si]
-            if do_silu_pot:
-                sample.silu = silu_energy[si]
-
-        samples_record.append(samples_list)
-
-    return samples_record
-
 
 """
 import plotly.graph_objects as go
@@ -444,32 +416,6 @@ fig.add_scatter(y=(es_pots * 10 + lj_pots).mean(1), marker_color='black', name='
 fig.show()
 """
 
-
-def scramble_resample(post_scramble_each, samples_record):  # deprecated
-    resampled_record = []
-    for sample_list in samples_record[::post_scramble_each]:
-        crystal_batch = collate_data_list(sample_list)
-
-        # random directions on the sphere, getting naturally the correct distribution of theta, phi
-        random_vectors = torch.randn(size=(crystal_batch.num_graphs, 3))
-
-        # set norms uniformly between 0-2pi
-        norms = random_vectors.norm(dim=1)
-        applied_norms = (torch.rand(crystal_batch.num_graphs) * 2 * torch.pi).clip(min=0.05)  # cannot be exactly zero
-        random_vectors = random_vectors / norms[:, None] * applied_norms[:, None]
-
-        crystal_batch.aunit_orientation = random_vectors
-        lj_pot, es_pot, scaled_lj_pot = crystal_batch.build_and_analyze()
-        samples_list = crystal_batch.detach().cpu().batch_to_list()
-
-        for si, sample in enumerate(samples_list):
-            sample.lj = lj_pot[si]
-            sample.scaled_lj = scaled_lj_pot[si]
-            sample.es_pot = es_pot[si]
-
-        resampled_record.append(samples_list)
-    samples_record.extend(resampled_record)
-    return samples_record
 
 
 def _init_for_local_opt(lr, max_num_steps, optimizer_func, sample, num_atoms):
@@ -517,18 +463,11 @@ def cleanup_sample(raw_sample, sg_ind_list, symmetries_dict):
     return sample
 
 
-def check_convergence(params_record, s_ind, convergence_eps, did_finetune, optimizer, init_lr):
+def check_convergence(params_record, s_ind, convergence_eps, optimizer, init_lr):
     smoothed = ema_trajectory(params_record[:s_ind])
     diffs = smoothed[s_ind - 50:s_ind, :, :].diff(dim=0).abs().mean((0, 2))
     converged = diffs < convergence_eps
-    # once all converged, kick off fine-tune
-    f_steps = 0
-    if (converged.float().mean() > 0.95) and not did_finetune:
-        did_finetune = True
-        converged.fill_(False)
-        for g in optimizer.param_groups:
-            g['lr'] = init_lr * 0.01
-    if did_finetune:
-        f_steps += 1
+    if (converged.float().mean() > 0.95):
+        converged.fill_(True)
 
-    return converged, f_steps
+    return converged

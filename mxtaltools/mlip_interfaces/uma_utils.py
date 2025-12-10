@@ -71,7 +71,7 @@ def compute_molecule_uma_on_mxt_batch(batch,
                                      predictor: Optional = None):
     data_list = []
 
-    for ind in range(batch.num_graphs):
+    for ind in range(batch.num_graphs):  # todo a Z'>1 fix for this
         pos = batch.pos[batch.batch == ind]
         z = batch.z[batch.batch==ind]
         atoms = Atoms(

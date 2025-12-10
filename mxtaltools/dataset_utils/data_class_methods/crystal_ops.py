@@ -7,13 +7,11 @@ import plotly.graph_objects as go
 import torch
 from plotly.subplots import make_subplots
 
-from mxtaltools.common.geometry_utils import enforce_crystal_system, batch_cell_vol_torch, \
-    batch_compute_fractional_transform
+from mxtaltools.common.geometry_utils import enforce_crystal_system, batch_compute_fractional_transform, \
+    cart2sph_rotvec, sph2cart_rotvec
 from mxtaltools.common.utils import softplus_shift, log_rescale_positive, get_point_density
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE
-from mxtaltools.crystal_building.crystal_latent_transforms import CompositeTransform, AunitTransform, NiggliTransform, \
-    enforce_niggli_plane, UnitTransform
 from mxtaltools.crystal_building.random_crystal_sampling import sample_aunit_lengths, sample_cell_angles, \
     sample_aunit_orientations, sample_aunit_centroids
 from mxtaltools.crystal_building.utils import parameterize_crystal_batch, canonicalize_aunit_order, canonicalize_rotvec
@@ -131,7 +129,6 @@ class MolCrystalOps:
             for key, value in mol_dict.items():
                 setattr(self, key, value)
 
-
     def box_analysis(self):
         self.T_fc, self.T_cf, self.cell_volume = (
             batch_compute_fractional_transform(self.cell_lengths,
@@ -215,6 +212,7 @@ class MolCrystalOps:
         """
         Sample random crystal parameters that are automatically Niggli-reduced
         """
+        assert False, "This method should be rewritten for our new reduction workflow"
         if seed is not None:
             torch.manual_seed(seed)
         assert self.is_batch, "Random crystal parameters not setup for single crystals"
@@ -243,20 +241,17 @@ class MolCrystalOps:
         :return:
         """
 
-        if not hasattr(self, 'latent_transform'):
-            self.init_latent_transform()
-
         min_vals = -torch.ones(latents.shape[-1], dtype=torch.float32, device=self.device)
         min_vals[:3] = -0.95  # DO NOT allow micro cells to be instantiated
         # also do not allow rotation length = 0 to be instantiated
         for ind in range(self.max_z_prime):
-            min_vals[5 + 6 * (1+ind)] = -0.99
+            min_vals[5 + 6 * (1 + ind)] = -0.99
 
         max_vals = torch.ones(latents.shape[-1], dtype=torch.float32, device=self.device)
-        max_vals[0:2] = 1-1e-4  # don't let it explicitly touch 1 or it can make an effective orthorhombic cell, and really pisses off ASE
-        self.set_cell_parameters(
-            self.latent_transform.inverse(latents.clamp(min=min_vals, max=max_vals), self.sg_ind, self.radius)
-        )
+        max_vals[
+            0:2] = 1 - 1e-4  # don't let it explicitly touch 1 or it can make an effective orthorhombic cell, and really pisses off ASE
+        self.set_cell_parameters(self.inv_latent_transform(latents.clamp(min=min_vals, max=max_vals))
+                                 )
 
         self.cell_lengths, self.cell_angles = enforce_crystal_system(
             self.cell_lengths,
@@ -265,29 +260,121 @@ class MolCrystalOps:
         )
         self.box_analysis()
 
-    def init_latent_transform(self):
-        if not hasattr(self, 'asym_unit_dict'):
-            self.asym_unit_dict = self.build_asym_unit_dict()
-
-        self.latent_transform = CompositeTransform([
-            AunitTransform(asym_unit_dict=self.asym_unit_dict, max_z_prime=self.max_z_prime),
-            NiggliTransform(),
-            UnitTransform(max_z_prime=self.max_z_prime),
-        ])
-
     def latent_params(self):
         """
         Transform cell parameters from physical space to latent.
         :return:
         """
-        if not hasattr(self, 'latent_transform'):
-            self.init_latent_transform()
-
         self.canonicalize_zp_aunits()  # latent space is always in the canonical ordering
-        std_cell_params = self.latent_transform.forward(self.full_cell_parameters(),
-                                                        self.sg_ind,
-                                                        self.radius).clip(min=-1, max=1)
-        return std_cell_params
+        return self.latent_transform(cell_params=self.full_cell_parameters())
+
+    def latent_transform(self, cell_params):
+        if not hasattr(self, 'asym_unit_dict'):
+            self.asym_unit_dict = self.build_asym_unit_dict()
+
+        sg_inds = self.sg_ind
+        radius = self.radius
+        auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds]).to(self.device)
+
+        'convert to latent basis'
+        # get aunit lengths
+        box_params, aunit_params = torch.tensor_split(cell_params, [6], dim=1)
+        cell_lengths = box_params[:, :3]
+        cell_angles = box_params[:, 3:]
+        aunit_lengths = cell_lengths * auvs
+        normed_aunit_lengths = aunit_lengths / (2 * radius[:, None])
+
+        # get aunit-wise fractional centroids
+        cell_centroids, cell_orientations = aunit_params.split(3 * self.max_z_prime, dim=1)
+        # this is the parallel way to do it over multiple Z'
+        aunit_centroids = (
+                cell_centroids
+                .reshape(-1, self.max_z_prime, 3)  # [n, max_z', 3]
+                / auvs.unsqueeze(1)  # [n, 1, 3] → broadcast over Z′
+        ).reshape(-1, 3 * self.max_z_prime)  # back to [n, 3 * max_z']
+
+        # get spherical rotvec
+        sph_rotvec = cart2sph_rotvec(cell_orientations.reshape(len(cell_orientations) * self.max_z_prime, 3)).reshape(
+            len(cell_orientations), self.max_z_prime * 3)
+
+        'rescale everything to [-1,1]'
+        halfpi = torch.pi / 2
+        log_au_range = torch.tensor([[-1.8, -2.3, -1.2], [0.7, 0.5, 1.1]], dtype=torch.float32,
+                                    device=self.device)  # [0.1, 3.0]  # norm range for asymmetric unit lengths - the 99% quantiles
+        ang_range = [0.37 * torch.pi, 0.7 * torch.pi]  # range of allowed cell angles
+
+        # lengths & angles - rescale from [min, max] to [-1,1]
+        lat_lengths = ((normed_aunit_lengths.log() - log_au_range[0]) / (log_au_range[1] - log_au_range[0]) - 0.5) * 2
+        lat_angles = ((cell_angles - ang_range[0]) / (ang_range[1] - ang_range[0]) - 0.5) * 2
+
+        # aunit centroid [0,1] to [-1,1]
+        lat_centroids = (aunit_centroids - 0.5) * 2
+
+        # orientation vectors are individual, theta is [0, pi/2] to [-1,1]
+        theta_inds = [ind * 3 for ind in range(self.max_z_prime)]
+        phi_inds = [ind * 3 + 1 for ind in range(self.max_z_prime)]
+        r_inds = [ind * 3 + 2 for ind in range(self.max_z_prime)]
+
+        lat_orientations = torch.zeros_like(sph_rotvec)
+        lat_orientations[:, theta_inds] = (sph_rotvec[:, theta_inds] - halfpi / 2) / torch.pi * 4
+        # phi is [-pi, pi] to [-1,1]
+        lat_orientations[:, phi_inds] = sph_rotvec[:, phi_inds] / torch.pi
+        # r is [0, 2pi] to [-1,1]
+        lat_orientations[:, r_inds] = (sph_rotvec[:, r_inds] - torch.pi) / torch.pi
+
+        latents = torch.cat([lat_lengths, lat_angles, lat_centroids, lat_orientations], dim=1)
+        return latents.clip(min=-1, max=1)
+
+    def inv_latent_transform(self, latents):
+        if not hasattr(self, 'asym_unit_dict'):
+            self.asym_unit_dict = self.build_asym_unit_dict()
+
+        sg_inds = self.sg_ind
+        radius = self.radius
+        auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds]).to(self.device)
+        lat_lengths, lat_angles, lat_centroids, lat_orientations = torch.split(latents, [3, 3, 3 * self.max_z_prime,
+                                                                                         3 * self.max_z_prime], dim=1)
+
+        '''reverse bounding transform'''
+        sph_rotvec = torch.zeros_like(lat_orientations)
+        theta_inds = [ind * 3 for ind in range(self.max_z_prime)]
+        phi_inds = [ind * 3 + 1 for ind in range(self.max_z_prime)]
+        r_inds = [ind * 3 + 2 for ind in range(self.max_z_prime)]
+        halfpi = torch.pi / 2
+
+        sph_rotvec[:, theta_inds] = lat_orientations[:, theta_inds] * torch.pi / 4 + halfpi / 2
+        # phi is [-pi, pi] to [-1,1]
+        sph_rotvec[:, phi_inds] = lat_orientations[:, phi_inds] * torch.pi
+        # r is [0, 2pi] to [-1,1]
+        sph_rotvec[:, r_inds] = lat_orientations[:, r_inds] * torch.pi + torch.pi
+
+        aunit_orientations = sph2cart_rotvec(sph_rotvec.reshape(len(sph_rotvec) * self.max_z_prime, 3)).reshape(
+            len(sph_rotvec), self.max_z_prime * 3)
+
+        aunit_centroids = lat_centroids / 2 + 0.5
+
+        cell_centroids = (
+                aunit_centroids
+                .reshape(-1, self.max_z_prime, 3)  # [n, max_z', 3]
+                * auvs.unsqueeze(1)  # [n, 1, 3] → broadcast over Z′
+        ).reshape(-1, 3 * self.max_z_prime)  # back to [n, 3 * max_z']
+
+        log_au_range = torch.tensor([[-1.8, -2.3, -1.2], [0.7, 0.5, 1.1]], dtype=torch.float32,
+                                    device=self.device)  # [0.1, 3.0]  # norm range for asymmetric unit lengths - the 99% quantiles
+        ang_range = [0.37 * torch.pi, 0.7 * torch.pi]  # range of allowed cell angles
+
+        log_span = log_au_range[1] - log_au_range[0]
+        logL = (lat_lengths / 2 + 0.5) * log_span + log_au_range[0]
+        normed_aunit_lengths = logL.exp()
+
+        # angles
+        ang_span = ang_range[1] - ang_range[0]
+        cell_angles = (lat_angles / 2 + 0.5) * ang_span + ang_range[0]
+
+        aunit_lengths = normed_aunit_lengths * (2 * radius[:, None])
+        cell_lengths = aunit_lengths / auvs
+
+        return torch.cat([cell_lengths, cell_angles, cell_centroids, aunit_orientations], dim=1)
 
     def sample_reduced_box_vectors(self, target_packing_coeff: Optional[float] = None):
         """
@@ -296,36 +383,37 @@ class MolCrystalOps:
         :param target_packing_coeff:
         :return:
         """
+        assert False, "Reduced box sampling is deprecated - must be re-implemented with our new reduction methods"
 
-        if not hasattr(self, 'latent_transform'):
-            self.init_latent_transform()
-
-        # use the latent transform for lengths and angles sampling, as its more stable and better tested
-        # we can still use the old samplers for aunit params
-        # latent space is defined on [-1,1]
-        rands = (torch.rand((self.num_graphs, 6 + 6 * self.max_z_prime), device=self.device) - 0.5) * 2
-        temp_params = self.latent_transform.inverse(rands,
-                                                    self.sg_ind,
-                                                    self.radius)
-        cell_lengths = temp_params[:, :3]
-        cell_angles = temp_params[:, 3:6]
-
-        if target_packing_coeff is not None:
-            vol1 = batch_cell_vol_torch(cell_lengths, cell_angles)
-            cp1 = self.mol_volume * self.sym_mult / vol1
-            correction_ratio = (cp1 / target_packing_coeff) ** (1 / 3)
-            cell_lengths *= correction_ratio[:, None]
-
-        cell_angles = enforce_niggli_plane(cell_lengths, cell_angles, mode='mirror')
-
-        self.cell_lengths, self.cell_angles = cell_lengths, cell_angles
+        # if not hasattr(self, 'latent_transform'):
+        #     self.init_latent_transform()
+        #
+        # # use the latent transform for lengths and angles sampling, as its more stable and better tested
+        # # we can still use the old samplers for aunit params
+        # # latent space is defined on [-1,1]
+        # rands = (torch.rand((self.num_graphs, 6 + 6 * self.max_z_prime), device=self.device) - 0.5) * 2
+        # temp_params = self.latent_transform.inverse(rands,
+        #                                             self.sg_ind,
+        #                                             self.radius)
+        # cell_lengths = temp_params[:, :3]
+        # cell_angles = temp_params[:, 3:6]
+        #
+        # if target_packing_coeff is not None:
+        #     vol1 = batch_cell_vol_torch(cell_lengths, cell_angles)
+        #     cp1 = self.mol_volume * self.sym_mult / vol1
+        #     correction_ratio = (cp1 / target_packing_coeff) ** (1 / 3)
+        #     cell_lengths *= correction_ratio[:, None]
+        #
+        # cell_angles = enforce_niggli_plane(cell_lengths, cell_angles, mode='mirror')
+        #
+        # self.cell_lengths, self.cell_angles = cell_lengths, cell_angles
 
     def sample_reasonable_random_parameters(self,
                                             tolerance: float = 1,
                                             target_packing_coeff: Optional = None,
                                             max_attempts: int = 100,
                                             seed: Optional[int] = None,
-                                            sample_niggli: Optional[bool] = True):
+                                            ):
         """
         Sample random crystal parameters
         build the resulting crystals and check their vdW overlaps
@@ -338,11 +426,7 @@ class MolCrystalOps:
         converged = False
         ind = 0
         while not converged and ind < max_attempts:
-            if sample_niggli:
-                self.sample_random_reduced_crystal_parameters(target_packing_coeff=target_packing_coeff,
-                                                              seed=seed)
-            else:
-                self.sample_random_crystal_parameters(target_packing_coeff, seed=seed)
+            self.sample_random_crystal_parameters(target_packing_coeff, seed=seed)
 
             _, _, scaled_lj = self.build_and_analyze(cutoff=3)
             improved_inds = torch.argwhere(scaled_lj < best_ljs)
@@ -604,24 +688,19 @@ class MolCrystalOps:
 
         return aunit_centroid, aunit_orientation, handedness_list.long(), is_well_defined, torch.cat(pos)
 
-    def compute_niggli_overlap(self, **kwargs):
-        a, b, c, al, be, ga = self.zp1_cell_parameters()[:, :6].split(1, dim=1)
-        ab = a * b
-        ac = a * c
-        bc = b * c
+    def split_cell_params(self):
+        cell_lengths, cell_angles, aunit_positions, aunit_orientations = torch.split(self.full_cell_parameters(),
+                                                                                     [3, 3, 3 * self.max_z_prime,
+                                                                                      3 * self.max_z_prime], dim=1)
+        return cell_lengths, cell_angles, aunit_positions, aunit_orientations
 
-        al_cos = torch.cos(al)
-        be_cos = torch.cos(be)
-        ga_cos = torch.cos(ga)
-
-        return (ab * ga_cos + ac * be_cos + bc * al_cos).flatten()
 
     def clean_cell_parameters(self, mode: str = 'hard',
                               canonicalize_orientations: bool = True,
                               angle_pad: float = 0.9,
                               length_pad: float = 3.0,
                               constrain_z: bool = False,
-                              enforce_niggli: Optional[bool] = False):
+                              ):
         """
         force cell parameters into physical ranges
         """
@@ -639,8 +718,8 @@ class MolCrystalOps:
                                             x_center=torch.pi / 2,
                                             mode=mode)
 
-        if enforce_niggli:
-            self.enforce_niggli_box(mode)
+        # if enforce_niggli:
+        #     self.enforce_niggli_box(mode)
 
         # positions must be on 0->1-eps in the asymmetric unit
         aunit_scaled_pos = self.scale_centroid_to_aunit()
@@ -687,46 +766,41 @@ class MolCrystalOps:
         self.box_analysis()
 
     def enforce_niggli_box(self, mode, apply_plane_shift: bool = False):
-        # enforce the scaling factor b/c and a/b in the range [0, 1]
-        a, b, c = self.cell_lengths.split(1, 1)
-        b_scale = enforce_1d_bound((b / c), 0.5, 0.5, mode=mode)
-        a_scale = enforce_1d_bound((a / b), 0.5, 0.5, mode=mode)
-        self.cell_lengths = torch.cat([
-            a_scale * b_scale * c,
-            b_scale * c,
-            c],
-            dim=1)
 
-        # enforce the scaling factor cos(alpha) / (b/2c) in the range [0, 1]
-        al_cos, be_cos, ga_cos = self.cell_angles.cos().split(1, 1)
-        a, b, c = self.cell_lengths.split(1, 1)
-        al_cos_max = (b / 2 / c)
-        be_cos_max = (a / 2 / c)
-        ga_cos_max = (a / 2 / b)
-
-        # now improved - including obtuse cells
-        al_cos_scale = enforce_1d_bound(al_cos / al_cos_max, 1.0, 0.0, mode=mode)
-        be_cos_scale = enforce_1d_bound(be_cos / be_cos_max, 1.0, 0.0, mode=mode)
-        ga_cos_scale = enforce_1d_bound(ga_cos / ga_cos_max, 1.0, 0.0, mode=mode)
-
-        # limit it here due to instability in arccos
-        al = torch.arccos(al_cos_max * al_cos_scale.clip(min=-0.99, max=0.99))
-        be = torch.arccos(be_cos_max * be_cos_scale.clip(min=-0.99, max=0.99))
-        ga = torch.arccos(ga_cos_max * ga_cos_scale.clip(min=-0.99, max=0.99))
-
-        self.cell_angles = torch.cat([al, be, ga], dim=1)
-        # here, enforce positivity of niggli overlap
-        if apply_plane_shift:
-            self.cell_angles = enforce_niggli_plane(self.cell_lengths,
-                                                    self.cell_angles,
-                                                    mode='shift')
-
-    def niggli_angle_limits(self):
-        a, b, c = self.cell_lengths.split(1, 1)
-        al_cos_max = (b / 2 / c)
-        be_cos_max = (a / 2 / c)
-        ga_cos_max = (a / 2 / b)
-        return torch.cat([al_cos_max, be_cos_max, ga_cos_max], dim=1)
+        assert False, "This needs to be reimplemented with our new reduction workflow"
+        # # enforce the scaling factor b/c and a/b in the range [0, 1]
+        # a, b, c = self.cell_lengths.split(1, 1)
+        # b_scale = enforce_1d_bound((b / c), 0.5, 0.5, mode=mode)
+        # a_scale = enforce_1d_bound((a / b), 0.5, 0.5, mode=mode)
+        # self.cell_lengths = torch.cat([
+        #     a_scale * b_scale * c,
+        #     b_scale * c,
+        #     c],
+        #     dim=1)
+        #
+        # # enforce the scaling factor cos(alpha) / (b/2c) in the range [0, 1]
+        # al_cos, be_cos, ga_cos = self.cell_angles.cos().split(1, 1)
+        # a, b, c = self.cell_lengths.split(1, 1)
+        # al_cos_max = (b / 2 / c)
+        # be_cos_max = (a / 2 / c)
+        # ga_cos_max = (a / 2 / b)
+        #
+        # # now improved - including obtuse cells
+        # al_cos_scale = enforce_1d_bound(al_cos / al_cos_max, 1.0, 0.0, mode=mode)
+        # be_cos_scale = enforce_1d_bound(be_cos / be_cos_max, 1.0, 0.0, mode=mode)
+        # ga_cos_scale = enforce_1d_bound(ga_cos / ga_cos_max, 1.0, 0.0, mode=mode)
+        #
+        # # limit it here due to instability in arccos
+        # al = torch.arccos(al_cos_max * al_cos_scale.clip(min=-0.99, max=0.99))
+        # be = torch.arccos(be_cos_max * be_cos_scale.clip(min=-0.99, max=0.99))
+        # ga = torch.arccos(ga_cos_max * ga_cos_scale.clip(min=-0.99, max=0.99))
+        #
+        # self.cell_angles = torch.cat([al, be, ga], dim=1)
+        # # here, enforce positivity of niggli overlap
+        # if apply_plane_shift:
+        #     self.cell_angles = enforce_niggli_plane(self.cell_lengths,
+        #                                             self.cell_angles,
+        #                                             mode='shift')
 
     def aunit_volume(self):
         return self.cell_volume / self.sym_mult
@@ -916,7 +990,7 @@ class MolCrystalOps:
             custom_ranges = {ind: [np.amin(samples[:, ind]), np.amax(samples[:, ind])]
                              for ind in range(3)}
             custom_ranges.update(
-                {3: [np.pi/4, 3/2*np.pi],
+                {3: [np.pi / 4, 3 / 2 * np.pi],
                  4: [np.pi / 4, 3 / 4 * np.pi],
                  5: [np.pi / 4, 3 / 4 * np.pi]
                  }
@@ -926,19 +1000,19 @@ class MolCrystalOps:
                     6 + ind * 6 + 0: [0, 1.1],
                     6 + ind * 6 + 1: [0, 1.1],
                     6 + ind * 6 + 2: [0, 1.1],
-                    6 + ind * 6 + 3: [-2*np.pi, 2*np.pi],
-                    6 + ind * 6 + 4: [-2*np.pi, 2*np.pi],
-                    6 + ind * 6 + 5: [0, 2*np.pi],
-                                      })
-
+                    6 + ind * 6 + 3: [-2 * np.pi, 2 * np.pi],
+                    6 + ind * 6 + 4: [-2 * np.pi, 2 * np.pi],
+                    6 + ind * 6 + 5: [0, 2 * np.pi],
+                })
 
         return custom_ranges
 
-    def _collect_sample_dists(self, samples, ref_dist, quantiles, split_by_sg, split_by_zp, aux_dists, override_energy=None):
+    def _collect_sample_dists(self, samples, ref_dist, quantiles, split_by_sg, split_by_zp, aux_dists,
+                              override_energy=None):
         num_dists = 1
         dists = []
         dist_names = []
-        if ref_dist is not None: # this should be first
+        if ref_dist is not None:  # this should be first
             assert ref_dist.shape[1] == samples.shape[1]
             num_dists += 1
             dist_names += ['Reference']
@@ -1109,14 +1183,15 @@ class MolCrystalOps:
                                split_by_zp: bool = False,
                                n_kde: int = 200,
                                bw_factor: float = 0.05,
-                               override_energy: Optional[torch.Tensor] = None,):
+                               override_energy: Optional[torch.Tensor] = None, ):
         if not self.is_batch:
             print("Cell statistics only works for a batch of crystal data objects")
             return None
 
         lattice_features = self._build_feature_labels()
         samples = self._get_samples(space)
-        num_dists, dist_names, dists = self._collect_sample_dists(samples, ref_dist, quantiles, split_by_sg, split_by_zp, aux_dists, override_energy)
+        num_dists, dist_names, dists = self._collect_sample_dists(samples, ref_dist, quantiles, split_by_sg,
+                                                                  split_by_zp, aux_dists, override_energy)
         # delete or NaN unused higher Z' elements
         # 1d Histograms
         fig = make_subplots(rows=2 + 2 * self.max_z_prime,
@@ -1258,7 +1333,7 @@ class MolCrystalOps:
         else:
             return pc.n_colors('rgb(0,0,255)', 'rgb(255,0,0)', n, colortype='rgb')
 
-    def _add_violin(self, fig, samples, name, color, column_index,ranges, n_kde, bw_factor):
+    def _add_violin(self, fig, samples, name, color, column_index, ranges, n_kde, bw_factor):
         row = column_index // 3 + 1
         col = column_index % 3 + 1
         x_samp, y_samp = lightweight_one_sided_violin(samples,
@@ -1267,17 +1342,16 @@ class MolCrystalOps:
                                                       data_min=ranges[0],
                                                       data_max=ranges[1])
         fig.add_scatter(
-                    x=x_samp,
-                    y=y_samp,
-                    mode='lines',
-                    fill='toself',  #'tonexty' if i == 0 else 'tonexty',  # Fill to next y (which is 0)
-                    fillcolor=color,
-                    line=dict(color=color, width=1.2),
-                    name=name,
-                    legendgroup=name,
-                    showlegend=True if column_index == 0 else False,
-                row=row, col=col)
-
+            x=x_samp,
+            y=y_samp,
+            mode='lines',
+            fill='toself',  # 'tonexty' if i == 0 else 'tonexty',  # Fill to next y (which is 0)
+            fillcolor=color,
+            line=dict(color=color, width=1.2),
+            name=name,
+            legendgroup=name,
+            showlegend=True if column_index == 0 else False,
+            row=row, col=col)
 
     def _get_samples(self, space):
         if space == 'real':
@@ -1375,7 +1449,6 @@ class MolCrystalOps:
             self.symmetry_operators = np.stack(SYM_OPS[int(self.sg_ind)])
             setattr(self, 'sym_mult', torch.tensor(
                 len(self.symmetry_operators), dtype=torch.long, device=self.device)[None])
-
 
     def canonicalize_zp_aunits(self):
         if self.is_batch:

@@ -16,6 +16,14 @@ from mxtaltools.common.utils import is_cuda_oom
 from mxtaltools.crystal_search.utils import get_initial_state, init_samples_to_optim, parse_args
 from mxtaltools.dataset_utils.utils import collate_data_list
 
+
+def init_score_model(opt_config, device, config):
+    # load up score model if it's needed
+    score_model = load_crystal_score_model(config.score_model_checkpoint, device).to(device)
+    score_model.eval()
+    opt_config['score_model'] = score_model
+
+
 if __name__ == '__main__':
     args = parse_args()  # call config with "python run_search.py --config /path/to/config.yaml
     source_dir = Path(__file__).resolve().parent.parent.parent
@@ -60,11 +68,11 @@ if __name__ == '__main__':
             for opt_ind, opt_config in enumerate(config.opt):
                 # do optimization in N stages
                 if opt_config['optim_target'] in ['rdf_score', 'classification_score']:
-                    # load up score model if it's needed
-                    score_model = load_crystal_score_model(config.score_model_checkpoint, device).to(device)
-                    score_model.eval()
-                    opt_config['score_model'] = score_model
+                    init_score_model(opt_config, device, config)
+
+                'do opt'
                 opt_out = crystal_batch.optimize_crystal_parameters(**opt_config)
+
                 crystal_batch = collate_data_list(opt_out).to(device)
 
             crystal_batch.box_analysis()

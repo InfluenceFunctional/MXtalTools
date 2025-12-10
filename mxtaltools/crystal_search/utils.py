@@ -160,20 +160,20 @@ def get_initial_state(config, crystal_batch, device):
             target_packing_coeff=target_cp,
             tolerance=5,
             max_attempts=50,
-            sample_niggli=config.init_sample_reduced,
+            #sample_niggli=config.init_sample_reduced,
             seed=config.opt_seed,
         )
     elif config.init_sample_method == 'random':
-        if config.init_sample_reduced:
-            crystal_batch.sample_random_reduced_crystal_parameters(
-                target_packing_coeff=target_cp,
-                seed=config.opt_seed,
-            )
-        else:
-            crystal_batch.sample_random_crystal_parameters(
-                target_packing_coeff=target_cp,
-                seed=config.opt_seed,
-            )
+        # if config.init_sample_reduced:
+        #     crystal_batch.sample_random_reduced_crystal_parameters(
+        #         target_packing_coeff=target_cp,
+        #         seed=config.opt_seed,
+        #     )
+        # else:
+        crystal_batch.sample_random_crystal_parameters(
+            target_packing_coeff=target_cp,
+            seed=config.opt_seed,
+        )
     else:
         assert False
     return crystal_batch

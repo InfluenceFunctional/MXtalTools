@@ -402,7 +402,7 @@ def parameterize_crystal_batch(crystal_batch,
     """
     Asymmetric Unit Centroid Analysis
     identify "canonical" asymmetric unit out of the Z asymmetric units in the unit cell
-    # TODO would be nice if this could be parallelized
+    # TODO would be nice if this could be parallelized. Would be nice indeed
     """
     canonical_conformer_coords_list = []
     mol_position_list = []
