@@ -1,5 +1,5 @@
 device: cuda
-mol_path: /scratch/mk8347/csd_runs/datasets/nicotinamide/protonated_nicotinamide.pkl
+mol_path: /scratch/mk8347/csd_runs/datasets/nicotinamide/protonated_nicotinamide.pt
 out_dir: /scratch/mk8347/csd_runs/datasets/nicotinamide
 run_name: nic_prod_dataset
 
