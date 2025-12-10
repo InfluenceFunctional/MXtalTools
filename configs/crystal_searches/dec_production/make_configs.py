@@ -22,7 +22,7 @@ def overwrite_nested_dict(d1, d2):
 
 
 if __name__ == "__main__":
-    base_path = 'nic.yaml'
+    base_path = 'acridine.yaml'
     base, spec_dir = load_yaml(base_path)
 
     ind = 0
@@ -31,9 +31,9 @@ if __name__ == "__main__":
             config = deepcopy(base)
             config['sgs_to_search'] = [sg]
             config['zp_to_search'] = [zp]
-            config['run_name'] = f'nic_sg{sg}_zp{zp}'
+            config['run_name'] = f'acridine_sg{sg}_zp{zp}'
 
-            config_path = f'nic_{ind}.yaml'
+            config_path = f'acridine_{ind}.yaml'
             with open(config_path, 'w') as f:
                 yaml.dump(config, f, default_flow_style=False)
 
