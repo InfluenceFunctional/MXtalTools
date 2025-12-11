@@ -242,7 +242,7 @@ class MolCrystalOps:
         """
 
         min_vals = -torch.ones(latents.shape[-1], dtype=torch.float32, device=self.device)
-        min_vals[:3] = -0.95  # DO NOT allow micro cells to be instantiated
+        min_vals[:3] = -0.99  # DO NOT allow micro cells to be instantiated
         # also do not allow rotation length = 0 to be instantiated
         for ind in range(self.max_z_prime):
             min_vals[5 + 6 * (1 + ind)] = -0.99
@@ -250,8 +250,7 @@ class MolCrystalOps:
         max_vals = torch.ones(latents.shape[-1], dtype=torch.float32, device=self.device)
         max_vals[
             0:2] = 1 - 1e-4  # don't let it explicitly touch 1 or it can make an effective orthorhombic cell, and really pisses off ASE
-        self.set_cell_parameters(self.inv_latent_transform(latents.clamp(min=min_vals, max=max_vals))
-                                 )
+        self.set_cell_parameters(self.inv_latent_transform(latents.clamp(min=min_vals, max=max_vals)))
 
         self.cell_lengths, self.cell_angles = enforce_crystal_system(
             self.cell_lengths,
@@ -266,7 +265,7 @@ class MolCrystalOps:
         :return:
         """
         self.canonicalize_zp_aunits()  # latent space is always in the canonical ordering
-        return self.latent_transform(cell_params=self.full_cell_parameters())
+        return self.latent_transform(cell_params=self.full_cell_parameters()).clip(min=-1, max=1)
 
     def latent_transform(self, cell_params):
         if not hasattr(self, 'asym_unit_dict'):
@@ -323,7 +322,7 @@ class MolCrystalOps:
         lat_orientations[:, r_inds] = (sph_rotvec[:, r_inds] - torch.pi) / torch.pi
 
         latents = torch.cat([lat_lengths, lat_angles, lat_centroids, lat_orientations], dim=1)
-        return latents.clip(min=-1, max=1)
+        return latents
 
     def inv_latent_transform(self, latents):
         if not hasattr(self, 'asym_unit_dict'):
@@ -693,7 +692,6 @@ class MolCrystalOps:
                                                                                      [3, 3, 3 * self.max_z_prime,
                                                                                       3 * self.max_z_prime], dim=1)
         return cell_lengths, cell_angles, aunit_positions, aunit_orientations
-
 
     def clean_cell_parameters(self, mode: str = 'hard',
                               canonicalize_orientations: bool = True,

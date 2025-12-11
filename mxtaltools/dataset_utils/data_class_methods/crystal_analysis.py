@@ -2,6 +2,7 @@ from typing import Optional
 
 import torch
 import torch.nn.functional as F
+from torch_scatter import scatter
 
 from mxtaltools.analysis.crystal_rdf import crystal_rdf
 from mxtaltools.analysis.vdw_analysis import get_intermolecular_dists_dict, lj_analysis, electrostatic_analysis, \
@@ -259,14 +260,28 @@ class MolCrystalAnalysis:
         else:
             diffuse_batch = collate_data_list(self)
 
-        # evaluate a diffuse P1 cell
-        diffuse_batch.reset_sg_info(sg_ind=1)  # big P1 cells
-        diffuse_batch.cell_lengths *= 100
-        diffuse_batch.box_analysis()
-        return compute_crystal_uma_on_mxt_batch(diffuse_batch,
-                                                std_orientation,
-                                                predictor,
-                                                pbc=False)
+        if diffuse_batch.z_prime.amax() > 1:  # do it separately per conformer
+            zp1_batch = diffuse_batch.split_to_zp1_batch()
+            zp1_batch.reset_sg_info(sg_ind=1)  # big P1 cells
+            zp1_batch.cell_lengths *= 100
+            zp1_batch.box_analysis()
+            split_ens = compute_crystal_uma_on_mxt_batch(zp1_batch,
+                                                    std_orientation,
+                                                    predictor,
+                                                    pbc=False)
+            zp_inds = torch.arange(self.num_graphs, dtype=torch.long, device=self.device
+                                   ).repeat_interleave(self.z_prime).to(split_ens.device)
+            return scatter(split_ens, zp_inds, reduce='mean', dim=0, dim_size=self.num_graphs)
+
+        else:
+            # evaluate a diffuse P1 cell
+            diffuse_batch.reset_sg_info(sg_ind=1)  # big P1 cells
+            diffuse_batch.cell_lengths *= 100
+            diffuse_batch.box_analysis()
+            return compute_crystal_uma_on_mxt_batch(diffuse_batch,
+                                                    std_orientation,
+                                                    predictor,
+                                                    pbc=False)
 
     def compute_rdf(self,
                     cutoff: float = 6,

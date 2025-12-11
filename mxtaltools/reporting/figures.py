@@ -122,7 +122,6 @@ def simple_cell_hist(sample_batch=None, reference_dist=None, n_kde_points=200, b
         }
     elif mode == 'latent':
         if samples is None:
-            del sample_batch.latent_transform
             samples = sample_batch.latent_params().cpu().detach().numpy()
         custom_ranges = {i: [-1.1, 1.1] for i in range(12)}
     else:
@@ -265,7 +264,6 @@ def conditional_simple_cell_hist(sample_batch, cond_inds, n_kde_points=200, bw_r
             11: [0, 2 * np.pi],  # orientation_3
         }
     elif mode == 'latent':
-        del sample_batch.latent_transform
         samples = sample_batch.latent_params().cpu().detach().numpy()
         custom_ranges = {i: [-1.1, 1.1] for i in range(12)}
     else:

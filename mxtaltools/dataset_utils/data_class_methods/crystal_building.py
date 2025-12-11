@@ -37,6 +37,8 @@ class MolCrystalBuilding:
         zp1_batch.cell_angles = self.cell_angles[rep_index]
         zp1_batch.num_atoms = (self.num_atoms//self.z_prime)[rep_index]
         zp1_batch.radius = self.radius[rep_index]
+        zp1_batch.mol_volume = self.mol_volume[rep_index]
+        zp1_batch.mass = self.mass[rep_index]
         zp1_batch.z_prime = torch.ones(new_num_graphs, device=self.device, dtype=torch.long)
 
         # extra handling for aunit properties

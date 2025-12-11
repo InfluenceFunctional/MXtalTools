@@ -10,10 +10,10 @@ from mxtaltools.common.utils import is_cuda_oom
 
 def safe_predict_uma(predictor, uma_batch):
     try:
-        torch.cuda.synchronize()              # flush prior kernels
-        out = predictor.predict(uma_batch)    # this launches UMA kernels
-        torch.cuda.synchronize()              # force errors to surface *here*
-        return out, False                     # False = no failure
+        torch.cuda.synchronize()  # flush prior kernels
+        out = predictor.predict(uma_batch)  # this launches UMA kernels
+        torch.cuda.synchronize()  # force errors to surface *here*
+        return out, False  # False = no failure
 
     except RuntimeError as e:
         if not is_cuda_oom(e):
@@ -22,7 +22,7 @@ def safe_predict_uma(predictor, uma_batch):
             # reset the cuda context fully
             torch.cuda.synchronize()
             torch.cuda.empty_cache()
-            return None, True                 # signal failure
+            return None, True  # signal failure
         else:
             raise e
 
@@ -40,12 +40,18 @@ def compute_crystal_uma_on_mxt_batch(batch,
             batch.box_analysis()
     batch.pose_aunit(std_orientation=std_orientation)
     assert torch.sum(torch.isnan(batch.pos)) == 0
-    batch.build_unit_cell()
+
+    if batch.z_prime.amax() > 1:
+        zp1_batch = batch.split_to_zp1_batch()
+        zp1_batch.build_unit_cell()
+        batch.join_zp1_ucell_batch(zp1_batch)
+    else:
+        batch.build_unit_cell()
     cell_params = torch.cat([batch.cell_lengths, batch.cell_angles * 90 / (torch.pi / 2)], dim=1).cpu().detach().numpy()
 
     for ind in range(batch.num_graphs):
         pos = batch.unit_cell_pos[batch.unit_cell_batch == ind]
-        z = batch.z[batch.batch==ind].repeat(batch.sym_mult[ind])
+        z = batch.z[batch.batch == ind].repeat(batch.sym_mult[ind])
         atoms = Atoms(
             numbers=z.cpu().detach().numpy(),
             positions=pos.cpu().detach().numpy(),
@@ -68,12 +74,12 @@ def compute_crystal_uma_on_mxt_batch(batch,
 
 
 def compute_molecule_uma_on_mxt_batch(batch,
-                                     predictor: Optional = None):
+                                      predictor: Optional = None):
     data_list = []
 
     for ind in range(batch.num_graphs):  # todo a Z'>1 fix for this
         pos = batch.pos[batch.batch == ind]
-        z = batch.z[batch.batch==ind]
+        z = batch.z[batch.batch == ind]
         atoms = Atoms(
             numbers=z.cpu().detach().numpy(),
             positions=pos.cpu().detach().numpy(),
@@ -93,6 +99,7 @@ def compute_molecule_uma_on_mxt_batch(batch,
 
     return energy
 
+
 def init_uma_crystal_predictor(model_path, device):
     predictor = pretrained_mlip.load_predict_unit(
         model_path,
@@ -103,7 +110,7 @@ def init_uma_crystal_predictor(model_path, device):
     )
     predictor.inference_mode.compile = False
     predictor.inference_mode.tf32 = True
-    #predictor.inference_mode.activation_checkpointing=False
+    # predictor.inference_mode.activation_checkpointing=False
 
     # # some savings if we do energy-only
     # # don't do this if you want forces and stresses
@@ -120,8 +127,8 @@ def init_uma_mol_predictor(model_path):
     predictor = pretrained_mlip.load_predict_unit(
         model_path,
         inference_settings='default',
-        overrides={"backbone": {#"always_use_pbc": True,
-                                "direct_forces": True}},
+        overrides={"backbone": {  # "always_use_pbc": True,
+            "direct_forces": True}},
         device="cuda",
     )
     predictor.inference_mode.compile = False
