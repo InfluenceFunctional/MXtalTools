@@ -272,7 +272,8 @@ class MolCrystalOps:
             self.asym_unit_dict = self.build_asym_unit_dict()
 
         sg_inds = self.sg_ind
-        radius = self.radius
+        radius = self.radius / (self.z_prime ** (
+                    2 / 3))  # 'radius' for Z'>1 stuctures is Z'*radius for downstream reasons. Also it's not intensive so we need a scaling
         auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds]).to(self.device)
 
         'convert to latent basis'
@@ -298,9 +299,9 @@ class MolCrystalOps:
 
         'rescale everything to [-1,1]'
         halfpi = torch.pi / 2
-        log_au_range = torch.tensor([[-1.8, -2.3, -1.2], [0.7, 0.5, 1.1]], dtype=torch.float32,
-                                    device=self.device)  # [0.1, 3.0]  # norm range for asymmetric unit lengths - the 99% quantiles
-        ang_range = [0.37 * torch.pi, 0.7 * torch.pi]  # range of allowed cell angles
+        au_range = torch.tensor([[0.075, 0.075, 0.1], [3, 3, 4]], dtype=torch.float32, device=self.device)  # range to scale aunit lengths
+        log_au_range = torch.log(au_range)
+        ang_range = [0.2 * torch.pi, 0.8 * torch.pi]  # range of allowed cell angles
 
         # lengths & angles - rescale from [min, max] to [-1,1]
         lat_lengths = ((normed_aunit_lengths.log() - log_au_range[0]) / (log_au_range[1] - log_au_range[0]) - 0.5) * 2
@@ -329,8 +330,9 @@ class MolCrystalOps:
             self.asym_unit_dict = self.build_asym_unit_dict()
 
         sg_inds = self.sg_ind
-        radius = self.radius
+        radius = self.radius / (self.z_prime ** (2 / 3))  # 'radius' for Z'>1 stuctures is Z'*radius for downstream reasons. Also it's not intensive so we need a scaling        auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds]).to(self.device)
         auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds]).to(self.device)
+
         lat_lengths, lat_angles, lat_centroids, lat_orientations = torch.split(latents, [3, 3, 3 * self.max_z_prime,
                                                                                          3 * self.max_z_prime], dim=1)
 
@@ -358,9 +360,10 @@ class MolCrystalOps:
                 * auvs.unsqueeze(1)  # [n, 1, 3] → broadcast over Z′
         ).reshape(-1, 3 * self.max_z_prime)  # back to [n, 3 * max_z']
 
-        log_au_range = torch.tensor([[-1.8, -2.3, -1.2], [0.7, 0.5, 1.1]], dtype=torch.float32,
-                                    device=self.device)  # [0.1, 3.0]  # norm range for asymmetric unit lengths - the 99% quantiles
-        ang_range = [0.37 * torch.pi, 0.7 * torch.pi]  # range of allowed cell angles
+        au_range = torch.tensor([[0.075, 0.075, 0.1], [3, 3, 4]], dtype=torch.float32, device=self.device)  # range to scale aunit lengths
+        log_au_range = torch.log(au_range)
+        ang_range = [0.2 * torch.pi, 0.8 * torch.pi]  # range of allowed cell angles
+
 
         log_span = log_au_range[1] - log_au_range[0]
         logL = (lat_lengths / 2 + 0.5) * log_span + log_au_range[0]
