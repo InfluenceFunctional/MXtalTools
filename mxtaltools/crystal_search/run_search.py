@@ -61,9 +61,12 @@ if __name__ == '__main__':
                 crystal_batch = get_initial_state(config, crystal_batch, device)
             else:
                 # if we oomed out in the last iter, recover the system state
-                crystal_batch.set_cell_parameters(
-                    prev_best_samples[:crystal_batch.num_graphs].to(crystal_batch.device)
-                )
+                try:
+                    crystal_batch.set_cell_parameters(
+                        prev_best_samples[:crystal_batch.num_graphs].to(crystal_batch.device)
+                    )
+                except:  # fails often for some reason
+                    crystal_batch = get_initial_state(config, crystal_batch, device)
 
             for opt_ind, opt_config in enumerate(config.opt):
                 # do optimization in N stages
