@@ -273,7 +273,7 @@ class MolCrystalOps:
 
         sg_inds = self.sg_ind
         radius = self.radius / (self.z_prime ** (
-                    2 / 3))  # 'radius' for Z'>1 stuctures is Z'*radius for downstream reasons. Also it's not intensive so we need a scaling
+                2 / 3))  # 'radius' for Z'>1 stuctures is Z'*radius for downstream reasons. Also it's not intensive so we need a scaling
         auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds]).to(self.device)
 
         'convert to latent basis'
@@ -299,7 +299,8 @@ class MolCrystalOps:
 
         'rescale everything to [-1,1]'
         halfpi = torch.pi / 2
-        au_range = torch.tensor([[0.075, 0.075, 0.1], [3, 3, 4]], dtype=torch.float32, device=self.device)  # range to scale aunit lengths
+        au_range = torch.tensor([[0.075, 0.075, 0.1], [3, 3, 4]], dtype=torch.float32,
+                                device=self.device)  # range to scale aunit lengths
         log_au_range = torch.log(au_range)
         ang_range = [0.2 * torch.pi, 0.8 * torch.pi]  # range of allowed cell angles
 
@@ -330,7 +331,8 @@ class MolCrystalOps:
             self.asym_unit_dict = self.build_asym_unit_dict()
 
         sg_inds = self.sg_ind
-        radius = self.radius / (self.z_prime ** (2 / 3))  # 'radius' for Z'>1 stuctures is Z'*radius for downstream reasons. Also it's not intensive so we need a scaling        auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds]).to(self.device)
+        radius = self.radius / (self.z_prime ** (
+                    2 / 3))  # 'radius' for Z'>1 stuctures is Z'*radius for downstream reasons. Also it's not intensive so we need a scaling        auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds]).to(self.device)
         auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds]).to(self.device)
 
         lat_lengths, lat_angles, lat_centroids, lat_orientations = torch.split(latents, [3, 3, 3 * self.max_z_prime,
@@ -360,10 +362,10 @@ class MolCrystalOps:
                 * auvs.unsqueeze(1)  # [n, 1, 3] → broadcast over Z′
         ).reshape(-1, 3 * self.max_z_prime)  # back to [n, 3 * max_z']
 
-        au_range = torch.tensor([[0.075, 0.075, 0.1], [3, 3, 4]], dtype=torch.float32, device=self.device)  # range to scale aunit lengths
+        au_range = torch.tensor([[0.075, 0.075, 0.1], [3, 3, 4]], dtype=torch.float32,
+                                device=self.device)  # range to scale aunit lengths
         log_au_range = torch.log(au_range)
         ang_range = [0.2 * torch.pi, 0.8 * torch.pi]  # range of allowed cell angles
-
 
         log_span = log_au_range[1] - log_au_range[0]
         logL = (lat_lengths / 2 + 0.5) * log_span + log_au_range[0]
@@ -964,16 +966,9 @@ class MolCrystalOps:
 
     def _set_cell_ranges(self, space, samples):
         if space == 'latent':
-            custom_ranges = {
-                0: [-1.1, 1.1],  # for cell_a
-                1: [-1.1, 1.1],  # for cell_b
-                2: [-1.1, 1.1],  # for cell_c
-                3: [-1.1, 1.1],  # for cell_alpha
-                4: [-1.1, 1.1],  # for cell_beta
-                5: [-1.1, 1.1],  # for cell_gamma
-            }
-            for ind in range(self.max_z_prime * 6):
-                custom_ranges.update({6 + ind: [-1.1, 1.1]})
+            custom_ranges = {}
+            for ind in range(6 + self.max_z_prime * 6):
+                custom_ranges.update({ind: [-1.1, 1.1]})
 
         elif space == 'standard':
             custom_ranges = {
@@ -998,12 +993,15 @@ class MolCrystalOps:
             )
             for ind in range(self.max_z_prime):
                 custom_ranges.update({
-                    6 + ind * 6 + 0: [0, 1.1],
-                    6 + ind * 6 + 1: [0, 1.1],
-                    6 + ind * 6 + 2: [0, 1.1],
-                    6 + ind * 6 + 3: [-2 * np.pi, 2 * np.pi],
-                    6 + ind * 6 + 4: [-2 * np.pi, 2 * np.pi],
-                    6 + ind * 6 + 5: [0, 2 * np.pi],
+                    6 + ind * 3 + 0: [0, 1.1],
+                    6 + ind * 3 + 1: [0, 1.1],
+                    6 + ind * 3 + 2: [0, 1.1],
+                })
+            for ind in range(self.max_z_prime):
+                custom_ranges.update({
+                    6 + self.max_z_prime * 3 + ind * 3 + 0: [-2 * np.pi, 2 * np.pi],
+                    6 + self.max_z_prime * 3 + ind * 3 + 1: [-2 * np.pi, 2 * np.pi],
+                    6 + self.max_z_prime * 3 + ind * 3 + 2: [0, 2 * np.pi],
                 })
 
         return custom_ranges

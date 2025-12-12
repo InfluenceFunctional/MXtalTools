@@ -1,0 +1,48 @@
+batch_size: 5000
+device: cuda
+grow_batch_size: false
+init_sample_method: random
+init_target_cp: 0.1
+mol_path: /scratch/mk8347/csd_runs/datasets/coumarin/coumarin.pt
+mol_seed: 0
+mols_to_sample: 1
+num_samples: 10000
+opt:
+- anneal_lr: false
+  compression_factor: 1.0
+  convergence_eps: 0.0001
+  enforce_reduced: true
+  grad_norm_clip: 0.1
+  init_lr: 0.01
+  max_num_steps: 500
+  optim_target: silu
+  optimizer_func: rprop
+  show_tqdm: true
+- anneal_lr: false
+  compression_factor: 1.0
+  convergence_eps: 0.0001
+  enforce_reduced: true
+  grad_norm_clip: 0.1
+  init_lr: 0.01
+  max_num_steps: 500
+  optim_target: lj
+  optimizer_func: rprop
+  show_tqdm: true
+- anneal_lr: false
+  compression_factor: 0.0
+  convergence_eps: 1.0e-05
+  enforce_reduced: true
+  grad_norm_clip: 0.1
+  init_lr: 0.01
+  max_num_steps: 500
+  optim_target: reduce
+  optimizer_func: rprop
+  show_tqdm: true
+opt_seed: 0
+out_dir: /scratch/mk8347/csd_runs/datasets/coumarin
+run_name: coumarin_sg19_zp3
+sampling_mode: all
+sgs_to_search:
+- 19
+zp_to_search:
+- 3

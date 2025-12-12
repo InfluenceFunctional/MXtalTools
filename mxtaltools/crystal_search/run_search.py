@@ -57,7 +57,7 @@ if __name__ == '__main__':
         try:
             crystal_batch = collate_data_list(samples_to_optim[cursor:cursor + config.batch_size]).to(device)
 
-            if prev_best_samples is None:
+            if (prev_best_samples is None) or (prev_best_samples is not None and len(prev_best_samples) < crystal_batch.num_graphs):
                 crystal_batch = get_initial_state(config, crystal_batch, device)
             else:
                 # if we oomed out in the last iter, recover the system state

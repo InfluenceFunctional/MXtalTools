@@ -422,7 +422,6 @@ class MolCrystalAnalysis:
 
         return ab_error + alpha_error + beta_error + gamma_error + abc_error
 
-    # todo check these next 3
     def trig_reduction_penalty(self, cell_lengths, cell_angles, margin):
         a, b, c = cell_lengths.unbind(dim=-1)
         al, be, ga = cell_angles.unbind(dim=-1)

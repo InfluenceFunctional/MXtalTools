@@ -1,7 +1,7 @@
 device: cuda
-mol_path: D:\crystal_datasets\acridine\acridine.pkl
-out_dir: D:\crystal_datasets\opt_outputs
-run_name: test
+mol_path: /scratch/mk8347/csd_runs/datasets/coumarin/coumarin.pt
+out_dir: /scratch/mk8347/csd_runs/datasets/coumarin
+run_name: coum_prod_dataset
 
 mol_seed: 0
 opt_seed: 0
@@ -9,10 +9,10 @@ sampling_mode: all # 'all' or 'random' or 'ordered'
 mols_to_sample: 1
 num_samples: 10000 # per mol, per space group, per Zp
 
-sgs_to_search: [ 4 ]
-zp_to_search: [ 2 ]
+sgs_to_search: [ 2,4,9,14, 15, 19, 33, 61 ]
+zp_to_search: [ 1, 2 ]
 
-batch_size: 250
+batch_size: 5000
 grow_batch_size: false
 
 init_sample_method: random  # 'random' 'reasonable'
@@ -71,4 +71,3 @@ opt:
     grad_norm_clip: 0.1
     show_tqdm: true
     max_num_steps: 500
-
