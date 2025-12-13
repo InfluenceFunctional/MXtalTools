@@ -33,7 +33,7 @@ def compute_crystal_uma_on_mxt_batch(batch,
                                      pbc: bool = True):
     data_list = []
     "UMA sometimes fails on ultra-dense cells, so we'll manually prevent that. These are obviously terrible cells anyway."
-    while sum(batch.packing_coeff > 10) > 0:
+    while sum(batch.packing_coeff > 2) > 0:
         bad_inds = torch.argwhere(batch.packing_coeff > 10)
         if len(bad_inds) > 0:
             batch.cell_lengths[bad_inds] *= 2
@@ -56,7 +56,13 @@ def compute_crystal_uma_on_mxt_batch(batch,
             numbers=z.cpu().detach().numpy(),
             positions=pos.cpu().detach().numpy(),
         )
-        atoms.set_cell(Cell.fromcellpar(cell_params[ind]))
+        try:
+            atoms.set_cell(Cell.fromcellpar(cell_params[ind]))
+        except AssertionError:  # cells have invalid shape according to ASE - we'll manually override
+            fixed_cp = cell_params[ind].copy()
+            fixed_cp[3:6] = 90
+            atoms.set_cell(Cell.fromcellpar(fixed_cp))
+
         pbc_flag = pbc
         atoms.set_pbc(pbc_flag)
         crystal = AtomicData.from_ase(atoms, task_name='omc')
