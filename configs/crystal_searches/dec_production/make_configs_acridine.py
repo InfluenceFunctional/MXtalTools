@@ -37,4 +37,7 @@ if __name__ == "__main__":
             with open(config_path, 'w') as f:
                 yaml.dump(config, f, default_flow_style=False)
 
+            if sg in [4, 14, 15,61]:
+                print(ind)
+
             ind += 1
