@@ -30,11 +30,12 @@ def safe_predict_uma(predictor, uma_batch):
 def compute_crystal_uma_on_mxt_batch(batch,
                                      std_orientation: bool = True,
                                      predictor: Optional = None,
-                                     pbc: bool = True):
+                                     pbc: bool = True,
+                                     max_cp: float = 2.0):
     data_list = []
     "UMA sometimes fails on ultra-dense cells, so we'll manually prevent that. These are obviously terrible cells anyway."
-    while sum(batch.packing_coeff > 2) > 0:
-        bad_inds = torch.argwhere(batch.packing_coeff > 2)
+    while sum(batch.packing_coeff > max_cp) > 0:
+        bad_inds = torch.argwhere(batch.packing_coeff > max_cp)
         if len(bad_inds) > 0:
             batch.cell_lengths[bad_inds] *= 2
             batch.box_analysis()
