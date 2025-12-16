@@ -986,9 +986,9 @@ class MolCrystalOps:
             custom_ranges = {ind: [np.amin(samples[:, ind]), np.amax(samples[:, ind])]
                              for ind in range(3)}
             custom_ranges.update(
-                {3: [np.pi / 4, 3 / 2 * np.pi],
-                 4: [np.pi / 4, 3 / 4 * np.pi],
-                 5: [np.pi / 4, 3 / 4 * np.pi]
+                {3: [np.pi / 10, 0.9 * np.pi],
+                 4: [np.pi / 10, 0.9 * np.pi],
+                 5: [np.pi / 10, 0.9 * np.pi]
                  }
             )
             for ind in range(self.max_z_prime):
