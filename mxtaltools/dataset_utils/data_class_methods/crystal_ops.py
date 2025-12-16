@@ -1117,8 +1117,8 @@ class MolCrystalOps:
                           )
 
         fig.update_layout(
-            xaxis_title=r"Packing coefficient",
-            yaxis_title=r"Energy, /Arb Units",
+            xaxis_title=r"Packing Coefficient",
+            yaxis_title=r"Energy per Atom, /Arb Units",
         )
         fig.update_traces(
             marker=dict(
