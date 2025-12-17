@@ -26,8 +26,8 @@ if __name__ == "__main__":
     base, spec_dir = load_yaml(base_path)
 
     ind = 0
-    for sg in [ 2,4,9,14, 15, 19, 33, 61, 1, 5, 7, 12, 13, 18, 29, 33, 60, 62, 146]:
-        for zp in [ 1, 2 ]:
+    for sg in [2, 4, 9, 14, 15, 19, 33, 61, 1, 5, 7, 12, 13, 18, 29, 33, 60, 62, 146]:
+        for zp in [1, 2]:
             config = deepcopy(base)
             config['sgs_to_search'] = [sg]
             config['zp_to_search'] = [zp]
@@ -37,7 +37,7 @@ if __name__ == "__main__":
             with open(config_path, 'w') as f:
                 yaml.dump(config, f, default_flow_style=False)
 
-            if sg in [4, 14, 15,61]:
+            if sg in [4, 14, 15, 61]:
                 print(ind)
 
             ind += 1

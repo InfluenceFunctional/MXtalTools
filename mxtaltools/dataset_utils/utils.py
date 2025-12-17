@@ -13,6 +13,9 @@ def collate_data_list(data_list, exclude_unit_cell: bool = True,
                       max_z_prime: Optional[int] = None,
                       exclude_keys: Optional[list] = None,
                       skip_default_exclusion: bool = False):
+    if len(data_list) == 0:
+        assert False, "Data list is empty!"
+
     if not isinstance(data_list, list):
         data_list = [data_list]
 

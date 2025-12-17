@@ -1,5 +1,5 @@
 device: cuda
-mol_path: /scratch/mk8347/csd_runs/datasets/acridine/acridine.pkl
+mol_path: /scratch/mk8347/csd_runs/datasets/acridine/acridine_conformer.pt
 out_dir: /scratch/mk8347/csd_runs/datasets/acridine
 run_name: acr_prod_dataset
 
