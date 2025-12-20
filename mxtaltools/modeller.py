@@ -44,7 +44,7 @@ from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering
 from mxtaltools.reporting.logger import Logger
 
 
-#os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+# os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 # noinspection PyAttributeOutsideInit
 
 
@@ -184,7 +184,7 @@ class Modeller:
             filter_protons=self.config.autoencoder.filter_protons if self.train_models_dict['autoencoder'] else False,
             conv_cutoff=conv_cutoff,
             do_shuffle=True,
-            precompute_edges=False,  #self.config.mode not in ['gan', 'discriminator', 'generator'],
+            precompute_edges=False,  # self.config.mode not in ['gan', 'discriminator', 'generator'],
             single_identifier=self.config.dataset.single_identifier,
         )
         self.dataDims = data_manager.dataDims
@@ -192,7 +192,7 @@ class Modeller:
         self.lattice_stds = torch.tensor(self.dataDims['lattice_stds'], device=self.device)
 
         if self.config.mode == 'polymorph_classification':
-            self.config.polymorph_classifier.num_output_classes = 7  #self.dataDims['num_polymorphs'] + self.dataDims['num_topologies']
+            self.config.polymorph_classifier.num_output_classes = 7  # self.dataDims['num_polymorphs'] + self.dataDims['num_topologies']
 
         self.times['dataset_loading'] = data_manager.times
 
@@ -412,7 +412,7 @@ class Modeller:
 
         self.config.autoencoder_sigma = self.config.autoencoder.init_sigma
         self.config.autoencoder.molecule_radius_normalization = self.models_dict[
-            'autoencoder'].radial_normalization  #self.dataDims['standardization_dict']['radius']['max']
+            'autoencoder'].radial_normalization  # self.dataDims['standardization_dict']['radius']['max']
 
         self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
 
@@ -472,7 +472,7 @@ class Modeller:
 
         self.config.autoencoder_sigma = self.config.autoencoder.evaluation_sigma
         self.config.autoencoder.molecule_radius_normalization = self.models_dict['autoencoder'].radial_normalization
-        #self.dataDims['standardization_dict']['radius']['max']
+        # self.dataDims['standardization_dict']['radius']['max']
 
         self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
 
@@ -646,7 +646,7 @@ class Modeller:
             [mol_batch.pos[mol_batch.batch == ind] for ind in range(mol_batch.num_graphs)])
 
         scaffold_rmsds, scaffold_max_dists, scaffold_matched = [], [], []
-        #glom_rmsds, glom_max_dists = [], []
+        # glom_rmsds, glom_max_dists = [], []
         for ind in range(mol_batch.num_graphs):  # somewhat slow
             rmsd, max_dist, weight_mean, match_successful = scaffolded_decoder_clustering(ind, mol_batch,
                                                                                           decoded_mol_batch,
@@ -776,7 +776,8 @@ class Modeller:
                                                                                            test_loader, train_loader)
                         elif "numerical error" in str(e).lower():
                             self.handle_nan(e, epoch)
-                        elif (isinstance(e, MemoryError) or "out of memory" in str(e).lower()) and ('cuda' not in str(e).lower()):
+                        elif (isinstance(e, MemoryError) or "out of memory" in str(e).lower()) and (
+                                'cuda' not in str(e).lower()):
                             print("Hit OOM, slashing train dataset size")
                             gc.collect()
                             self.config.max_dataset_length *= 0.9
@@ -893,7 +894,7 @@ class Modeller:
                     if self.train_models_dict[model_name]:
                         self.logger.save_stats_dict(prefix=f'best_{model_name}_')
 
-                #self.logger.save_stats_dict(prefix=f'best_{model_name}_')
+                # self.logger.save_stats_dict(prefix=f'best_{model_name}_')
 
     def train_test_validate(self, epoch, extra_test_loader, steps_override, test_loader, train_loader):
         self.run_epoch(epoch_type='train',
@@ -1010,7 +1011,7 @@ class Modeller:
             self.cr_epoch(data_loader, update_weights, iteration_override)
 
         if self.train_models_dict['generator']:
-            #self.generator_epoch(data_loader, update_weights, iteration_override)
+            # self.generator_epoch(data_loader, update_weights, iteration_override)
             assert False, "Generator workflow needs to be updated!"
 
         elif self.config.mode == 'regression':
@@ -1452,7 +1453,7 @@ class Modeller:
             if self.logger.epoch == 0 or self.integrated_dataset == True:
                 self.otf_start_time = time()
                 print('sending crystal opt jobs to mp pool')
-                #if self.config.machine == 'cluster': # linux machines
+                # if self.config.machine == 'cluster': # linux machines
                 mp.set_start_method('spawn', force=True)
                 self.mp_pool = mp.Pool(num_processes)
                 self.mp_pool = otf_synthesize_crystals(
@@ -1744,9 +1745,9 @@ class Modeller:
         losses = (reconstruction_loss +
                   constraining_loss +
                   node_weight_constraining_loss +
-                  #self.config.autoencoder.nearest_node_loss_coefficient * nearest_node_loss**2 +
+                  # self.config.autoencoder.nearest_node_loss_coefficient * nearest_node_loss**2 +
                   self.config.autoencoder.nearest_component_loss_coefficient * nearest_component_loss ** 2
-                  #self.config.autoencoder.clumping_loss_coefficient * clumping_loss
+                  # self.config.autoencoder.clumping_loss_coefficient * clumping_loss
                   )
 
         if not skip_stats:
@@ -1840,7 +1841,7 @@ class Modeller:
                                                   loss.mean().cpu().detach().numpy(),
                                                   loss.cpu().detach().numpy())
 
-                stats_values = [data.polymorph.detach(), output.detach()]  #, data.cluster_type]
+                stats_values = [data.polymorph.detach(), output.detach()]  # , data.cluster_type]
                 stats = {key: value for key, value in zip(stats_keys, stats_values)}
                 dict_of_tensors_to_cpu_numpy(stats)
                 self.logger.update_stats_dict(self.epoch_type,
@@ -1985,6 +1986,7 @@ class Modeller:
         del data_loader
 
         return embedding_data_loader
+
     #
     # def generator_epoch(self,
     #                     data_loader=None,
@@ -2236,7 +2238,7 @@ class Modeller:
         cr_losses, predictions, targets = get_regression_loss(
             self.models_dict['crystal_regressor'],
             cluster_batch,
-            cluster_batch.y,  #(lj_pot - self.dataDims['target_mean'])/self.dataDims['target_std'],
+            cluster_batch.y,  # (lj_pot - self.dataDims['target_mean'])/self.dataDims['target_std'],
             self.dataDims['target_mean'],
             self.dataDims['target_std'])
 
@@ -2272,13 +2274,11 @@ class Modeller:
         rdf_dists = torch.zeros(real_cluster_batch.num_graphs, device=self.config.device, dtype=torch.float32)
         if self.config.discriminator.use_rdf_distance_loss:
             real_rdf, rr, _ = crystal_rdf(real_cluster_batch, real_cluster_batch.edges_dict,
-                                          rrange=[0, self.config.discriminator.model.graph.cutoff], bins=2000,
-                                          mode='intermolecular', elementwise=True, raw_density=True,
-                                          cpu_detach=False)
+                                          rrange=[0, self.config.discriminator.model.graph.cutoff], bins=100,
+                                          elementwise=True)
             fake_rdf, _, _ = crystal_rdf(fake_cluster_batch, fake_cluster_batch.edges_dict,
-                                         rrange=[0, self.config.discriminator.model.graph.cutoff], bins=2000,
-                                         mode='intermolecular', elementwise=True, raw_density=True,
-                                         cpu_detach=False)
+                                         rrange=[0, self.config.discriminator.model.graph.cutoff], bins=100,
+                                         elementwise=True)
 
             for i in range(real_cluster_batch.num_graphs):
                 rdf_dists[i] = compute_rdf_distance(real_rdf[i], fake_rdf[i], rr) / real_cluster_batch.num_atoms[i]
@@ -2444,6 +2444,7 @@ class Modeller:
         ellipsoid_loss = (normed_ellipsoid_overlap ** 2).clip(max=2)
 
         return vdw_loss, density_loss, ellipsoid_loss
+
     #
     # def generator_step(self, mol_batch, step, update_weights, skip_stats):
     #     """

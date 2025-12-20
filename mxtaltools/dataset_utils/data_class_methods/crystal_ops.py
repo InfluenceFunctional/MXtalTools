@@ -1335,7 +1335,7 @@ class MolCrystalOps:
     def _add_violin(self, fig, samples, name, color, column_index, ranges, n_kde, bw_factor):
         row = column_index // 3 + 1
         col = column_index % 3 + 1
-        x_samp, y_samp = lightweight_one_sided_violin(samples,
+        x_samp, y_samp = lightweight_one_sided_violin(samples + np.random.randn(len(samples)) * 1e-3,
                                                       n_kde,
                                                       bandwidth_factor=bw_factor,
                                                       data_min=ranges[0],

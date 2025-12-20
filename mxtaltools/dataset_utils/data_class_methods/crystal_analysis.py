@@ -72,6 +72,7 @@ class MolCrystalAnalysis:
                              'ellipsoid': self.compute_ellipsoidal_overlap,
                              'niggli_overlap': self.compute_niggli_overlap,
                              'reduction_en': self.compute_cell_reduction_penalty,
+                             'rdf': self.compute_rdf,
                              }
 
     def compute_LJ_energy(self, **kwargs):
@@ -208,7 +209,7 @@ class MolCrystalAnalysis:
                 computes: list,
                 return_cluster: Optional[bool] = False,
                 noise: Optional[float] = None,
-                cutoff: float = 6,
+                cutoff: float = 6, # todo allow custom cutoff for rdf compute
                 supercell_size: int = 10,
                 std_orientation: Optional[bool] = True,
                 assign_outputs: Optional[bool] = False,
@@ -230,7 +231,10 @@ class MolCrystalAnalysis:
 
         if assign_outputs:
             for key, value in results.items():
-                self.add_graph_attr(value, key)
+                if key != 'rdf':
+                    self.add_graph_attr(value, key)
+                else:
+                    self.add_graph_attr(value[0], key)
 
         if return_cluster:
             return results, cluster_batch
@@ -288,7 +292,7 @@ class MolCrystalAnalysis:
                     mode: str = 'intermolecular',
                     elementwise: bool = True,
                     # atomwise: bool = False  # doesn't work properly right now
-                    bins: int = 2000,
+                    bins: int = 100,
                     raw_density: bool = True
                     ):
         if not hasattr(self, 'edges_dict'):
@@ -299,11 +303,8 @@ class MolCrystalAnalysis:
         rdf, bin_edges, rdf_pair_dict = crystal_rdf(self,
                                                     self.edges_dict,
                                                     rrange=(0, cutoff),
-                                                    raw_density=raw_density,
-                                                    mode=mode,
                                                     bins=bins,
                                                     elementwise=elementwise,
-                                                    atomwise=False,
                                                     )
         return rdf, bin_edges, rdf_pair_dict
 

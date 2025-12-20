@@ -42,51 +42,51 @@ def get_heavy_atom_distribution(mol_batch, min: float = 0, max: float = 15, nbin
     hist, bins = torch.histogram(num_heavy_atoms.float(), bins=bins, density=True)
     return hist, bins
 
-
-def get_edge_distribution(dataset,
-                          max_edge_length: float,
-                          relevant_elements: list = [1, 6, 7, 8, 9],
-                          device: str = 'cpu'):
-    with torch.no_grad():
-        batch_size = 100
-        num_chunks = dataset.num_graphs // 100
-        if dataset.num_graphs % 100 != 0:
-            num_chunks += 1
-
-        for ind in range(num_chunks):
-            mol_batch = collate_data_list(dataset[ind * batch_size: (ind + 1) * batch_size]).to(device)
-            edges = radius(
-                x=mol_batch.pos,
-                y=mol_batch.pos,
-                r=max_edge_length,
-                max_num_neighbors=100,
-                batch_x=mol_batch.batch,
-                batch_y=mol_batch.batch,
-            )
-            edge_batch = mol_batch.batch[edges[0]]
-            dists = (mol_batch.pos[edges[0]] - mol_batch.pos[edges[1]]).norm(dim=1)
-            dists_per_hist, sorted_dists, rdfs_dict = get_elementwise_dists(
-                mol_batch.z.flatten(),
-                edges,
-                dists,
-                device=device,
-                num_graphs=mol_batch.num_graphs,
-                edge_in_crystal_number=edge_batch,
-                atomic_numbers_override=torch.LongTensor(relevant_elements).to(device),
-            )
-            num_pairs = len(rdfs_dict.keys())
-            batch = torch.arange(len(dists_per_hist), device=device).repeat_interleave(dists_per_hist, dim=0)
-            hist, bin_edges = batch_histogram_1d(sorted_dists, batch, mol_batch.num_graphs * num_pairs,
-                                                 rrange=[0, max_edge_length],
-                                                 nbins=100)
-            if ind == 0:
-                hist_record = torch.zeros((num_pairs, hist.shape[1]), dtype=torch.float32, device='cpu')
-
-            dist_batch = torch.arange(num_pairs, device=device).repeat(mol_batch.num_graphs)
-            agg_hist = scatter(hist, dist_batch, dim=0, dim_size=num_pairs)
-            hist_record += (agg_hist / mol_batch.num_graphs).cpu()
-
-    return hist_record, bin_edges.cpu(), rdfs_dict
+#
+# def get_edge_distribution(dataset,
+#                           max_edge_length: float,
+#                           relevant_elements: list = [1, 6, 7, 8, 9],
+#                           device: str = 'cpu'):
+#     with torch.no_grad():
+#         batch_size = 100
+#         num_chunks = dataset.num_graphs // 100
+#         if dataset.num_graphs % 100 != 0:
+#             num_chunks += 1
+#
+#         for ind in range(num_chunks):
+#             mol_batch = collate_data_list(dataset[ind * batch_size: (ind + 1) * batch_size]).to(device)
+#             edges = radius(
+#                 x=mol_batch.pos,
+#                 y=mol_batch.pos,
+#                 r=max_edge_length,
+#                 max_num_neighbors=100,
+#                 batch_x=mol_batch.batch,
+#                 batch_y=mol_batch.batch,
+#             )
+#             edge_batch = mol_batch.batch[edges[0]]
+#             dists = (mol_batch.pos[edges[0]] - mol_batch.pos[edges[1]]).norm(dim=1)
+#             dists_per_hist, sorted_dists, rdfs_dict = get_elementwise_dists(
+#                 mol_batch.z.flatten(),
+#                 edges,
+#                 dists,
+#                 device=device,
+#                 num_graphs=mol_batch.num_graphs,
+#                 edge_in_crystal_number=edge_batch,
+#                 atomic_numbers_override=torch.LongTensor(relevant_elements).to(device),
+#             )
+#             num_pairs = len(rdfs_dict.keys())
+#             batch = torch.arange(len(dists_per_hist), device=device).repeat_interleave(dists_per_hist, dim=0)
+#             hist, bin_edges = batch_histogram_1d(sorted_dists, batch, mol_batch.num_graphs * num_pairs,
+#                                                  rrange=[0, max_edge_length],
+#                                                  nbins=100)
+#             if ind == 0:
+#                 hist_record = torch.zeros((num_pairs, hist.shape[1]), dtype=torch.float32, device='cpu')
+#
+#             dist_batch = torch.arange(num_pairs, device=device).repeat(mol_batch.num_graphs)
+#             agg_hist = scatter(hist, dist_batch, dim=0, dim_size=num_pairs)
+#             hist_record += (agg_hist / mol_batch.num_graphs).cpu()
+#
+#     return hist_record, bin_edges.cpu(), rdfs_dict
 
 
 def rdkit_molecule_analysis(smiles):
@@ -198,12 +198,12 @@ def analyze_mol_dataset(dataset, device, bins_set=None):
 
                                     0, 15,
                                     15))
-    rdfs, bin_edges, rdfs_dict = get_edge_distribution(dataset, max_edge_length=6, device=device)
-    for ind in range(len(rdfs)):
-        rdf_name = rdfs_dict[ind]
-        mol_feats_dict[f'{rdf_name}_rdf'] = rdfs[ind][1:] / rdfs[ind][1:].sum()
-        mol_feats_dict[f'{rdf_name}_rdf_bins'] = bin_edges[1:]
-
+    # rdfs, bin_edges, rdfs_dict = get_edge_distribution(dataset, max_edge_length=6, device=device)
+    # for ind in range(len(rdfs)):
+    #     rdf_name = rdfs_dict[ind]
+    #     mol_feats_dict[f'{rdf_name}_rdf'] = rdfs[ind][1:] / rdfs[ind][1:].sum()
+    #     mol_feats_dict[f'{rdf_name}_rdf_bins'] = bin_edges[1:]
+    print("Omitting edge distribution - analysis code was rewritten")
     return mol_feats_dict
 
 
