@@ -63,7 +63,7 @@ def get_point_density(xy, bins=35):
     z = interpn((0.5 * (x_e[1:] + x_e[:-1]), 0.5 * (y_e[1:] + y_e[:-1])),
                 data,
                 np.vstack([x, y]).T,
-                method="cubic",
+                method="linear",
                 bounds_error=False,
                 fill_value=None)
 
