@@ -195,7 +195,7 @@ def compack_fig(matches, rmsds, write_fig):
         fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\mxt_code\compack_fig.png', width=900, height=900)
 
 
-def batch_compack(best_sample_inds, optimized_samples, original_cluster_batch):
+def batch_compack(best_sample_inds, optimized_samples, original_cluster_batch): # todo refactor into analysis code
     # generate the crystals in ccdc format
     best_crystals_batch = collate_data_list([optimized_samples[ind] for ind in best_sample_inds])
     best_cluster_batch = best_crystals_batch.mol2cluster().to('cpu')

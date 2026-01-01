@@ -431,20 +431,20 @@ if __name__ == '__main__':
     #                        protonation_state='protonated')
     #
     #
-    # process_cifs_to_chunks(n_chunks=1,
-    #                        cifs_path='D:/crystal_datasets/CSD_dump/',
-    #                        chunks_path='D:/crystal_datasets/xuldud/',
-    #                        chunk_prefix='',
-    #                        use_filenames_for_identifiers=False,
-    #                        target_identifiers=['XULDUD'],
-    #                        filter_by_targets=True,
-    #                        protonation_state='protonated')
-
     process_cifs_to_chunks(n_chunks=1,
                            cifs_path='D:/crystal_datasets/CSD_dump/',
-                           chunks_path='D:/crystal_datasets/acridine/',
+                           chunks_path='D:/crystal_datasets/xuldud/',
                            chunk_prefix='',
                            use_filenames_for_identifiers=False,
-                           target_identifiers=['ACRDIN','ACRDIN01','ACRDIN04','ACRDIN04','ACRDIN05','ACRDIN06','ACRDIN07','ACRDIN08','ACRDIN09','ACRDIN10','ACRDIN11','ACRDIN12','ACRDIN13'],
+                           target_identifiers=['XULDUD','XULDUD01'],
                            filter_by_targets=True,
                            protonation_state='protonated')
+    #
+    # process_cifs_to_chunks(n_chunks=1,
+    #                        cifs_path='D:/crystal_datasets/CSD_dump/',
+    #                        chunks_path='D:/crystal_datasets/acridine/',
+    #                        chunk_prefix='',
+    #                        use_filenames_for_identifiers=False,
+    #                        target_identifiers=['ACRDIN','ACRDIN01','ACRDIN04','ACRDIN04','ACRDIN05','ACRDIN06','ACRDIN07','ACRDIN08','ACRDIN09','ACRDIN10','ACRDIN11','ACRDIN12','ACRDIN13'],
+    #                        filter_by_targets=True,
+    #                        protonation_state='protonated')

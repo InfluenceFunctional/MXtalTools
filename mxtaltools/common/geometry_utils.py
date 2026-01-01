@@ -1587,3 +1587,120 @@ def safe_batched_eigh(covs, chunk=10000):
         out_vals.append(ev)
         out_vecs.append(evec)
     return torch.cat(out_vals, dim=0).float(), torch.cat(out_vecs, dim=0).float()
+
+def lat2sph_rotvec(lat_orientations, z_prime):
+
+    sph_rotvec = torch.zeros_like(lat_orientations)
+    theta_inds = [ind * 3 for ind in range(z_prime)]
+    phi_inds = [ind * 3 + 1 for ind in range(z_prime)]
+    r_inds = [ind * 3 + 2 for ind in range(z_prime)]
+    halfpi = torch.pi / 2
+
+    sph_rotvec[:, theta_inds] = lat_orientations[:, theta_inds] * torch.pi / 4 + halfpi / 2
+    # phi is [-pi, pi] to [-1,1]
+    sph_rotvec[:, phi_inds] = lat_orientations[:, phi_inds] * torch.pi
+    # r is [0, 2pi] to [-1,1]
+    sph_rotvec[:, r_inds] = lat_orientations[:, r_inds] * torch.pi + torch.pi
+    return sph_rotvec
+
+def crystal_parameter_distance(latents1: torch.Tensor,
+                               latents2: torch.Tensor) -> torch.Tensor:
+    """
+    Compute a distance metric between crystals in the latent parameterization.
+    :param params:
+    :return:
+    """
+    n_params = latents1.shape[1]
+    assert latents1.shape[1] == latents2.shape[1]
+    z_prime = (n_params - 6) // 6
+
+    "Latent box parameters are the log lengths 0-2 and angles 3-5"
+    box_params1 = latents1[:, :6]
+    box_params2 = latents2[:, :6]
+    box_dist = (box_params1 - box_params2).norm(dim=-1)
+
+    "positions defined on [-1, 1]^3 * z_prime. Not periodic (different periodicity in every space group)"
+    positions1 = latents1[:, 6:6+3*z_prime]
+    positions2 = latents2[:, 6:6+3*z_prime]
+    positions_dist = (positions1 - positions2).norm(dim=-1)
+
+    "angles are defined in a spherical basis [0,pi/2], [-pi, pi], [0,2pi] and renormalized on [-1,1]"
+    lat_orientations1 = latents1[:, 6+3*z_prime:]
+    lat_orientations2 = latents2[:, 6+3*z_prime:]
+
+    lat_sph_rotvec1 = lat2sph_rotvec(lat_orientations1, z_prime)  # [polar, azimuthal, length]
+    lat_sph_rotvec2 = lat2sph_rotvec(lat_orientations2, z_prime)
+
+    lat_cart_rotvec1 = sph2cart_rotvec(lat_sph_rotvec1.reshape(len(lat_sph_rotvec1) * z_prime, 3)).reshape(
+        len(lat_sph_rotvec1), z_prime * 3)
+    lat_cart_rotvec2 = sph2cart_rotvec(lat_sph_rotvec2.reshape(len(lat_sph_rotvec2) * z_prime, 3)).reshape(
+        len(lat_sph_rotvec2), z_prime * 3)
+
+    rot_dists = []
+    for zp in range(z_prime):
+        v1 = lat_cart_rotvec1[:,3*zp:3*zp+3]
+        v2 = lat_cart_rotvec2[:,3*zp:3*zp+3]
+        dist = 1 - (v1*v2).sum(dim=1)/(v1.norm(dim=1)*v2.norm(dim=1))
+        rot_dists.append(dist)
+
+    rot_dists = torch.stack(rot_dists).sum(0)
+
+    "overall distance metric"
+    dists = 0.5*box_dist + 0.25*(positions_dist/z_prime/2.5) + 0.25*(rot_dists/z_prime/2)
+
+    return dists
+
+# def crystal_parameter_distmat(latents, max_batch_size = 2000):
+#     """
+#     Compute distance to self for a set of crystal latent vectors
+#     :param latents:
+#     :return:
+#     """
+#     N, K = latents.shape
+#     if N < max_batch_size:
+#         lat1 = latents[:, None, :].expand(N, N, K).reshape(N * N, K)
+#         lat2 = latents[None, :, :].expand(N, N, K).reshape(N * N, K)
+#
+#         d = crystal_parameter_distance(lat1, lat2)  # (N*N,)
+#         distmat = d.reshape(N, N)
+#     else:
+#         distmat = torch.zeros((N, N), device=latents.device)
+#
+#         for i in range(N):
+#             lat1 = latents[i:i + 1].expand(N, -1)  # (N, K)
+#             lat2 = latents  # (N, K)
+#
+#             distmat[i] = crystal_parameter_distance(lat1, lat2)
+#
+#
+#     return distmat
+
+def crystal_parameter_distmat(
+    latents,
+    target_entries=5_000_000,   # ≈ distances per call
+    min_block=1,
+    max_block=2048,
+):
+    """
+    Blockwise distance matrix with adaptive block size.
+    Tries to keep ~target_entries distances per kernel call.
+    """
+    device = latents.device
+    N, K = latents.shape
+
+    # adaptive block size
+    B = max(min_block, min(max_block, target_entries // max(N, 1)))
+
+    distmat = torch.empty((N, N), device=device)
+
+    for i in range(0, N, B):
+        lat1 = latents[i:i+B]                     # (B, K)
+        b = lat1.shape[0]
+
+        lat1_exp = lat1[:, None, :].expand(b, N, K).reshape(-1, K)
+        lat2_exp = latents[None, :, :].expand(b, N, K).reshape(-1, K)
+
+        d = crystal_parameter_distance(lat1_exp, lat2_exp)
+        distmat[i:i+b] = d.view(b, N)
+
+    return distmat

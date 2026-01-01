@@ -37,17 +37,20 @@ def compute_crystal_uma_on_mxt_batch(batch,
     while sum(batch.packing_coeff > max_cp) > 0:
         bad_inds = torch.argwhere(batch.packing_coeff > max_cp)
         if len(bad_inds) > 0:
-            batch.cell_lengths[bad_inds] *= 2
+            batch.cell_lengths[bad_inds] += 2
             batch.box_analysis()
-    batch.pose_aunit(std_orientation=std_orientation)
-    assert torch.sum(torch.isnan(batch.pos)) == 0
 
     if batch.z_prime.amax() > 1:
         zp1_batch = batch.split_to_zp1_batch()
+        zp1_batch.pose_aunit(std_orientation=std_orientation)
         zp1_batch.build_unit_cell()
         batch.join_zp1_ucell_batch(zp1_batch)
     else:
+        batch.pose_aunit(std_orientation=std_orientation)
         batch.build_unit_cell()
+
+    assert torch.sum(torch.isnan(batch.pos)) == 0
+
     cell_params = torch.cat([batch.cell_lengths, batch.cell_angles * 90 / (torch.pi / 2)], dim=1).cpu().detach().numpy()
 
     for ind in range(batch.num_graphs):

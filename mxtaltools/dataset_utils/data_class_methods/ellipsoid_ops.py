@@ -41,51 +41,8 @@ class MolCrystalEllipsoidOps:
         if not hasattr(self, 'edges_dict'):
             raise RuntimeError("Need to build radial graph before computing overlaps")
 
-        mols_per_cluster = torch.tensor(self.edges_dict['n_repeats'], device=self.device)
-        tot_num_mols = torch.sum(mols_per_cluster)
-        tot_mol_index = torch.arange(tot_num_mols, device=self.device).repeat_interleave(
-            self.num_atoms.repeat_interleave(mols_per_cluster))
-        molwise_batch = torch.arange(self.num_graphs, device=self.device).repeat_interleave(mols_per_cluster, dim=0)
-
-        edge_i_good, edge_j_good, mol_centroids = self.get_intermolecular_ellipsoid_edges(molwise_batch,
-                                                                                          surface_padding,
-                                                                                          tot_mol_index, tot_num_mols)
-
-        (atoms_per_necessary_mol, mol_id_map, molwise_batch_subset,
-         num_necessary_mols, subset_pos, tot_mol_index_subset) = self.reindex_ellipsoid_mols(
-            edge_i_good, edge_j_good, molwise_batch, tot_mol_index, tot_num_mols)
-
-        """get ellipsoids"""
-        add_noise = 0.01
-        cov_eps = 0.01
-
-        eigvals_sorted, eigvecs_sorted = self.compute_ellipsoid_eigvecs(add_noise, atoms_per_necessary_mol, cov_eps,
-                                                                        molwise_batch_subset, num_necessary_mols,
-                                                                        subset_pos,
-                                                                        tot_mol_index_subset)
-
-        """
-        Set default as the ellipsoid tip being at the surface of the molecule (assume largest radius)
-        Then, plus or minus angstroms to expose or cover surface atoms
-        """
-        eps = 1e-3
-
-        longest_length = self.radius[molwise_batch_subset]
-        padding_scaling_factor = (longest_length + surface_padding) / longest_length
-        min_axis_length = torch.amax(
-            torch.stack([1.5 * padding_scaling_factor, 0.1 * torch.ones_like(padding_scaling_factor)]),
-            dim=0)  # need a finite thickness for flat molecules
-        sqrt_eigenvalues = torch.sqrt(eigvals_sorted.clamp(min=0) + eps)
-        normed_eigs = sqrt_eigenvalues / sqrt_eigenvalues.amax(1, keepdim=True)  # normalize to relative lengths
-        # semi axis scale now controls how much of the surface is revealed - for negative values, surface atoms will poke out
-        # if the surface padding is set too small, the ellipsoid will just retreat into a tiny sphere
-        semi_axis_lengths = (normed_eigs * longest_length[:, None] + surface_padding).clip(min=min_axis_length[:, None])
-        Ip = eigvecs_sorted
-
-        """ featurize ellipsoids """
-        norm_factor, normed_v1, normed_v2, v1, v2, x = self.featurize_ellipsoids(Ip, edge_i_good, edge_j_good, eps,
-                                                                                 mol_centroids, mol_id_map,
-                                                                                 semi_axis_lengths)
+        edge_j_good, molwise_batch, norm_factor, normed_v1, normed_v2, v1, v2, x = self.get_ellipsoid_embedding(
+            surface_padding)
 
         # pass to the model
         if hasattr(self, 'ellipsoid_model') and model is None:
@@ -115,6 +72,47 @@ class MolCrystalEllipsoidOps:
             return normed_ellipsoid_overlap
         else:
             return normed_ellipsoid_overlap, v1_pred, v2_pred, v1, v2, norm_factor, molwise_ellipsoid_overlap
+
+    def get_ellipsoid_embedding(self, surface_padding):
+        mols_per_cluster = torch.tensor(self.edges_dict['n_repeats'], device=self.device)
+        tot_num_mols = torch.sum(mols_per_cluster)
+        tot_mol_index = torch.arange(tot_num_mols, device=self.device).repeat_interleave(
+            self.num_atoms.repeat_interleave(mols_per_cluster))
+        molwise_batch = torch.arange(self.num_graphs, device=self.device).repeat_interleave(mols_per_cluster, dim=0)
+        edge_i_good, edge_j_good, mol_centroids = self.get_intermolecular_ellipsoid_edges(molwise_batch,
+                                                                                          surface_padding,
+                                                                                          tot_mol_index, tot_num_mols)
+        (atoms_per_necessary_mol, mol_id_map, molwise_batch_subset,
+         num_necessary_mols, subset_pos, tot_mol_index_subset) = self.reindex_ellipsoid_mols(
+            edge_i_good, edge_j_good, molwise_batch, tot_mol_index, tot_num_mols)
+        """get ellipsoids"""
+        add_noise = 0.01
+        cov_eps = 0.01
+        eigvals_sorted, eigvecs_sorted = self.compute_ellipsoid_eigvecs(add_noise, atoms_per_necessary_mol, cov_eps,
+                                                                        molwise_batch_subset, num_necessary_mols,
+                                                                        subset_pos,
+                                                                        tot_mol_index_subset)
+        """
+            Set default as the ellipsoid tip being at the surface of the molecule (assume largest radius)
+            Then, plus or minus angstroms to expose or cover surface atoms
+            """
+        eps = 1e-3
+        longest_length = self.radius[molwise_batch_subset]
+        padding_scaling_factor = (longest_length + surface_padding) / longest_length
+        min_axis_length = torch.amax(
+            torch.stack([1.5 * padding_scaling_factor, 0.1 * torch.ones_like(padding_scaling_factor)]),
+            dim=0)  # need a finite thickness for flat molecules
+        sqrt_eigenvalues = torch.sqrt(eigvals_sorted.clamp(min=0) + eps)
+        normed_eigs = sqrt_eigenvalues / sqrt_eigenvalues.amax(1, keepdim=True)  # normalize to relative lengths
+        # semi axis scale now controls how much of the surface is revealed - for negative values, surface atoms will poke out
+        # if the surface padding is set too small, the ellipsoid will just retreat into a tiny sphere
+        semi_axis_lengths = (normed_eigs * longest_length[:, None] + surface_padding).clip(min=min_axis_length[:, None])
+        Ip = eigvecs_sorted
+        """ featurize ellipsoids """
+        norm_factor, normed_v1, normed_v2, v1, v2, x = self.featurize_ellipsoids(Ip, edge_i_good, edge_j_good, eps,
+                                                                                 mol_centroids, mol_id_map,
+                                                                                 semi_axis_lengths)
+        return edge_j_good, molwise_batch, norm_factor, normed_v1, normed_v2, v1, v2, x
 
     def featurize_ellipsoids(self, Ip, edge_i_good, edge_j_good, eps, mol_centroids, mol_id_map, semi_axis_lengths):
         # featurize pairs

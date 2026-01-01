@@ -73,7 +73,14 @@ class MolCrystalAnalysis:
                              'niggli_overlap': self.compute_niggli_overlap,
                              'reduction_en': self.compute_cell_reduction_penalty,
                              'rdf': self.compute_rdf,
+                             'ellipsoid_emb': self.compute_ellipsoid_embedding,
                              }
+
+    def compute_ellipsoid_embedding(self):
+        edge_j_good, molwise_batch, norm_factor, normed_v1, normed_v2, v1, v2, x = self.get_ellipsoid_embedding(
+            surface_padding=1
+        )
+        return scatter(x, molwise_batch, dim=0, dim_size=self.num_graphs, reduce='sum')
 
     def compute_LJ_energy(self, **kwargs):
         self._pre_compute_checks()
@@ -278,7 +285,7 @@ class MolCrystalAnalysis:
             return scatter(split_ens, zp_inds, reduce='mean', dim=0, dim_size=self.num_graphs)
 
         else:
-            # evaluate a diffuse P1 cell
+            # evaluate a diffuse P1 5ell
             diffuse_batch.reset_sg_info(sg_ind=1)  # big P1 cells
             diffuse_batch.cell_lengths *= 100
             diffuse_batch.box_analysis()
@@ -288,12 +295,9 @@ class MolCrystalAnalysis:
                                                     pbc=False)
 
     def compute_rdf(self,
-                    cutoff: float = 6,
-                    mode: str = 'intermolecular',
+                    rdf_cutoff: float = 6,
                     elementwise: bool = True,
-                    # atomwise: bool = False  # doesn't work properly right now
                     bins: int = 100,
-                    raw_density: bool = True
                     ):
         if not hasattr(self, 'edges_dict'):
             raise RuntimeError("Must build radial graph before computing RDF!"
@@ -302,11 +306,11 @@ class MolCrystalAnalysis:
         assert self.is_batch, "RDF method not implemented for single crystals"
         rdf, bin_edges, rdf_pair_dict = crystal_rdf(self,
                                                     self.edges_dict,
-                                                    rrange=(0, cutoff),
+                                                    rrange=(0, rdf_cutoff),
                                                     bins=bins,
                                                     elementwise=elementwise,
                                                     )
-        return rdf, bin_edges, rdf_pair_dict
+        return rdf/self.z_prime[:, None, None], bin_edges, rdf_pair_dict
 
     def compute_niggli_overlap(self, **kwargs):
         a, b, c, al, be, ga = self.zp1_cell_parameters()[:, :6].split(1, dim=1)

@@ -8,7 +8,7 @@ import torch
 from plotly.subplots import make_subplots
 
 from mxtaltools.common.geometry_utils import enforce_crystal_system, batch_compute_fractional_transform, \
-    cart2sph_rotvec, sph2cart_rotvec
+    cart2sph_rotvec, sph2cart_rotvec, crystal_parameter_distmat
 from mxtaltools.common.utils import softplus_shift, log_rescale_positive, get_point_density
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE
@@ -317,6 +317,7 @@ class MolCrystalOps:
         r_inds = [ind * 3 + 2 for ind in range(self.max_z_prime)]
 
         lat_orientations = torch.zeros_like(sph_rotvec)
+        # theta is [0, pi/2] to [-1, 1]
         lat_orientations[:, theta_inds] = (sph_rotvec[:, theta_inds] - halfpi / 2) / torch.pi * 4
         # phi is [-pi, pi] to [-1,1]
         lat_orientations[:, phi_inds] = sph_rotvec[:, phi_inds] / torch.pi
@@ -345,6 +346,7 @@ class MolCrystalOps:
         r_inds = [ind * 3 + 2 for ind in range(self.max_z_prime)]
         halfpi = torch.pi / 2
 
+        # phi is [0, pi/2] to [-1, 1]
         sph_rotvec[:, theta_inds] = lat_orientations[:, theta_inds] * torch.pi / 4 + halfpi / 2
         # phi is [-pi, pi] to [-1,1]
         sph_rotvec[:, phi_inds] = lat_orientations[:, phi_inds] * torch.pi
@@ -379,6 +381,9 @@ class MolCrystalOps:
         cell_lengths = aunit_lengths / auvs
 
         return torch.cat([cell_lengths, cell_angles, cell_centroids, aunit_orientations], dim=1)
+
+    def latent_distmat(self):
+        return crystal_parameter_distmat(self.latent_params()).fill_diagonal_(0)
 
     def sample_reduced_box_vectors(self, target_packing_coeff: Optional[float] = None):
         """
@@ -1063,6 +1068,9 @@ class MolCrystalOps:
                                   split_by_zp: bool = False,
                                   override_energy: torch.Tensor = None,
                                   color_flag: torch.Tensor = None,
+                                  show_colorbar: bool = False,
+                                  max_y_quantile: Optional[float] = None,
+                                  overwrite_yaxis_title: Optional[str] = None,
                                   ):
 
         if override_energy is None:
@@ -1110,15 +1118,23 @@ class MolCrystalOps:
                          )
 
         fig.update_layout(yaxis_title='Energy', xaxis_title='Packing Coeff')
-        fig.update_layout(yaxis_range=[np.amin(df['energy']) - np.ptp(df['energy']) * 0.05,
-                                       min(10, np.amax(df['energy']) + np.ptp(df['energy']) * 0.05)],
+        if max_y_quantile is not None:
+            max_y = np.quantile(df['energy'], max_y_quantile)
+        else:
+            max_y = min(10, np.amax(df['energy']) + np.ptp(df['energy']) * 0.05)
+
+        fig.update_layout(yaxis_range=[np.amin(df['energy']) - np.ptp(df['energy']) * 0.05, max_y],
                           xaxis_range=[max(0, np.amin(df['packing_coefficient']) * 0.95),
                                        min(1, np.amax(df['packing_coefficient']) * 1.05)],
                           )
 
+        if overwrite_yaxis_title is not None:
+            yaxis_title = overwrite_yaxis_title
+        else:
+            yaxis_title = r'Energy per Atom /Arb Units'
         fig.update_layout(
             xaxis_title=r"Packing Coefficient",
-            yaxis_title=r"Energy per Atom, /Arb Units",
+            yaxis_title=yaxis_title,
         )
         fig.update_traces(
             marker=dict(
@@ -1127,7 +1143,7 @@ class MolCrystalOps:
                 opacity=opacity,
             )
         )
-        if color_tag == 'Point Density':
+        if color_tag == 'Point Density' and show_colorbar:
             fig.update_layout(coloraxis_colorbar=dict(
                 title="Point Density (Normed)",
                 tickfont=dict(size=10),
@@ -1164,6 +1180,8 @@ class MolCrystalOps:
             mirror=True,
             row=1, col=1  # target the main scatter subplot
         )
+        if not show_colorbar:
+            fig.update_layout(coloraxis_showscale=False)
         if show:
             fig.show(renderer=renderer)
 
@@ -1260,7 +1278,7 @@ class MolCrystalOps:
         # Create D×D subplots (upper triangle empty)
         fig = make_subplots(
             rows=D, cols=D,
-            horizontal_spacing=0.005, vertical_spacing=0.005,
+            horizontal_spacing=0.01, vertical_spacing=0.01,
             shared_xaxes=True, shared_yaxes=True,
         )
 
@@ -1335,7 +1353,8 @@ class MolCrystalOps:
     def _add_violin(self, fig, samples, name, color, column_index, ranges, n_kde, bw_factor):
         row = column_index // 3 + 1
         col = column_index % 3 + 1
-        x_samp, y_samp = lightweight_one_sided_violin(samples + np.random.randn(len(samples)) * 1e-3,
+        noise = (torch.randn_like(samples) * 1e-3) if torch.is_tensor(samples) else (np.random.randn(len(samples)) * 1e-3)
+        x_samp, y_samp = lightweight_one_sided_violin(samples + noise,
                                                       n_kde,
                                                       bandwidth_factor=bw_factor,
                                                       data_min=ranges[0],

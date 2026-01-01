@@ -415,19 +415,28 @@ def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None, return_num
     else:
         torch_rdf1_f = torch_rdf1
 
-    emd = earth_movers_distance_torch(torch_rdf1_f, torch_rdf2)
+    bin_range = (torch_range[-1] - torch_range[0])
+    bin_width = torch_range[1] - torch_range[0]
 
-    # rescale the distance from units of bins to the real physical range
-    range_normed_emd = emd / len(torch_range)**2 * (torch_range[-1] - torch_range[0])**2
-    # do not adjust the above - distance is extensive weirdly extensive in bin scaling
+    # RDF should measure how much mass needs to move, by how far
+    # emd = earth_movers_distance_torch(torch_rdf1_f, torch_rdf2) * bin_width
+    rdf1_normalized = torch_rdf1_f / (torch_rdf1_f.sum(dim=-1, keepdim=True) + 1e-10)
+    rdf2_normalized = torch_rdf2 / (torch_rdf2.sum(dim=-1, keepdim=True) + 1e-10)
 
-    # aggregate rdf components according to pairwise mean weight
-    # aggregation_weight = (torch_rdf1_f.sum(-1) + torch_rdf2.sum(-1)) / 2
-    # distance = (range_normed_emd * aggregation_weight).mean(-1)
+    # EMD between normalized distributions (now intensive)
+    emd = earth_movers_distance_torch(rdf1_normalized, rdf2_normalized) * bin_width
 
-    mass = (rdf1.sum(-1) + rdf2.sum(-1)) / 2
-    mass = mass / (1e-3 + mass.mean(dim=-1, keepdim=True))
-    distance = (range_normed_emd * mass).mean(-1)
+    # take the raw average over nonzero element pairs
+    eps = 1e-12
+    active = (torch_rdf1_f.sum(dim=-1) > eps) | (torch_rdf2.sum(dim=-1) > eps)
+    distance = (emd * active).sum(dim=-1) / active.sum(dim=-1).clamp_min(1)  # ignore unused channels
+
+    #distance = emd.mean(-1)
+    #
+    # mass = (rdf1.sum(-1) + rdf2.sum(-1)) / 2
+    # mass = mass / (1e-3 + mass.mean(dim=-1, keepdim=True))
+    #
+    # distance = (emd * mass).mean(-1)
 
     assert torch.sum(torch.isnan(distance)) == 0, "NaN EMD Distances Computed"
     if return_numpy:
