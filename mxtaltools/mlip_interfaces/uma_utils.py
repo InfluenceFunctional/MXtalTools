@@ -26,20 +26,13 @@ def safe_predict_uma(predictor, uma_batch):
         else:
             raise e
 
+def batch_to_ase_ucell_list(
+        batch,
+        std_orientation,
+        pbc,
 
-def compute_crystal_uma_on_mxt_batch(batch,
-                                     std_orientation: bool = True,
-                                     predictor: Optional = None,
-                                     pbc: bool = True,
-                                     max_cp: float = 2.0):
+):
     data_list = []
-    "UMA sometimes fails on ultra-dense cells, so we'll manually prevent that. These are obviously terrible cells anyway."
-    while sum(batch.packing_coeff > max_cp) > 0:
-        bad_inds = torch.argwhere(batch.packing_coeff > max_cp)
-        if len(bad_inds) > 0:
-            batch.cell_lengths[bad_inds] += 2
-            batch.box_analysis()
-
     if batch.z_prime.amax() > 1:
         zp1_batch = batch.split_to_zp1_batch()
         zp1_batch.pose_aunit(std_orientation=std_orientation)
@@ -69,10 +62,27 @@ def compute_crystal_uma_on_mxt_batch(batch,
 
         pbc_flag = pbc
         atoms.set_pbc(pbc_flag)
-        crystal = AtomicData.from_ase(atoms, task_name='omc')
-        data_list.append(crystal)
+        data_list.append(atoms)
 
-    uma_batch = atomicdata_list_to_batch(data_list)
+    return data_list
+
+
+def compute_crystal_uma_on_mxt_batch(batch,
+                                     std_orientation: bool = True,
+                                     predictor: Optional = None,
+                                     pbc: bool = True,
+                                     max_cp: float = 2.0):
+    "UMA sometimes fails on ultra-dense cells, so we'll manually prevent that. These are obviously terrible cells anyway."
+    while sum(batch.packing_coeff > max_cp) > 0:
+        bad_inds = torch.argwhere(batch.packing_coeff > max_cp)
+        if len(bad_inds) > 0:
+            batch.cell_lengths[bad_inds] += 2
+            batch.box_analysis()
+
+    data_list = batch_to_ase_ucell_list(batch, std_orientation, pbc)
+
+    uma_batch = atomicdata_list_to_batch(
+        [AtomicData.from_ase(atoms, task_name='omc') for atoms in data_list])
 
     out, crashed = safe_predict_uma(predictor, uma_batch)
     if crashed:

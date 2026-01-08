@@ -1,12 +1,13 @@
 import json
 import sys
 
-import numpy
 import numpy as np
 import plotly
 
 import torch
-from torch.nn import functional as F, functional
+from scipy.ndimage import gaussian_filter
+from sklearn.neighbors import NearestNeighbors
+from torch.nn import functional as F
 from torch_scatter import scatter
 from scipy.interpolate import interpn
 from typing import List, Optional, Union
@@ -17,6 +18,21 @@ from copy import copy
 general utilities
 '''
 
+def get_point_density_knn(xy, k=30, alpha=20):
+    X = xy.T.astype(np.float64)
+
+    # whiten
+    X -= X.mean(axis=0, keepdims=True)
+    X /= X.std(axis=0, keepdims=True) + 1e-12
+    nbrs = NearestNeighbors(n_neighbors=k, algorithm="auto").fit(X)
+    dists, _ = nbrs.kneighbors(X)
+
+    rk = dists[:, -1]          # distance to k-th neighbor
+    z = 1.0 / (rk**2 + 1e-12)  # 2D density proxy
+
+    z /= z.max()
+    z = np.log1p(alpha * z) / np.log1p(alpha)
+    return z
 
 def batch_compute_dipole(pos, batch, z, electronegativity_tensor):
     """
@@ -44,34 +60,23 @@ def batch_compute_dipole(pos, batch, z, electronegativity_tensor):
     return centers_of_charge - centers_of_geometry
 
 
-def get_point_density(xy, bins=35):
-    """
-    Interpolate a local density function over 2d points.
-
-    Parameters
-    ----------
-    xy : torch.tensor(n,2)
-    bins : int
-
-    Returns
-    -------
-    z : normalized local density function
-    """
-
+def get_point_density(xy, bins=100, sigma=1.5, alpha=20):
     x, y = xy
-    data, x_e, y_e = np.histogram2d(x, y, bins=bins, density=True)
-    z = interpn((0.5 * (x_e[1:] + x_e[:-1]), 0.5 * (y_e[1:] + y_e[:-1])),
-                data,
-                np.vstack([x, y]).T,
-                method="linear",
-                bounds_error=False,
-                fill_value=None)
 
-    # To be sure to plot all data
-    z[np.where(np.isnan(z))] = 0.0
-    z = z.clip(min=0)
+    hist, x_e, y_e = np.histogram2d(x, y, bins=bins, density=True)
+    hist = gaussian_filter(hist, sigma=sigma, mode="nearest")
 
-    return np.sqrt(z / z.max())
+    xc = 0.5 * (x_e[1:] + x_e[:-1])
+    yc = 0.5 * (y_e[1:] + y_e[:-1])
+
+    z = interpn((xc, yc), hist, np.vstack([x, y]).T,
+                bounds_error=False, fill_value=0.0)
+
+    # floor + log compression
+    z = np.clip(z, 1e-4 * z.max(), None)
+    z /= z.max()
+    z = np.log1p(alpha * z) / np.log1p(alpha)
+    return z
 
 
 def chunkify(lst: list, n: int):
