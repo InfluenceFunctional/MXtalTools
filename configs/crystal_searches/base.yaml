@@ -1,5 +1,5 @@
 device: cuda
-mol_path: D:\crystal_datasets\acridine\acridine.pkl
+mol_path: D:\crystal_datasets\acridine\acridine_conformer.pt
 out_dir: D:\crystal_datasets\opt_outputs
 run_name: test
 
@@ -7,10 +7,10 @@ mol_seed: 0
 opt_seed: 0
 sampling_mode: all # 'all' or 'random' or 'ordered'
 mols_to_sample: 1
-num_samples: 10000 # per mol, per space group, per Zp
+num_samples: 250 # per mol, per space group, per Zp
 
-sgs_to_search: [ 4 ]
-zp_to_search: [ 2 ]
+sgs_to_search: [ 2 ]
+zp_to_search: [ 4 ]
 
 batch_size: 250
 grow_batch_size: false
@@ -50,7 +50,7 @@ opt:
     show_tqdm: true
     max_num_steps: 500
 
-  - optim_target: 'lj' # lj qlj elj silu ellipsoid classification_score rdf_score
+  - optim_target: 'elj' # lj qlj elj silu ellipsoid classification_score rdf_score
     enforce_reduced: true
     compression_factor: 1.0
     init_lr: 0.01
@@ -71,4 +71,3 @@ opt:
     grad_norm_clip: 0.1
     show_tqdm: true
     max_num_steps: 500
-

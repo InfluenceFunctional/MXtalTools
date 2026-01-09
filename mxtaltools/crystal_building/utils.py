@@ -1,4 +1,5 @@
 import warnings
+from typing import Union
 
 import numpy as np
 import torch
@@ -26,7 +27,8 @@ def generate_sorted_fractional_translations(supercell_size):
 
 
 def ucell2cluster(crystal_batch, cutoff: float = 6,
-                  supercell_size: int = 10):  # todo this could be modularized/simplified
+                  supercell_size: int = 10,
+                  zp_buffer: Union[float, torch.Tensor] = 0):  # todo this could be modularized/simplified
     """
     1) generate supercell cluster including only unit cells which could plausibly interact with the asymmetric unit
     2) instantiate the cluster
@@ -41,7 +43,7 @@ def ucell2cluster(crystal_batch, cutoff: float = 6,
     good_translations, ucells_per_cluster = get_cart_translations(cc_centroids,
                                                                   crystal_batch.T_fc,
                                                                   crystal_batch.radius,
-                                                                  cutoff,
+                                                                  cutoff + zp_buffer,
                                                                   supercell_size)
 
     """
@@ -61,7 +63,6 @@ def ucell2cluster(crystal_batch, cutoff: float = 6,
     """
     Instantiate explicit clusters
     """
-
     cluster_batch = instantiate_cluster(atoms_per_ucell,
                                         atoms_per_cluster,
                                         atomwise_translation,
@@ -74,7 +75,7 @@ def ucell2cluster(crystal_batch, cutoff: float = 6,
     """
     cluster_batch = _pare_cluster_molwise(atoms_per_cluster, cc_centroids,
                                           cluster_batch, crystal_batch,
-                                          cutoff, aunits_per_cluster)
+                                          cutoff + zp_buffer, aunits_per_cluster)
 
     return cluster_batch
     # zpg_inds = torch.argwhere(cluster_batch.z_prime > 1).flatten().tolist()
@@ -83,7 +84,8 @@ def ucell2cluster(crystal_batch, cutoff: float = 6,
     # cluster_batch.visualize([1, 2, 3, 4, 5], mode='convolve with')
 
 
-def _pare_cluster_molwise(atoms_per_cluster, cc_centroids, cluster_batch, crystal_batch, cutoff, aunits_per_cluster):
+def _pare_cluster_molwise(atoms_per_cluster, cc_centroids, cluster_batch,
+                          crystal_batch, cutoff, aunits_per_cluster):
     # get all mol centroids
     # indexes which molecule each atom belongs to, globally (not within-crystal)
     aunit_ptr = torch.cat([torch.zeros(1, device=cluster_batch.device, dtype=torch.long),
@@ -346,14 +348,15 @@ def get_cart_translations(cc_centroids,
                           T_fc,
                           mol_radii,
                           cutoff,
-                          supercell_size: int = 9):
+                          supercell_size: int = 9,
+                          ):
     # precompute some stuff
     # get the set of all possible cartesian translations
     cell_vectors = T_fc.permute(0, 2, 1)
     # cell diagonals
     cell_diag = cell_vectors.sum(1).norm(dim=-1)
     # bounding box cutoff
-    cutoff_distance = mol_radii * 2 + cutoff + 0.1 + cell_diag  # convolutional radius plus cell diagonal
+    cutoff_distance = mol_radii * 2 + cutoff + 0.1 + cell_diag  # convolutional radius plus cell diagonal plus z'>1 buffer
 
     # identify actual supercell size
     box_lengths = torch.linalg.norm(cell_vectors, dim=-1)
@@ -457,7 +460,7 @@ def extract_aunit_orientation(mol_batch,
         mol_batch.num_graphs,
         mol_batch.num_atoms,
         heavy_atoms_only=True,
-        atom_types = mol_batch.z
+        atom_types=mol_batch.z
     )
 
     handedness_list = compute_Ip_handedness(Ip).long()
@@ -738,6 +741,7 @@ def get_aunit_positions(mol_batch,
 
     return pos
 
+
 def canonicalize_aunit_order(batch):
     # canonical aunit ordering according to distance to the origin, with x, y, z, tiebreak
     # TODO implement tiebreak
@@ -756,7 +760,7 @@ def canonicalize_aunit_order(batch):
 
     # also reorder the orientations accordingly
     per_aunit_orient = batch.aunit_orientation.reshape(batch.num_graphs, batch.max_z_prime, 3)
-    per_aunit_orient[mask] = torch.pi/2  # this places all unused samples in the same state
+    per_aunit_orient[mask] = torch.pi / 2  # this places all unused samples in the same state
     canonical_order_exp = canonical_order.unsqueeze(-1).expand(-1, -1, 3)  # [n, k, 3]
     sorted_orient = torch.gather(per_aunit_orient, dim=1, index=canonical_order_exp)
     aunit_orientation = sorted_orient.reshape(batch.num_graphs, batch.max_z_prime * 3)
@@ -808,4 +812,3 @@ def protonate_mol(atom_types, coords):
     view([m1, m2])
     
     """
-

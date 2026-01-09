@@ -8,7 +8,7 @@ import torch
 from plotly.subplots import make_subplots
 
 from mxtaltools.common.geometry_utils import enforce_crystal_system, batch_compute_fractional_transform, \
-    cart2sph_rotvec, sph2cart_rotvec, crystal_parameter_distmat
+    cart2sph_rotvec, sph2cart_rotvec, crystal_parameter_distmat, sph_rotvec2lat, lat2sph_rotvec
 from mxtaltools.common.utils import softplus_shift, log_rescale_positive, get_point_density
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE
@@ -22,6 +22,9 @@ from mxtaltools.reporting.utils import lightweight_one_sided_violin
 
 
 # noinspection PyAttributeOutsideInit
+
+
+
 class MolCrystalOps:
 
     def assign_aunit_centroid(self, values, eps=1e-4):
@@ -311,18 +314,7 @@ class MolCrystalOps:
         # aunit centroid [0,1] to [-1,1]
         lat_centroids = (aunit_centroids - 0.5) * 2
 
-        # orientation vectors are individual, theta is [0, pi/2] to [-1,1]
-        theta_inds = [ind * 3 for ind in range(self.max_z_prime)]
-        phi_inds = [ind * 3 + 1 for ind in range(self.max_z_prime)]
-        r_inds = [ind * 3 + 2 for ind in range(self.max_z_prime)]
-
-        lat_orientations = torch.zeros_like(sph_rotvec)
-        # theta is [0, pi/2] to [-1, 1]
-        lat_orientations[:, theta_inds] = (sph_rotvec[:, theta_inds] - halfpi / 2) / torch.pi * 4
-        # phi is [-pi, pi] to [-1,1]
-        lat_orientations[:, phi_inds] = sph_rotvec[:, phi_inds] / torch.pi
-        # r is [0, 2pi] to [-1,1]
-        lat_orientations[:, r_inds] = (sph_rotvec[:, r_inds] - torch.pi) / torch.pi
+        lat_orientations = sph_rotvec2lat(sph_rotvec, self.max_z_prime)
 
         latents = torch.cat([lat_lengths, lat_angles, lat_centroids, lat_orientations], dim=1)
         return latents
@@ -340,18 +332,7 @@ class MolCrystalOps:
                                                                                          3 * self.max_z_prime], dim=1)
 
         '''reverse bounding transform'''
-        sph_rotvec = torch.zeros_like(lat_orientations)
-        theta_inds = [ind * 3 for ind in range(self.max_z_prime)]
-        phi_inds = [ind * 3 + 1 for ind in range(self.max_z_prime)]
-        r_inds = [ind * 3 + 2 for ind in range(self.max_z_prime)]
-        halfpi = torch.pi / 2
-
-        # phi is [0, pi/2] to [-1, 1]
-        sph_rotvec[:, theta_inds] = lat_orientations[:, theta_inds] * torch.pi / 4 + halfpi / 2
-        # phi is [-pi, pi] to [-1,1]
-        sph_rotvec[:, phi_inds] = lat_orientations[:, phi_inds] * torch.pi
-        # r is [0, 2pi] to [-1,1]
-        sph_rotvec[:, r_inds] = lat_orientations[:, r_inds] * torch.pi + torch.pi
+        sph_rotvec = lat2sph_rotvec(lat_orientations, self.max_z_prime)
 
         aunit_orientations = sph2cart_rotvec(sph_rotvec.reshape(len(sph_rotvec) * self.max_z_prime, 3)).reshape(
             len(sph_rotvec), self.max_z_prime * 3)

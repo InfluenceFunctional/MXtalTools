@@ -1532,7 +1532,8 @@ def fractional_transform(coords, transform_matrix):
         return fractional_transform_np(coords, transform_matrix)
     elif torch.is_tensor(coords):
         return fractional_transform_torch(coords, transform_matrix)
-
+    else:
+        assert False
 
 def fractional_transform_np(coords, transform_matrix):
     if coords.ndim == 2 and transform_matrix.ndim == 2:
@@ -1711,3 +1712,23 @@ def crystal_parameter_distmat(
         distmat[i:i + b] = d.view(b, N)
 
     return distmat
+
+
+def sph_rotvec2lat(sph_rotvec, z_prime):
+    sph = sph_rotvec.view(*sph_rotvec.shape[:-1], z_prime, 3)
+
+    # allocate output
+    lat = torch.empty_like(sph)
+
+    halfpi = torch.pi / 2
+
+    # theta: [0, π/2] → [-1, 1]
+    lat[..., 0] = (sph[..., 0] - (halfpi / 2)) / (torch.pi / 4)
+
+    # phi: [-π, π] → [-1, 1]
+    lat[..., 1] = sph[..., 1] / torch.pi
+
+    # r: [0, 2π] → [-1, 1]
+    lat[..., 2] = (sph[..., 2] - torch.pi) / torch.pi
+
+    return lat.view(*sph_rotvec.shape)

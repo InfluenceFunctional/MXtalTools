@@ -2,6 +2,7 @@ from typing import Optional
 
 import torch
 
+from mxtaltools.common.geometry_utils import fractional_transform
 from mxtaltools.crystal_building.utils import get_aunit_positions, aunit2ucell, ucell2cluster
 from mxtaltools.dataset_utils.utils import collate_data_list
 
@@ -94,6 +95,9 @@ class MolCrystalBuilding:
                 torch.cumsum(atoms_per_cluster, dim=0)
             ])
 
+            cluster_batch.unit_cell_pos = zp1_batch.unit_cell_pos.clone()
+            cluster_batch.unit_cell_batch = batch_map[zp1_batch.unit_cell_batch].clone()
+
             return cluster_batch
 
         else:
@@ -120,13 +124,13 @@ class MolCrystalBuilding:
         else:
             self.unit_cell_pos, self.unit_cell_batch, self.unit_cell_mol_ind = aunit2ucell(collate_data_list([self]))
 
-    def build_cluster(self, cutoff: float = 6, supercell_size: int = 10):
+    def build_cluster(self, cutoff: float = 6, supercell_size: int = 10, zp_buffer=0):
         if self.is_batch:
-            return ucell2cluster(self, cutoff=cutoff, supercell_size=supercell_size)
+            return ucell2cluster(self, cutoff=cutoff, supercell_size=supercell_size, zp_buffer=zp_buffer)
         else:
             crystal_batch = collate_data_list([self])
             crystal_batch.build_unit_cell()
-            return ucell2cluster(crystal_batch, cutoff=cutoff, supercell_size=supercell_size)
+            return ucell2cluster(crystal_batch, cutoff=cutoff, supercell_size=supercell_size, zp_buffer=zp_buffer)
 
     def de_cluster(self):  # todo check and consider rewrite with new methods
         # delete cluster information and reset this object as a molecule
@@ -153,10 +157,17 @@ class MolCrystalBuilding:
         if self.max_z_prime > 1:
             # if there are any Z'>1 crystals in the batch, we
             # unzip for unit cell generation then re zip
+
+            # add the intra-aunit centroid distance to cutoffs
+            frac_centroids = self.aunit_centroid.reshape(self.num_graphs * self.max_z_prime, 3)
+            cart_centroids = fractional_transform(frac_centroids,self.T_fc.repeat_interleave(self.max_z_prime,dim=0)[1]).reshape(self.num_graphs, self.max_z_prime, 3)
+            dists = (cart_centroids[:, :, None, :] - cart_centroids[:, None, :, :]).norm(dim=-1) # [n, Zp, Zp, 3]
+            zp_buffer = dists.amax(dim=(1,2)).repeat_interleave(self.max_z_prime, dim=0)
+
             zp1_batch = self.split_to_zp1_batch()
             zp1_batch.pose_aunit(std_orientation=std_orientation)
             zp1_batch.build_unit_cell()
-            zp1_cluster = zp1_batch.build_cluster()
+            zp1_cluster = zp1_batch.build_cluster(cutoff=cutoff, supercell_size=supercell_size, zp_buffer=zp_buffer)
             return self.join_zp1_cluster_batch(zp1_cluster)
 
         else:

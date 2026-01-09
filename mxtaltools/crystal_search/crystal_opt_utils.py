@@ -344,9 +344,10 @@ def compute_auxiliary_loss(cluster_batch, compression_factor, do_box_restriction
     return loss
 
 
-def inter_overlap_loss(cluster_batch, crystal_batch):
+def inter_overlap_loss(cluster_batch):
     # enforce molecules far enough away that they cannot possibly overlap
     # intermolecular centroid range repulsion
+    assert cluster_batch.z_prime.amax() == 1, "molwise business not implemented for Z'>1"
     _, atoms_per_cluster = torch.unique(cluster_batch.batch, return_counts=True)
     mols_per_cluster = (atoms_per_cluster / cluster_batch.num_atoms).long()
     molwise_batch = torch.arange(cluster_batch.num_graphs, device=cluster_batch.device).repeat_interleave(
@@ -365,7 +366,7 @@ def inter_overlap_loss(cluster_batch, crystal_batch):
     inter_dists = torch.linalg.norm(
         mol_centroids[edge_i] - mol_centroids[edge_j], dim=1
     )
-    scaled_inter_dists = inter_dists / crystal_batch.radius[molwise_batch[edge_i]]
+    scaled_inter_dists = inter_dists / cluster_batch.radius[molwise_batch[edge_i]]
     edgewise_losses = F.relu(-(scaled_inter_dists - 2))  # push molecules apart if they are within each others' radii
     loss = scatter(edgewise_losses,
                    molwise_batch[edge_i],

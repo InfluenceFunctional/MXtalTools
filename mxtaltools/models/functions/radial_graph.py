@@ -205,8 +205,6 @@ def build_radial_graph(pos: torch.FloatTensor,
         # atoms which are not in the asymmetric unit but which we will convolve - pre-excluding many from outside the cutoff
         outside_inds = torch.where(outside_bool)[0]
         inside_batch = batch[inside_inds]  # get the feature vectors we want to repeat
-        # n_repeats = [int(torch.sum(batch == ii) / torch.sum(inside_batch == ii)) for ii in
-        #              range(len(ptr) - 1)]  # number of molecules in convolution region ABSURDLY SLOW
 
         # counts of atoms per molecule in full batch
         batch_counts = torch.bincount(batch, minlength=len(ptr) - 1)
