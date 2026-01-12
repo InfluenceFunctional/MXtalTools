@@ -1,4 +1,4 @@
-batch_size: 5000
+batch_size: 20000
 device: cuda
 grow_batch_size: false
 init_sample_method: random

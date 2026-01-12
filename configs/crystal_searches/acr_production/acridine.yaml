@@ -12,7 +12,7 @@ num_samples: 10000 # per mol, per space group, per Zp
 sgs_to_search: [ 2,4,9,14, 15, 19, 33, 61 ]
 zp_to_search: [ 1, 2 ]
 
-batch_size: 5000
+batch_size: 20000
 grow_batch_size: false
 
 init_sample_method: random  # 'random' 'reasonable'
