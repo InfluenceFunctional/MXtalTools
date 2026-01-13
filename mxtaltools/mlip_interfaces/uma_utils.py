@@ -1,4 +1,6 @@
 from typing import Optional
+
+import numpy as np
 from ase import Atoms
 from ase.cell import Cell
 from fairchem.core.calculate import pretrained_mlip
@@ -26,6 +28,7 @@ def safe_predict_uma(predictor, uma_batch):
         else:
             raise e
 
+
 def batch_to_ase_ucell_list(
         batch,
         std_orientation,
@@ -45,13 +48,17 @@ def batch_to_ase_ucell_list(
     assert torch.sum(torch.isnan(batch.pos)) == 0
 
     cell_params = torch.cat([batch.cell_lengths, batch.cell_angles * 90 / (torch.pi / 2)], dim=1).cpu().detach().numpy()
-
+    cpuz = batch.z.cpu().detach().numpy()
+    cpupos = batch.unit_cell_pos.cpu().detach().numpy()
+    cpuubatch = batch.unit_cell_batch.cpu().detach().numpy()
+    cpubatch = batch.batch.cpu().detach().numpy()
+    cpusymmult = batch.sym_mult.cpu().detach().numpy()
     for ind in range(batch.num_graphs):
-        pos = batch.unit_cell_pos[batch.unit_cell_batch == ind]
-        z = batch.z[batch.batch == ind].repeat(batch.sym_mult[ind])
+        pos = cpupos[cpuubatch == ind]
+        z = np.tile(cpuz[cpubatch == ind], cpusymmult[ind])
         atoms = Atoms(
-            numbers=z.cpu().detach().numpy(),
-            positions=pos.cpu().detach().numpy(),
+            numbers=z,
+            positions=pos,
         )
         try:
             atoms.set_cell(Cell.fromcellpar(cell_params[ind]))
@@ -131,6 +138,15 @@ def init_uma_crystal_predictor(model_path, device):
     predictor.inference_mode.compile = False
     predictor.inference_mode.tf32 = True
     # predictor.inference_mode.activation_checkpointing=False
+
+    # predictor.tasks.pop("omc_forces")
+    # predictor.tasks.pop("omc_stress")
+    # predictor.dataset_to_tasks['omc'].pop(-1)
+    # predictor.dataset_to_tasks['omc'].pop(-1)
+    # predictor.model.module.backbone.regress_forces = False
+    # predictor.model.module.backbone.regress_stress = False
+    # predictor.output_heads['energyandforcehead'].regress_forces = False
+    # predictor.output_heads['energyandforcehead'].regress_stress = False
 
     # # some savings if we do energy-only
     # # don't do this if you want forces and stresses
