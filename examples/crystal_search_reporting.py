@@ -234,8 +234,8 @@ def single_compack_run(ind):
     similarity_engine.settings.packing_shell_size = 20
     try:
         result = similarity_engine.compare(ref_crystal, sample_crystal)
-        print(f"Crystal {ind} RMSD = {result.rmsd:.3f} Å, {result.nmatched_molecules} mols matched")
-        return result.rmsd, result.nmatched_molecules
+        print(f"Crystal {ind} RMSD = {result.rmsdmat:.3f} Å, {result.nmatched_molecules} mols matched")
+        return result.rmsdmat, result.nmatched_molecules
     except AttributeError:
         print("Analysis failed")
         return 0, 0
