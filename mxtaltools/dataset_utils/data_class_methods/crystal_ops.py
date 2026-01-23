@@ -136,10 +136,6 @@ class MolCrystalOps:
         self.T_fc, self.T_cf, self.cell_volume = (
             batch_compute_fractional_transform(self.cell_lengths,
                                                self.cell_angles))
-        try:
-            self.T_cf = torch.linalg.inv(self.T_fc)
-        except:
-            assert False, "This is a debugging flag!"
 
         self.packing_coeff = self.mol_volume * self.sym_mult / self.cell_volume
         self.density = self.mass * self.sym_mult / self.cell_volume * 1.66054  # conversion from D/A^3 to g/cm^3
