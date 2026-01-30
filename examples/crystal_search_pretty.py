@@ -51,7 +51,7 @@ ref_cp = ref_cluster_batch.packing_coeff.cpu()
 """
 Run optimization via standalone script & config
 """
-subprocess.run(["python", "run_search.py", "--input", "dafmuv_example.yaml"], check=True)
+#subprocess.run(["python", "run_search.py", "--input", "dafmuv_example.yaml"], check=True)
 
 """
 Analyze optimized samples
@@ -64,14 +64,13 @@ for batch_idx in tqdm(range(num_batches)):
     opt_crystal_batch = collate_data_list(opt_sample_list[batch_size * batch_idx:batch_size * (1 + batch_idx)]).to(
         device)
     computes, opt_cluster_batch = opt_crystal_batch.analyze(
-        computes=['lj'], return_cluster=True, cutoff=10, supercell_size=10
+        computes=['lj','rdf'], return_cluster=True, cutoff=10, supercell_size=10
     )
 
     model_output = score_model(opt_cluster_batch.to(device), force_edges_rebuild=True).cpu()
     opt_score.append(softmax_and_score(model_output[:, :2]).cpu())
     opt_pred_rdfemd.append(F.softplus(model_output[:, 2]).cpu())
-    rdf, bin_edges, _ = opt_cluster_batch.compute_rdf()
-    opt_rdfs.append(rdf.cpu())
+    opt_rdfs.append(computes['rdf'][0].cpu())
     opt_lj_energy.append(computes['lj'].cpu())
     opt_cp.append(opt_crystal_batch.packing_coeff.cpu())
 
@@ -84,17 +83,13 @@ opt_cp = torch.cat(opt_cp)
 """
 Compute true RDF distances
 """
-rdf_dists = torch.zeros(len(opt_rdfs), device=opt_rdfs.device, dtype=torch.float32)
-for i in range(len(opt_rdfs)):
-    rdf_dists[i] = compute_rdf_distance(ref_rdf[0], opt_rdfs[i], bin_edges.to(opt_rdfs.device)) / \
-                   ref_cluster_batch.num_atoms[0]
-rdf_dists = rdf_dists.cpu()
+rdf_dists = compute_rdf_distance(ref_rdf[0], opt_rdfs, bin_edges.to('cpu'))
 
 """
 COMPACK analysis
 """
 best_sample_inds = torch.argwhere((opt_cp > 0.6) * (opt_cp < 0.8)).squeeze()
-matches, rmsds = batch_compack(best_sample_inds, opt_sample_list, ref_crystal_batch)
+matches, rmsds = batch_compack(best_sample_inds, opt_sample_list, ref_cluster_batch)
 
 all_matched = np.argwhere(matches == 20).flatten()
 matched_rmsds = rmsds[all_matched]

@@ -50,7 +50,7 @@ def process_cifs_to_chunks(n_chunks: int,
 
     for chunk_ind, chunk in zip(chunk_inds, chunks_list[start_ind:stop_ind]):
         chunk_output_path = chunks_path + chunk_prefix + f"_chunk_{chunk_ind}.pkl"
-        if not os.path.exists(chunk_output_path):
+        if True: #not os.path.exists(chunk_output_path):
             # if this chunk has not already been processed, process it
             chunk_data_list = process_chunk(chunk, chunk_ind,
                                             use_filenames_for_identifiers,
@@ -384,14 +384,14 @@ view([m1, m2])
 
 if __name__ == '__main__':
     # full dataset processing
-    # process_cifs_to_chunks(n_chunks=1000,
-    #                        cifs_path='D:/crystal_datasets/CSD_dump/',
-    #                        chunks_path='D:/crystal_datasets/CSD_featurized_chunks/',
-    #                        chunk_prefix='',
-    #                        use_filenames_for_identifiers=False,
-    #                        target_identifiers=None,
-    #                        filter_by_targets=False,
-    #                        protonation_state='deprotonated')
+    process_cifs_to_chunks(n_chunks=1000,
+                           cifs_path='D:/crystal_datasets/CSD_dump/',
+                           chunks_path='D:/crystal_datasets/CSD_featurized_chunks/',
+                           chunk_prefix='',
+                           use_filenames_for_identifiers=False,
+                           target_identifiers=None,
+                           filter_by_targets=False,
+                           protonation_state='deprotonated')
 
     # process_cifs_to_chunks(n_chunks=1,
     #                        cifs_path='D:/crystal_datasets/dafmuv/',
@@ -431,14 +431,14 @@ if __name__ == '__main__':
     #                        protonation_state='protonated')
     #
     #
-    process_cifs_to_chunks(n_chunks=1,
-                           cifs_path='D:/crystal_datasets/CSD_dump/',
-                           chunks_path='D:/crystal_datasets/xuldud/',
-                           chunk_prefix='',
-                           use_filenames_for_identifiers=False,
-                           target_identifiers=['XULDUD','XULDUD01'],
-                           filter_by_targets=True,
-                           protonation_state='protonated')
+    # process_cifs_to_chunks(n_chunks=1,
+    #                        cifs_path='D:/crystal_datasets/CSD_dump/',
+    #                        chunks_path='D:/crystal_datasets/xuldud/',
+    #                        chunk_prefix='',
+    #                        use_filenames_for_identifiers=False,
+    #                        target_identifiers=['XULDUD','XULDUD01'],
+    #                        filter_by_targets=True,
+    #                        protonation_state='protonated')
     #
     # process_cifs_to_chunks(n_chunks=1,
     #                        cifs_path='D:/crystal_datasets/CSD_dump/',

@@ -195,12 +195,12 @@ def compack_fig(matches, rmsds, write_fig):
         fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\mxt_code\compack_fig.png', width=900, height=900)
 
 
-def batch_compack(best_sample_inds, optimized_samples, original_cluster_batch): # todo refactor into analysis code
+def batch_compack(best_sample_inds, optimized_samples, reference_cluster_batch): # todo refactor into analysis code
     # generate the crystals in ccdc format
     best_crystals_batch = collate_data_list([optimized_samples[ind] for ind in best_sample_inds])
     best_cluster_batch = best_crystals_batch.mol2cluster().to('cpu')
     _ = cluster_batch_to_ccdc_crystals(best_cluster_batch, np.arange(best_cluster_batch.num_graphs))
-    mol = ase_mol_from_crystaldata(original_cluster_batch, index=0, mode='unit cell')
+    mol = ase_mol_from_crystaldata(reference_cluster_batch, index=0, mode='unit cell')
     mol.info['spacegroup'] = Spacegroup(int(best_cluster_batch.sg_ind[0]), setting=1)
     mol.write('DAFMUV.cif')
 
