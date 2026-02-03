@@ -40,9 +40,9 @@ opt:
   show_tqdm: true
 opt_seed: 0
 out_dir: /scratch/mk8347/csd_runs/datasets/acridine
-run_name: acridine_sg15_zp1
+run_name: acridine_sg2_zp2
 sampling_mode: all
 sgs_to_search:
-- 15
+- 2
 zp_to_search:
-- 1
+- 2

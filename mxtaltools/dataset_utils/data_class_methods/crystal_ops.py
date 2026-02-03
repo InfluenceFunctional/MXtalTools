@@ -271,8 +271,8 @@ class MolCrystalOps:
             self.asym_unit_dict = self.build_asym_unit_dict()
 
         sg_inds = self.sg_ind
-        radius = self.radius / (self.z_prime ** (
-                2 / 3))  # 'radius' for Z'>1 stuctures is Z'*radius for downstream reasons. Also it's not intensive so we need a scaling
+        # 'radius' for Z'>1 stuctures is Z'*radius for downstream reasons. Also it's not intensive so we need a scaling
+        radius = self.radius / (self.z_prime ** (2 / 3))
         auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds]).to(self.device)
 
         'convert to latent basis'
