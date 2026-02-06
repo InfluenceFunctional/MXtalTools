@@ -272,7 +272,7 @@ def clean_cell_params(samples,
                       mode='soft',
                       fractional_basis='asymmetric_unit',
                       skip_angular_dof=False):
-    """  # todo simplify and combine with clean_generator output
+    """  # todo deprecate
     An important function for enforcing physical limits on cell parameterization
     with randomly generated samples of different sources.
 

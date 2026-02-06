@@ -24,7 +24,6 @@ from mxtaltools.reporting.utils import lightweight_one_sided_violin
 # noinspection PyAttributeOutsideInit
 
 
-
 class MolCrystalOps:
 
     def assign_aunit_centroid(self, values, eps=1e-4):
@@ -249,8 +248,7 @@ class MolCrystalOps:
             min_vals[5 + 6 * (1 + ind)] = -0.99
 
         max_vals = torch.ones(latents.shape[-1], dtype=torch.float32, device=self.device)
-        max_vals[
-            0:2] = 1 - 1e-4  # don't let it explicitly touch 1 or it can make an effective orthorhombic cell, and really pisses off ASE
+        max_vals[0:2] = 1 - 1e-4  # don't let it explicitly touch 1 or it can make an effective orthorhombic cell, and really pisses off ASE
         self.set_cell_parameters(self.inv_latent_transform(latents.clamp(min=min_vals, max=max_vals)))
 
         if not skip_enforce_crystal_system:
@@ -325,7 +323,7 @@ class MolCrystalOps:
 
         sg_inds = self.sg_ind
         radius = self.radius / (self.z_prime ** (
-                    2 / 3))  # 'radius' for Z'>1 stuctures is Z'*radius for downstream reasons. Also it's not intensive so we need a scaling        auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds]).to(self.device)
+                2 / 3))  # 'radius' for Z'>1 stuctures is Z'*radius for downstream reasons. Also it's not intensive so we need a scaling        auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds]).to(self.device)
         auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds]).to(self.device)
 
         lat_lengths, lat_angles, lat_centroids, lat_orientations = torch.split(latents, [3, 3, 3 * self.max_z_prime,
@@ -686,11 +684,11 @@ class MolCrystalOps:
 
     def clean_cell_parameters(self, mode: str = 'hard',
                               canonicalize_orientations: bool = True,
-                              angle_pad: float = 0.9,
+                              angle_pad: float = 0.6,
                               length_pad: float = 3.0,
                               constrain_z: bool = False,
                               ):
-        """
+        """  # todo align with latent transforms - otherwise we can get severe roundtrip errors. Lengths and interior angles
         force cell parameters into physical ranges
         """
 
@@ -1334,7 +1332,8 @@ class MolCrystalOps:
     def _add_violin(self, fig, samples, name, color, column_index, ranges, n_kde, bw_factor):
         row = column_index // 3 + 1
         col = column_index % 3 + 1
-        noise = (torch.randn_like(samples) * 1e-3) if torch.is_tensor(samples) else (np.random.randn(len(samples)) * 1e-3)
+        noise = (torch.randn_like(samples) * 1e-3) if torch.is_tensor(samples) else (
+                    np.random.randn(len(samples)) * 1e-3)
         x_samp, y_samp = lightweight_one_sided_violin(samples + noise,
                                                       n_kde,
                                                       bandwidth_factor=bw_factor,

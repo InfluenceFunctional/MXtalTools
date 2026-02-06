@@ -75,8 +75,7 @@ def gradient_descent_optimization(
 
     if cutoff is None:
         # lennard jones need 10 angstroms to nicely converge
-        # other metrics only need 6
-        cutoff = 10 if optim_target.lower() in ['lj', 'qlj'] else 6
+        cutoff = 10
 
     energy_computes = ['lj']
     min_num_steps = 50
@@ -542,29 +541,29 @@ def _init_for_local_opt(lr, max_num_steps, optimizer_func, sample, num_atoms):
             optimizer, packing_record, samples_record, raw_samples_record, handedness_record,
             scheduler1, scheduler2, vdw_record, aunit_poses)
 
-
-def cleanup_sample(raw_sample, sg_ind_list, symmetries_dict):
-    # force outputs into physical ranges
-    # cell lengths have to be positive nonzero
-    cell_lengths = raw_sample[:, :3].clip(min=0.01)
-    # range from (0,pi) with 20% padding to prevent too-skinny cells
-    cell_angles = enforce_1d_bound(raw_sample[:, 3:6], x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2,
-                                   mode='hard')
-    # positions must be on 0-1
-    mol_positions = enforce_1d_bound(raw_sample[:, 6:9], x_span=0.5, x_center=0.5, mode='hard')
-    # for now, just enforce vector norm
-    rotvec = raw_sample[:, 9:12]
-    norm = torch.linalg.norm(rotvec, dim=1)
-    new_norm = enforce_1d_bound(norm, x_span=0.999 * torch.pi, x_center=torch.pi, mode='hard')  # MUST be nonzero
-    new_rotvec = rotvec / norm[:, None] * new_norm[:, None]
-    # invert_inds = torch.argwhere(new_rotvec[:, 2] < 0)
-    # new_rotvec[invert_inds] = -new_rotvec[invert_inds]  # z direction always positive
-    # force cells to conform to crystal system
-    cell_lengths, cell_angles = enforce_crystal_system(cell_lengths, cell_angles, sg_ind_list,
-                                                       symmetries_dict)
-    sample = torch.cat((cell_lengths, cell_angles, mol_positions, new_rotvec), dim=-1)
-    return sample
-
+#
+# def cleanup_sample(raw_sample, sg_ind_list, symmetries_dict):
+#     # force outputs into physical ranges
+#     # cell lengths have to be positive nonzero
+#     cell_lengths = raw_sample[:, :3].clip(min=0.01)
+#     # range from (0,pi) with 20% padding to prevent too-skinny cells
+#     cell_angles = enforce_1d_bound(raw_sample[:, 3:6], x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2,
+#                                    mode='hard')
+#     # positions must be on 0-1
+#     mol_positions = enforce_1d_bound(raw_sample[:, 6:9], x_span=0.5, x_center=0.5, mode='hard')
+#     # for now, just enforce vector norm
+#     rotvec = raw_sample[:, 9:12]
+#     norm = torch.linalg.norm(rotvec, dim=1)
+#     new_norm = enforce_1d_bound(norm, x_span=0.999 * torch.pi, x_center=torch.pi, mode='hard')  # MUST be nonzero
+#     new_rotvec = rotvec / norm[:, None] * new_norm[:, None]
+#     # invert_inds = torch.argwhere(new_rotvec[:, 2] < 0)
+#     # new_rotvec[invert_inds] = -new_rotvec[invert_inds]  # z direction always positive
+#     # force cells to conform to crystal system
+#     cell_lengths, cell_angles = enforce_crystal_system(cell_lengths, cell_angles, sg_ind_list,
+#                                                        symmetries_dict)
+#     sample = torch.cat((cell_lengths, cell_angles, mol_positions, new_rotvec), dim=-1)
+#     return sample
+#
 
 def check_convergence(params_record, s_ind, convergence_eps, optimizer, init_lr):
     smoothed = ema_trajectory(params_record[:s_ind])

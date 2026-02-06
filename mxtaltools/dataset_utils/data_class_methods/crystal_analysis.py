@@ -219,7 +219,7 @@ class MolCrystalAnalysis:
                 computes: list,
                 return_cluster: Optional[bool] = False,
                 noise: Optional[float] = None,
-                cutoff: float = 6,  # todo allow custom cutoff for rdf compute
+                cutoff: float = 10,  # todo allow custom cutoff for rdf compute
                 supercell_size: int = 10,
                 std_orientation: Optional[bool] = True,
                 assign_outputs: Optional[bool] = False,
@@ -280,7 +280,7 @@ class MolCrystalAnalysis:
 
         # lattice energy per molecule, in eV
         # multiply by 96.485 to get kJ/mol
-        return self.uma_pot / (self.sym_mult * self.z_prime) - self.uma_gas_pot
+        return (self.uma_pot / (self.sym_mult * self.z_prime) - self.uma_gas_pot) * 96.485
 
     def compute_lattice_gas_phase_uma(self,
                                       predictor,
