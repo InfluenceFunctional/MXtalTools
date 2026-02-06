@@ -31,6 +31,21 @@ class CrystalParams(nn.Module):
     def stacked(self):
         return torch.stack(list(self.params), dim=0)
 
+    def update_params(self, new_values, mask=None):
+        """
+        new_values: [batch_size, param_dim] tensor
+        mask: optional boolean mask [batch_size] to only update accepted samples
+        """
+        with torch.no_grad():
+            if mask is None:
+                for i, val in enumerate(new_values):
+                    self.params[i].copy_(val)
+            else:
+                # Only update the specific batch indices that were accepted
+                indices = torch.where(mask)[0]
+                for idx in indices:
+                    self.params[idx].copy_(new_values[idx])
+
 
 def gradient_descent_optimization(
         init_sample: torch.Tensor,
@@ -50,10 +65,13 @@ def gradient_descent_optimization(
         enforce_reduced: Optional[bool] = False,
         supercell_size: Optional[int] = 10,
         anneal_lr: Optional[bool] = False,
+        uma_predictor: Optional = None,
+        mc_kT: float = 0.5,
+        log_noise_range=[-2, -1]
 ):
     """
     do a local optimization via gradient descent on some score function
-    """  # todo implement wrapping over periodic DoF
+    """  # todo implement wrapping over periodic latent DoF
 
     if cutoff is None:
         # lennard jones need 10 angstroms to nicely converge
@@ -74,6 +92,8 @@ def gradient_descent_optimization(
         energy_computes.append('ellipsoid')
     elif optim_target.lower() == 'reduce':
         energy_computes.append('reduction_en')
+    elif optim_target.lower() == 'uma':
+        energy_computes.append('uma')
 
     if enforce_reduced:  # use an energy based penalty to enforce sampling in the reduced subspace
         energy_computes.append('reduction_en')
@@ -84,6 +104,15 @@ def gradient_descent_optimization(
     param_module = CrystalParams(init_sample)  # <-- init_sample shape [n, 6 + max_z_prime * 6]
 
     optimizer = init_opt(init_lr, optimizer_func, param_module)
+    monte_carlo = optimizer_func.lower() == 'mcmc'
+    if monte_carlo:
+        # We need a starting energy for the very first comparison
+        with torch.no_grad():
+            T, current_energy, current_state = init_mc_state(compression_factor, cutoff, do_box_restriction,
+                                                              energy_computes, enforce_reduced, init_crystal_batch,
+                                                              mc_kT, optim_target, param_module, score_model,
+                                                              std_margin, supercell_size, target_packing_coeff,
+                                                              uma_predictor)
 
     if anneal_lr:
         lr_factor = get_annealing_factor(1, 0.01, 500, 1)
@@ -99,20 +128,33 @@ def gradient_descent_optimization(
         init_crystal_batch.load_ellipsoid_model()
         ellipsoid_model = copy.deepcopy(init_crystal_batch.ellipsoid_model)
         ellipsoid_model = ellipsoid_model.to(init_crystal_batch.device)
-        ellipsoid_model.eval()
+        ellipsoid_model.eval()  # unify initialization of this vs other score models, uma models, etc.
 
     records = None
     converged = torch.zeros(init_crystal_batch.num_graphs, dtype=torch.bool)
     # torch.autograd.set_detect_anomaly(True)  # for debugging
     try:
-        with (torch.enable_grad()):
+        with torch.set_grad_enabled(not monte_carlo):
             with tqdm(total=max_num_steps, disable=not show_tqdm) as pbar:
                 s_ind = 0
                 while (s_ind < (max_num_steps - 1)) and not converged.all():
                     optimizer.zero_grad(set_to_none=True)
                     crystal_batch = init_crystal_batch.clone().detach()  # this is necessary to not retain lots of intermediate tensors
-                    crystal_batch.set_cell_parameters(param_module.stacked(),
-                                                      skip_box_analysis=True)  # we will do box analysis in the next step, after cleanup
+                    if monte_carlo:
+                        crystal_batch.set_cell_parameters(param_module.stacked(), skip_box_analysis=False)
+                        samples = crystal_batch.latent_params()
+                        rand_dir = torch.randn_like(samples)
+                        rand_dir = rand_dir / rand_dir.norm(dim=-1, keepdim=True)
+                        # rand_magnitude = torch.randn(len(samples), device=samples.device).abs() * noise_level
+                        u = torch.rand(len(samples), device=samples.device)
+                        rand_magnitude = 10 ** (log_noise_range[0] + (log_noise_range[1] - log_noise_range[0]) * u)
+                        noised_samples = (samples + rand_dir * rand_magnitude[:, None]).clip(min=-1, max=1)
+                        crystal_batch.latent_to_cell_params(noised_samples,
+                                                            skip_box_analysis=True,
+                                                            skip_enforce_crystal_system=True)
+                    else:
+                        crystal_batch.set_cell_parameters(param_module.stacked(),
+                                                          skip_box_analysis=True)  # we will do box analysis in the next step, after cleanup
                     crystal_batch.clean_cell_parameters(
                         mode='hard',
                         canonicalize_orientations=True,
@@ -126,6 +168,7 @@ def gradient_descent_optimization(
                         surface_padding=0,
                         std_orientation=True,
                         margin=std_margin,
+                        predictor=uma_predictor,
                     )
 
                     """
@@ -144,17 +187,47 @@ def gradient_descent_optimization(
                     """
                     loss and backprop
                     """
-                    loss = compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model)
-                    loss = compute_auxiliary_loss(cluster_batch, compression_factor,
-                                                  do_box_restriction, loss, target_packing_coeff, enforce_reduced,
-                                                  outputs)
-                    records['loss'].append(loss.detach().cpu())
-                    loss_to_backprop = loss[~converged].mean()  # save some effort in backprop
-                    loss_to_backprop.backward()
-                    torch.nn.utils.clip_grad_norm_(param_module.parameters(), grad_norm_clip)  # gradient clipping
-                    optimizer.step()  # apply grad
+                    if monte_carlo:
+                        # 1. Compute energy of the proposal (noised_samples)
+                        proposal_energy = compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model)
+                        proposal_energy = compute_auxiliary_loss(cluster_batch, compression_factor,
+                                                                 do_box_restriction, proposal_energy,
+                                                                 target_packing_coeff, enforce_reduced, outputs)
 
-                    del loss_to_backprop, cluster_batch, outputs, crystal_batch, loss
+                        # 2. Calculate Metropolis Criterion
+                        # For minimization: P(accept) = exp(-(E_prop - E_curr) / T)
+                        delta_e = proposal_energy - current_energy
+                        acceptance_prob = torch.exp(-delta_e / T).clamp(max=1.0)
+
+                        # 3. Batch-wise Acceptance
+                        accepted = torch.rand_like(acceptance_prob) < acceptance_prob
+
+                        # 4. Update the "Current" State
+                        current_energy[accepted] = proposal_energy[accepted]
+                        current_state[accepted] = crystal_batch.full_cell_parameters()[accepted]
+
+                        # 5. Sync the param_module so the next iteration starts from the accepted state
+                        param_module.update_params(current_state)  # You'll need a setter in your module
+
+                        # Record the energy for your stats
+                        records['loss'].append(current_energy.detach().cpu())
+
+                        # 6. Cooling (Simulated Annealing)
+                        # T *= cooling_rate
+                        del proposal_energy, cluster_batch, outputs, crystal_batch
+
+                    else:
+                        loss = compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model)
+                        loss = compute_auxiliary_loss(cluster_batch, compression_factor,
+                                                      do_box_restriction, loss, target_packing_coeff, enforce_reduced,
+                                                      outputs)
+                        records['loss'].append(loss.detach().cpu())
+                        loss_to_backprop = loss[~converged].mean()  # save some effort in backprop
+                        loss_to_backprop.backward()
+                        torch.nn.utils.clip_grad_norm_(param_module.parameters(), grad_norm_clip)  # gradient clipping
+                        optimizer.step()  # apply grad
+
+                        del loss_to_backprop, cluster_batch, outputs, crystal_batch, loss
                     if s_ind % 10 == 0:
                         gc.collect()
                         torch.cuda.empty_cache()
@@ -166,7 +239,7 @@ def gradient_descent_optimization(
                         pbar.update(50)
                     if s_ind >= min(max_num_steps, max(50, min_num_steps)):
                         converged = check_convergence(params_record, s_ind, convergence_eps,
-                                                               optimizer, init_lr)
+                                                      optimizer, init_lr)
     except (RuntimeError, ValueError) as e:
         if is_cuda_oom(e):
             if s_ind > 0:
@@ -193,6 +266,7 @@ def gradient_descent_optimization(
         return_cluster=True,
         repulsion=1,
         surface_padding=0,
+        predictor=uma_predictor
     )
     crystal_batch.add_graph_attr(outputs['lj'].detach(), 'lj')
     crystal_batch.add_graph_attr(crystal_batch.packing_coeff.detach(), 'packing_coeff')
@@ -219,6 +293,32 @@ def gradient_descent_optimization(
     return samples_list, records
 
 
+def init_mc_state(compression_factor, cutoff, do_box_restriction, energy_computes, enforce_reduced, init_crystal_batch,
+                  mc_kT, optim_target, param_module, score_model, std_margin, supercell_size, target_packing_coeff,
+                  uma_predictor):
+    # Initialize param_module and get initial energy
+    crystal_batch = init_crystal_batch.clone().detach()
+    crystal_batch.set_cell_parameters(param_module.stacked())
+    outputs, cluster_batch = crystal_batch.analyze(computes=energy_computes,
+                                                   cutoff=cutoff,
+                                                   supercell_size=supercell_size,
+                                                   return_cluster=True,
+                                                   repulsion=1,
+                                                   surface_padding=0,
+                                                   std_orientation=True,
+                                                   margin=std_margin,
+                                                   predictor=uma_predictor, )
+    current_energy = compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model)
+    current_energy = compute_auxiliary_loss(cluster_batch, compression_factor,
+                                            do_box_restriction, current_energy, target_packing_coeff,
+                                            enforce_reduced,
+                                            outputs)
+    current_state = param_module.stacked().clone()
+    # Temperature schedule (Initial T should be ~ typical delta energy)
+    T = mc_kT
+    return T, current_energy, current_state
+
+
 def init_opt(init_lr, optimizer_func, param_module):
     if isinstance(optimizer_func, str):
         if optimizer_func.lower() == 'sgd':
@@ -241,6 +341,8 @@ def init_opt(init_lr, optimizer_func, param_module):
             optimizer_func = optim.Adadelta
         elif optimizer_func.lower() == 'asgd':
             optimizer_func = optim.ASGD
+        elif optimizer_func.lower() == 'mcmc':
+            optimizer_func = optim.SGD  # this is a dummy
         else:
             assert False, "Must pass an optimizer or an implemented string"
     optimizer = optimizer_func(param_module.parameters(), lr=init_lr)
@@ -319,6 +421,9 @@ def compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_mode
     elif optim_target.lower() == 'reduce':
         loss = outputs['reduction_en']
 
+    elif optim_target.lower() == 'uma':
+        loss = outputs['uma'] * 96.485
+
     return loss
 
 
@@ -388,8 +493,6 @@ fig.show()
 
 """
 
-
-
 """
 import plotly.graph_objects as go
 fig = go.Figure()
@@ -416,7 +519,6 @@ fig.add_scatter(y=(es_pots * 10 + lj_pots).mean(1), marker_color='black', name='
 
 fig.show()
 """
-
 
 
 def _init_for_local_opt(lr, max_num_steps, optimizer_func, sample, num_atoms):

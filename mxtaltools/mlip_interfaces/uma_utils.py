@@ -33,25 +33,35 @@ def batch_to_ase_ucell_list(
         batch,
         std_orientation,
         pbc,
-
+        force_rebuild: bool = False,
 ):
+
     data_list = []
-    if batch.z_prime.amax() > 1:
-        zp1_batch = batch.split_to_zp1_batch()
-        zp1_batch.pose_aunit(std_orientation=std_orientation)
-        zp1_batch.build_unit_cell()
-        batch.join_zp1_ucell_batch(zp1_batch)
+    if not hasattr(batch, 'unit_cell_pos') or force_rebuild:
+        if batch.z_prime.amax() > 1:
+            zp1_batch = batch.split_to_zp1_batch()
+            zp1_batch.pose_aunit(std_orientation=std_orientation)
+            zp1_batch.build_unit_cell()
+            batch.join_zp1_ucell_batch(zp1_batch)
+        else:
+            batch.pose_aunit(std_orientation=std_orientation)
+            batch.build_unit_cell()
+        cpuz = batch.z.cpu().detach().numpy()
+        cpubatch = batch.batch.cpu().detach().numpy()
+
+    elif hasattr(batch, 'aux_ind'):
+        cpuz = batch.z[batch.aux_ind == 0].cpu().detach().numpy()
+        cpubatch = batch.batch[batch.aux_ind == 0].cpu().detach().numpy()
+
     else:
-        batch.pose_aunit(std_orientation=std_orientation)
-        batch.build_unit_cell()
+        cpuz = batch.z.cpu().detach().numpy()
+        cpubatch = batch.batch.cpu().detach().numpy()
 
     assert torch.sum(torch.isnan(batch.pos)) == 0
 
     cell_params = torch.cat([batch.cell_lengths, batch.cell_angles * 90 / (torch.pi / 2)], dim=1).cpu().detach().numpy()
-    cpuz = batch.z.cpu().detach().numpy()
     cpupos = batch.unit_cell_pos.cpu().detach().numpy()
     cpuubatch = batch.unit_cell_batch.cpu().detach().numpy()
-    cpubatch = batch.batch.cpu().detach().numpy()
     cpusymmult = batch.sym_mult.cpu().detach().numpy()
     for ind in range(batch.num_graphs):
         pos = cpupos[cpuubatch == ind]
@@ -78,7 +88,8 @@ def compute_crystal_uma_on_mxt_batch(batch,
                                      std_orientation: bool = True,
                                      predictor: Optional = None,
                                      pbc: bool = True,
-                                     max_cp: float = 2.0):
+                                     max_cp: float = 2.0,
+                                     force_rebuild: bool = False):
     "UMA sometimes fails on ultra-dense cells, so we'll manually prevent that. These are obviously terrible cells anyway."
     while sum(batch.packing_coeff > max_cp) > 0:
         bad_inds = torch.argwhere(batch.packing_coeff > max_cp)
@@ -86,7 +97,7 @@ def compute_crystal_uma_on_mxt_batch(batch,
             batch.cell_lengths[bad_inds] += 2
             batch.box_analysis()
 
-    data_list = batch_to_ase_ucell_list(batch, std_orientation, pbc)
+    data_list = batch_to_ase_ucell_list(batch, std_orientation, pbc, force_rebuild)
 
     uma_batch = atomicdata_list_to_batch(
         [AtomicData.from_ase(atoms, task_name='omc') for atoms in data_list])

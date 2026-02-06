@@ -74,6 +74,9 @@ class MolCrystalAnalysis:
                              'reduction_en': self.compute_cell_reduction_penalty,
                              'rdf': self.compute_rdf,
                              'ellipsoid_emb': self.compute_ellipsoid_embedding,
+                             'uma_pot': self.compute_crystal_uma,
+                             'uma_gas_pot': self.compute_lattice_gas_phase_uma,
+                             'uma': self.compute_lattice_uma,
                              }
 
     def compute_ellipsoid_embedding(self):
@@ -190,7 +193,7 @@ class MolCrystalAnalysis:
                           cutoff: float = 6,
                           supercell_size: int = 10,
                           ):
-        """
+        """  # todo this should be deprecated in favour of analyze
         full procedure for building and analyzing a molecular crystal
         this is the OLD version of this function - best practice is to use the 'analyze' function below
         """
@@ -216,7 +219,7 @@ class MolCrystalAnalysis:
                 computes: list,
                 return_cluster: Optional[bool] = False,
                 noise: Optional[float] = None,
-                cutoff: float = 6, # todo allow custom cutoff for rdf compute
+                cutoff: float = 6,  # todo allow custom cutoff for rdf compute
                 supercell_size: int = 10,
                 std_orientation: Optional[bool] = True,
                 assign_outputs: Optional[bool] = False,
@@ -261,15 +264,41 @@ class MolCrystalAnalysis:
                                                     std_orientation,
                                                     predictor)
 
+    def compute_lattice_uma(self,
+                            predictor,
+                            std_orienation: bool = True,
+                            **kwargs):
+        if not hasattr(self, 'uma_gas_pot'):
+            self.add_graph_attr(
+                self.compute_lattice_gas_phase_uma(predictor),
+                'uma_gas_pot')
+
+        if not hasattr(self, 'uma_pot'):
+            self.add_graph_attr(
+                self.compute_crystal_uma(predictor, std_orientation=std_orienation),
+                'uma_pot')
+
+        # lattice energy per molecule, in eV
+        # multiply by 96.485 to get kJ/mol
+        return self.uma_pot / (self.sym_mult * self.z_prime) - self.uma_gas_pot
+
     def compute_lattice_gas_phase_uma(self,
                                       predictor,
                                       std_orientation: bool = True,
+                                      **kwargs,
                                       ):
+
 
         if self.is_batch:
             diffuse_batch = self.clone()
         else:
             diffuse_batch = collate_data_list(self)
+
+        if hasattr(self, 'aux_ind'):
+            if self.aux_ind is not None:  # if this is a cluster, we have to rebuild the original aunit batch
+                diffuse_batch.pos = self.pos[self.aux_ind == 0].detach().clone()
+                diffuse_batch.batch = self.batch[self.aux_ind == 0].detach().clone()
+                diffuse_batch.z = self.z[self.aux_ind == 0].detach().clone()
 
         if diffuse_batch.z_prime.amax() > 1:  # do it separately per conformer
             zp1_batch = diffuse_batch.split_to_zp1_batch()
@@ -277,9 +306,9 @@ class MolCrystalAnalysis:
             zp1_batch.cell_lengths *= 100
             zp1_batch.box_analysis()
             split_ens = compute_crystal_uma_on_mxt_batch(zp1_batch,
-                                                    std_orientation,
-                                                    predictor,
-                                                    pbc=False)
+                                                         std_orientation,
+                                                         predictor,
+                                                         pbc=False)
             zp_inds = torch.arange(self.num_graphs, dtype=torch.long, device=self.device
                                    ).repeat_interleave(self.z_prime).to(split_ens.device)
             return scatter(split_ens, zp_inds, reduce='mean', dim=0, dim_size=self.num_graphs)
@@ -292,12 +321,14 @@ class MolCrystalAnalysis:
             return compute_crystal_uma_on_mxt_batch(diffuse_batch,
                                                     std_orientation,
                                                     predictor,
-                                                    pbc=False)
+                                                    pbc=False,
+                                                    force_rebuild=True)
 
     def compute_rdf(self,
                     rdf_cutoff: float = 6,
                     elementwise: bool = True,
                     bins: int = 100,
+                    **kwargs,
                     ):
         if not hasattr(self, 'edges_dict'):
             raise RuntimeError("Must build radial graph before computing RDF!"
@@ -310,7 +341,7 @@ class MolCrystalAnalysis:
                                                     bins=bins,
                                                     elementwise=elementwise,
                                                     )
-        return rdf/self.z_prime[:, None, None], bin_edges, rdf_pair_dict
+        return rdf / self.z_prime[:, None, None], bin_edges, rdf_pair_dict
 
     def compute_niggli_overlap(self, **kwargs):
         a, b, c, al, be, ga = self.zp1_cell_parameters()[:, :6].split(1, dim=1)

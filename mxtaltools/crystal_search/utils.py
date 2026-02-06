@@ -148,6 +148,9 @@ def coarse_crystal_filter(lj_record, lj_cutoff, packing_coeff_record, packing_cu
 
 def get_initial_state(config, crystal_batch, device):
     # sample initial parameters
+    if config.init_sample_method == 'data':
+        return crystal_batch
+
     if config.init_target_cp == 'std':
         target_cp = (torch.randn(crystal_batch.num_graphs, device=device) * 0.0447 + 0.6226).clip(min=0.45, max=0.95)
     elif config.init_target_cp is not None:

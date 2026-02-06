@@ -232,6 +232,8 @@ class MolCrystalOps:
 
     def latent_to_cell_params(self,
                               latents: torch.tensor,
+                              skip_box_analysis: bool = False,
+                              skip_enforce_crystal_system: bool = False
                               ):
         """
         Transform from latent space to physical crystal parameters
@@ -251,12 +253,14 @@ class MolCrystalOps:
             0:2] = 1 - 1e-4  # don't let it explicitly touch 1 or it can make an effective orthorhombic cell, and really pisses off ASE
         self.set_cell_parameters(self.inv_latent_transform(latents.clamp(min=min_vals, max=max_vals)))
 
-        self.cell_lengths, self.cell_angles = enforce_crystal_system(
-            self.cell_lengths,
-            self.cell_angles,
-            self.sg_ind
-        )
-        self.box_analysis()
+        if not skip_enforce_crystal_system:
+            self.cell_lengths, self.cell_angles = enforce_crystal_system(
+                self.cell_lengths,
+                self.cell_angles,
+                self.sg_ind
+            )
+        if not skip_box_analysis:
+            self.box_analysis()
 
     def latent_params(self):
         """

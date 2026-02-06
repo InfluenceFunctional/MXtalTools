@@ -15,6 +15,7 @@ from mxtaltools.common.training_utils import load_crystal_score_model
 from mxtaltools.common.utils import is_cuda_oom
 from mxtaltools.crystal_search.utils import get_initial_state, init_samples_to_optim, parse_args
 from mxtaltools.dataset_utils.utils import collate_data_list
+from mxtaltools.mlip_interfaces.uma_utils import init_uma_crystal_predictor
 
 
 def init_score_model(opt_config, device, config):
@@ -38,9 +39,14 @@ if __name__ == '__main__':
     device = config.device
     if device == 'cuda':
         # prevents from dipping into windows virtual vram which is super slow
-        torch.cuda.set_per_process_memory_fraction(0.99, device=0)
+        torch.cuda.set_per_process_memory_fraction(0.9, device=0)
 
-    samples_to_optim = init_samples_to_optim(config)
+    if config.init_sample_method == 'data':
+        samples_to_optim = torch.load(config.dataset_path, weights_only=False)
+        index_block = torch.arange(config.mol_seed * config.num_samples, (config.mol_seed + 1) * config.num_samples)
+        samples_to_optim = [samples_to_optim[ind] for ind in index_block]
+    else:
+        samples_to_optim = init_samples_to_optim(config)
 
     out_path = Path(config.out_dir + f"/{config.run_name}.pt")  # where to save outputs
     num_samples = len(samples_to_optim)
@@ -72,6 +78,9 @@ if __name__ == '__main__':
                 # do optimization in N stages
                 if opt_config['optim_target'] in ['rdf_score', 'classification_score']:
                     init_score_model(opt_config, device, config)
+                if opt_config['optim_target'] in ['uma']:
+                    pred_path = config.uma_predictor_path  # smaller mol crystal model
+                    opt_config['uma_predictor'] = init_uma_crystal_predictor(pred_path, device=device)
 
                 'do opt'
                 opt_out = crystal_batch.optimize_crystal_parameters(**opt_config)
