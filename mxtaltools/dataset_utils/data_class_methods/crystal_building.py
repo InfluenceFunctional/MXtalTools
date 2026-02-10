@@ -162,7 +162,7 @@ class MolCrystalBuilding:
             frac_centroids = self.aunit_centroid.reshape(self.num_graphs * self.max_z_prime, 3)
             cart_centroids = fractional_transform(frac_centroids,self.T_fc.repeat_interleave(self.max_z_prime,dim=0)[1]).reshape(self.num_graphs, self.max_z_prime, 3)
             dists = (cart_centroids[:, :, None, :] - cart_centroids[:, None, :, :]).norm(dim=-1) # [n, Zp, Zp, 3]
-            zp_buffer = dists.amax(dim=(1,2)).repeat_interleave(self.max_z_prime, dim=0)
+            zp_buffer = dists.amax(dim=(1,2)).repeat_interleave(self.z_prime, dim=0)
 
             zp1_batch = self.split_to_zp1_batch()
             zp1_batch.pose_aunit(std_orientation=std_orientation)
