@@ -189,67 +189,9 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers, protonation_s
                 error_codes.append("Failed reparameterization")
                 continue
 
-            if z_prime > 1:
-                # instantiate Z'>1 crystal object
-                mol = MolData(
-                    z=rebuild_batch.z,
-                    pos=rebuild_batch.pos,
-                    x=rebuild_batch.x,
-                    smiles='|'.join(rebuild_batch.smiles),
-                    fingerprint=rebuild_batch.fingerprint.sum(0, keepdim=True),
-                    do_mol_analysis=False,  # combine manually below
-                )
-                mol.mass = torch.stack([m.mass for m in mols]).sum()
-                mol.mol_volume = torch.stack([m.mol_volume for m in mols]).sum()
-                mol.radius = torch.stack([m.radius for m in mols]).sum()
-
-                zp1_crystal = MolCrystalData(
-                    molecule=mol,
-                    sg_ind=rebuild_batch.sg_ind[0],
-                    cell_lengths=rebuild_batch.cell_lengths[0],
-                    cell_angles=rebuild_batch.cell_angles[0],
-                    aunit_orientation=aunit_orientation.flatten(),
-                    aunit_centroid=aunit_centroid.flatten(),
-                    aunit_handedness=aunit_handedness.flatten(),
-                    identifier=rebuild_batch.identifier[0],
-                    nonstandard_symmetry=any(rebuild_batch.nonstandard_symmetry),
-                    symmetry_operators=rebuild_batch.symmetry_operators[0],
-                    z_prime=torch.ones(1, dtype=torch.long) * z_prime,
-                    do_box_analysis=True,
-                    cocrystal=False,
-                    max_z_prime=max_z_prime,
-                    mol_ind=torch.arange(z_prime, dtype=torch.long).repeat_interleave(
-                        torch.stack([m.num_atoms for m in mols])),
-                )
-
-                data_list.append(zp1_crystal)
-            else:
-                mol = MolData(
-                    z=rebuild_batch.z,
-                    pos=rebuild_batch.pos,
-                    x=rebuild_batch.x,
-                    smiles=rebuild_batch.smiles[0],
-                    fingerprint=rebuild_batch.fingerprint,
-                    do_mol_analysis=True,  # combine manually below
-                )
-                zp1_crystal = MolCrystalData(
-                    molecule=mol,
-                    sg_ind=rebuild_batch.sg_ind[0],
-                    cell_lengths=rebuild_batch.cell_lengths[0],
-                    cell_angles=rebuild_batch.cell_angles[0],
-                    aunit_orientation=aunit_orientation.flatten(),
-                    aunit_centroid=aunit_centroid.flatten(),
-                    aunit_handedness=aunit_handedness.flatten(),
-                    identifier=rebuild_batch.identifier[0],
-                    nonstandard_symmetry=any(rebuild_batch.nonstandard_symmetry),
-                    symmetry_operators=rebuild_batch.symmetry_operators[0],
-                    z_prime=torch.ones(1, dtype=torch.long),
-                    do_box_analysis=True,
-                    cocrystal=False,
-                    max_z_prime=max_z_prime,
-                    mol_ind=torch.zeros(len(mol.z), dtype=torch.long),
-                )
-                data_list.append(zp1_crystal)
+            zp1_crystal = instantiate_crystal(aunit_centroid, aunit_handedness, aunit_orientation, max_z_prime, mols,
+                                              rebuild_batch, z_prime)
+            data_list.append(zp1_crystal)
 
     print(f"Cell reconstruction failed {failed_parameterization_counter} times out of {len(chunk)}")
     print(f"Crystal filtered {failed_checks_counter} times out of {len(chunk)}")
@@ -257,6 +199,69 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers, protonation_s
     print("\n".join(f"{c}: {n}" for c, n in Counter(error_codes).items()))
 
     return data_list
+
+
+def instantiate_crystal(aunit_centroid, aunit_handedness, aunit_orientation, max_z_prime, mols, rebuild_batch, z_prime):
+    if z_prime > 1:
+        # instantiate Z'>1 crystal object
+        mol = MolData(
+            z=rebuild_batch.z,
+            pos=rebuild_batch.pos,
+            x=rebuild_batch.x,
+            smiles='|'.join(rebuild_batch.smiles),
+            fingerprint=rebuild_batch.fingerprint.sum(0, keepdim=True),
+            do_mol_analysis=False,  # combine manually below
+        )
+        mol.mass = torch.stack([m.mass for m in mols]).sum()
+        mol.mol_volume = torch.stack([m.mol_volume for m in mols]).sum()
+        mol.radius = torch.stack([m.radius for m in mols]).sum()
+
+        zp1_crystal = MolCrystalData(
+            molecule=mol,
+            sg_ind=rebuild_batch.sg_ind[0],
+            cell_lengths=rebuild_batch.cell_lengths[0],
+            cell_angles=rebuild_batch.cell_angles[0],
+            aunit_orientation=aunit_orientation.flatten(),
+            aunit_centroid=aunit_centroid.flatten(),
+            aunit_handedness=aunit_handedness.flatten(),
+            identifier=rebuild_batch.identifier[0],
+            nonstandard_symmetry=any(rebuild_batch.nonstandard_symmetry),
+            symmetry_operators=rebuild_batch.symmetry_operators[0],
+            z_prime=torch.ones(1, dtype=torch.long) * z_prime,
+            do_box_analysis=True,
+            cocrystal=False,
+            max_z_prime=max_z_prime,
+            mol_ind=torch.arange(z_prime, dtype=torch.long).repeat_interleave(
+                torch.stack([m.num_atoms for m in mols])),
+        )
+
+    else:
+        mol = MolData(
+            z=rebuild_batch.z,
+            pos=rebuild_batch.pos,
+            x=rebuild_batch.x,
+            smiles=rebuild_batch.smiles[0],
+            fingerprint=rebuild_batch.fingerprint,
+            do_mol_analysis=True,  # combine manually below
+        )
+        zp1_crystal = MolCrystalData(
+            molecule=mol,
+            sg_ind=rebuild_batch.sg_ind[0],
+            cell_lengths=rebuild_batch.cell_lengths[0],
+            cell_angles=rebuild_batch.cell_angles[0],
+            aunit_orientation=aunit_orientation.flatten(),
+            aunit_centroid=aunit_centroid.flatten(),
+            aunit_handedness=aunit_handedness.flatten(),
+            identifier=rebuild_batch.identifier[0],
+            nonstandard_symmetry=any(rebuild_batch.nonstandard_symmetry),
+            symmetry_operators=rebuild_batch.symmetry_operators[0],
+            z_prime=torch.ones(1, dtype=torch.long),
+            do_box_analysis=True,
+            cocrystal=False,
+            max_z_prime=max_z_prime,
+            mol_ind=torch.zeros(len(mol.z), dtype=torch.long),
+        )
+    return zp1_crystal
 
 
 def init_zp1_crystals(crystal_dict, mols, sym_ops, sym_ops_are_standard):

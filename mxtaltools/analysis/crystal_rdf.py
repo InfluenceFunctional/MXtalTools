@@ -1,4 +1,5 @@
 import itertools
+import math
 from typing import Tuple, Optional, Union
 
 import numpy as np
@@ -45,7 +46,7 @@ def crystal_rdf(crystal_batch,
                                                                atomic_numbers_override)
 
         num_pairs = len(rdfs_dict.keys())
-        hist, rdf_density = new_1d_histogram(bins, device, dists, graph_indexed_pairs, num_graphs, num_pairs, rrange)
+        hist, rdf_density = smooth_1d_histogram(bins, device, dists, graph_indexed_pairs, num_graphs, num_pairs, rrange)
         # volume of the shell at radius r+dr
         shell_volumes = (4 / 3) * torch.pi * ((bin_edges[:-1] + torch.diff(bin_edges)) ** 3 - bin_edges[:-1] ** 3)
         rdf = hist / shell_volumes[None, None, :] / rdf_density[..., None]  # un-smoothed radial density
@@ -80,7 +81,62 @@ def crystal_rdf(crystal_batch,
 
     bin_centers = (bin_edges[:-1] + torch.diff(bin_edges)).requires_grad_()  # todo move this to discriminator code
 
-    return rdf, bin_centers, rdfs_dict
+    envelope_func = smooth_cutoff(bin_edges[1:], rrange[-1], rrange[-1]-1)  # smooth out the last 1 angstrom
+    smoothed_rdf = rdf * envelope_func.to(rdf.device)
+    return smoothed_rdf, bin_centers, rdfs_dict
+
+def smooth_cutoff(d, rc, ron):
+    # d: distances
+    # rc: cutoff
+    # ron: onset of damping
+
+    x = (d - ron) / (rc - ron)
+    x = torch.clamp(x, 0.0, 1.0)
+
+    envelope = 0.5 * (1.0 + torch.cos(torch.pi * x))
+    envelope = envelope * (d <= rc)
+
+    return envelope
+
+def smooth_1d_histogram(bins, device, dist, graph_indexed_pairs, num_graphs, num_pairs, rrange, sigma=None):
+    rmin, rmax = rrange
+    bin_centers = torch.linspace(rmin, rmax, bins, device=device)
+
+    if sigma is None:
+        sigma = (rmax - rmin) / bins
+
+    valid = graph_indexed_pairs >= 0
+    gip = graph_indexed_pairs[valid]
+    d = dist[valid]
+
+    delta_r = (rmax - rmin) / bins
+
+    weights = torch.exp(
+        -0.5 * ((d[:, None] - bin_centers[None, :]) / sigma) ** 2
+    )
+
+    weights = weights / (math.sqrt(2 * math.pi) * sigma)
+
+    weights = weights * delta_r
+
+    # flatten (hist, bin) → single index
+    flat_idx = gip[:, None] * bins + torch.arange(bins, device=device)[None, :]
+
+    flat_hist = torch.zeros(
+        num_graphs * num_pairs * bins,
+        device=device
+    )
+
+    flat_hist.scatter_add_(
+        0,
+        flat_idx.reshape(-1),
+        weights.reshape(-1),
+    )
+
+    hist = flat_hist.view(num_graphs, num_pairs, bins)
+
+    rdf_density = torch.ones((num_graphs, num_pairs), device=device)
+    return hist, rdf_density
 
 
 def new_1d_histogram(bins, device, dists, graph_indexed_pairs, num_graphs, num_pairs, rrange):
@@ -89,9 +145,15 @@ def new_1d_histogram(bins, device, dists, graph_indexed_pairs, num_graphs, num_p
     d = dists[valid]
     # compute bin id explicitly
     rmin, rmax = rrange
-    Δr = (rmax - rmin) / bins
-    bin_id = ((d - rmin) / Δr).floor().clamp(0, bins - 1).long()
-    # flatten (hist, bin) → single index
+    delta_r = (rmax - rmin) / bins
+    # mask too-distant bins
+    t = (d - rmin) / delta_r
+    valid_bins = (t >= 0) & (t < bins)
+
+    t = t[valid_bins]
+    gip = gip[valid_bins]
+
+    bin_id = t.floor().long()    # flatten (hist, bin) → single index
     scatter_idx = gip * bins + bin_id
     flat_hist = torch.zeros(num_graphs * num_pairs * bins, device=device)
     flat_hist.scatter_add_(

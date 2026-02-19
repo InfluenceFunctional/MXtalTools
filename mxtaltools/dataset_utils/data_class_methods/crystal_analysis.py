@@ -327,7 +327,7 @@ class MolCrystalAnalysis:
     def compute_rdf(self,
                     rdf_cutoff: float = 6,
                     elementwise: bool = True,
-                    bins: int = 100,
+                    bins: int = 500,
                     **kwargs,
                     ):
         if not hasattr(self, 'edges_dict'):

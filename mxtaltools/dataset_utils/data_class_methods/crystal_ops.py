@@ -568,6 +568,11 @@ class MolCrystalOps:
         # refresh box
         self.box_analysis()
 
+    def noise_latent_parameters(self, noise_level: float):
+        latents = self.latent_params()
+        noised_params = latents + torch.randn_like(latents) * noise_level
+        self.latent_to_cell_params(noised_params)
+
     def zp1_std_cell_parameters(self):
         """
         Return standardized zp=1 cell parameters

@@ -48,6 +48,18 @@ if __name__ == '__main__':
     else:
         samples_to_optim = init_samples_to_optim(config)
 
+    if config.target_path is not None:
+        target = torch.load(config.target_path, weights_only=False)
+    else:
+        target = None
+
+    # # TODO REMOVE
+    # tlat = collate_data_list([target]).latent_params().repeat(len(samples_to_optim), 1)
+    # noised_params = tlat + torch.randn_like(tlat) * 0.01
+    # tsbatch = collate_data_list([target.clone() for _ in range(len(samples_to_optim))], max_z_prime=1)
+    # tsbatch.latent_to_cell_params(noised_params)
+    # samples_to_optim = tsbatch.batch_to_list()
+
     out_path = Path(config.out_dir + f"/{config.run_name}.pt")  # where to save outputs
     num_samples = len(samples_to_optim)
     print(f"Starting optimization of {num_samples} crystal samples")
@@ -81,6 +93,10 @@ if __name__ == '__main__':
                 if opt_config['optim_target'] in ['uma']:
                     pred_path = config.uma_predictor_path  # smaller mol crystal model
                     opt_config['uma_predictor'] = init_uma_crystal_predictor(pred_path, device=device)
+                if opt_config['optim_target'] in ['rdf_dist']:
+                    tbatch = collate_data_list([target])
+                    out = tbatch.analyze(['rdf'], cutoff=10, rdf_cutoff=10)
+                    opt_config['target_rdf'] = out['rdf'][0]
 
                 'do opt'
                 opt_out = crystal_batch.optimize_crystal_parameters(**opt_config)
