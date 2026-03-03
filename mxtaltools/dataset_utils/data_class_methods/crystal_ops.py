@@ -248,7 +248,8 @@ class MolCrystalOps:
             min_vals[5 + 6 * (1 + ind)] = -0.99
 
         max_vals = torch.ones(latents.shape[-1], dtype=torch.float32, device=self.device)
-        max_vals[0:2] = 1 - 1e-4  # don't let it explicitly touch 1 or it can make an effective orthorhombic cell, and really pisses off ASE
+        max_vals[
+            0:2] = 1 - 1e-4  # don't let it explicitly touch 1 or it can make an effective orthorhombic cell, and really pisses off ASE
         self.set_cell_parameters(self.inv_latent_transform(latents.clamp(min=min_vals, max=max_vals)))
 
         if not skip_enforce_crystal_system:
@@ -299,7 +300,7 @@ class MolCrystalOps:
             len(cell_orientations), self.max_z_prime * 3)
 
         'rescale everything to [-1,1]'
-        halfpi = torch.pi / 2
+        # halfpi = torch.pi / 2
         au_range = torch.tensor([[0.075, 0.075, 0.1], [3, 3, 4]], dtype=torch.float32,
                                 device=self.device)  # range to scale aunit lengths
         log_au_range = torch.log(au_range)
@@ -1251,6 +1252,7 @@ class MolCrystalOps:
                              cmap='icefire',
                              nbins=25,
                              colorbar=False,
+                             ref_dist=None,
                              ):
 
         labels = self._build_feature_labels()
@@ -1286,6 +1288,7 @@ class MolCrystalOps:
                         nbinsx=nbins,
                         nbinsy=nbins,
                     )
+
                 elif mode == 'heatmap':
                     trace = go.Histogram2d(
                         x=x, y=y,
@@ -1296,6 +1299,11 @@ class MolCrystalOps:
                 else:
                     raise ValueError("mode must be 'contour' or 'heatmap'")
                 fig.add_trace(trace, row=i + 1, col=j + 1)
+                if ref_dist is not None:
+                    trace = go.Scatter(x=ref_dist[:, j], y=ref_dist[:, i], mode='markers',
+                                       marker_color='yellow', marker_line_width=4, opacity=0.5,
+                                       marker_line_color='black', marker_size=14, showlegend=False)
+                    fig.add_trace(trace, row=i + 1, col=j + 1)
 
         for i in range(D):
             fig.update_xaxes(title_text=labels[i], row=D, col=i + 1)
@@ -1338,7 +1346,7 @@ class MolCrystalOps:
         row = column_index // 3 + 1
         col = column_index % 3 + 1
         noise = (torch.randn_like(samples) * 1e-3) if torch.is_tensor(samples) else (
-                    np.random.randn(len(samples)) * 1e-3)
+                np.random.randn(len(samples)) * 1e-3)
         x_samp, y_samp = lightweight_one_sided_violin(samples + noise,
                                                       n_kde,
                                                       bandwidth_factor=bw_factor,

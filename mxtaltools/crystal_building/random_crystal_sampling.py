@@ -67,6 +67,7 @@ def sample_aunit_orientations(num_samples, z_prime: int=1):
         norms = random_vectors.norm(dim=1)
 
         # random lengths
+        # this should be changed to the correct Haar measure, proportional to sin^2(theta/2), but I don't know if it has an analytical PDF
         applied_norms = (torch.randn(num_samples) * norm_std + torch.pi
                          ).clip(min=-2 * torch.pi * 0.99,
                                 max=2 * torch.pi * 0.99)  # the CSD rotation norms are gaussian-distributed, not uniform

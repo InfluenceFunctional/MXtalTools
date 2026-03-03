@@ -48,7 +48,7 @@ class CrystalParams(nn.Module):
                     self.params[idx].copy_(new_values[idx])
 
 
-def gradient_descent_optimization(
+def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         init_sample: torch.Tensor,
         init_crystal_batch,
         optimizer_func: Union[torch.optim.Optimizer, str],
@@ -70,6 +70,10 @@ def gradient_descent_optimization(
         mc_kT: float = 0.5,
         log_noise_range=[-2, -1],
         target_rdf: torch.tensor = None,
+        target_latent: torch.tensor = None,
+        elementwise: bool = True,
+        atomwise: bool = False,
+        repulsion: float = 1.0,
 ):
     """
     do a local optimization via gradient descent on some score function
@@ -106,6 +110,9 @@ def gradient_descent_optimization(
 
     if target_rdf is not None:
         target_rdf = target_rdf.to(init_sample.device)
+    if target_latent is not None:
+        target_latent = target_latent.to(init_sample.device)
+
     param_module = CrystalParams(init_sample)  # <-- init_sample shape [n, 6 + max_z_prime * 6]
 
     optimizer = init_opt(init_lr, optimizer_func, param_module)
@@ -114,10 +121,10 @@ def gradient_descent_optimization(
         # We need a starting energy for the very first comparison
         with torch.no_grad():
             T, current_energy, current_state = init_mc_state(compression_factor, cutoff, do_box_restriction,
-                                                              energy_computes, enforce_reduced, init_crystal_batch,
-                                                              mc_kT, optim_target, param_module, score_model,
-                                                              std_margin, supercell_size, target_packing_coeff,
-                                                              uma_predictor, target_rdf)
+                                                             energy_computes, enforce_reduced, init_crystal_batch,
+                                                             mc_kT, optim_target, param_module, score_model,
+                                                             std_margin, supercell_size, target_packing_coeff,
+                                                             uma_predictor, target_rdf, target_latent)
 
     if anneal_lr:
         lr_factor = get_annealing_factor(1, 0.01, 500, 1)
@@ -144,26 +151,23 @@ def gradient_descent_optimization(
                 s_ind = 0
                 while (s_ind < (max_num_steps - 1)) and not converged.all():
                     optimizer.zero_grad(set_to_none=True)
-                    crystal_batch = init_crystal_batch.clone().detach()  # this is necessary to not retain lots of intermediate tensors
+                    crystal_batch = init_crystal_batch.clone().detach()
+
                     if monte_carlo:
                         crystal_batch.set_cell_parameters(param_module.stacked(), skip_box_analysis=False)
-                        samples = crystal_batch.latent_params()
-                        rand_dir = torch.randn_like(samples)
-                        rand_dir = rand_dir / rand_dir.norm(dim=-1, keepdim=True)
-                        # rand_magnitude = torch.randn(len(samples), device=samples.device).abs() * noise_level
-                        u = torch.rand(len(samples), device=samples.device)
-                        rand_magnitude = 10 ** (log_noise_range[0] + (log_noise_range[1] - log_noise_range[0]) * u)
-                        noised_samples = (samples + rand_dir * rand_magnitude[:, None]).clip(min=-1, max=1)
-                        crystal_batch.latent_to_cell_params(noised_samples,
+                        noised_latents = get_mc_noised_samples(crystal_batch, log_noise_range)
+                        crystal_batch.latent_to_cell_params(noised_latents,
                                                             skip_box_analysis=True,
                                                             skip_enforce_crystal_system=True)
                     else:
                         crystal_batch.set_cell_parameters(param_module.stacked(),
-                                                          skip_box_analysis=True)  # we will do box analysis in the next step, after cleanup
+                                                          skip_box_analysis=True)
+
                     crystal_batch.clean_cell_parameters(
                         mode='hard',
                         canonicalize_orientations=True,
-                    )
+                    )  # box analysis included in here
+
                     outputs, cluster_batch = crystal_batch.analyze(
                         computes=energy_computes,
                         cutoff=cutoff,
@@ -175,54 +179,40 @@ def gradient_descent_optimization(
                         std_orientation=True,
                         margin=std_margin,
                         predictor=uma_predictor,
+                        elementwise=elementwise,
+                        atomwise=atomwise,
+                        assign_outputs=True
                     )
 
-                    """
-                    record some stats
-                    """
-                    params_record[
-                        s_ind] = crystal_batch.full_cell_parameters().detach().cpu()  # must put this before the .backward()
-                    if records is None:
-                        records = {key: [] for key in outputs if key != 'rdf'}
-                        records['cp'] = []
-                        records['loss'] = []
-                    for key, value in outputs.items():
-                        if torch.is_tensor(value):
-                            records[key].append(value.detach().cpu())
-                    records['cp'].append(crystal_batch.packing_coeff.detach().cpu())
+                    """ record some stats"""
+                    records = update_record(crystal_batch, outputs, params_record, records, s_ind)
 
-                    """
-                    loss and backprop
-                    """
+                    """loss and backprop"""
                     if monte_carlo:
                         parse_mc_step(T, cluster_batch, compression_factor, crystal_batch, current_energy,
                                       current_state, do_box_restriction, enforce_reduced, optim_target, outputs,
-                                      param_module, records, score_model, target_packing_coeff, target_rdf)
+                                      param_module, records, score_model, target_packing_coeff, target_rdf,
+                                      target_latent)
 
                     else:
-                        loss = compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model, target_rdf)
-                        loss = compute_auxiliary_loss(cluster_batch, compression_factor,
-                                                      do_box_restriction, loss, target_packing_coeff, enforce_reduced,
-                                                      outputs)
-                        records['loss'].append(loss.detach().cpu())
-                        loss_to_backprop = loss[~converged].mean()  # save some effort in backprop
-                        loss_to_backprop.backward()
-                        torch.nn.utils.clip_grad_norm_(param_module.parameters(), grad_norm_clip)  # gradient clipping
-                        optimizer.step()  # apply grad
+                        loss_and_backprop(cluster_batch, compression_factor, crystal_batch, do_box_restriction,
+                                          enforce_reduced, grad_norm_clip, optim_target, optimizer, outputs,
+                                          param_module, records, score_model, target_latent, target_packing_coeff,
+                                          target_rdf)
 
-                        del loss_to_backprop, cluster_batch, outputs, crystal_batch, loss
                     if s_ind % 10 == 0:
                         gc.collect()
                         torch.cuda.empty_cache()
 
                     scheduler1.step()  # shrink
-
                     s_ind += 1
                     if s_ind % 50 == 0:
                         pbar.update(50)
                     if s_ind >= min(max_num_steps, max(50, min_num_steps)):
                         converged = check_convergence(params_record, s_ind, convergence_eps,
                                                       optimizer, init_lr)
+
+
     except (RuntimeError, ValueError) as e:
         if is_cuda_oom(e):
             if s_ind > 0:
@@ -234,6 +224,7 @@ def gradient_descent_optimization(
             raise e  # we want to raise this to fire the oom catcher above
 
     records = {k: torch.stack(v) for k, v in records.items()}
+
     """
     Pull out and re-analyze the best samples from each trajectory
     """
@@ -242,18 +233,17 @@ def gradient_descent_optimization(
     crystal_batch = init_crystal_batch.clone().detach()  # this is necessary to not retain lots of intermediate tensors
     crystal_batch.set_cell_parameters(best_samples.to(crystal_batch.device),
                                       skip_box_analysis=False)
-    outputs, cluster_batch = crystal_batch.analyze(
+    _ = crystal_batch.analyze(
         computes=energy_computes,
         cutoff=cutoff,
         rdf_cutoff=cutoff,
         supercell_size=supercell_size,
-        return_cluster=True,
-        repulsion=1,
+        return_cluster=False,
+        repulsion=repulsion,
         surface_padding=0,
-        predictor=uma_predictor
+        predictor=uma_predictor,
+        assign_outputs=True
     )
-    crystal_batch.add_graph_attr(outputs['lj'].detach(), 'lj')
-    crystal_batch.add_graph_attr(crystal_batch.packing_coeff.detach(), 'packing_coeff')
     samples_list = crystal_batch.batch_to_list()
 
     if enforce_reduced:
@@ -275,14 +265,90 @@ def gradient_descent_optimization(
     go.Figure(go.Histogram(x=(penalty+1e-6).log10().cpu().detach().numpy())).show()
     
     """
+    if optim_target == 'rdf_dist':
+        if torch.amin(records['loss']).log() < -2.5:
+            print("Found the crystal!")
+            good_ind = torch.argmin(records['loss'][-1]).item()
+            sample = crystal_batch.batch_to_list()[good_ind]
+            torch.save(sample.cpu().detach(), f'{crystal_batch.identifier[0]}_standardized_match.pt')
+            assert False, "Found what we were looking for"
+
+    records['params'] = params_record[:s_ind]
     return samples_list, records
+
+
+
+"""
+from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
+
+mol = ase_mol_from_crystaldata(cluster_batch, torch.argmin(records['loss'][-1]).item(), mode='unit cell')
+from ase.io import write
+write('aaa.cif',mol)
+"""
+
+"""
+
+# params trajectories
+from plotly.subplots import make_subplots
+fig = make_subplots(rows=4, cols=3, subplot_titles = ['a','b','c','al','be','ga','x','y','z','u','v','w'])
+for ind in range(12):
+    row = ind // 3 + 1
+    col = ind % 3 + 1
+    for ind2 in range(params_record.shape[1]):
+        fig.add_scatter(y=params_record[:s_ind, ind2, ind], showlegend=False, row=row, col=col)
+fig.show()
+
+"""
+
+
+def update_record(crystal_batch, outputs, params_record, records, s_ind):
+    params_record[s_ind] = crystal_batch.full_cell_parameters().detach().cpu()  # must put this before the .backward()
+    if records is None:
+        records = {key: [] for key in outputs if key != 'rdf'}
+        records['cp'] = []
+        records['loss'] = []
+    for key, value in outputs.items():
+        if torch.is_tensor(value):
+            records[key].append(value.detach().cpu())
+    records['cp'].append(crystal_batch.packing_coeff.detach().cpu())
+    return records
+
+
+def loss_and_backprop(cluster_batch, compression_factor, crystal_batch, do_box_restriction, enforce_reduced,
+                      grad_norm_clip, optim_target, optimizer, outputs, param_module, records, score_model,
+                      target_latent, target_packing_coeff, target_rdf):
+    loss = compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model,
+                        target_rdf, target_latent)
+    loss = compute_auxiliary_loss(cluster_batch, compression_factor,
+                                  do_box_restriction, loss, target_packing_coeff, enforce_reduced,
+                                  outputs)
+    records['loss'].append(loss.detach().cpu())
+    loss_to_backprop = loss.mean()  # save some effort in backprop
+    loss_to_backprop.backward()
+    torch.nn.utils.clip_grad_norm_(param_module.parameters(), grad_norm_clip)  # gradient clipping
+    optimizer.step()  # apply grad
+    del loss_to_backprop, cluster_batch, outputs, crystal_batch, loss
+
+
+def get_mc_noised_samples(crystal_batch, log_noise_range):
+    samples = crystal_batch.latent_params()
+    rand_dir = torch.randn_like(samples)
+    rand_dir = rand_dir / rand_dir.norm(dim=-1, keepdim=True)
+    # rand_magnitude = torch.randn(len(samples), device=samples.device).abs() * noise_level
+    u = torch.rand(len(samples), device=samples.device)
+    rand_magnitude = 10 ** (log_noise_range[0] + (log_noise_range[1] - log_noise_range[0]) * u)
+    noised_samples = (samples + rand_dir * rand_magnitude[:, None]).clip(min=-1, max=1)
+    return noised_samples
+
+
 
 
 def parse_mc_step(T, cluster_batch, compression_factor, crystal_batch, current_energy, current_state,
                   do_box_restriction, enforce_reduced, optim_target, outputs, param_module, records, score_model,
-                  target_packing_coeff, target_rdf):
+                  target_packing_coeff, target_rdf, target_latent):
     # 1. Compute energy of the proposal (noised_samples)
-    proposal_energy = compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model, target_rdf)
+    proposal_energy = compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model, target_rdf,
+                                   target_latent)
     proposal_energy = compute_auxiliary_loss(cluster_batch, compression_factor,
                                              do_box_restriction, proposal_energy,
                                              target_packing_coeff, enforce_reduced, outputs)
@@ -306,7 +372,7 @@ def parse_mc_step(T, cluster_batch, compression_factor, crystal_batch, current_e
 
 def init_mc_state(compression_factor, cutoff, do_box_restriction, energy_computes, enforce_reduced, init_crystal_batch,
                   mc_kT, optim_target, param_module, score_model, std_margin, supercell_size, target_packing_coeff,
-                  uma_predictor, target_rdf):
+                  uma_predictor, target_rdf, target_latent):
     # Initialize param_module and get initial energy
     crystal_batch = init_crystal_batch.clone().detach()
     crystal_batch.set_cell_parameters(param_module.stacked())
@@ -320,7 +386,8 @@ def init_mc_state(compression_factor, cutoff, do_box_restriction, energy_compute
                                                    std_orientation=True,
                                                    margin=std_margin,
                                                    predictor=uma_predictor, )
-    current_energy = compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model, target_rdf)
+    current_energy = compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model, target_rdf,
+                                  target_latent)
     current_energy = compute_auxiliary_loss(cluster_batch, compression_factor,
                                             do_box_restriction, current_energy, target_packing_coeff,
                                             enforce_reduced,
@@ -364,29 +431,17 @@ def init_opt(init_lr, optimizer_func, param_module):
 def traj_fig(x, y, names=[None, None], yrange=None, xrange=None):
     import plotly.graph_objects as go
     fig = go.Figure()
-    fig.add_scatter(x=x[0, :], y=y[0, :], mode='markers', marker_size=20, marker_color='grey',
-                    name='Initial State')
-    fig.add_scatter(x=x[-1, :], y=y[-1, :], mode='markers', marker_size=20, marker_color='black',
-                    name='Final State')
+
     for ind in range(x.shape[1]):
         fig.add_scatter(x=x[:, ind], y=y[:, ind], name=f"Run {ind}", opacity=0.5)
+    fig.add_scatter(x=x[-1, :], y=y[-1, :], mode='markers', marker_size=20, marker_color='black',
+                    name='Final State')
+    fig.add_scatter(x=x[0, :], y=y[0, :], mode='markers', marker_size=20, marker_color='grey',
+                    name='Initial State')
     fig.update_layout(xaxis_title=names[0], yaxis_title=names[1], xaxis_range=xrange, yaxis_range=yrange)
     fig.show()
 
 
-"""
-
-# params trajectories
-from plotly.subplots import make_subplots
-fig = make_subplots(rows=4, cols=3, subplot_titles = ['a','b','c','al','be','ga','x','y','z','u','v','w'])
-for ind in range(12):
-    row = ind // 3 + 1
-    col = ind % 3 + 1
-    for ind2 in range(params_record.shape[1]):
-        fig.add_scatter(y=params_record[:s_ind, ind2, ind], showlegend=False, row=row, col=col)
-fig.show()
-
-"""
 
 
 def ema_trajectory(traj: torch.Tensor, alpha: float = 0.1) -> torch.Tensor:
@@ -405,7 +460,7 @@ def ema_trajectory(traj: torch.Tensor, alpha: float = 0.1) -> torch.Tensor:
     return numer / denom
 
 
-def compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model, target_rdf=None):
+def compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model, target_rdf=None, target_latent=None):
     if optim_target.lower() == 'lj':  # todo obviate this with analysis keys
         loss = outputs['lj']
 
@@ -434,10 +489,13 @@ def compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_mode
         loss = outputs['reduction_en']
 
     elif optim_target.lower() == 'uma':
-        loss = outputs['uma'] * 96.485
+        loss = outputs['uma']
 
     elif optim_target.lower() == 'rdf_dist':
         loss = compute_rdf_distance(outputs['rdf'][0], target_rdf, torch.linspace(0, 6, target_rdf.shape[-1]))
+
+    elif optim_target.lower() == 'latent_dist':
+        loss = (target_latent - crystal_batch.latent_params()).norm(dim=-1)
 
     return loss
 
@@ -455,7 +513,12 @@ def compute_auxiliary_loss(cluster_batch, compression_factor, do_box_restriction
         loss = loss + box_loss
     if compression_factor != 0:
         aunit_lengths = cluster_batch.scale_lengths_to_aunit()
-        loss = loss + aunit_lengths.sum(dim=1) * compression_factor
+        threshold = 0.65
+        width = 0.01  # controls sharpness of transition
+
+        gate = torch.sigmoid((threshold - cluster_batch.packing_coeff) / width)
+        pressure_loss = aunit_lengths.sum(dim=1) * compression_factor * gate
+        loss = loss + pressure_loss
 
     if enforce_reduced:
         penalty = F.relu(outputs['reduction_en'])
@@ -556,6 +619,7 @@ def _init_for_local_opt(lr, max_num_steps, optimizer_func, sample, num_atoms):
     return (hit_max_lr, loss_record, lr_record, max_lr,
             optimizer, packing_record, samples_record, raw_samples_record, handedness_record,
             scheduler1, scheduler2, vdw_record, aunit_poses)
+
 
 #
 # def cleanup_sample(raw_sample, sg_ind_list, symmetries_dict):

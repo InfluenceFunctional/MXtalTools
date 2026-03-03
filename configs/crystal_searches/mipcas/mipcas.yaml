@@ -1,0 +1,77 @@
+device: cuda
+mol_path: /scratch/mk8347/csd_runs/datasets/mipcas/MIPCAS_standardized.pt
+dataset_path: null #D:\crystal_datasets\xuldud\xuldud_sg61_zp1.pt
+target_path: null #D:\crystal_datasets\mipcas\MIPCAS.pt
+target_identifier: null #MIPCAS
+out_dir: /scratch/mk8347/csd_runs/datasets/mipcas
+run_name: mipcas_uma
+save_trajs: true
+
+
+uma_predictor_path: '/scratch/mk8347/models/uma/esen_s.pt'
+
+init_sample_method: random  # 'random' 'reasonable' 'data'
+
+# if method is 'data' optimize provided pre-built crystals
+# else, from random initial conditions
+mol_seed: 0
+opt_seed: 1
+sampling_mode: all # 'all' or 'random' or 'ordered'
+mols_to_sample: 1
+num_samples: 10000 # per mol, per space group, per Zp
+
+sgs_to_search: [ 2 ]
+zp_to_search: [ 1 ]
+
+batch_size: 10000
+grow_batch_size: false
+
+init_target_cp: wide  # a float, null (use target value), 'wide' (0.0-0.7) or 'std' target packing coefficient for initial structure sampling
+
+# Optimization can have multiple stages by duplicating the opt block below and adjusting params
+# the search algo will run consecutive n consecutive optimizations for n the number of list elements
+
+#        these are the valid kwargs to feed to the opt function (from gradient_descent_optimization)
+#        optimizer_func: Optional = torch.optim.SGD,
+#        convergence_eps: Optional[float] = 1e-4,
+#        init_lr: Optional[float] = 1e-1,
+#        max_num_steps: Optional[int] = 500,
+#        show_tqdm: Optional[bool] = False,
+#        grad_norm_clip: Optional[float] = 0.1,
+#        optim_target: Optional[str] = 'lj',
+#        score_model: Optional[torch.nn.Module] = None,
+#        target_packing_coeff: Optional[torch.Tensor] = None,
+#        do_box_restriction: Optional[bool] = False,
+#        cutoff: Optional[float] = None,
+#        compression_factor: Optional[float] = 0,
+#        enforce_reduced: Optional[bool] = False,
+#        supercell_size: Optional[int] = 10,
+#        anneal_lr: Optional[bool] = False,
+
+opt:
+
+  - optim_target: 'uma' # lj qlj elj silu ellipsoid classification_score rdf_score rdf_dist latent_dist
+    enforce_reduced: true
+    compression_factor: 1.0
+    cutoff: 10  # can be as low as 6 for SiLU, 10 otherwise
+    init_lr: 0.05
+    convergence_eps: 0.00001
+    optimizer_func: 'rprop'  # NOTE rprop is by far the fastest and most reliable
+    anneal_lr: false
+    grad_norm_clip: 0.1
+    show_tqdm: true
+    max_num_steps: 450
+    target_packing_coeff: null
+
+  - optim_target: 'uma' # lj qlj elj silu ellipsoid classification_score rdf_score rdf_dist latent_dist
+    enforce_reduced: true
+    compression_factor: 0.0
+    cutoff: 10  # can be as low as 6 for SiLU, 10 otherwise
+    init_lr: 0.01
+    convergence_eps: 0.00001
+    optimizer_func: 'rprop'  # NOTE rprop is by far the fastest and most reliable
+    anneal_lr: false
+    grad_norm_clip: 0.1
+    show_tqdm: true
+    max_num_steps: 50
+    target_packing_coeff: null

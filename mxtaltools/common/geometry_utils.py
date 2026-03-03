@@ -1,4 +1,5 @@
 import sys
+from math import sqrt
 from typing import Optional
 
 import numpy as np
@@ -1535,6 +1536,7 @@ def fractional_transform(coords, transform_matrix):
     else:
         assert False
 
+
 def fractional_transform_np(coords, transform_matrix):
     if coords.ndim == 2 and transform_matrix.ndim == 2:
         return np.einsum('nj,ij->ni', coords, transform_matrix)
@@ -1610,8 +1612,29 @@ def lat2sph_rotvec(lat_orientations, z_prime):
     return sph.view(*lat_orientations.shape)
 
 
-def crystal_parameter_distance(latents1: torch.Tensor,
-                               latents2: torch.Tensor) -> torch.Tensor:
+def simple_latent_distance(l1: torch.Tensor,
+                           l2: torch.Tensor) -> torch.Tensor:
+    """euclidean distances, but with wrapped angular dimensions"""
+    max_z_prime = (l1.shape[-1] - 6) // 6
+    angs = [False] * 6
+    for zp in range(max_z_prime):
+        angs.extend([False, False, False])
+    for zp in range(max_z_prime):
+        angs.extend([False, True, True])
+        # phi and r dimensions arein rotational basis
+    periodic_mask = torch.tensor(angs)
+
+    diff = l1 - l2
+
+    # wrap periodic dims
+    diff[:, periodic_mask] = ((diff[:, periodic_mask] + 1) % 2) - 1
+
+    dist = diff.norm(dim=-1)
+    return dist
+
+
+def compute_latent_distance(latents1: torch.Tensor,
+                            latents2: torch.Tensor) -> torch.Tensor:
     """
     Compute a distance metric between crystals in the latent parameterization.
     :param params:
@@ -1638,22 +1661,25 @@ def crystal_parameter_distance(latents1: torch.Tensor,
     lat_sph_rotvec1 = lat2sph_rotvec(lat_orientations1, z_prime)  # [polar, azimuthal, length]
     lat_sph_rotvec2 = lat2sph_rotvec(lat_orientations2, z_prime)
 
-    lat_cart_rotvec1 = sph2cart_rotvec(lat_sph_rotvec1.reshape(len(lat_sph_rotvec1) * z_prime, 3)).reshape(
-        len(lat_sph_rotvec1), z_prime * 3)
-    lat_cart_rotvec2 = sph2cart_rotvec(lat_sph_rotvec2.reshape(len(lat_sph_rotvec2) * z_prime, 3)).reshape(
-        len(lat_sph_rotvec2), z_prime * 3)
-
     rot_dists = []
-    for zp in range(z_prime):
-        v1 = lat_cart_rotvec1[..., 3 * zp:3 * zp + 3]
-        v2 = lat_cart_rotvec2[..., 3 * zp:3 * zp + 3]
-        dist = 1 - (v1 * v2).sum(dim=1) / (v1.norm(dim=1) * v2.norm(dim=1))
+    for zp in range(z_prime):  # this should be replaced with a proper vector distance
+        rmat1 = rotvec2rotmat(lat_sph_rotvec1[...,3 * zp:3 * zp + 3], 'spherical')
+        rmat2 = rotvec2rotmat(lat_sph_rotvec2[...,3 * zp:3 * zp + 3], 'spherical')
+
+        R_delta = rmat1 @ rmat2.transpose(-1, -2)
+
+        trace = R_delta.diagonal(dim1=-2, dim2=-1).sum(-1)
+        cos_theta = ((trace - 1) / 2).clamp(-1 + 1e-7, 1 - 1e-7)
+        dist = torch.acos(cos_theta)
         rot_dists.append(dist)
 
     rot_dists = torch.stack(rot_dists).sum(0)
 
     "overall distance metric"
-    dists = 0.5 * box_dist + 0.25 * (positions_dist / z_prime / 2.5) + 0.25 * (rot_dists / z_prime / 2)
+    #dists = 0.5 * box_dist + 0.25 * (positions_dist / z_prime / 2.5) + 0.25 * (rot_dists / z_prime / 2)
+    #scales = [2 * sqrt(6), 2*sqrt(3), torch.pi] # maximum variation per dist
+    scales = [1, 0.836, 0.293]# [0.0127, 0.0152, 0.0433]  # empirical std over CSD samples
+    dists = scales[0] * 0.5 * box_dist + scales[1] * 0.25 * (positions_dist / z_prime) + scales[2] * 0.25 * (rot_dists / z_prime)
 
     return dists
 
@@ -1708,7 +1734,7 @@ def crystal_parameter_distmat(
         lat1_exp = lat1[:, None, :].expand(b, N, K).reshape(-1, K)
         lat2_exp = latents[None, :, :].expand(b, N, K).reshape(-1, K)
 
-        d = crystal_parameter_distance(lat1_exp, lat2_exp)
+        d = compute_latent_distance(lat1_exp, lat2_exp)
         distmat[i:i + b] = d.view(b, N)
 
     return distmat

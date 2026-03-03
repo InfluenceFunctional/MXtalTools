@@ -52,22 +52,17 @@ def crystal_rdf(crystal_batch,
         rdf = hist / shell_volumes[None, None, :] / rdf_density[..., None]  # un-smoothed radial density
 
     elif atomwise:  # todo this is only implemented for an identical atom indexing (assumes batch is repetition of same molecule)
-        assert False, "Atomwise RDFs must be rebuilt"
-        dists_per_hist, sorted_dists, rdfs_dict = get_atomwise_dists(crystal_batch.z, edges, dists, device,
-                                                                     num_graphs,
-                                                                     edge_batch,
-                                                                     crystal_batch.num_atoms)
+        graph_indexed_pairs, rdfs_dict = get_atomwise_dists(crystal_batch.z,
+                                                            edges,
+                                                            device,
+                                                            edge_batch,
+                                                            crystal_batch.num_atoms)
+
         num_pairs = len(rdfs_dict.keys())
-        batch = torch.arange(len(dists_per_hist), device=device).repeat_interleave(dists_per_hist, dim=0)
-        hist, bin_edges = batch_histogram_1d(sorted_dists, batch, num_graphs * num_pairs, rrange=rrange, nbins=bins)
-        if raw_density:  # todo reimplement
-            rdf_density = torch.ones(num_graphs * num_pairs, device=device, dtype=torch.float32)
-        else:
-            assert False, "non-raw density not implemented"
+        hist, rdf_density = smooth_1d_histogram(bins, device, dists, graph_indexed_pairs, num_graphs, num_pairs, rrange)
         # volume of the shell at radius r+dr
         shell_volumes = (4 / 3) * torch.pi * ((bin_edges[:-1] + torch.diff(bin_edges)) ** 3 - bin_edges[:-1] ** 3)
-        rdf = hist / shell_volumes[None, :] / rdf_density[:, None]  # un-smoothed radial density
-        rdf = rdf.reshape(num_graphs, num_pairs, -1)  # sample-wise indexing    else:  # average over all atom types
+        rdf = hist / shell_volumes[None, None, :] / rdf_density[..., None]  # un-smoothed radial density
     else:
         dists_per_hist = [torch.sum(edge_batch == n) for n in range(num_graphs)]
         sorted_dists = torch.cat([dists[edge_batch == n] for n in range(num_graphs)])
@@ -81,9 +76,10 @@ def crystal_rdf(crystal_batch,
 
     bin_centers = (bin_edges[:-1] + torch.diff(bin_edges)).requires_grad_()  # todo move this to discriminator code
 
-    envelope_func = smooth_cutoff(bin_edges[1:], rrange[-1], rrange[-1]-1)  # smooth out the last 1 angstrom
+    envelope_func = smooth_cutoff(bin_edges[1:], rrange[-1], rrange[-1] - 1)  # smooth out the last 1 angstrom
     smoothed_rdf = rdf * envelope_func.to(rdf.device)
     return smoothed_rdf, bin_centers, rdfs_dict
+
 
 def smooth_cutoff(d, rc, ron):
     # d: distances
@@ -97,6 +93,7 @@ def smooth_cutoff(d, rc, ron):
     envelope = envelope * (d <= rc)
 
     return envelope
+
 
 def smooth_1d_histogram(bins, device, dist, graph_indexed_pairs, num_graphs, num_pairs, rrange, sigma=None):
     rmin, rmax = rrange
@@ -153,7 +150,7 @@ def new_1d_histogram(bins, device, dists, graph_indexed_pairs, num_graphs, num_p
     t = t[valid_bins]
     gip = gip[valid_bins]
 
-    bin_id = t.floor().long()    # flatten (hist, bin) → single index
+    bin_id = t.floor().long()  # flatten (hist, bin) → single index
     scatter_idx = gip * bins + bin_id
     flat_hist = torch.zeros(num_graphs * num_pairs * bins, device=device)
     flat_hist.scatter_add_(
@@ -212,22 +209,22 @@ def get_elementwise_dists(atom_types: torch.LongTensor,
     return graph_indexed_pairs, rdfs_dict
 
 
-def get_atomwise_dists(atom_types: torch.LongTensor,
-                       edges: torch.LongTensor,
-                       dists: torch.Tensor,
-                       device: Union[torch.device, str],
-                       num_graphs: int,
-                       edge_in_crystal_number: torch.LongTensor,
-                       mol_num_atoms: torch.LongTensor,
-                       ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
-    assert all(mol_num_atoms == mol_num_atoms[0]), "atomwise rdf not set up for variable molecule sizes"
+def get_atomwise_dists_old(atom_types: torch.LongTensor,
+                           edges: torch.LongTensor,
+                           dists: torch.Tensor,
+                           device: Union[torch.device, str],
+                           num_graphs: int,
+                           edge_in_crystal_number: torch.LongTensor,
+                           mol_num_atoms: torch.LongTensor,
+                           ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
+    assert torch.all(mol_num_atoms == mol_num_atoms[0]), "atomwise rdf not set up for variable molecule sizes"
     all_atoms = torch.arange(mol_num_atoms[0], device=atom_types.device)
     num_atoms = len(all_atoms)
 
-    atoms = [atom_types[edges[0]].long(), atom_types[edges[1]].long()]
-    rdfs_dict = {}
     num_pairs = int((len(all_atoms) ** 2 + len(all_atoms)) / 2)
 
+    atoms = [atom_types[edges[0]].long(), atom_types[edges[1]].long()]
+    rdfs_dict = {}
     # prebuild pair lists
     elem_pair_list = torch.zeros((num_pairs, len(atoms[0])), dtype=torch.bool, device=device)
     elem1 = atoms[0].repeat(num_atoms, 1) == torch.Tensor(all_atoms)[:, None].to(device)
@@ -250,6 +247,44 @@ def get_atomwise_dists(atom_types: torch.LongTensor,
     dists_per_hist = bool_list.sum(1)
 
     return dists_per_hist, sorted_dists, rdfs_dict
+
+
+def get_atomwise_dists(atom_types: torch.LongTensor,
+                       edges: torch.LongTensor,
+                       device: Union[torch.device, str],
+                       edge_in_crystal_number: torch.LongTensor,
+                       mol_num_atoms: torch.LongTensor,
+                       ) -> Tuple[torch.Tensor, dict]:
+    assert torch.all(mol_num_atoms == mol_num_atoms[0]), "atomwise rdf not set up for variable molecule sizes"
+
+    A = mol_num_atoms[0].item()  # atoms per molecule
+    num_pairs = A * (A + 1) // 2
+
+    # --- get atom indices per edge ---
+    tot_num_repeats = len(atom_types) // A
+    atom_inds = torch.arange(A, device=device).repeat(tot_num_repeats)
+    i = atom_inds[edges[0]].long()
+    j = atom_inds[edges[1]].long()
+
+    # enforce i ≤ j
+    ii = torch.minimum(i, j)
+    jj = torch.maximum(i, j)
+
+    # triangular indexing
+    pair_ind = ii * A - ii * (ii - 1) // 2 + (jj - ii)
+
+    # combine with graph index
+    graph_indexed_pairs = edge_in_crystal_number * num_pairs + pair_ind
+
+    # --- build dictionary ---
+    rdfs_dict = {}
+    ind = 0
+    for a in range(A):
+        for b in range(a, A):
+            rdfs_dict[ind] = f"{a}_to_{b}"
+            ind += 1
+
+    return graph_indexed_pairs, rdfs_dict
 
 
 def get_rdf_inds(crystal_batch,
@@ -369,7 +404,7 @@ def compute_rdf_distmat(rdf_record, rr, show_tqdm=True, chunk_size=250):
             stop_ind = min(i, (j + 1) * chunk_size)
             rdf_dists[i, start_ind:stop_ind] = compute_rdf_distance(
                 rdf_record[i],
-                rdf_record[start_ind:stop_ind],  # save on energy & memory
+                rdf_record[start_ind:stop_ind],
                 rr,
                 n_parallel_rdf2=stop_ind - start_ind)
     rdf_dists = rdf_dists + rdf_dists.T  # symmetric distance matrix
@@ -493,7 +528,7 @@ def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None, return_num
     active = (torch_rdf1_f.sum(dim=-1) > eps) | (torch_rdf2.sum(dim=-1) > eps)
     distance = (emd * active).sum(dim=-1) / active.sum(dim=-1).clamp_min(1)  # ignore unused channels
 
-    #distance = emd.mean(-1)
+    # distance = emd.mean(-1)
     #
     # mass = (rdf1.sum(-1) + rdf2.sum(-1)) / 2
     # mass = mass / (1e-3 + mass.mean(dim=-1, keepdim=True))

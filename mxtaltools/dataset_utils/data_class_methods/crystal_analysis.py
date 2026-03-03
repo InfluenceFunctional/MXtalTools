@@ -113,15 +113,15 @@ class MolCrystalAnalysis:
 
         return molwise_lj_pot
 
-    def compute_eLJ_energy(self, repulsion: Optional[float] = 2.5, **kwargs):
+    def compute_eLJ_energy(self, repulsion: Optional[float] = 1.0, **kwargs):
         self._pre_compute_checks()
-
+        stiffness = repulsion * 2.5  # baseline value is 2.5
         if self.is_batch:
             molwise_lj_pot \
                 = elj_analysis(self.vdw_radii_tensor,
                                self.edges_dict,
                                self.num_graphs,
-                               stiffness=repulsion,
+                               stiffness=stiffness,
                                )
         else:
             raise NotImplementedError("LJ energies not implemented for single crystals")
@@ -288,7 +288,6 @@ class MolCrystalAnalysis:
                                       **kwargs,
                                       ):
 
-
         if self.is_batch:
             diffuse_batch = self.clone()
         else:
@@ -324,10 +323,11 @@ class MolCrystalAnalysis:
                                                     pbc=False,
                                                     force_rebuild=True)
 
-    def compute_rdf(self,
+    def compute_rdf(self,  # todo rebuild analyses with a template
                     rdf_cutoff: float = 6,
-                    elementwise: bool = True,
                     bins: int = 500,
+                    elementwise: bool = True,
+                    atomwise: bool = False,
                     **kwargs,
                     ):
         if not hasattr(self, 'edges_dict'):
@@ -339,6 +339,7 @@ class MolCrystalAnalysis:
                                                     self.edges_dict,
                                                     rrange=(0, rdf_cutoff),
                                                     bins=bins,
+                                                    atomwise=atomwise,
                                                     elementwise=elementwise,
                                                     )
         return rdf / self.z_prime[:, None, None], bin_edges, rdf_pair_dict

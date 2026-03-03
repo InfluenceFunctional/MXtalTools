@@ -651,8 +651,13 @@ def aunit2ucell(mol_batch):
     # get all molecule centroids via symmetry ops
     ucell_centroids_f = torch.einsum('nij,nj->ni', (molwise_sym_ops, unit_cell_affine_centroids_f))[..., :-1]
 
-    # force centroids within unit cell
-    centroids_f_in_cell = ucell_centroids_f - torch.floor(ucell_centroids_f)
+    # force centroids within unit cell # note this disallows centroids at fractional 1.0 and moves them to 0.0, which causes some artifacting
+    #centroids_f_in_cell = ucell_centroids_f - torch.floor(ucell_centroids_f)
+    # this one lets them sit at 1.0 exactly
+    mask = (ucell_centroids_f != 1.0)
+    centroids_f_in_cell = torch.where(mask,
+                                      ucell_centroids_f - torch.floor(ucell_centroids_f),
+                                      ucell_centroids_f)
 
     # subtract centroids and apply point symmetry to the molecule coordinates in fractional frame
     centered_coords_c = center_batch(unit_cell_coords_c,

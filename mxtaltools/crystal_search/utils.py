@@ -6,7 +6,10 @@ import torch
 from sklearn.cluster import AgglomerativeClustering
 
 from mxtaltools.analysis.crystal_rdf import compute_rdf_distmat_parallel, compute_rdf_distmat
+from mxtaltools.common.training_utils import load_crystal_score_model
 from mxtaltools.dataset_utils.data_classes import MolCrystalData
+from mxtaltools.dataset_utils.utils import collate_data_list
+from mxtaltools.mlip_interfaces.uma_utils import init_uma_crystal_predictor
 
 
 def rdf_clustering(packing_coeff, rdf, rdf_cutoff, rr, samples, vdw, num_cpus=None):
@@ -146,13 +149,15 @@ def coarse_crystal_filter(lj_record, lj_cutoff, packing_coeff_record, packing_cu
     return bad_inds, good_inds
 
 
-def get_initial_state(config, crystal_batch, device):
+def get_initial_state(config, crystal_batch, device, batch_idx):
     # sample initial parameters
     if config.init_sample_method == 'data':
         return crystal_batch
 
     if config.init_target_cp == 'std':
         target_cp = (torch.randn(crystal_batch.num_graphs, device=device) * 0.0447 + 0.6226).clip(min=0.45, max=0.95)
+    elif config.init_target_cp == 'wide':
+        target_cp = torch.rand(crystal_batch.num_graphs, device=device) * 0.6 + 0.1  # range of 0.1 to 0.7
     elif config.init_target_cp is not None:
         target_cp = config.init_target_cp
     else:
@@ -164,29 +169,35 @@ def get_initial_state(config, crystal_batch, device):
             tolerance=5,
             max_attempts=50,
             #sample_niggli=config.init_sample_reduced,
-            seed=config.opt_seed,
+            seed=config.opt_seed + int(batch_idx * 10000),
         )
+        if ((crystal_batch.packing_coeff - target_cp).abs() > 0.1).any():  # todo make this a general method
+            ratio = crystal_batch.packing_coeff / target_cp
+            crystal_batch.cell_lengths *= ratio.pow(1.0/3.0)[:, None]
+            crystal_batch.clean_cell_parameters(mode='hard')
+            crystal_batch.box_analysis()
     elif config.init_sample_method == 'random':
-        # if config.init_sample_reduced:
-        #     crystal_batch.sample_random_reduced_crystal_parameters(
-        #         target_packing_coeff=target_cp,
-        #         seed=config.opt_seed,
-        #     )
-        # else:
         crystal_batch.sample_random_crystal_parameters(
             target_packing_coeff=target_cp,
-            seed=config.opt_seed,
-        )
+            seed=config.opt_seed + int(batch_idx * 10000))
+        if ((crystal_batch.packing_coeff - target_cp).abs() > 0.1).any():
+            ratio = crystal_batch.packing_coeff / target_cp
+            crystal_batch.cell_lengths *= ratio.pow(1.0/3.0)[:, None]
+            crystal_batch.clean_cell_parameters(mode='hard')
+            crystal_batch.box_analysis()
     else:
         assert False
     return crystal_batch
 
 
-def init_samples_to_optim(config):
+def init_samples_to_optim(config, target=None):
     """
     Load and select molecules to optimize
     """
-    mol_list = torch.load(config.mol_path, weights_only=False)
+    if target is None:
+        mol_list = torch.load(config.mol_path, weights_only=False)
+    else:
+        mol_list = [target]  # must use identical conformer with ordering or rdf comparison will fail
     if not isinstance(mol_list, list):
         mol_list = [mol_list]
     if config.sampling_mode == 'all':
@@ -242,3 +253,45 @@ def parse_args():
         help="Path to YAML config file. If not provided, defaults to configs/crystal_searches/base.yaml",
     )
     return parser.parse_args()
+
+
+def parse_opt_config(opt_config, config, device, target):
+    if opt_config['optim_target'] in ['rdf_score', 'classification_score']:
+        score_model = load_crystal_score_model(config.score_model_checkpoint, device).to(device)
+        score_model.eval()
+        opt_config['score_model'] = score_model
+    if opt_config['optim_target'] in ['uma']:
+        pred_path = config.uma_predictor_path  # smaller mol crystal model
+        opt_config['uma_predictor'] = init_uma_crystal_predictor(pred_path, device=device)
+    if opt_config['optim_target'] in ['rdf_dist']:
+        opt_config['elementwise'] = False
+        opt_config['atomwise'] = True
+        tbatch = collate_data_list([target])
+        out = tbatch.analyze(['rdf'], cutoff=10, rdf_cutoff=10, elementwise=False, atomwise=True)
+        opt_config['target_rdf'] = out['rdf'][0]
+    if opt_config['optim_target'] in ['latent_dist']:
+        tbatch = collate_data_list([target])
+        opt_config['target_latent'] = tbatch.latent_params()
+    return opt_config
+
+
+def recover_opt_state(crystal_batch, config, device, batch_idx, prev_best_samples):
+    # if we oomed out in the last iter, recover the system state
+    try:
+        crystal_batch.set_cell_parameters(
+            prev_best_samples[:crystal_batch.num_graphs].to(crystal_batch.device)
+        )
+    except:  # fails often for some reason
+        crystal_batch = get_initial_state(config, crystal_batch, device, batch_idx)
+    return crystal_batch
+
+
+def process_target(config):
+    "Load target polymorph, get its features, and use its conformer"
+    target = torch.load(config.target_path, weights_only=False)
+    target = [elem for elem in target if elem.identifier == config.target_identifier][0]
+    assert len(target) > 0, "No target in the file with the given identifier!"
+    print("overwriting initial and target packing coeffs from target!")
+    config.init_target_cp = target.packing_coeff.item()
+    config.target_packing_coeff = target.packing_coeff.item()
+    return target, config
