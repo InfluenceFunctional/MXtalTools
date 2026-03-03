@@ -36,7 +36,7 @@ if __name__ == "__main__":
                 opt['optim_target'] = enfunc
             config['run_name'] = f'mipcas_{enfunc}_{seed_ind}'
 
-            config_path = f'mipcas_{enfunc}_{ind}.yaml'
+            config_path = f'mipcas_{enfunc}_{seed_ind}.yaml'
             with open(config_path, 'w') as f:
                 yaml.dump(config, f, default_flow_style=False)
 
