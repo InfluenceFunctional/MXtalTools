@@ -29,7 +29,7 @@ if __name__ == "__main__":
     ind = 0
     for enfunc in ['elj', 'uma']:
         for seed_ind in np.arange(10):
-
+            seed_ind = int(seed_ind)
             config = deepcopy(base)
             config['opt_seed'] = seed_ind
             for opt in config['opt']:

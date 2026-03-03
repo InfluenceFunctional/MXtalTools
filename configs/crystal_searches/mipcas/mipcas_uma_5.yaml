@@ -33,23 +33,7 @@ opt:
   optimizer_func: rprop
   show_tqdm: true
   target_packing_coeff: null
-opt_seed: !!python/object/apply:numpy._core.multiarray.scalar
-- !!python/object/apply:numpy.dtype
-  args:
-  - i8
-  - false
-  - true
-  state: !!python/tuple
-  - 3
-  - <
-  - null
-  - null
-  - null
-  - -1
-  - -1
-  - 0
-- !!binary |
-  BQAAAAAAAAA=
+opt_seed: 5
 out_dir: /scratch/mk8347/csd_runs/datasets/mipcas
 run_name: mipcas_uma_5
 sampling_mode: all
