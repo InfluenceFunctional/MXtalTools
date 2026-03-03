@@ -219,8 +219,8 @@ def init_uma_crystal_predictor(model_path, device):
             , },
         device=device,
     )
-    predictor.inference_mode.compile = False
-    predictor.inference_mode.tf32 = True
+    #predictor.inference_mode.compile = False
+    #predictor.inference_mode.tf32 = True
     predictor.tasks.pop('omc_forces')
     predictor.tasks.pop('omc_stress')
     predictor.dataset_to_tasks['omc'].pop(1)
