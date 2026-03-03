@@ -4,7 +4,7 @@ device: cuda
 grow_batch_size: false
 init_sample_method: random
 init_target_cp: wide
-mol_path: /scratch/mk8347/csd_runs/datasets/mipcas/MIPCAS_standardized.pt
+mol_path: /scratch/mk8347/data/crystal_datasets/mipcas/MIPCAS_standardized.pt
 mol_seed: 0
 mols_to_sample: 1
 num_samples: 10000
@@ -34,7 +34,7 @@ opt:
   show_tqdm: true
   target_packing_coeff: null
 opt_seed: 7
-out_dir: /scratch/mk8347/csd_runs/datasets/mipcas
+out_dir: /scratch/mk8347/data/crystal_datasets/mipcas
 run_name: mipcas_elj_7
 sampling_mode: all
 save_trajs: true

@@ -1,9 +1,9 @@
 device: cuda
-mol_path: /scratch/mk8347/csd_runs/datasets/mipcas/MIPCAS_standardized.pt
+mol_path: /scratch/mk8347/data/crystal_datasets/mipcas/MIPCAS_standardized.pt
 dataset_path: null #D:\crystal_datasets\xuldud\xuldud_sg61_zp1.pt
 target_path: null #D:\crystal_datasets\mipcas\MIPCAS.pt
 target_identifier: null #MIPCAS
-out_dir: /scratch/mk8347/csd_runs/datasets/mipcas
+out_dir: /scratch/mk8347/data/crystal_datasets/mipcas
 run_name: mipcas_uma
 save_trajs: true
 
