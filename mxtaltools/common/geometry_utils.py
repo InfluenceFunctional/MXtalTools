@@ -1622,7 +1622,7 @@ def simple_latent_distance(l1: torch.Tensor,
     for zp in range(max_z_prime):
         angs.extend([False, True, True])
         # phi and r dimensions arein rotational basis
-    periodic_mask = torch.tensor(angs)
+    periodic_mask = torch.tensor(angs, device=l1.device)
 
     diff = l1 - l2
 

@@ -248,8 +248,7 @@ class MolCrystalOps:
             min_vals[5 + 6 * (1 + ind)] = -0.99
 
         max_vals = torch.ones(latents.shape[-1], dtype=torch.float32, device=self.device)
-        max_vals[
-            0:2] = 1 - 1e-4  # don't let it explicitly touch 1 or it can make an effective orthorhombic cell, and really pisses off ASE
+        max_vals[0:2] = 1 - 1e-4  # don't let it explicitly touch 1 or it can make an effective orthorhombic cell, and really pisses off ASE
         self.set_cell_parameters(self.inv_latent_transform(latents.clamp(min=min_vals, max=max_vals)))
 
         if not skip_enforce_crystal_system:
@@ -573,6 +572,16 @@ class MolCrystalOps:
         latents = self.latent_params()
         noised_params = latents + torch.randn_like(latents) * noise_level
         self.latent_to_cell_params(noised_params)
+
+    def log_noise_latent_parameters(self, log_min: float, log_max: float):
+        latents = self.latent_params()
+        rand_dir = torch.randn_like(latents)
+        rand_dir = rand_dir / rand_dir.norm(dim=-1, keepdim=True)
+        u = torch.rand(len(latents), device=self.device)
+        rand_magnitude = 10 ** (log_min + (log_max - log_min) * u)
+        noised_latents = (latents + rand_dir * rand_magnitude[:, None]).clip(min=-1, max=1)
+        self.latent_to_cell_params(noised_latents)
+        self.clean_cell_parameters(mode='hard')
 
     def zp1_std_cell_parameters(self):
         """

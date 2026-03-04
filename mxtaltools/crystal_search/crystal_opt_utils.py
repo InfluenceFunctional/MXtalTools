@@ -249,6 +249,7 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
     if enforce_reduced:
         penalty = crystal_batch.compute_cell_reduction_penalty()
         samples_list = [elem for i, elem in enumerate(samples_list) if penalty[i] < 1e-3]
+
     """
     # analyze trajectory information, if we want
     

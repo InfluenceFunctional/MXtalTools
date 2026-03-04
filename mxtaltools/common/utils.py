@@ -69,7 +69,10 @@ def get_point_density(xy, bins=100, sigma=1.5, alpha=20):
     xc = 0.5 * (x_e[1:] + x_e[:-1])
     yc = 0.5 * (y_e[1:] + y_e[:-1])
 
-    z = interpn((xc, yc), hist, np.vstack([x, y]).T,
+    x_clipped = np.clip(x, xc[0], xc[-1])
+    y_clipped = np.clip(y, yc[0], yc[-1])
+
+    z = interpn((xc, yc), hist, np.vstack([x_clipped, y_clipped]).T,
                 bounds_error=False, fill_value=0.0)
 
     # floor + log compression
