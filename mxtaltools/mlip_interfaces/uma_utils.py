@@ -162,7 +162,7 @@ def batch_to_fairchem_atomicdata(batch, std_orientation, pbc=True, force_rebuild
             atomic_numbers=sample_z,
             cell=batch.T_fc[ind].T[None, ...],
             pbc=torch.tensor([[pbc, pbc, pbc]], dtype=bool, device=device),
-            natoms=torch.tensor([len(pos)], dtype=torch.long),
+            natoms=torch.tensor([len(pos)], dtype=torch.long, device=device),
             edge_index=torch.empty((2, 0), dtype=torch.long, device=device),
             cell_offsets=torch.empty((0, 3), dtype=torch.float32, device=device),
             nedges=torch.zeros(1, dtype=torch.long, device=device),
@@ -219,8 +219,14 @@ def init_uma_crystal_predictor(model_path, device):
             , },
         device=device,
     )
-    #predictor.inference_mode.compile = False
-    #predictor.inference_mode.tf32 = True
+    # predictor.inference_mode.compile = False
+    # predictor.inference_mode.tf32 = True
+    if hasattr(predictor, 'inference_mode'):  # older fairchem-core uses this
+        predictor.inference_mode.tf32 = True
+        predictor.inference_mode.compile = False
+    elif hasattr(predictor, 'inference_settings'):
+        predictor.inference_settings.tf32 = True  # newer fairchem-core uses this
+        predictor.inference_settings.compile = False
     predictor.tasks.pop('omc_forces')
     predictor.tasks.pop('omc_stress')
     predictor.dataset_to_tasks['omc'].pop(1)

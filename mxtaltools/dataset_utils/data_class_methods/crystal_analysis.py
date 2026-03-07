@@ -280,7 +280,7 @@ class MolCrystalAnalysis:
 
         # lattice energy per molecule, in eV
         # multiply by 96.485 to get kJ/mol
-        return (self.uma_pot / (self.sym_mult * self.z_prime) - self.uma_gas_pot) * 96.485
+        return ((self.uma_pot / (self.sym_mult * self.z_prime) - self.uma_gas_pot) * 96.485).float()
 
     def compute_lattice_gas_phase_uma(self,
                                       predictor,
