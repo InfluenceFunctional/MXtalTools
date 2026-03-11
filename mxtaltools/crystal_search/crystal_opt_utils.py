@@ -23,14 +23,27 @@ def get_annealing_factor(start_value, stop_value, total_time, step_iters):
 
 
 class CrystalParams(nn.Module):
-    def __init__(self, init_sample):
+    def __init__(self, init_sample, fixed_dims=None):
         super().__init__()
+        # fixed_dims: list of column indices to freeze
+        self.fixed_dims = fixed_dims if fixed_dims is not None else []
+        free_dims = [i for i in range(init_sample.shape[1]) if i not in self.fixed_dims]
+        self.free_dims = free_dims
+
+        # Only free dims are Parameters
         self.params = nn.ParameterList(
-            [nn.Parameter(row.clone().detach()) for row in init_sample]
+            [nn.Parameter(row[free_dims].clone().detach()) for row in init_sample]
         )
+        # Fixed dims stored as buffer (not optimized, but accessible)
+        self.register_buffer('fixed_vals', init_sample[:, fixed_dims].clone().detach())
 
     def stacked(self):
-        return torch.stack(list(self.params), dim=0)
+        free = torch.stack(list(self.params), dim=0)  # [n, n_free]
+        full = torch.zeros(free.shape[0], free.shape[1] + len(self.fixed_dims),
+                          device=free.device, dtype=free.dtype)
+        full[:, self.free_dims] = free
+        full[:, self.fixed_dims] = self.fixed_vals
+        return full
 
     def update_params(self, new_values, mask=None):
         """
@@ -113,7 +126,11 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
     if target_latent is not None:
         target_latent = target_latent.to(init_sample.device)
 
-    param_module = CrystalParams(init_sample)  # <-- init_sample shape [n, 6 + max_z_prime * 6]
+    if target_rdf is not None:
+        fixed_dims = [0,1,2,3,4,5]
+    else:
+        fixed_dims = None
+    param_module = CrystalParams(init_sample, fixed_dims=fixed_dims)
 
     optimizer = init_opt(init_lr, optimizer_func, param_module)
     monte_carlo = optimizer_func.lower() == 'mcmc'
@@ -127,7 +144,7 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                                                              uma_predictor, target_rdf, target_latent)
 
     if anneal_lr:
-        lr_factor = get_annealing_factor(1, 0.01, 500, 1)
+        lr_factor = get_annealing_factor(1, 0.01, int(max_num_steps * 0.75), 1)
     else:
         lr_factor = 1
     scheduler1 = optim.lr_scheduler.MultiplicativeLR(optimizer,
@@ -280,8 +297,8 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
             torch.save(sample.cpu().detach(), f'{crystal_batch.identifier[0]}_standardized_match.pt')
             assert False, "Found what we were looking for"
 
-    # timesteps = torch.arange(s_ind).repeat(init_crystal_batch.num_graphs, 1).T
-    # traj_fig(timesteps, torch.log(records['loss']), names=['time', 'loss'])
+    timesteps = torch.arange(s_ind).repeat(init_crystal_batch.num_graphs, 1).T
+    traj_fig(timesteps, torch.log(records['loss']), names=['time', 'loss'])
 
     records['params'] = params_record[:s_ind]
     return samples_list, records
@@ -307,6 +324,14 @@ for ind in range(12):
     for ind2 in range(params_record.shape[1]):
         fig.add_scatter(y=params_record[:s_ind, ind2, ind], showlegend=False, row=row, col=col)
 fig.show()
+
+# traj vis
+t_ind = torch.argmin(records['loss'][-1]).item()
+tbatch = collate_data_list([samples_list[0].clone().cpu() for _ in range(s_ind)])
+tbatch.set_cell_parameters(params_record[:s_ind, t_ind, :])
+tbatch.pose_aunit()
+tbatch.build_unit_cell()
+tbatch.visualize(mode='unit cell')
 
 """
 

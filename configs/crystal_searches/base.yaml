@@ -1,6 +1,6 @@
 device: cuda
 mol_path: D:\crystal_datasets\nehzor\NEHZOR0_std_conf.pt
-dataset_path: null # D:\crystal_datasets\nehzor\NEHZOR_structures_std_conf.pt #D:\crystal_datasets\xuldud\xuldud_sg61_zp1.pt
+dataset_path: D:\crystal_datasets\nehzor\NEHZOR_structures_std_conf.pt #D:\crystal_datasets\xuldud\xuldud_sg61_zp1.pt
 target_path: D:\crystal_datasets\nehzor\NEHZOR0_std_conf.pt #D:\crystal_datasets\mipcas\MIPCAS.pt
 target_identifier: NEHZOR #MIPCAS
 out_dir: D:\crystal_datasets\opt_outputs
@@ -9,15 +9,15 @@ save_trajs: false
 
 uma_predictor_path: D:\crystal_datasets\esen_s.pt
 
-init_sample_method: random  # 'random' 'reasonable' 'data'
+init_sample_method: target  # 'random' 'reasonable' 'data'
 
 # if method is 'data' optimize provided pre-built crystals
 # else, from random initial conditions
 mol_seed: 0
-opt_seed: 5
+opt_seed: 7
 sampling_mode: all # 'all' or 'random' or 'ordered'
 mols_to_sample: 2
-num_samples: 10000 # per mol, per space group, per Zp
+num_samples: 50000 # per mol, per space group, per Zp
 
 sgs_to_search: [ 14 ]
 zp_to_search: [ 1 ]
@@ -25,7 +25,7 @@ zp_to_search: [ 1 ]
 batch_size: 200
 grow_batch_size: false
 
-init_target_cp: wide  # a float, null (use target value), 'wide' (0.0-0.7) or 'std' target packing coefficient for initial structure sampling
+init_target_cp: null  # a float, null (use target value), 'wide' (0.0-0.7) or 'std' target packing coefficient for initial structure sampling
 
 # Optimization can have multiple stages by duplicating the opt block below and adjusting params
 # the search algo will run consecutive n consecutive optimizations for n the number of list elements
@@ -48,31 +48,31 @@ init_target_cp: wide  # a float, null (use target value), 'wide' (0.0-0.7) or 's
 #        anneal_lr: Optional[bool] = False,
 
 opt:
-
-  - optim_target: 'silu' # lj qlj elj silu ellipsoid classification_score rdf_score rdf_dist latent_dist
-    enforce_reduced: true
-    compression_factor: 1.0
-    cutoff: 6  # can be as low as 6 for SiLU, 10 otherwise
-    init_lr: 0.05
-    convergence_eps: 0.00001
-    optimizer_func: 'rprop'  # NOTE rprop is by far the fastest and most reliable
-    anneal_lr: false
-    grad_norm_clip: 0.1
-    show_tqdm: true
-    max_num_steps: 250
-    target_packing_coeff: 0.73
+#
+#  - optim_target: 'silu' # lj qlj elj silu ellipsoid classification_score rdf_score rdf_dist latent_dist
+#    enforce_reduced: true
+#    compression_factor: 1.0
+#    cutoff: 6  # can be as low as 6 for SiLU, 10 otherwise
+#    init_lr: 0.05
+#    convergence_eps: 0.00001
+#    optimizer_func: 'rprop'  # NOTE rprop is by far the fastest and most reliable
+#    anneal_lr: false
+#    grad_norm_clip: 0.1
+#    show_tqdm: true
+#    max_num_steps: 250
+#    target_packing_coeff: 0.73
 
   - optim_target: 'rdf_dist' # lj qlj elj silu ellipsoid classification_score rdf_score rdf_dist latent_dist
     enforce_reduced: true
-    compression_factor: 0.1
+    compression_factor: 0.0
     cutoff: 10  # can be as low as 6 for SiLU, 10 otherwise
-    init_lr: 0.01
-    convergence_eps: 0.00001
+    init_lr: 0.1
+    convergence_eps: 0.001
     optimizer_func: 'rprop'  # NOTE rprop is by far the fastest and most reliable
-    anneal_lr: false
+    anneal_lr: true
     grad_norm_clip: 0.1
     show_tqdm: true
-    max_num_steps: 250
+    max_num_steps: 1000
     target_packing_coeff: null
 #
 #  - optim_target: 'uma' # lj qlj elj silu ellipsoid classification_score rdf_score rdf_dist latent_dist

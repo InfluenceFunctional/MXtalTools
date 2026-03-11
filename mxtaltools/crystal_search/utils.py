@@ -149,7 +149,7 @@ def coarse_crystal_filter(lj_record, lj_cutoff, packing_coeff_record, packing_cu
     return bad_inds, good_inds
 
 
-def get_initial_state(config, crystal_batch, device, batch_idx):
+def get_initial_state(config, crystal_batch, device, batch_idx, target):
     # sample initial parameters
     if config.init_sample_method == 'data':
         return crystal_batch
@@ -185,6 +185,15 @@ def get_initial_state(config, crystal_batch, device, batch_idx):
             crystal_batch.cell_lengths *= ratio.pow(1.0/3.0)[:, None]
             crystal_batch.clean_cell_parameters(mode='hard')
             crystal_batch.box_analysis()
+    elif config.init_sample_method == 'target':
+        crystal_batch.sample_random_crystal_parameters(
+            target_packing_coeff=target_cp,
+            seed=config.opt_seed + int(batch_idx * 10000))
+        standard_cell = target.compute_standard_cell()
+        crystal_batch.cell_lengths = torch.tensor(standard_cell[0, :3], dtype=torch.float32, device=crystal_batch.device).repeat(crystal_batch.num_graphs, 1)
+        crystal_batch.cell_angles = torch.tensor(standard_cell[0, 3:], dtype=torch.float32, device=crystal_batch.device).repeat(crystal_batch.num_graphs, 1) * torch.pi /2 / 90
+        crystal_batch.box_analysis()
+
     else:
         assert False
     return crystal_batch

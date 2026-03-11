@@ -227,7 +227,7 @@ class MolCrystalAnalysis:
                 ):
         """
         full procedure for building and analyzing a molecular crystal
-        """
+        """ # todo add a flag to only build cluster if we actually need it - not all computes require it e.g., reduction energy
         cluster_batch = self.mol2cluster(
             cutoff, supercell_size,
             std_orientation=std_orientation)

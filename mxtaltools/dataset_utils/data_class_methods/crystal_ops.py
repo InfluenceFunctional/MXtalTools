@@ -1487,3 +1487,26 @@ class MolCrystalOps:
         fixed_flat_rotvecs = canonicalize_rotvec(flat_rotvecs)
         fixed_rotvecs = fixed_flat_rotvecs.reshape(self.num_graphs, self.max_z_prime * 3)
         self.aunit_orientation = fixed_rotvecs
+
+    def compute_standard_cell(self):
+        import spglib
+        from ase.geometry import cellpar_to_cell, cell_to_cellpar
+        target_params = self.full_cell_parameters()
+        std_params = []
+        for p in target_params:
+            cellpar = p[:6].clone().numpy()
+            cellpar[3:] *= (180 / np.pi)
+
+            lattice = cellpar_to_cell(cellpar)
+            # dummy atom (needed for spglib)
+            positions = [[0, 0, 0]]
+            numbers = [1]
+            cell = (lattice, positions, numbers)
+            lattice_std, positions_std, numbers_std = spglib.standardize_cell(
+                cell,
+                to_primitive=False,
+                no_idealize=False
+            )
+            cellpar_std = cell_to_cellpar(lattice_std)
+            std_params.append(cellpar_std)
+        return np.stack(std_params)
