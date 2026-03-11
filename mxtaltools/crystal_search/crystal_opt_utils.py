@@ -181,7 +181,8 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                         predictor=uma_predictor,
                         elementwise=elementwise,
                         atomwise=atomwise,
-                        assign_outputs=True
+                        assign_outputs=True,
+                        bins=100,
                     )
 
                     """ record some stats"""
@@ -192,13 +193,13 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                         parse_mc_step(T, cluster_batch, compression_factor, crystal_batch, current_energy,
                                       current_state, do_box_restriction, enforce_reduced, optim_target, outputs,
                                       param_module, records, score_model, target_packing_coeff, target_rdf,
-                                      target_latent)
+                                      target_latent, cutoff)
 
                     else:
                         loss_and_backprop(cluster_batch, compression_factor, crystal_batch, do_box_restriction,
                                           enforce_reduced, grad_norm_clip, optim_target, optimizer, outputs,
                                           param_module, records, score_model, target_latent, target_packing_coeff,
-                                          target_rdf)
+                                          target_rdf, cutoff)
 
                     if s_ind % 10 == 0:
                         gc.collect()
@@ -242,7 +243,10 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         repulsion=repulsion,
         surface_padding=0,
         predictor=uma_predictor,
-        assign_outputs=True
+        assign_outputs=True,
+        elementwise=False,
+        atomwise=True,
+        bins=100
     )
     samples_list = crystal_batch.batch_to_list()
 
@@ -258,6 +262,8 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
     traj_fig(timesteps, log_rescale_positive(records['loss']), names=['time', 'loss'])
     traj_fig(timesteps, (records['cp']), names=['time', 'cp'])
     traj_fig(records['cp'], log_rescale_positive(records['lj']), names=['cp', 'lj'])
+    traj_fig(timesteps, torch.log(records['loss']), names=['time', 'loss'])
+
     
     crystal_batch.plot_batch_cell_params()
     crystal_batch.plot_batch_density_funnel()
@@ -273,6 +279,9 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
             sample = crystal_batch.batch_to_list()[good_ind]
             torch.save(sample.cpu().detach(), f'{crystal_batch.identifier[0]}_standardized_match.pt')
             assert False, "Found what we were looking for"
+
+    # timesteps = torch.arange(s_ind).repeat(init_crystal_batch.num_graphs, 1).T
+    # traj_fig(timesteps, torch.log(records['loss']), names=['time', 'loss'])
 
     records['params'] = params_record[:s_ind]
     return samples_list, records
@@ -317,9 +326,9 @@ def update_record(crystal_batch, outputs, params_record, records, s_ind):
 
 def loss_and_backprop(cluster_batch, compression_factor, crystal_batch, do_box_restriction, enforce_reduced,
                       grad_norm_clip, optim_target, optimizer, outputs, param_module, records, score_model,
-                      target_latent, target_packing_coeff, target_rdf):
+                      target_latent, target_packing_coeff, target_rdf, cutoff):
     loss = compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model,
-                        target_rdf, target_latent)
+                        cutoff, target_rdf, target_latent)
     loss = compute_auxiliary_loss(cluster_batch, compression_factor,
                                   do_box_restriction, loss, target_packing_coeff, enforce_reduced,
                                   outputs)
@@ -346,10 +355,10 @@ def get_mc_noised_samples(crystal_batch, log_noise_range):
 
 def parse_mc_step(T, cluster_batch, compression_factor, crystal_batch, current_energy, current_state,
                   do_box_restriction, enforce_reduced, optim_target, outputs, param_module, records, score_model,
-                  target_packing_coeff, target_rdf, target_latent):
+                  target_packing_coeff, target_rdf, target_latent, cutoff):
     # 1. Compute energy of the proposal (noised_samples)
     proposal_energy = compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model, target_rdf,
-                                   target_latent)
+                                   target_latent, cutoff)
     proposal_energy = compute_auxiliary_loss(cluster_batch, compression_factor,
                                              do_box_restriction, proposal_energy,
                                              target_packing_coeff, enforce_reduced, outputs)
@@ -387,7 +396,7 @@ def init_mc_state(compression_factor, cutoff, do_box_restriction, energy_compute
                                                    std_orientation=True,
                                                    margin=std_margin,
                                                    predictor=uma_predictor, )
-    current_energy = compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model, target_rdf,
+    current_energy = compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model, cutoff, target_rdf,
                                   target_latent)
     current_energy = compute_auxiliary_loss(cluster_batch, compression_factor,
                                             do_box_restriction, current_energy, target_packing_coeff,
@@ -461,7 +470,7 @@ def ema_trajectory(traj: torch.Tensor, alpha: float = 0.1) -> torch.Tensor:
     return numer / denom
 
 
-def compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model, target_rdf=None, target_latent=None):
+def compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model, cutoff, target_rdf=None, target_latent=None):
     if optim_target.lower() == 'lj':  # todo obviate this with analysis keys
         loss = outputs['lj']
 
@@ -493,7 +502,7 @@ def compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_mode
         loss = outputs['uma']
 
     elif optim_target.lower() == 'rdf_dist':
-        loss = compute_rdf_distance(outputs['rdf'][0], target_rdf, torch.linspace(0, 6, target_rdf.shape[-1]))
+        loss = compute_rdf_distance(outputs['rdf'][0], target_rdf, torch.linspace(0, cutoff, target_rdf.shape[-1]))
 
     elif optim_target.lower() == 'latent_dist':
         loss = (target_latent - crystal_batch.latent_params()).norm(dim=-1)

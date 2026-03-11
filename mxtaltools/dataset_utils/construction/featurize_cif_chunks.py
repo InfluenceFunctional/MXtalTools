@@ -399,13 +399,22 @@ if __name__ == '__main__':
     #                        protonation_state='deprotonated')
 
     process_cifs_to_chunks(n_chunks=1,
-                           cifs_path=r"D:\crystal_datasets\mipcas",
-                           chunks_path='D:/crystal_datasets/',
-                           chunk_prefix='mipcas',
+                           cifs_path=r"D:\crystal_datasets\nehzor",
+                           chunks_path='D:/crystal_datasets/nehzor/',
+                           chunk_prefix='nehzor',
                            use_filenames_for_identifiers=False,
-                           target_identifiers=['MIPCAS'],
+                           target_identifiers=['NEHZOR','NEHZOR01'],
                            filter_by_targets=False,
                            protonation_state='protonated')
+
+    # process_cifs_to_chunks(n_chunks=1,
+    #                        cifs_path=r"D:\crystal_datasets\mipcas",
+    #                        chunks_path='D:/crystal_datasets/',
+    #                        chunk_prefix='mipcas',
+    #                        use_filenames_for_identifiers=False,
+    #                        target_identifiers=['MIPCAS'],
+    #                        filter_by_targets=False,
+    #                        protonation_state='protonated')
 
     # process_cifs_to_chunks(n_chunks=1,
     #                        cifs_path='D:/crystal_datasets/dafmuv/',

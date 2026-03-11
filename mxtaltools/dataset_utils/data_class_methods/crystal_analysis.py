@@ -325,7 +325,7 @@ class MolCrystalAnalysis:
 
     def compute_rdf(self,  # todo rebuild analyses with a template
                     rdf_cutoff: float = 6,
-                    bins: int = 500,
+                    bins: int = 100,
                     elementwise: bool = True,
                     atomwise: bool = False,
                     **kwargs,

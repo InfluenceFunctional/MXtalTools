@@ -1060,7 +1060,7 @@ class MolCrystalOps:
                                   return_fig: bool = False,
                                   split_by_sg: bool = False,
                                   split_by_zp: bool = False,
-                                  override_energy: torch.Tensor = None,
+                                  override_energy: Union[str, torch.Tensor] = None,
                                   color_flag: torch.Tensor = None,
                                   show_colorbar: bool = False,
                                   max_y_quantile: Optional[float] = None,
@@ -1070,7 +1070,12 @@ class MolCrystalOps:
         if override_energy is None:
             energy = (log_rescale_positive(self.lj) / self.num_atoms).cpu().detach()
         else:
-            energy = (log_rescale_positive(override_energy) / self.num_atoms).cpu().detach()
+            if isinstance(override_energy, torch.Tensor):
+                energy = (log_rescale_positive(override_energy) / self.num_atoms).cpu().detach()
+            elif isinstance(override_energy, str):
+                energy = log_rescale_positive(self[override_energy]/self.num_atoms).cpu().detach()
+            else:
+                assert False, "override_energyu must be tensor or string"
 
         xy = np.vstack([self.packing_coeff.cpu().detach(), energy])
         try:

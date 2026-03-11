@@ -62,6 +62,12 @@ if __name__ == '__main__':
             if (prev_best_samples is None) or (
                     prev_best_samples is not None and len(prev_best_samples) < crystal_batch.num_graphs):
                 crystal_batch = get_initial_state(config, crystal_batch, device, batch_idx)
+                target_params = target.full_cell_parameters()[0]
+                crystal_batch.cell_lengths[:, 0] = target_params[2]
+                crystal_batch.cell_lengths[:, 1] = target_params[1]
+                crystal_batch.cell_lengths[:, 2] = target_params[0]
+                crystal_batch.cell_angles[:, 1] = target_params[4]
+                crystal_batch.box_analysis()
             else:
                 crystal_batch = recover_opt_state(crystal_batch, config, device, batch_idx, prev_best_samples)
 

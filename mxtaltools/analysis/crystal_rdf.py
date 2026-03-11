@@ -7,7 +7,7 @@ import torch
 from torch_scatter import scatter
 from tqdm import tqdm
 
-from mxtaltools.common.utils import repeat_interleave, torch_ptp
+from mxtaltools.common.utils import repeat_interleave, torch_ptp, is_cuda_oom
 
 
 def crystal_rdf(crystal_batch,
@@ -408,7 +408,6 @@ def compute_rdf_distmat(rdf_record, rr, show_tqdm=True, chunk_size=250):
                 rr,
                 n_parallel_rdf2=stop_ind - start_ind)
     rdf_dists = rdf_dists + rdf_dists.T  # symmetric distance matrix
-    rdf_dists = torch.log10(1 + rdf_dists)
     return rdf_dists
 
 
@@ -573,3 +572,46 @@ def earth_movers_distance_np(pdf1: np.ndarray, pdf2: np.ndarray):
     emd: np.array(n)
     """
     return np.sum(np.abs(np.cumsum(pdf1, axis=-1) - np.cumsum(pdf2, axis=-1)), axis=-1)
+
+def rdf_radial_graph(rdfs, device, d_cut, bins, chunk_size: int = 4):
+    rdfs_gpu = rdfs.to(device)
+    rdf_norm = rdfs_gpu / (rdfs_gpu.sum(dim=-1, keepdim=True) + 1e-10)
+    cdfs = torch.cumsum(rdf_norm, dim=-1)
+    bin_width = bins[1] - bins[0]
+    eps = 1e-12
+    N = rdfs_gpu.shape[0]
+
+    neighbor_lists = []
+    neighbor_dists = []
+
+    i = 0
+    pbar = tqdm(total=N)
+
+    while True:
+        c = min(chunk_size, N-i)
+        try:
+            c = min(chunk_size, N - i)
+            emd = torch.sum(torch.abs(cdfs[i:i + c, None] - cdfs[None, :]), dim=-1) * bin_width  # (c, N, 91)
+            active = (rdfs_gpu[i:i + c, None].sum(-1) > eps) | (rdfs_gpu[None].sum(-1) > eps)  # (c, N, 91)
+            d = (emd * active).sum(-1) / active.sum(-1).clamp_min(1)  # (c, N)
+
+            for j in range(c):
+                mask = d[j] < d_cut
+                mask[i + j] = False
+                neighbor_lists.append(mask.nonzero(as_tuple=False).squeeze(-1).cpu())
+                neighbor_dists.append(d[j][mask].cpu())
+
+            i += c
+            pbar.update(c)
+            if i >= N:
+                break
+        except Exception as e:
+            if is_cuda_oom(e):
+                print("cutting chunk size")
+                chunk_size = max(1, chunk_size - 1)
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+            else:
+                raise e
+
+    return neighbor_lists, neighbor_dists

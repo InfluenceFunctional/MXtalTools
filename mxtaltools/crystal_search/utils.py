@@ -267,11 +267,13 @@ def parse_opt_config(opt_config, config, device, target):
         opt_config['elementwise'] = False
         opt_config['atomwise'] = True
         tbatch = collate_data_list([target])
-        out = tbatch.analyze(['rdf'], cutoff=10, rdf_cutoff=10, elementwise=False, atomwise=True)
+        out = tbatch.analyze(['rdf'], cutoff=10, rdf_cutoff=10, elementwise=False, atomwise=True, bins=100)
         opt_config['target_rdf'] = out['rdf'][0]
     if opt_config['optim_target'] in ['latent_dist']:
         tbatch = collate_data_list([target])
         opt_config['target_latent'] = tbatch.latent_params()
+    # if config.target_path is not None:
+    #     opt_config['target_packing_coeff'] = config.init_target_cp
     return opt_config
 
 
@@ -289,9 +291,12 @@ def recover_opt_state(crystal_batch, config, device, batch_idx, prev_best_sample
 def process_target(config):
     "Load target polymorph, get its features, and use its conformer"
     target = torch.load(config.target_path, weights_only=False)
-    target = [elem for elem in target if elem.identifier == config.target_identifier][0]
+    if isinstance(target, list):
+        target = [elem for elem in target if elem.identifier == config.target_identifier][0]
+    else:
+        assert target.identifier == config.target_identifier
     assert len(target) > 0, "No target in the file with the given identifier!"
     print("overwriting initial and target packing coeffs from target!")
-    config.init_target_cp = target.packing_coeff.item()
-    config.target_packing_coeff = target.packing_coeff.item()
+    #config.init_target_cp = target.packing_coeff.item()
+    #config.target_packing_coeff = target.packing_coeff.item()
     return target, config
