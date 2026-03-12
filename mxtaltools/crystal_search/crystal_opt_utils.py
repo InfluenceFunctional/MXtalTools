@@ -42,7 +42,8 @@ class CrystalParams(nn.Module):
         full = torch.zeros(free.shape[0], free.shape[1] + len(self.fixed_dims),
                           device=free.device, dtype=free.dtype)
         full[:, self.free_dims] = free
-        full[:, self.fixed_dims] = self.fixed_vals
+        if len(self.fixed_dims) > 0:
+            full[:, self.fixed_dims] = self.fixed_vals
         return full
 
     def update_params(self, new_values, mask=None):
@@ -240,6 +241,8 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                 best_samples = torch.stack([params_record[best_sample_ind[ind], ind] for ind in range(num_samples)])
                 torch.save(best_samples, 'opt_intermediates.pt')
             raise e  # we want to raise this to fire the oom catcher above
+        else:
+            raise e
 
     records = {k: torch.stack(v) for k, v in records.items()}
 
@@ -297,8 +300,8 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
             torch.save(sample.cpu().detach(), f'{crystal_batch.identifier[0]}_standardized_match.pt')
             assert False, "Found what we were looking for"
 
-    timesteps = torch.arange(s_ind).repeat(init_crystal_batch.num_graphs, 1).T
-    traj_fig(timesteps, torch.log(records['loss']), names=['time', 'loss'])
+    # timesteps = torch.arange(s_ind).repeat(init_crystal_batch.num_graphs, 1).T
+    # traj_fig(timesteps, torch.log(records['loss']), names=['time', 'loss'])
 
     records['params'] = params_record[:s_ind]
     return samples_list, records
