@@ -41,3 +41,19 @@ if __name__ == "__main__":
                 yaml.dump(config, f, default_flow_style=False)
 
             ind += 1
+
+
+    for enfunc in ['uma']:
+        for seed_ind in np.arange(30):
+            seed_ind = int(seed_ind)
+            config = deepcopy(base)
+            config['opt_seed'] = seed_ind
+            for opt in config['opt']:
+                opt['optim_target'] = enfunc
+            config['run_name'] = f'nehzor_{enfunc}_{seed_ind}'
+
+            config_path = f'nehzor_{enfunc}_{seed_ind}.yaml'
+            with open(config_path, 'w') as f:
+                yaml.dump(config, f, default_flow_style=False)
+
+            ind += 1
