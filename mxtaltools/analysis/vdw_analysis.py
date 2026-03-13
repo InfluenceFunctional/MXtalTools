@@ -340,13 +340,14 @@ def lj_analysis(vdw_radii: torch.Tensor,
 def vdW_analysis(vdw_radii: torch.Tensor,
                  dist_dict: dict,
                  num_graphs: int,
+                 reduce: str = 'sum'
                  ):
     """
     new version of the vdw_overlap function for analysis of intermolecular contacts
     """
     batch = dist_dict['intermolecular_dist_batch']
     vdw_overlap = compute_vdW_overlap(dist_dict, vdw_radii)
-    molwise_vdw_overlap = scatter(vdw_overlap, batch, reduce='sum', dim_size=num_graphs)
+    molwise_vdw_overlap = scatter(vdw_overlap, batch, reduce=reduce, dim_size=num_graphs)
 
     return molwise_vdw_overlap
 

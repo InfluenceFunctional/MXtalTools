@@ -69,6 +69,7 @@ class MolCrystalAnalysis:
                              'bh': self.compute_buckingham_energy,
                              'silu': self.compute_silu_energy,
                              'vdw': self.compute_vdW_overlap,
+                             'vdw_max': self.compute_max_vdW_overlap,
                              'ellipsoid': self.compute_ellipsoidal_overlap,
                              'niggli_overlap': self.compute_niggli_overlap,
                              'reduction_en': self.compute_cell_reduction_penalty,
@@ -136,11 +137,29 @@ class MolCrystalAnalysis:
                 = vdW_analysis(self.vdw_radii_tensor,
                                self.edges_dict,
                                self.num_graphs,
+                               reduce='sum'
                                )
         else:
             raise NotImplementedError("LJ energies not implemented for single crystals")
 
         return molwise_vdw_overlap
+
+
+    def compute_max_vdW_overlap(self, **kwargs):
+        self._pre_compute_checks()
+
+        if self.is_batch:
+            molwise_vdw_overlap \
+                = vdW_analysis(self.vdw_radii_tensor,
+                               self.edges_dict,
+                               self.num_graphs,
+                               reduce='max'
+                               )
+        else:
+            raise NotImplementedError("LJ energies not implemented for single crystals")
+
+        return molwise_vdw_overlap
+
 
     def compute_ES_energy(self, **kwargs):
         self._pre_compute_checks()
