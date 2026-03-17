@@ -1,0 +1,47 @@
+batch_size: 10000
+dataset_path: null
+device: cuda
+grow_batch_size: false
+init_sample_method: random
+init_target_cp: wide
+mol_path: /scratch/mk8347/data/crystal_datasets/nehzor/NEHZOR0_std_conf.pt
+mol_seed: 0
+mols_to_sample: 1
+num_samples: 10000
+opt:
+- anneal_lr: false
+  compression_factor: 1.0
+  convergence_eps: 1.0e-05
+  cutoff: 10
+  enforce_reduced: true
+  grad_norm_clip: 0.1
+  init_lr: 0.05
+  max_num_steps: 300
+  optim_target: elj
+  optimizer_func: rprop
+  show_tqdm: true
+  target_packing_coeff: null
+- anneal_lr: false
+  compression_factor: 0.0
+  convergence_eps: 1.0e-05
+  cutoff: 10
+  enforce_reduced: true
+  grad_norm_clip: 0.1
+  init_lr: 0.05
+  max_num_steps: 200
+  optim_target: uma
+  optimizer_func: rprop
+  show_tqdm: true
+  target_packing_coeff: null
+opt_seed: 0
+out_dir: /scratch/mk8347/data/crystal_datasets/nehzor
+run_name: nehzor_elj_uma_0
+sampling_mode: all
+save_trajs: true
+sgs_to_search:
+- 14
+target_identifier: null
+target_path: null
+uma_predictor_path: /scratch/mk8347/models/uma/esen_s.pt
+zp_to_search:
+- 1
