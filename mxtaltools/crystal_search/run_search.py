@@ -43,7 +43,10 @@ if __name__ == '__main__':
     num_samples = len(samples_to_optim)
     print(f"Starting optimization of {num_samples} crystal samples")
 
-    opt_outs = []
+    if os.path.exists(out_path):
+        opt_outs = torch.load(out_path, weights_only=False)
+    else:
+        opt_outs = []
     num_opts = len(config.opt)
     batch_idx = -1
     finished = False
@@ -99,13 +102,13 @@ if __name__ == '__main__':
                     umbrella_record = torch.load(umbrella_path, weights_only=False)
                     save_umbrella_record(umbrella_record, new_latents, umbrella_path, opt_config['umbrella_sigma'], opt_config['umbrella_epsilon'])
 
-                cursor = 0
-                bsz = config.batch_size
-                while cursor < len(opt_outs):
-                    batch = collate_data_list(opt_outs[cursor:cursor + bsz])
-                    en = batch.elj
-                    print([en.quantile(ii) for ii in torch.linspace(0, 1, 10)])
-                    cursor += bsz
+                # cursor = 0
+                # bsz = config.batch_size
+                # while cursor < len(opt_outs):
+                #     batch = collate_data_list(opt_outs[cursor:cursor + bsz])
+                #     en = batch.elj
+                #     print([en.quantile(ii) for ii in torch.linspace(0, 1, 10)])
+                #     cursor += bsz
 
             cursor += config.batch_size
             prev_best_samples = None
