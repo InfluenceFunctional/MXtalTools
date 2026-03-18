@@ -2,20 +2,21 @@ device: cuda
 mol_path: /scratch/mk8347/data/crystal_datasets/nehzor/NEHZOR0_std_conf.pt
 dataset_path: null #D:\crystal_datasets\xuldud\xuldud_sg61_zp1.pt
 target_path: null #D:\crystal_datasets\nehzor\nehzor.pt
+umbrella_path:  /scratch/mk8347/data/crystal_datasets/nehzor/nehzor3_umbrella.pt
 target_identifier: null #nehzor
 out_dir: /scratch/mk8347/data/crystal_datasets/nehzor
-run_name: nehzor_uma
-save_trajs: true
-
+run_name: nehzor_uma3
+save_trajs: false
 
 uma_predictor_path: '/scratch/mk8347/models/uma/esen_s.pt'
 
 init_sample_method: random  # 'random' 'reasonable' 'data'
+init_reduced: true
 
 # if method is 'data' optimize provided pre-built crystals
 # else, from random initial conditions
 mol_seed: 0
-opt_seed: 1
+opt_seed: 100
 sampling_mode: all # 'all' or 'random' or 'ordered'
 mols_to_sample: 1
 num_samples: 10000 # per mol, per space group, per Zp
@@ -23,7 +24,7 @@ num_samples: 10000 # per mol, per space group, per Zp
 sgs_to_search: [ 14 ]
 zp_to_search: [ 1 ]
 
-batch_size: 10000
+batch_size: 1000
 grow_batch_size: false
 
 init_target_cp: wide  # a float, null (use target value), 'wide' (0.0-0.7) or 'std' target packing coefficient for initial structure sampling
@@ -49,19 +50,21 @@ init_target_cp: wide  # a float, null (use target value), 'wide' (0.0-0.7) or 's
 #        anneal_lr: Optional[bool] = False,
 
 opt:
-
   - optim_target: 'uma' # lj qlj elj silu ellipsoid classification_score rdf_score rdf_dist latent_dist
     enforce_reduced: true
     compression_factor: 1.0
     cutoff: 10  # can be as low as 6 for SiLU, 10 otherwise
     init_lr: 0.05
-    convergence_eps: 0.00001
+    convergence_eps: 0.001
     optimizer_func: 'rprop'  # NOTE rprop is by far the fastest and most reliable
     anneal_lr: false
     grad_norm_clip: 0.1
     show_tqdm: true
-    max_num_steps: 450
+    max_num_steps: 350
     target_packing_coeff: null
+    umbrella: true
+    umbrella_sigma: 0.25
+    umbrella_epsilon: 7.5
 
   - optim_target: 'uma' # lj qlj elj silu ellipsoid classification_score rdf_score rdf_dist latent_dist
     enforce_reduced: true
@@ -70,8 +73,11 @@ opt:
     init_lr: 0.01
     convergence_eps: 0.00001
     optimizer_func: 'rprop'  # NOTE rprop is by far the fastest and most reliable
-    anneal_lr: false
+    anneal_lr: true
     grad_norm_clip: 0.1
     show_tqdm: true
-    max_num_steps: 50
+    max_num_steps: 150
     target_packing_coeff: null
+    umbrella: true
+    umbrella_sigma: 0.25
+    umbrella_epsilon: 7.5

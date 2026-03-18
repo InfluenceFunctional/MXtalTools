@@ -1,5 +1,6 @@
 import copy
 import gc
+from argparse import Namespace
 from typing import Optional, Union
 
 import torch
@@ -10,11 +11,39 @@ from torch import optim
 from torch_scatter import scatter
 from tqdm import tqdm
 
+
 from mxtaltools.analysis.crystal_rdf import compute_rdf_distance
 from mxtaltools.common.geometry_utils import enforce_crystal_system
 from mxtaltools.common.utils import is_cuda_oom
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.utils import enforce_1d_bound, softmax_and_score
+
+
+
+
+def dict2namespace(data_dict: dict):
+    """
+    Recursively converts a dictionary and its internal dictionaries into an
+    argparse.Namespace
+
+    Parameters
+    ----------
+    data_dict : dict
+        The input dictionary
+
+    Return
+    ------
+    data_namespace : argparse.Namespace
+        The output namespace
+    """
+    for k, v in data_dict.items():
+        if isinstance(v, dict):
+            data_dict[k] = dict2namespace(v)
+        else:
+            pass
+    data_namespace = Namespace(**data_dict)
+
+    return data_namespace
 
 
 def get_annealing_factor(start_value, stop_value, total_time, step_iters):
@@ -40,7 +69,7 @@ class CrystalParams(nn.Module):
     def stacked(self):
         free = torch.stack(list(self.params), dim=0)  # [n, n_free]
         full = torch.zeros(free.shape[0], free.shape[1] + len(self.fixed_dims),
-                          device=free.device, dtype=free.dtype)
+                           device=free.device, dtype=free.dtype)
         full[:, self.free_dims] = free
         if len(self.fixed_dims) > 0:
             full[:, self.fixed_dims] = self.fixed_vals
@@ -88,6 +117,10 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         elementwise: bool = True,
         atomwise: bool = False,
         repulsion: float = 1.0,
+        umbrella: Optional[bool] = False,  # do umbrella sampling in latent space
+        umbrella_sigma: Optional[float] = None,  # bandwidth term for umbrella sampling
+        umbrella_epsilon: Optional[float] = None,  # repulsion term for umbrella sampling
+        umbrella_record: Optional[list] = None,
 ):
     """
     do a local optimization via gradient descent on some score function
@@ -128,15 +161,35 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         target_latent = target_latent.to(init_sample.device)
 
     if target_rdf is not None:
-        fixed_dims = [0,1,2,3,4,5]
+        fixed_dims = [0, 1, 2, 3, 4, 5]
     else:
         fixed_dims = None
     param_module = CrystalParams(init_sample, fixed_dims=fixed_dims)
+
+    loss_config = dict2namespace({
+        'cutoff': cutoff,
+        'target_rdf': target_rdf,
+        'score_model': score_model,
+        'optim_target': optim_target,
+        'target_latent': target_latent,
+    })
+
+    aux_config = dict2namespace({
+        'compression_factor': compression_factor,
+        'do_box_restriction': do_box_restriction,
+        'target_packing_coeff': target_packing_coeff,
+        'enforce_reduced': enforce_reduced,
+        'umbrella': umbrella,
+        'umbrella_sigma': umbrella_sigma,
+        'umbrella_epsilon': umbrella_epsilon,
+        'umbrella_record': [] if umbrella_record is None else umbrella_record,
+    })
 
     optimizer = init_opt(init_lr, optimizer_func, param_module)
     monte_carlo = optimizer_func.lower() == 'mcmc'
     if monte_carlo:
         # We need a starting energy for the very first comparison
+        assert False, "Rewrite with new args"
         with torch.no_grad():
             T, current_energy, current_state = init_mc_state(compression_factor, cutoff, do_box_restriction,
                                                              energy_computes, enforce_reduced, init_crystal_batch,
@@ -208,16 +261,16 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
 
                     """loss and backprop"""
                     if monte_carlo:
+                        assert False, "Update arguments"
                         parse_mc_step(T, cluster_batch, compression_factor, crystal_batch, current_energy,
                                       current_state, do_box_restriction, enforce_reduced, optim_target, outputs,
                                       param_module, records, score_model, target_packing_coeff, target_rdf,
                                       target_latent, cutoff)
 
                     else:
-                        loss_and_backprop(cluster_batch, compression_factor, crystal_batch, do_box_restriction,
-                                          enforce_reduced, grad_norm_clip, optim_target, optimizer, outputs,
-                                          param_module, records, score_model, target_latent, target_packing_coeff,
-                                          target_rdf, cutoff)
+                        loss_and_backprop(cluster_batch, crystal_batch, grad_norm_clip,
+                                          optimizer, outputs, param_module, records,
+                                          loss_config, aux_config)
 
                     if s_ind % 10 == 0:
                         gc.collect()
@@ -269,7 +322,6 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         bins=100
     )
     samples_list = crystal_batch.batch_to_list()
-
     if enforce_reduced:
         penalty = crystal_batch.compute_cell_reduction_penalty()
         samples_list = [elem for i, elem in enumerate(samples_list) if penalty[i] < 1e-3]
@@ -305,7 +357,6 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
 
     records['params'] = params_record[:s_ind]
     return samples_list, records
-
 
 
 """
@@ -352,14 +403,11 @@ def update_record(crystal_batch, outputs, params_record, records, s_ind):
     return records
 
 
-def loss_and_backprop(cluster_batch, compression_factor, crystal_batch, do_box_restriction, enforce_reduced,
-                      grad_norm_clip, optim_target, optimizer, outputs, param_module, records, score_model,
-                      target_latent, target_packing_coeff, target_rdf, cutoff):
-    loss = compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model,
-                        cutoff, target_rdf, target_latent)
-    loss = compute_auxiliary_loss(cluster_batch, compression_factor,
-                                  do_box_restriction, loss, target_packing_coeff, enforce_reduced,
-                                  outputs)
+def loss_and_backprop(cluster_batch, crystal_batch, grad_norm_clip, optimizer, outputs, param_module, records,
+                      loss_config, aux_config):
+    loss = compute_loss(cluster_batch, crystal_batch, outputs, loss_config)
+    loss = compute_auxiliary_loss(cluster_batch, loss, outputs, aux_config)
+
     records['loss'].append(loss.detach().cpu())
     loss_to_backprop = loss.mean()  # save some effort in backprop
     loss_to_backprop.backward()
@@ -377,8 +425,6 @@ def get_mc_noised_samples(crystal_batch, log_noise_range):
     rand_magnitude = 10 ** (log_noise_range[0] + (log_noise_range[1] - log_noise_range[0]) * u)
     noised_samples = (samples + rand_dir * rand_magnitude[:, None]).clip(min=-1, max=1)
     return noised_samples
-
-
 
 
 def parse_mc_step(T, cluster_batch, compression_factor, crystal_batch, current_energy, current_state,
@@ -480,8 +526,6 @@ def traj_fig(x, y, names=[None, None], yrange=None, xrange=None):
     fig.show()
 
 
-
-
 def ema_trajectory(traj: torch.Tensor, alpha: float = 0.1) -> torch.Tensor:
     """
     Vectorized EMA along time (dim=0).
@@ -498,69 +542,79 @@ def ema_trajectory(traj: torch.Tensor, alpha: float = 0.1) -> torch.Tensor:
     return numer / denom
 
 
-def compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model, cutoff, target_rdf=None, target_latent=None):
-    if optim_target.lower() == 'lj':  # todo obviate this with analysis keys
+def compute_loss(cluster_batch, crystal_batch, outputs, config):
+    if config.optim_target.lower() == 'lj':  # todo obviate this with analysis keys
         loss = outputs['lj']
 
-    elif optim_target.lower() == 'silu':
+    elif config.optim_target.lower() == 'silu':
         loss = outputs['silu']
 
-    elif optim_target.lower() == 'qlj':
+    elif config.optim_target.lower() == 'qlj':
         loss = outputs['qlj']
 
-    elif optim_target.lower() == 'elj':
+    elif config.optim_target.lower() == 'elj':
         loss = outputs['elj']
 
-    elif optim_target.lower() == 'inter_overlaps':  # force molecules apart by separating their centroids
+    elif config.optim_target.lower() == 'inter_overlaps':  # force molecules apart by separating their centroids
         loss = inter_overlap_loss(cluster_batch, crystal_batch)
 
-    elif optim_target.lower() == 'classification_score':
-        loss = -softmax_and_score(score_model(cluster_batch, force_edges_rebuild=False)[:, :2])
+    elif config.optim_target.lower() == 'classification_score':
+        loss = -softmax_and_score(config.score_model(cluster_batch, force_edges_rebuild=False)[:, :2])
 
-    elif optim_target.lower() == 'rdf_score':
-        loss = F.softplus(score_model(cluster_batch, force_edges_rebuild=False)[:, 2])
+    elif config.optim_target.lower() == 'rdf_score':
+        loss = F.softplus(config.score_model(cluster_batch, force_edges_rebuild=False)[:, 2])
 
-    elif optim_target.lower() == 'ellipsoid':
+    elif config.optim_target.lower() == 'ellipsoid':
         loss = outputs['ellipsoid']
 
-    elif optim_target.lower() == 'reduce':
+    elif config.optim_target.lower() == 'reduce':
         loss = outputs['reduction_en']
 
-    elif optim_target.lower() == 'uma':
+    elif config.optim_target.lower() == 'uma':
         loss = outputs['uma']
 
-    elif optim_target.lower() == 'rdf_dist':
-        loss = compute_rdf_distance(outputs['rdf'][0], target_rdf, torch.linspace(0, cutoff, target_rdf.shape[-1]))
+    elif config.optim_target.lower() == 'rdf_dist':
+        loss = compute_rdf_distance(outputs['rdf'][0], config.target_rdf,
+                                    torch.linspace(0, config.cutoff, config.target_rdf.shape[-1]))
 
-    elif optim_target.lower() == 'latent_dist':
-        loss = (target_latent - crystal_batch.latent_params()).norm(dim=-1)
+    elif config.optim_target.lower() == 'latent_dist':
+        loss = (config.target_latent - crystal_batch.latent_params()).norm(dim=-1)
 
     return loss
 
 
-def compute_auxiliary_loss(cluster_batch, compression_factor, do_box_restriction,
-                           loss, target_packing_coeff, enforce_reduced, outputs):
-    if target_packing_coeff is not None:
-        cp_loss = (cluster_batch.packing_coeff - target_packing_coeff) ** 2
+def compute_auxiliary_loss(cluster_batch, loss, outputs, config):
+    if config.target_packing_coeff is not None:
+        cp_loss = (cluster_batch.packing_coeff - config.target_packing_coeff) ** 2
         loss = loss + cp_loss
-    if do_box_restriction:
+    if config.do_box_restriction:
         # enforce box shape cannot become too long (3 mol radii) or narrow (3 angstroms) in any direction
         # repulsive from about range 3 #(80000/aunit_lengths**12 + 10*aunit_lengths - 31.25).sum(dim=1)  # forces boxes to be larger than 3 angstroms, but squeezes them otherwise
         aunit_lengths = cluster_batch.scale_lengths_to_aunit()
         box_loss = (80000 / aunit_lengths ** 12).sum(dim=1)
         loss = loss + box_loss
-    if compression_factor != 0:
+    if config.compression_factor != 0:
         aunit_lengths = cluster_batch.scale_lengths_to_aunit()
         threshold = 0.65
         width = 0.01  # controls sharpness of transition
 
         gate = torch.sigmoid((threshold - cluster_batch.packing_coeff) / width)
-        pressure_loss = aunit_lengths.sum(dim=1) * compression_factor * gate
+        pressure_loss = aunit_lengths.sum(dim=1) * config.compression_factor * gate
         loss = loss + pressure_loss
 
-    if enforce_reduced:
+    if config.enforce_reduced:
         penalty = F.relu(outputs['reduction_en'])
         loss = loss + 10000 * penalty  # severely punish reduction violations
+
+    if config.umbrella:
+        if len(config.umbrella_record) == 0:
+            pass
+        else:
+            latents = cluster_batch.latent_params()
+            record = config.umbrella_record.to(cluster_batch.device)
+            dists = torch.cdist(latents, record)
+            penalty = torch.exp(-dists ** 2 / (2 * config.umbrella_sigma ** 2)).sum(dim=1).clip(max=10)
+            loss = loss + config.umbrella_epsilon *  penalty
 
     return loss
 

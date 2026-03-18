@@ -12,7 +12,7 @@ from tqdm import tqdm
 from mxtaltools.common.config_processing import load_yaml, dict2namespace
 from mxtaltools.common.utils import is_cuda_oom
 from mxtaltools.crystal_search.utils import get_initial_state, init_samples_to_optim, parse_args, parse_opt_config, \
-    recover_opt_state, process_target
+    recover_opt_state, process_target, save_umbrella_record
 from mxtaltools.dataset_utils.utils import collate_data_list
 
 if __name__ == '__main__':
@@ -26,6 +26,7 @@ if __name__ == '__main__':
     config = dict2namespace(load_yaml(config_path))
 
     device = config.device
+    umbrella_path = config.umbrella_path
 
     if device == 'cuda':
         # prevents from dipping into windows virtual vram which is super slow
@@ -36,12 +37,7 @@ if __name__ == '__main__':
     else:
         target = None
 
-    if config.init_sample_method == 'data':
-        samples_to_optim = torch.load(config.dataset_path, weights_only=False)
-        index_block = torch.arange(config.mol_seed * config.num_samples, (config.mol_seed + 1) * config.num_samples)
-        samples_to_optim = [samples_to_optim[ind] for ind in index_block]
-    else:
-        samples_to_optim = init_samples_to_optim(config, target=target)
+    samples_to_optim = init_samples_to_optim(config, target=target)
 
     out_path = Path(config.out_dir + f"/{config.run_name}.pt")  # where to save outputs
     num_samples = len(samples_to_optim)
@@ -54,6 +50,7 @@ if __name__ == '__main__':
     cursor = 0
     pbar = tqdm(total=num_samples, unit="samples")
     prev_best_samples = None
+
     while not finished:
         try:
             batch_idx += 1
@@ -68,9 +65,15 @@ if __name__ == '__main__':
             for opt_ind, opt_config in enumerate(config.opt):
                 # do optimization in N stages
                 opt_config = parse_opt_config(opt_config, config, device, target)
+                if opt_config['umbrella']:
+                    if os.path.exists(umbrella_path):
+                        opt_config['umbrella_record'] = torch.load(umbrella_path, weights_only=False)
+                    else:
+                        opt_config['umbrella_record'] = torch.zeros(0, crystal_batch.latent_params().shape[-1])
 
                 'do opt'
-                opt_out, opt_record = crystal_batch.optimize_crystal_parameters(return_record = True, **opt_config)
+                opt_out, opt_record = crystal_batch.optimize_crystal_parameters(return_record=True, **opt_config)
+
                 if config.save_trajs:
                     opt_record.update({'base_crystal': samples_to_optim[0]})
                     torch.save(opt_record, Path(str(out_path).replace('.pt', f'_traj{batch_idx}_{opt_ind}.pt')))
@@ -83,9 +86,26 @@ if __name__ == '__main__':
                     del opt_config['score_model']
 
             crystal_batch.box_analysis()
+            print(crystal_batch.elj.mean())
             opt_outs.extend(crystal_batch.cpu().detach().batch_to_list())
 
             torch.save(opt_outs, out_path)
+
+            if any(getattr(opt, 'umbrella', True) for opt in config.opt):
+                new_latents = crystal_batch.latent_params().cpu()
+                if not os.path.exists(umbrella_path):
+                    torch.save(new_latents, umbrella_path)
+                else:
+                    umbrella_record = torch.load(umbrella_path, weights_only=False)
+                    save_umbrella_record(umbrella_record, new_latents, umbrella_path, opt_config['umbrella_sigma'], opt_config['umbrella_epsilon'])
+
+                cursor = 0
+                bsz = config.batch_size
+                while cursor < len(opt_outs):
+                    batch = collate_data_list(opt_outs[cursor:cursor + bsz])
+                    en = batch.elj
+                    print([en.quantile(ii) for ii in torch.linspace(0, 1, 10)])
+                    cursor += bsz
 
             cursor += config.batch_size
             prev_best_samples = None

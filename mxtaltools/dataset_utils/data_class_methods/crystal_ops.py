@@ -190,7 +190,7 @@ class MolCrystalOps:
                                          seed: Optional[int] = None,
                                          cleaning_mode: Optional[str] = 'hard'
                                          ):
-        if seed is not None:
+        if seed is not None:  # todo this seeding method is wrong
             torch.manual_seed(seed)
         self.sample_random_cell_angles()  # must do this one before cell lengths !!!
         self.sample_random_cell_lengths(target_packing_coeff)
@@ -206,13 +206,35 @@ class MolCrystalOps:
                                                  seed: Optional[int] = None,
                                                  ):
         """
-        Sample random crystal parameters that are automatically Niggli-reduced
+        Sample random crystal parameters that are automatically standardized
+        Repeat random box params until valid
         """
-        assert False, "This method should be rewritten for our new reduction workflow"
         if seed is not None:
             torch.manual_seed(seed)
         assert self.is_batch, "Random crystal parameters not setup for single crystals"
-        self.sample_reduced_box_vectors(target_packing_coeff=target_packing_coeff)
+        valid = torch.zeros(self.num_graphs, dtype=bool, device=self.device)
+        good_params = torch.zeros((self.num_graphs, 6), dtype=torch.float32, device=self.device)
+        while not valid.all():
+            self.sample_random_cell_angles()  # must do this one before cell lengths !!!
+            self.sample_random_cell_lengths(target_packing_coeff)
+            self.cell_lengths, self.cell_angles = enforce_crystal_system(
+                self.cell_lengths,
+                self.cell_angles,
+                self.sg_ind
+            )
+            penalty = self.compute_cell_reduction_penalty()
+            valid_sample = penalty == 0
+            good_params[valid_sample] = torch.cat([self.cell_lengths[valid_sample], self.cell_angles[valid_sample]],
+                                                  dim=1)
+            valid[valid_sample] = True
+
+        self.cell_lengths = good_params[:, :3]
+        self.cell_angles = good_params[:, 3:]
+        self.cell_lengths, self.cell_angles = enforce_crystal_system(
+            self.cell_lengths,
+            self.cell_angles,
+            self.sg_ind
+        )
         self.sample_random_aunit_orientations()
         self.sample_random_aunit_centroids()
         if torch.any(self.z_prime > 1):
@@ -220,11 +242,7 @@ class MolCrystalOps:
         # enforce agreement with crystal system
         # other cell parameters are valid by explicit construction
         # todo add crystal system conditions to sampling workflow, rather than cleaning up here
-        self.cell_lengths, self.cell_angles = enforce_crystal_system(
-            self.cell_lengths,
-            self.cell_angles,
-            self.sg_ind
-        )
+
         self.box_analysis()
 
     def latent_to_cell_params(self,

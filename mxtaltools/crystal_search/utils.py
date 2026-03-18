@@ -12,6 +12,16 @@ from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.mlip_interfaces.uma_utils import init_uma_crystal_predictor
 
 
+def save_umbrella_record(record, new_latents, path, sigma = 0.2, epsilon = 10):
+    if len(record) > 0 and len(new_latents) > 0:
+        dists = torch.cdist(new_latents, record)
+        repulsion = epsilon * torch.exp(-dists ** 2 / (2 * sigma ** 2)).sum(dim=1).clip(max=10)
+        new_latents = new_latents[repulsion < epsilon]  # only keep if total repulsion < one basin block
+    if len(new_latents) > 0:
+        record = torch.cat([record, new_latents], dim=0)
+    torch.save(record, path)
+    return record
+
 def rdf_clustering(packing_coeff, rdf, rdf_cutoff, rr, samples, vdw, num_cpus=None):
     """cluster samples according to rdf distances"""
     # rdf_dists = compute_rdf_distmat(rdf, rr)
@@ -168,30 +178,43 @@ def get_initial_state(config, crystal_batch, device, batch_idx, target):
             target_packing_coeff=target_cp,
             tolerance=5,
             max_attempts=50,
-            #sample_niggli=config.init_sample_reduced,
+            # sample_niggli=config.init_sample_reduced,
             seed=config.opt_seed + int(batch_idx * 10000),
         )
         if ((crystal_batch.packing_coeff - target_cp).abs() > 0.1).any():  # todo make this a general method
             ratio = crystal_batch.packing_coeff / target_cp
-            crystal_batch.cell_lengths *= ratio.pow(1.0/3.0)[:, None]
+            crystal_batch.cell_lengths *= ratio.pow(1.0 / 3.0)[:, None]
             crystal_batch.clean_cell_parameters(mode='hard')
             crystal_batch.box_analysis()
     elif config.init_sample_method == 'random':
-        crystal_batch.sample_random_crystal_parameters(
-            target_packing_coeff=target_cp,
-            seed=config.opt_seed + int(batch_idx * 10000))
+        if config.init_reduced:
+            crystal_batch.sample_random_reduced_crystal_parameters(
+                target_packing_coeff=target_cp,
+                seed=config.opt_seed + int(batch_idx * 10000))
+        else:
+            crystal_batch.sample_random_crystal_parameters(
+                target_packing_coeff=target_cp,
+                seed=config.opt_seed + int(batch_idx * 10000))
         if ((crystal_batch.packing_coeff - target_cp).abs() > 0.1).any():
             ratio = crystal_batch.packing_coeff / target_cp
-            crystal_batch.cell_lengths *= ratio.pow(1.0/3.0)[:, None]
+            crystal_batch.cell_lengths *= ratio.pow(1.0 / 3.0)[:, None]
             crystal_batch.clean_cell_parameters(mode='hard')
             crystal_batch.box_analysis()
     elif config.init_sample_method == 'target':
-        crystal_batch.sample_random_crystal_parameters(
-            target_packing_coeff=target_cp,
-            seed=config.opt_seed + int(batch_idx * 10000))
+        if config.init_reduced:
+            crystal_batch.sample_random_reduced_crystal_parameters(
+                target_packing_coeff=target_cp,
+                seed=config.opt_seed + int(batch_idx * 10000))
+        else:
+            crystal_batch.sample_random_crystal_parameters(
+                target_packing_coeff=target_cp,
+                seed=config.opt_seed + int(batch_idx * 10000))
         standard_cell = target.compute_standard_cell()
-        crystal_batch.cell_lengths = torch.tensor(standard_cell[0, :3], dtype=torch.float32, device=crystal_batch.device).repeat(crystal_batch.num_graphs, 1)
-        crystal_batch.cell_angles = torch.tensor(standard_cell[0, 3:], dtype=torch.float32, device=crystal_batch.device).repeat(crystal_batch.num_graphs, 1) * torch.pi /2 / 90
+        crystal_batch.cell_lengths = torch.tensor(standard_cell[0, :3], dtype=torch.float32,
+                                                  device=crystal_batch.device).repeat(crystal_batch.num_graphs, 1)
+        crystal_batch.cell_angles = torch.tensor(standard_cell[0, 3:], dtype=torch.float32,
+                                                 device=crystal_batch.device).repeat(crystal_batch.num_graphs,
+                                                                                     1) * torch.pi / 2 / 90
         crystal_batch.box_analysis()
 
     else:
@@ -203,52 +226,58 @@ def init_samples_to_optim(config, target=None):
     """
     Load and select molecules to optimize
     """
-    if target is None:
-        mol_list = torch.load(config.mol_path, weights_only=False)
+    if config.init_sample_method == 'data':
+        samples_to_optim = torch.load(config.dataset_path, weights_only=False)
+        index_block = torch.arange(config.mol_seed * config.num_samples, (config.mol_seed + 1) * config.num_samples)
+        samples_to_optim = [samples_to_optim[ind] for ind in index_block]
+        return samples_to_optim
     else:
-        mol_list = [target]  # must use identical conformer with ordering or rdf comparison will fail
-    if not isinstance(mol_list, list):
-        mol_list = [mol_list]
-    if config.sampling_mode == 'all':
-        mols_to_optim = mol_list
-    elif config.sampling_mode == 'random':
-        rng = np.random.RandomState(config.mol_seed)
-        inds = rng.randint(0, len(mol_list), config.mols_to_sample)
-        mols_to_optim = [mol_list[ind] for ind in inds]
-    elif config.sampling_mode == 'ordered':
-        mols_to_optim = [elem for elem in mol_list[:config.mols_to_sample]]
-    else:
-        assert False, "Sampling mode must be 'all' or 'random"
-    """
-    Initialize full set of crystals to optimize
-    """
-    max_zp = max(config.zp_to_search)
-    samples_to_optim = []
-    ones3 = torch.ones(3, device='cpu')
-    ones1 = torch.ones(1, device='cpu')
-    print("Initializing crystals to optimize")
-    for mol in mols_to_optim:
-        for sg in config.sgs_to_search:
-            for s_ind in range(config.num_samples):
-                for zp in config.zp_to_search:
-                    opt_sample = MolCrystalData(
-                        molecule=[mol.clone() for _ in range(zp)] if zp > 1 else mol.clone(),
-                        # duplicate molecules here
-                        sg_ind=sg,
-                        aunit_handedness=ones1,
-                        cell_lengths=ones3,
-                        cell_angles=ones3,
-                        aunit_centroid=ones3,
-                        aunit_orientation=ones3,
-                        skip_box_analysis=True,
-                        max_z_prime=max_zp,
-                        z_prime=zp,
-                        do_box_analysis=True,  # need this just to instantiate the tensors
-                    )
-                    samples_to_optim.append(opt_sample)
-    from random import shuffle
-    shuffle(samples_to_optim)
-    return samples_to_optim
+        if target is None:
+            mol_list = torch.load(config.mol_path, weights_only=False)
+        else:
+            mol_list = [target]  # must use identical conformer with ordering or rdf comparison will fail
+        if not isinstance(mol_list, list):
+            mol_list = [mol_list]
+        if config.sampling_mode == 'all':
+            mols_to_optim = mol_list
+        elif config.sampling_mode == 'random':
+            rng = np.random.RandomState(config.mol_seed)
+            inds = rng.randint(0, len(mol_list), config.mols_to_sample)
+            mols_to_optim = [mol_list[ind] for ind in inds]
+        elif config.sampling_mode == 'ordered':
+            mols_to_optim = [elem for elem in mol_list[:config.mols_to_sample]]
+        else:
+            assert False, "Sampling mode must be 'all' or 'random"
+        """
+        Initialize full set of crystals to optimize
+        """
+        max_zp = max(config.zp_to_search)
+        samples_to_optim = []
+        ones3 = torch.ones(3, device='cpu')
+        ones1 = torch.ones(1, device='cpu')
+        print("Initializing crystals to optimize")
+        for mol in mols_to_optim:
+            for sg in config.sgs_to_search:
+                for s_ind in range(config.num_samples):
+                    for zp in config.zp_to_search:
+                        opt_sample = MolCrystalData(
+                            molecule=[mol.clone() for _ in range(zp)] if zp > 1 else mol.clone(),
+                            # duplicate molecules here
+                            sg_ind=sg,
+                            aunit_handedness=ones1,
+                            cell_lengths=ones3,
+                            cell_angles=ones3,
+                            aunit_centroid=ones3,
+                            aunit_orientation=ones3,
+                            skip_box_analysis=True,
+                            max_z_prime=max_zp,
+                            z_prime=zp,
+                            do_box_analysis=True,  # need this just to instantiate the tensors
+                        )
+                        samples_to_optim.append(opt_sample)
+        from random import shuffle
+        shuffle(samples_to_optim)
+        return samples_to_optim
 
 
 def parse_args():
@@ -306,6 +335,6 @@ def process_target(config):
         assert target.identifier == config.target_identifier
     assert len(target) > 0, "No target in the file with the given identifier!"
     print("overwriting initial and target packing coeffs from target!")
-    #config.init_target_cp = target.packing_coeff.item()
-    #config.target_packing_coeff = target.packing_coeff.item()
+    # config.init_target_cp = target.packing_coeff.item()
+    # config.target_packing_coeff = target.packing_coeff.item()
     return target, config
