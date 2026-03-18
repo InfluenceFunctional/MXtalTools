@@ -86,7 +86,7 @@ if __name__ == '__main__':
                     del opt_config['score_model']
 
             crystal_batch.box_analysis()
-            print(crystal_batch.elj.mean())
+            #print(crystal_batch.elj.mean())
             opt_outs.extend(crystal_batch.cpu().detach().batch_to_list())
 
             torch.save(opt_outs, out_path)
