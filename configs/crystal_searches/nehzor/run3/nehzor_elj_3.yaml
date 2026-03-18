@@ -23,7 +23,7 @@ opt:
   show_tqdm: true
   target_packing_coeff: null
   umbrella: true
-  umbrella_epsilon: 7.5
+  umbrella_epsilon: 30.0
   umbrella_sigma: 0.25
 - anneal_lr: true
   compression_factor: 0.0
@@ -38,7 +38,7 @@ opt:
   show_tqdm: true
   target_packing_coeff: null
   umbrella: true
-  umbrella_epsilon: 7.5
+  umbrella_epsilon: 30.0
   umbrella_sigma: 0.25
 opt_seed: 3
 out_dir: /scratch/mk8347/data/crystal_datasets/nehzor
