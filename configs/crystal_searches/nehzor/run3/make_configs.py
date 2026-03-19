@@ -28,13 +28,16 @@ if __name__ == "__main__":
 
     ind = 0
     for enfunc in ['uma']:
-        for seed_ind in np.arange(16):
+        for seed_ind in np.arange(22):
             seed_ind = int(seed_ind)
             config = deepcopy(base)
             config['opt_seed'] = seed_ind
             for opt in config['opt']:
                 opt['optim_target'] = enfunc
                 opt['umbrella_epsilon'] = 7.5
+                if seed_ind > 15:
+                    opt['umbrella_epsilon'] = 12.5
+                    opt['umbrella_sigma'] = 0.5
             config['run_name'] = f'nehzor_{enfunc}_{seed_ind}'
 
             config_path = f'nehzor_{enfunc}_{seed_ind}.yaml'
