@@ -1,0 +1,56 @@
+batch_size: 250
+dataset_path: null
+device: cuda
+grow_batch_size: false
+init_reduced: false
+init_sample_method: random
+init_target_cp: wide
+mol_path: /scratch/mk8347/data/crystal_datasets/nehzor/NEHZOR0_std_conf.pt
+mol_seed: 0
+mols_to_sample: 1
+num_samples: 10000
+opt:
+- anneal_lr: false
+  compression_factor: 1.0
+  convergence_eps: 0.001
+  cutoff: 10
+  enforce_reduced: false
+  grad_norm_clip: 0.1
+  init_lr: 0.05
+  max_num_steps: 350
+  optim_target: uma
+  optimizer_func: rprop
+  show_tqdm: true
+  target_packing_coeff: null
+  umbrella: true
+  umbrella_epsilon: 7.5
+  umbrella_sigma: 0.25
+- anneal_lr: true
+  compression_factor: 0.0
+  convergence_eps: 1.0e-05
+  cutoff: 10
+  enforce_reduced: false
+  grad_norm_clip: 0.1
+  init_lr: 0.01
+  max_num_steps: 150
+  optim_target: uma
+  optimizer_func: rprop
+  show_tqdm: true
+  target_packing_coeff: null
+  umbrella: true
+  umbrella_epsilon: 7.5
+  umbrella_sigma: 0.25
+opt_seed: 32
+out_dir: /scratch/mk8347/data/crystal_datasets/nehzor
+run_name: nehzor_uma_32
+sampling_mode: all
+save_trajs: false
+sgs_to_search:
+- 14
+target_identifier: null
+target_path: null
+uma_predictor_path: /scratch/mk8347/models/uma/esen_s.pt
+umbrella: false
+umbrella_path: /scratch/mk8347/data/crystal_datasets/nehzor/nehzor3_umbrella.pt
+zp_to_search:
+- 1

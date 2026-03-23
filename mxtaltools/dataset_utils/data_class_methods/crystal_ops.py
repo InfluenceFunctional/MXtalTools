@@ -1,10 +1,10 @@
 from typing import Optional, Union, Iterable
-
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import torch
 from plotly.subplots import make_subplots
-
+import plotly.graph_objects as go
 from mxtaltools.common.geometry_utils import enforce_crystal_system, batch_compute_fractional_transform, \
     cart2sph_rotvec, sph2cart_rotvec, crystal_parameter_distmat, sph_rotvec2lat, lat2sph_rotvec
 from mxtaltools.common.utils import softplus_shift, log_rescale_positive, get_point_density
@@ -1528,127 +1528,3 @@ class MolCrystalOps:
             std_params.append(cellpar_std)
         return np.stack(std_params)
 
-
-import numpy as np
-import plotly.graph_objects as go
-
-from scipy.stats import gaussian_kde
-
-
-def plot_dual_density_contour(
-        x_a, y_a,
-        x_b, y_b,
-        bw: float = 0.15,
-        label_a: str = "Distribution A",
-        label_b: str = "Distribution B",
-        ncontours: int = 8,
-        color_a: str = "steelblue",
-        color_b: str = "firebrick",
-        grid_size: int = 100,
-        fill_opacity: float = 0.10,
-        renderer=None,
-        show: bool = True,
-        return_fig: bool = False,
-        yaxis_title: str = "Energy per Atom / Arb Units",
-        xaxis_title: str = "Packing Coefficient",
-        max_y_quantile: float = 0.99,
-        x_min: float = None,
-        x_max: float = None,
-        y_min: float = None,
-        y_max: float = None,
-):
-    all_y = np.concatenate([y_a, y_b])
-    all_x = np.concatenate([x_a, x_b])
-    if y_max is None: y_max = np.quantile(all_y, max_y_quantile)
-    if y_min is None: y_min = np.amin(all_y) - np.ptp(all_y) * 0.05
-    if x_min is None: x_min = max(0.0, np.amin(all_x) * 0.95)
-    if x_max is None: x_max = min(1.0, np.amax(all_x) * 1.05)
-
-    xi = np.linspace(x_min, x_max, grid_size)
-    yi = np.linspace(y_min, y_max, grid_size)
-    xx, yy = np.meshgrid(xi, yi)
-    grid_points = np.vstack([xx.ravel(), yy.ravel()])
-
-    def compute_kde(x, y, bw_method):
-        kde = gaussian_kde(np.vstack([x, y]), bw_method=bw_method)
-        z = kde(grid_points).reshape(grid_size, grid_size)
-        # log-transform then renormalize: spreads low-density contours,
-        # compresses high-density ones
-        z = np.log1p(z / z.max() * 100)
-        return z / z.max()
-
-    import matplotlib.colors as mcolors
-
-    def hex_to_rgba(color, alpha):
-        r, g, b, _ = mcolors.to_rgba(color)
-        return f'rgba({int(r * 255)},{int(g * 255)},{int(b * 255)},{alpha})'
-
-    def make_colorscale(hex_color, fill_opacity):
-        """Transparent at low density, light fill at high density."""
-        rgba_zero = hex_to_rgba(hex_color, 0.0)
-        rgba_fill = hex_to_rgba(hex_color, fill_opacity)
-        return [[0.0, rgba_zero], [1.0, rgba_fill]]
-
-    def add_traces(fig, z, color, name, dash):
-        # filled heatmap layer
-        fig.add_trace(go.Contour(
-            x=xi, y=yi, z=z,
-            ncontours=ncontours,
-            contours=dict(coloring='heatmap', showlines=False),
-            colorscale=make_colorscale(color, fill_opacity),
-            showscale=False,
-            showlegend=False,
-            hoverinfo='skip',
-        ))
-        # contour lines layer
-        fig.add_trace(go.Contour(
-            x=xi, y=yi, z=z,
-            ncontours=ncontours,
-            contours=dict(coloring='none', showlines=True),
-            line=dict(width=1.5, color=color, dash=dash),
-            showscale=False,
-            showlegend=False,
-            hoverinfo='skip',
-        ))
-
-    z_a = compute_kde(x_a, y_a, bw)
-    z_b = compute_kde(x_b, y_b, bw)
-
-    fig = go.Figure()
-    add_traces(fig, z_a, color_a, label_a, 'solid')
-    add_traces(fig, z_b, color_b, label_b, 'dash')
-
-    for color, label, dash in [(color_a, label_a, 'solid'), (color_b, label_b, 'dash')]:
-        fig.add_trace(go.Scatter(
-            x=[None], y=[None], mode='lines',
-            line=dict(color=color, width=1.5, dash=dash),
-            name=label, showlegend=True,
-        ))
-
-    fig.update_layout(
-        xaxis_title=xaxis_title,
-        yaxis_title=yaxis_title,
-        xaxis_range=[x_min, x_max],
-        yaxis_range=[y_min, y_max],
-        font=dict(family="Helvetica", size=12),
-        plot_bgcolor='white',
-        paper_bgcolor='white',
-        margin=dict(l=60, r=20, t=40, b=50),
-        legend=dict(
-            x=0.98, y=0.98, xanchor='right', yanchor='top',
-            bgcolor='rgba(255,255,255,0.8)', bordercolor='black', borderwidth=0.8,
-        ),
-    )
-    fig.update_xaxes(
-        showgrid=True, gridcolor='rgba(0,0,0,0.15)', gridwidth=0.8,
-        zeroline=False, showline=True, linewidth=1, linecolor='black', mirror=True,
-    )
-    fig.update_yaxes(
-        showgrid=True, gridcolor='rgba(0,0,0,0.15)', gridwidth=0.8,
-        zeroline=False, showline=True, linewidth=1, linecolor='black', mirror=True,
-    )
-
-    if show:
-        fig.show(renderer=renderer)
-    if return_fig:
-        return fig
