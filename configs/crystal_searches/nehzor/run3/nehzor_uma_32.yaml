@@ -1,4 +1,4 @@
-batch_size: 250
+batch_size: 500
 dataset_path: null
 device: cuda
 grow_batch_size: false
@@ -22,7 +22,7 @@ opt:
   optimizer_func: rprop
   show_tqdm: true
   target_packing_coeff: null
-  umbrella: true
+  umbrella: false
   umbrella_epsilon: 7.5
   umbrella_sigma: 0.25
 - anneal_lr: true
@@ -37,7 +37,7 @@ opt:
   optimizer_func: rprop
   show_tqdm: true
   target_packing_coeff: null
-  umbrella: true
+  umbrella: false
   umbrella_epsilon: 7.5
   umbrella_sigma: 0.25
 opt_seed: 32
@@ -50,7 +50,6 @@ sgs_to_search:
 target_identifier: null
 target_path: null
 uma_predictor_path: /scratch/mk8347/models/uma/esen_s.pt
-umbrella: false
 umbrella_path: /scratch/mk8347/data/crystal_datasets/nehzor/nehzor3_umbrella.pt
 zp_to_search:
 - 1

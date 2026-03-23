@@ -64,16 +64,16 @@ if __name__ == "__main__":
             ind += 1
 
     for enfunc in ['uma']:
-        for seed_ind in np.arange(ind, ind + 8):
+        for seed_ind in np.arange(ind, ind + 16):
             seed_ind = int(seed_ind)
             config = deepcopy(base)
             config['opt_seed'] = seed_ind
-            config['umbrella'] = False
-            config['batch_size'] = 250
+            config['batch_size'] = 500
             config['init_reduced'] = False
             config['run_name'] = f'nehzor_{enfunc}_{seed_ind}'
             for opt in config['opt']:
                 opt['enforce_reduced'] = False
+                opt['umbrella'] = False
 
             config_path = f'nehzor_{enfunc}_{seed_ind}.yaml'
             with open(config_path, 'w') as f:

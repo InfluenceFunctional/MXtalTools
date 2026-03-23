@@ -40,9 +40,9 @@ opt:
   umbrella: false
   umbrella_epsilon: 7.5
   umbrella_sigma: 0.25
-opt_seed: 29
+opt_seed: 35
 out_dir: /scratch/mk8347/data/crystal_datasets/nehzor
-run_name: nehzor_uma_29
+run_name: nehzor_uma_35
 sampling_mode: all
 save_trajs: false
 sgs_to_search:
