@@ -5,6 +5,8 @@ import plotly.express as px
 import torch
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
+
+from mxtaltools.common.ase_interface import ase_write_cif
 from mxtaltools.common.geometry_utils import enforce_crystal_system, batch_compute_fractional_transform, \
     cart2sph_rotvec, sph2cart_rotvec, crystal_parameter_distmat, sph_rotvec2lat, lat2sph_rotvec
 from mxtaltools.common.utils import softplus_shift, log_rescale_positive, get_point_density
@@ -1505,11 +1507,13 @@ class MolCrystalOps:
         fixed_rotvecs = fixed_flat_rotvecs.reshape(self.num_graphs, self.max_z_prime * 3)
         self.aunit_orientation = fixed_rotvecs
 
-    def compute_standard_cell(self):
+    def compute_standard_cell(self, return_transform: bool = False):
         import spglib
         from ase.geometry import cellpar_to_cell, cell_to_cellpar
         target_params = self.full_cell_parameters()
         std_params = []
+        permutations = []
+
         for p in target_params:
             cellpar = p[:6].clone().numpy()
             cellpar[3:] *= (180 / np.pi)
@@ -1524,7 +1528,33 @@ class MolCrystalOps:
                 to_primitive=False,
                 no_idealize=False
             )
+            #lengths_old = np.linalg.norm(lattice, axis=1)
+            #lengths_new = np.linalg.norm(lattice_std, axis=1)
+            #perm = [np.argmin(np.abs(lengths_old - l)) for l in lengths_new]
+            P = np.linalg.inv(lattice) @ lattice_std
             cellpar_std = cell_to_cellpar(lattice_std)
             std_params.append(cellpar_std)
-        return np.stack(std_params)
+            permutations.append(P)
+        if return_transform:
+            return np.stack(std_params), np.stack(permutations)
+        else:
+            return np.stack(std_params)
 
+    def write_to_cif(self, inds, mode, path):
+        ase_write_cif(self, inds, path, mode)
+
+'''
+positions = fractional_transform(self.unit_cell_pos[self.unit_cell_batch == ind], self.T_cf[0])
+numbers = self.z[self.batch == ind].repeat(self.sym_mult[ind]).numpy().tolist()
+cell = (lattice, positions, numbers)
+lattice_std, positions_std, numbers_std = spglib.standardize_cell(
+    cell,
+    to_primitive=False,
+    no_idealize=False
+)
+dataset = spglib.get_symmetry_dataset(cell)
+for key in dataset.__dict__.keys():
+    print(key, dataset[key])
+    print('===============================')
+
+'''

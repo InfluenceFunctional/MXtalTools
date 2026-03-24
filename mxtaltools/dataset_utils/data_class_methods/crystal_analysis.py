@@ -144,7 +144,6 @@ class MolCrystalAnalysis:
 
         return molwise_vdw_overlap
 
-
     def compute_max_vdW_overlap(self, **kwargs):
         self._pre_compute_checks()
 
@@ -159,7 +158,6 @@ class MolCrystalAnalysis:
             raise NotImplementedError("LJ energies not implemented for single crystals")
 
         return molwise_vdw_overlap
-
 
     def compute_ES_energy(self, **kwargs):
         self._pre_compute_checks()
@@ -246,7 +244,7 @@ class MolCrystalAnalysis:
                 ):
         """
         full procedure for building and analyzing a molecular crystal
-        """ # todo add a flag to only build cluster if we actually need it - not all computes require it e.g., reduction energy
+        """  # todo add a flag to only build cluster if we actually need it - not all computes require it e.g., reduction energy
         cluster_batch = self.mol2cluster(
             cutoff, supercell_size,
             std_orientation=std_orientation)
@@ -438,16 +436,20 @@ class MolCrystalAnalysis:
         return bc_error + ab_error + alpha_error + beta_error + gamma_error
 
     def mono_reduction_penalty(self, cell_lengths, cell_angles, margin):
+        eps = 1e-6
 
         # enforces our reduction scheme
-        ac_error = F.relu(cell_lengths[:, 0] / cell_lengths[:, 2] - (1 - margin)) ** 2  # c>a
-        beta_error = self.bounding_penalty(cell_angles[:, 1], torch.pi / 2, torch.pi, margin=margin)
+        a, b, c = cell_lengths.unbind(dim=1)
+        al, be, ga = cell_angles.unbind(dim=1)
+        be_min_cos = (- a / 2 / c).clamp(min=-1)
+        be_max_cos = 0
+        beta_error = self.bounding_penalty(be.cos(), be_min_cos, be_max_cos, margin=margin)
 
         # enforces the crystal system
         alpha_error = (cell_angles[:, 0] - torch.pi / 2) ** 2
         gamma_error = (cell_angles[:, 2] - torch.pi / 2) ** 2
 
-        return ac_error + beta_error + alpha_error + gamma_error
+        return beta_error + alpha_error + gamma_error
 
     def ortho_reduction_penalty(self, cell_lengths, cell_angles, margin):
         # crystal system enforcement
@@ -456,16 +458,16 @@ class MolCrystalAnalysis:
         gamma_error = (cell_angles[:, 2] - torch.pi / 2) ** 2
 
         # cell reduction enforcement
-        bc_error = F.relu(cell_lengths[:, 1] / cell_lengths[:, 2] - (1 - margin)) ** 2  # c>b
-        ab_error = F.relu(cell_lengths[:, 0] / cell_lengths[:, 1] - (1 - margin)) ** 2  # # b>a
+        # bc_error = F.relu(cell_lengths[:, 1] / cell_lengths[:, 2] - (1 - margin)) ** 2  # c>b
+        # ab_error = F.relu(cell_lengths[:, 0] / cell_lengths[:, 1] - (1 - margin)) ** 2  # # b>a
 
-        return alpha_error + beta_error + gamma_error + ab_error + bc_error
+        return alpha_error + beta_error + gamma_error  # + ab_error + bc_error
 
     def tetra_reduction_penalty(self, cell_lengths, cell_angles, margin):
         a, b, c = cell_lengths.unbind(dim=-1)
 
         # reduction term
-        abc_error = F.relu(b / c - (1 - margin)) ** 2 + F.relu(a / c - (1 - margin)) ** 2
+        # abc_error = F.relu(b / c - (1 - margin)) ** 2 + F.relu(a / c - (1 - margin)) ** 2
 
         # crystal system terms
 
@@ -476,13 +478,11 @@ class MolCrystalAnalysis:
         beta_error = (cell_angles[:, 1] - torch.pi / 2) ** 2
         gamma_error = (cell_angles[:, 2] - torch.pi / 2) ** 2
 
-        return ab_error + alpha_error + beta_error + gamma_error + abc_error
+        return ab_error + alpha_error + beta_error + gamma_error  # + abc_error
 
     def trig_reduction_penalty(self, cell_lengths, cell_angles, margin):
         a, b, c = cell_lengths.unbind(dim=-1)
         al, be, ga = cell_angles.unbind(dim=-1)
-
-        # todo add reduction terms
 
         # crystal system enforcement
         # a = b
@@ -501,8 +501,6 @@ class MolCrystalAnalysis:
         a, b, c = cell_lengths.unbind(dim=-1)
         al, be, ga = cell_angles.unbind(dim=-1)
 
-        # todo add reduction terms
-
         # crystal system enforcement
         ab_error = (a - b) ** 2
         alpha_error = (al - torch.pi / 2) ** 2
@@ -514,8 +512,6 @@ class MolCrystalAnalysis:
     def rhombo_reduction_penalty(self, cell_lengths, cell_angles, margin):
         a, b, c = cell_lengths.unbind(dim=1)
         al, be, ga = cell_angles.unbind(dim=1)
-
-        # todo add reduction terms
 
         # crystal system enforcement
         ab_error = (a - b) ** 2

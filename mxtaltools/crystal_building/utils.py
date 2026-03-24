@@ -652,7 +652,7 @@ def aunit2ucell(mol_batch):
     ucell_centroids_f = torch.einsum('nij,nj->ni', (molwise_sym_ops, unit_cell_affine_centroids_f))[..., :-1]
 
     # force centroids within unit cell # note this disallows centroids at fractional 1.0 and moves them to 0.0, which causes some artifacting
-    #centroids_f_in_cell = ucell_centroids_f - torch.floor(ucell_centroids_f)
+    # centroids_f_in_cell = ucell_centroids_f - torch.floor(ucell_centroids_f)
     # this one lets them sit at 1.0 exactly
     mask = (ucell_centroids_f != 1.0)
     centroids_f_in_cell = torch.where(mask,

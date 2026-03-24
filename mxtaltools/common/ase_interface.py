@@ -165,3 +165,9 @@ def get_niggli_cell(crystal_batch, index, radians: bool=False):
     atoms = read("temp.cif")
     niggli_reduce(atoms)
     return cell_to_cellpar(atoms.cell, radians=radians)
+
+
+def ase_write_cif(batch, inds, path, mode):
+    for ind in inds:
+        mol = ase_mol_from_crystaldata(batch, ind, mode=mode)
+        mol.write(f"{path}_{ind}.cif")

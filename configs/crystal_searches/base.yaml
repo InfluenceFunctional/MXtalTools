@@ -48,12 +48,12 @@ init_target_cp: wide  # a float, null (use target value), 'wide' (0.0-0.7) or 's
 #        enforce_reduced: Optional[bool] = False,
 #        supercell_size: Optional[int] = 10,
 #        anneal_lr: Optional[bool] = False,
-#        umbrella: Optional[bool] = False, # do umbrella sampling in latent space
+#        umbrella: Optional[bool] = False, # do umbrella sampling in latent space  ONLY KINDOF WORKS
 #        umbrella_sigma: Optional[float] = None, # bandwidth term for umbrella sampling
 #        umbrella_epsilon: Optional[float] = None, # repulsion term for umbrella sampling
 
 opt:
-  - optim_target: 'elj' # lj qlj elj silu ellipsoid classification_score rdf_score rdf_dist latent_dist
+  - optim_target: 'uma' # lj qlj elj silu ellipsoid classification_score rdf_score rdf_dist latent_dist
     enforce_reduced: true
     compression_factor: 1.0
     cutoff: 10  # can be as low as 6 for SiLU, 10 otherwise
@@ -63,9 +63,9 @@ opt:
     anneal_lr: true
     grad_norm_clip: 0.1
     show_tqdm: true
-    max_num_steps: 50
+    max_num_steps: 250
     target_packing_coeff: null
-    umbrella: true
+    umbrella: false
     umbrella_sigma: 0.25
     umbrella_epsilon: 40.0
 #

@@ -94,7 +94,7 @@ if __name__ == '__main__':
 
             torch.save(opt_outs, out_path)
 
-            if any(getattr(opt, 'umbrella', True) for opt in config.opt):
+            if any(opt.umbrella for opt in config.opt):
                 new_latents = crystal_batch.latent_params().cpu()
                 if not os.path.exists(umbrella_path):
                     torch.save(new_latents, umbrella_path)

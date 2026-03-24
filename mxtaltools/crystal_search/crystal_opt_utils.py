@@ -335,7 +335,6 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
     traj_fig(timesteps, (records['cp']), names=['time', 'cp'])
     traj_fig(records['cp'], log_rescale_positive(records['lj']), names=['cp', 'lj'])
     traj_fig(timesteps, torch.log(records['loss']), names=['time', 'loss'])
-
     
     crystal_batch.plot_batch_cell_params()
     crystal_batch.plot_batch_density_funnel()
