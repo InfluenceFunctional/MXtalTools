@@ -315,7 +315,7 @@ def crystal_filter(crystal,
     if any([len(component.atoms) == 0 for component in crystal.molecule.components]):
         return False, None, None, "Not all components have atoms"
     if len(reduced_crystal.asymmetric_unit_molecule.heavy_atoms) != len(
-            crystal.molecule.heavy_atoms):  # could make this done Z'-by-Z'
+            crystal.asymmetric_unit_molecule.heavy_atoms):  # could make this done Z'-by-Z'
         return False, None, None, "Aunit and mol heavy atoms disagree"
     if len(reduced_crystal.molecule.components) != crystal.z_prime:
         return False, None, None, "Z' != mol components"

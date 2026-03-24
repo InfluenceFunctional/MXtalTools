@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 
 from mxtaltools.common.ase_interface import ase_write_cif
 from mxtaltools.common.geometry_utils import enforce_crystal_system, batch_compute_fractional_transform, \
-    cart2sph_rotvec, sph2cart_rotvec, crystal_parameter_distmat, sph_rotvec2lat, lat2sph_rotvec
+    cart2sph_rotvec, sph2cart_rotvec, crystal_parameter_distmat, sph_rotvec2lat, lat2sph_rotvec, fractional_transform
 from mxtaltools.common.utils import softplus_shift, log_rescale_positive, get_point_density
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE
@@ -1513,26 +1513,27 @@ class MolCrystalOps:
         target_params = self.full_cell_parameters()
         std_params = []
         permutations = []
-
-        for p in target_params:
+        self.pose_aunit()
+        self.build_unit_cell()
+        for ind, p in enumerate(target_params):
             cellpar = p[:6].clone().numpy()
             cellpar[3:] *= (180 / np.pi)
 
             lattice = cellpar_to_cell(cellpar)
             # dummy atom (needed for spglib)
-            positions = [[0, 0, 0]]
-            numbers = [1]
+            # positions = [[0, 0, 0]]
+            # numbers = [1]
+            positions = fractional_transform(self.unit_cell_pos[self.unit_cell_batch == ind], self.T_cf[ind])
+            numbers = self.z[self.batch == ind].repeat(self.sym_mult[ind]).numpy().tolist()
             cell = (lattice, positions, numbers)
             lattice_std, positions_std, numbers_std = spglib.standardize_cell(
                 cell,
                 to_primitive=False,
                 no_idealize=False
             )
-            #lengths_old = np.linalg.norm(lattice, axis=1)
-            #lengths_new = np.linalg.norm(lattice_std, axis=1)
-            #perm = [np.argmin(np.abs(lengths_old - l)) for l in lengths_new]
-            P = np.linalg.inv(lattice) @ lattice_std
             cellpar_std = cell_to_cellpar(lattice_std)
+
+            P = np.linalg.inv(lattice) @ lattice_std
             std_params.append(cellpar_std)
             permutations.append(P)
         if return_transform:
@@ -1544,7 +1545,10 @@ class MolCrystalOps:
         ase_write_cif(self, inds, path, mode)
 
 '''
-positions = fractional_transform(self.unit_cell_pos[self.unit_cell_batch == ind], self.T_cf[0])
+from mxtaltools.common.geometry_utils import fractional_transform
+self.pose_aunit()
+self.build_unit_cell()
+positions = fractional_transform(self.unit_cell_pos[self.unit_cell_batch == ind], self.T_cf[ind])
 numbers = self.z[self.batch == ind].repeat(self.sym_mult[ind]).numpy().tolist()
 cell = (lattice, positions, numbers)
 lattice_std, positions_std, numbers_std = spglib.standardize_cell(

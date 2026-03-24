@@ -441,7 +441,7 @@ class MolCrystalAnalysis:
         # enforces our reduction scheme
         a, b, c = cell_lengths.unbind(dim=1)
         al, be, ga = cell_angles.unbind(dim=1)
-        be_min_cos = (- a / 2 / c).clamp(min=-1)
+        be_min_cos = (- a / c).clamp(min=-1)
         be_max_cos = 0
         beta_error = self.bounding_penalty(be.cos(), be_min_cos, be_max_cos, margin=margin)
 

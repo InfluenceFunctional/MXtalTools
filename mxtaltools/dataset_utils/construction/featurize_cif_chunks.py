@@ -124,7 +124,7 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers, protonation_s
             crystal_dict = extract_custom_cif_data(cif_path, crystal_dict)
 
             "check sym ops"
-            try:
+            try:  # todo upgrade this to detect if sym ops are identical but out of order
                 sym_ops_are_standard = np.all(np.stack(SYM_OPS[crystal_dict['space_group_number']]) == np.stack(
                     crystal_dict['symmetry_operators']))
             except ValueError:  # sometimes, there are not even the correct multiplicity of space group indexing
@@ -399,13 +399,22 @@ if __name__ == '__main__':
     #                        protonation_state='deprotonated')
 
     process_cifs_to_chunks(n_chunks=1,
-                           cifs_path=r"D:\crystal_datasets\nehzor",
-                           chunks_path='D:/crystal_datasets/nehzor/',
-                           chunk_prefix='nehzor',
+                           cifs_path=r"D:\crystal_datasets\nacjaf\nikos\round_2_cc_optimized_filtered",
+                           chunks_path='D:/crystal_datasets/nacjaf/',
+                           chunk_prefix='nacjaf',
                            use_filenames_for_identifiers=False,
-                           target_identifiers=['NEHZOR','NEHZOR01'],
+                           target_identifiers=None,
                            filter_by_targets=False,
                            protonation_state='protonated')
+
+    # process_cifs_to_chunks(n_chunks=1,
+    #                        cifs_path=r"D:\crystal_datasets\nehzor",
+    #                        chunks_path='D:/crystal_datasets/nehzor/',
+    #                        chunk_prefix='nehzor',
+    #                        use_filenames_for_identifiers=False,
+    #                        target_identifiers=['NEHZOR','NEHZOR01'],
+    #                        filter_by_targets=False,
+    #                        protonation_state='protonated')
 
     # process_cifs_to_chunks(n_chunks=1,
     #                        cifs_path=r"D:\crystal_datasets\mipcas",
