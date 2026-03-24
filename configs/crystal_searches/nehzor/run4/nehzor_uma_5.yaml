@@ -8,7 +8,7 @@ init_target_cp: wide
 mol_path: /scratch/mk8347/data/crystal_datasets/nehzor/NEHZOR0_std_conf.pt
 mol_seed: 0
 mols_to_sample: 1
-num_samples: 5000
+num_samples: 2500
 opt:
 - anneal_lr: false
   compression_factor: 1.0

@@ -19,7 +19,7 @@ mol_seed: 0
 opt_seed: 100
 sampling_mode: all # 'all' or 'random' or 'ordered'
 mols_to_sample: 1
-num_samples: 5000 # per mol, per space group, per Zp
+num_samples: 2500 # per mol, per space group, per Zp
 
 sgs_to_search: [ 14 ]
 zp_to_search: [ 1 ]
