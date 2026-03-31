@@ -50,7 +50,7 @@ def process_cifs_to_chunks(n_chunks: int,
 
     for chunk_ind, chunk in zip(chunk_inds, chunks_list[start_ind:stop_ind]):
         chunk_output_path = chunks_path + chunk_prefix + f"_chunk_{chunk_ind}.pkl"
-        if True: #not os.path.exists(chunk_output_path):
+        if True:  # not os.path.exists(chunk_output_path):
             # if this chunk has not already been processed, process it
             chunk_data_list = process_chunk(chunk, chunk_ind,
                                             use_filenames_for_identifiers,
@@ -79,7 +79,7 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers, protonation_s
                 csd_crystal = reader[crystal_ind]
                 # Z and Z' do NOT copy into the reduced crystal for some reason, so we keep boty
                 reduced_crystal = csd_crystal
-                #reduced_crystal = csd_crystal.generate_reduced_crystal(csd_crystal)  # todo this breaks the symmetry settings - we still have to figure out how to do it nicely
+                # reduced_crystal = csd_crystal.generate_reduced_crystal(csd_crystal)  # todo this breaks the symmetry settings - we still have to figure out how to do it nicely
                 if protonation_state == 'protonated':
                     reduced_crystal.assign_bonds()
                     reduced_crystal.add_hydrogens()
@@ -124,7 +124,7 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers, protonation_s
             crystal_dict = extract_custom_cif_data(cif_path, crystal_dict)
 
             "check sym ops"
-            try:  # todo upgrade this to detect if sym ops are identical but out of order
+            try:  # todo upgrade this to detect if sym ops are standard but out of order, and we can appropriately reshuffle them
                 sym_ops_are_standard = np.all(np.stack(SYM_OPS[crystal_dict['space_group_number']]) == np.stack(
                     crystal_dict['symmetry_operators']))
             except ValueError:  # sometimes, there are not even the correct multiplicity of space group indexing
@@ -159,19 +159,23 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers, protonation_s
             z_prime = torch.tensor(int(crystal_dict['z_prime']), dtype=torch.long)
             zp1_crystals = init_zp1_crystals(
                 crystal_dict, mols, sym_ops, sym_ops_are_standard)
-            aunit_centroid, aunit_handedness, aunit_orientation, crystal_batch, is_well_defined, pos = extract_zp1_pose_info(
+            (aunit_centroid, aunit_handedness,
+             aunit_orientation, crystal_batch,
+             is_well_defined, pos) = extract_zp1_pose_info(
                 crystal_dict, z_prime, zp1_crystals)
 
             """
             rebuild the crystal with these parameters to confirm correct reconstruction
             """
-            for ind, zp1_crystal in enumerate(zp1_crystals):
-                zp1_crystal.aunit_centroid[:, :3] = aunit_centroid[ind][None, ...]
-                zp1_crystal.aunit_orientation[:, :3] = aunit_orientation[ind][None, ...]
-                zp1_crystal.aunit_handedness[:, :1] = aunit_handedness[ind]
-                zp1_crystal.is_well_defined = torch.tensor(is_well_defined, dtype=torch.bool)[ind]
-                zp1_crystal.pos = pos[crystal_batch.batch == ind]
-                zp1_crystal.box_analysis()
+            for ind, finished_crystal in enumerate(zp1_crystals):
+                finished_crystal.aunit_centroid[:, :3] = aunit_centroid[ind][None, ...]
+                finished_crystal.aunit_orientation[:, :3] = aunit_orientation[ind][None, ...]
+                finished_crystal.aunit_handedness[:, :1] = aunit_handedness[ind]
+                if aunit_handedness[ind] == -1:
+                    aa = 1
+                finished_crystal.is_well_defined = torch.tensor(is_well_defined, dtype=torch.bool)[ind]
+                finished_crystal.pos = pos[crystal_batch.batch == ind]
+                finished_crystal.box_analysis()
 
             rebuild_batch = collate_data_list(zp1_crystals, max_z_prime=1)
             rebuild_batch.pose_aunit()
@@ -189,9 +193,9 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers, protonation_s
                 error_codes.append("Failed reparameterization")
                 continue
 
-            zp1_crystal = instantiate_crystal(aunit_centroid, aunit_handedness, aunit_orientation, max_z_prime, mols,
+            finished_crystal = instantiate_crystal(aunit_centroid, aunit_handedness, aunit_orientation, max_z_prime, mols,
                                               rebuild_batch, z_prime)
-            data_list.append(zp1_crystal)
+            data_list.append(finished_crystal)
 
     print(f"Cell reconstruction failed {failed_parameterization_counter} times out of {len(chunk)}")
     print(f"Crystal filtered {failed_checks_counter} times out of {len(chunk)}")
@@ -389,23 +393,23 @@ view([m1, m2])
 
 if __name__ == '__main__':
     # full dataset processing
-    # process_cifs_to_chunks(n_chunks=1000,
-    #                        cifs_path='D:/crystal_datasets/CSD_dump/',
-    #                        chunks_path='D:/crystal_datasets/CSD_featurized_chunks/',
-    #                        chunk_prefix='',
-    #                        use_filenames_for_identifiers=False,
-    #                        target_identifiers=None,
-    #                        filter_by_targets=False,
-    #                        protonation_state='deprotonated')
-
-    process_cifs_to_chunks(n_chunks=1,
-                           cifs_path=r"D:\crystal_datasets\nacjaf\nikos\round_2_cc_optimized_filtered",
-                           chunks_path='D:/crystal_datasets/nacjaf/',
-                           chunk_prefix='nacjaf',
+    process_cifs_to_chunks(n_chunks=1000,
+                           cifs_path='D:/crystal_datasets/CSD_dump/',
+                           chunks_path='D:/crystal_datasets/CSD_featurized_chunks/',
+                           chunk_prefix='',
                            use_filenames_for_identifiers=False,
                            target_identifiers=None,
                            filter_by_targets=False,
-                           protonation_state='protonated')
+                           protonation_state='deprotonated')
+
+    # process_cifs_to_chunks(n_chunks=1,
+    #                        cifs_path=r"D:\crystal_datasets\nacjaf\nikos\round_2_cc_optimized_filtered",
+    #                        chunks_path='D:/crystal_datasets/nacjaf/',
+    #                        chunk_prefix='nacjaf',
+    #                        use_filenames_for_identifiers=False,
+    #                        target_identifiers=None,
+    #                        filter_by_targets=False,
+    #                        protonation_state='protonated')
 
     # process_cifs_to_chunks(n_chunks=1,
     #                        cifs_path=r"D:\crystal_datasets\nehzor",
@@ -433,7 +437,6 @@ if __name__ == '__main__':
     #                        target_identifiers=None,
     #                        filter_by_targets=False,
     #                        protonation_state='deprotonated')
-
 
     # process_cifs_to_chunks(n_chunks=1,
     #                        cifs_path='D:/crystal_datasets/acridine/',

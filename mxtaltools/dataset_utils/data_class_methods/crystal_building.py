@@ -104,18 +104,23 @@ class MolCrystalBuilding:
             assert False, "No point in joining batches which area already Z'=1"
 
 
-    def pose_aunit(self, std_orientation: Optional[bool] = True):
+    def pose_aunit(self, std_orientation: Optional[bool] = True,
+                   override_handedness = None):
+        if override_handedness is not None:
+            handedness = override_handedness
+        else:
+            handedness = self.aunit_handedness
         if self.is_batch:
             self.pos = get_aunit_positions(
                 self,
                 std_orientation=std_orientation,
-                mol_handedness=self.aunit_handedness,
+                mol_handedness=handedness,
             )
         else:
             self.pos = get_aunit_positions(
                 collate_data_list([self]),
                 std_orientation=std_orientation,
-                mol_handedness=self.aunit_handedness,
+                mol_handedness=handedness,
             )
 
     def build_unit_cell(self):

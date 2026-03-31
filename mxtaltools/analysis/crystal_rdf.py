@@ -475,7 +475,7 @@ def compute_rdf_distmat_parallel(rdf_record, rr, num_cpus, chunk_size=250):
     return rdf_dists
 
 
-def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None, return_numpy: bool = False):
+def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None, return_numpy: bool = False, channel_weights: torch.tensor=None):
     """
     Compute a distance metric between two radial distribution functions including sub_rdfs where sub_rdfs are e.g., particular interatomic RDFS within a certain sample (elementwise or atomwise modes).
 
@@ -511,7 +511,7 @@ def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None, return_num
     else:
         torch_rdf1_f = torch_rdf1
 
-    bin_range = (torch_range[-1] - torch_range[0])
+    #bin_range = (torch_range[-1] - torch_range[0])
     bin_width = torch_range[1] - torch_range[0]
 
     # RDF should measure how much mass needs to move, by how far
@@ -525,7 +525,12 @@ def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None, return_num
     # take the raw average over nonzero element pairs
     eps = 1e-12
     active = (torch_rdf1_f.sum(dim=-1) > eps) | (torch_rdf2.sum(dim=-1) > eps)
-    distance = (emd * active).sum(dim=-1) / active.sum(dim=-1).clamp_min(1)  # ignore unused channels
+
+    if channel_weights is not None:
+        w = channel_weights.to(emd.device)[None, :]  # [1, n_channels]
+        distance = (emd * active * w).sum(dim=-1) / (active * w).sum(dim=-1).clamp_min(1e-10)
+    else:
+        distance = (emd * active).sum(dim=-1) / active.sum(dim=-1).clamp_min(1)
 
     # distance = emd.mean(-1)
     #

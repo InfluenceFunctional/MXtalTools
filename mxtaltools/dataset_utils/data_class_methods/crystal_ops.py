@@ -1,12 +1,14 @@
 from typing import Optional, Union, Iterable
+
 import numpy as np
 import pandas as pd
 import plotly.express as px
-import torch
-from plotly.subplots import make_subplots
 import plotly.graph_objects as go
+import torch
+from ase.geometry import cellpar_to_cell, cell_to_cellpar
+from plotly.subplots import make_subplots
 
-from mxtaltools.common.ase_interface import ase_write_cif
+from mxtaltools.analysis.crystal_rdf import compute_rdf_distance
 from mxtaltools.common.geometry_utils import enforce_crystal_system, batch_compute_fractional_transform, \
     cart2sph_rotvec, sph2cart_rotvec, crystal_parameter_distmat, sph_rotvec2lat, lat2sph_rotvec, fractional_transform
 from mxtaltools.common.utils import softplus_shift, log_rescale_positive, get_point_density
@@ -700,12 +702,12 @@ class MolCrystalOps:
 
         return True
 
-    def reparameterize_unit_cell(self):
+    def reparameterize_unit_cell(self,enforce_right_handedness: bool = False):
         (aunit_centroid, aunit_orientation,
          handedness_list, is_well_defined, pos) = (
             parameterize_crystal_batch(self,
                                        ASYM_UNITS,
-                                       enforce_right_handedness=False,
+                                       enforce_right_handedness=enforce_right_handedness,
                                        return_aunit=True))
 
         return aunit_centroid, aunit_orientation, handedness_list.long(), is_well_defined, torch.cat(pos)
@@ -1087,12 +1089,12 @@ class MolCrystalOps:
                                   ):
 
         if override_energy is None:
-            energy = (log_rescale_positive(self.lj) / self.num_atoms).cpu().detach()
+            energy = (log_rescale_positive(self.lj)).cpu().detach()
         else:
             if isinstance(override_energy, torch.Tensor):
-                energy = (log_rescale_positive(override_energy) / self.num_atoms).cpu().detach()
+                energy = (log_rescale_positive(override_energy)).cpu().detach()
             elif isinstance(override_energy, str):
-                energy = log_rescale_positive(self[override_energy] / self.num_atoms).cpu().detach()
+                energy = log_rescale_positive(self[override_energy]).cpu().detach()
             else:
                 assert False, "override_energyu must be tensor or string"
 
@@ -1507,58 +1509,90 @@ class MolCrystalOps:
         fixed_rotvecs = fixed_flat_rotvecs.reshape(self.num_graphs, self.max_z_prime * 3)
         self.aunit_orientation = fixed_rotvecs
 
-    def compute_standard_cell(self, return_transform: bool = False):
+    def compute_standard_cell(self, confirm_transform: bool = False):
+        assert self.is_batch, "Cell standardization currently only implemented for batch objects"
         import spglib
-        from ase.geometry import cellpar_to_cell, cell_to_cellpar
-        target_params = self.full_cell_parameters()
-        std_params = []
-        permutations = []
+
+        """set up unit cell"""
         self.pose_aunit()
         self.build_unit_cell()
+
+        target_params = self.full_cell_parameters()
+        std_params = []
+        transforms = []
+        new_positions = []
+
+        """get standard cell from spglib"""
         for ind, p in enumerate(target_params):
+            "box params"
             cellpar = p[:6].clone().numpy()
             cellpar[3:] *= (180 / np.pi)
-
             lattice = cellpar_to_cell(cellpar)
-            # dummy atom (needed for spglib)
-            # positions = [[0, 0, 0]]
-            # numbers = [1]
-            positions = fractional_transform(self.unit_cell_pos[self.unit_cell_batch == ind], self.T_cf[ind])
-            numbers = self.z[self.batch == ind].repeat(self.sym_mult[ind]).numpy().tolist()
+
+            "fractional positions"
+            positions = fractional_transform(self.unit_cell_pos[self.unit_cell_batch == ind],
+                                             self.T_cf[ind]).cpu().detach().numpy()
+
+            numbers = self.z[self.batch == ind].repeat(self.sym_mult[ind]).cpu().detach().numpy()
+
+            "spglib standardize"
             cell = (lattice, positions, numbers)
             lattice_std, positions_std, numbers_std = spglib.standardize_cell(
-                cell,
-                to_primitive=False,
-                no_idealize=False
-            )
+                cell, to_primitive=False, no_idealize=True)
+
+            "get new lattice"
             cellpar_std = cell_to_cellpar(lattice_std)
 
-            P = np.linalg.inv(lattice) @ lattice_std
+            "manually apply transform to atom positions (avoid breaking mols)"
+            T = lattice @ np.linalg.inv(lattice_std)
+            positions_new = positions @ T
+            transforms.append(T)
+            new_positions.append(positions_new)
             std_params.append(cellpar_std)
-            permutations.append(P)
-        if return_transform:
-            return np.stack(std_params), np.stack(permutations)
+
+        std_params = np.stack(std_params)
+
+        """instantiate standardized batch object"""
+        std_batch = self.clone()
+        "new box"
+        std_batch.cell_lengths = torch.tensor(std_params[:, :3], dtype=torch.float32, device=self.device)
+        std_batch.cell_angles = torch.tensor(std_params[:, 3:] / 180 * np.pi, dtype=torch.float32, device=self.device)
+        std_batch.box_analysis()
+        "transformed cartesian positions (not properly wrapped)"
+        ucell_pos_frac = torch.as_tensor(np.stack(new_positions), dtype=torch.float32, device=self.device)
+        ucell_batch = torch.arange(self.num_graphs).repeat_interleave((self.num_atoms * self.sym_mult).long())
+        ucell_pos_cart = fractional_transform(ucell_pos_frac.flatten(0, 1), std_batch.T_fc[ucell_batch])
+        std_batch.unit_cell_pos = ucell_pos_cart
+        std_batch.unit_cell_batch = ucell_batch
+        "parameterize unit cell (wrapping handled here) and update crystal params"
+        (aunit_centroid, aunit_orientation,
+         handedness_list, is_well_defined, pos) = std_batch.reparameterize_unit_cell()
+        std_batch.symmetry_operators = [SYM_OPS[int(ind)] for ind in
+                                        std_batch.sg_ind]  # critical - give standard sym ops!
+        std_batch.nonstandard_symmetry.fill_(False)
+        std_batch.aunit_centroid = aunit_centroid
+        std_batch.aunit_orientation = aunit_orientation
+        std_batch.aunit_handedness = handedness_list[:, None]
+        std_batch.is_well_defined = torch.tensor(is_well_defined, dtype=torch.bool, device=self.device)
+        std_batch.pos = pos
+        std_batch.pose_aunit()
+
+
+        if confirm_transform:
+            # estimate magnitude of the transform
+            # transform_dist = torch.cdist(torch.tensor(transforms.reshape(-1, 9), dtype=torch.float32), torch.eye(3).flatten()[None, :]).flatten()
+
+            rdf1 = self.analyze(['rdf'], )['rdf'][0]
+            rdf2 = std_batch.analyze(['rdf'])['rdf'][0]
+            diffs = compute_rdf_distance(rdf1, rdf2, torch.linspace(0, 10, rdf1.shape[-1],
+                                                                    dtype=torch.float32, device=self.device))
+            succeeded = diffs < 1e-3
+            if not succeeded.all():
+                print((~succeeded).sum().item(), " samples failed standardization")
+
+        if confirm_transform:
+            return std_batch, succeeded
         else:
-            return np.stack(std_params)
+            return std_batch
 
-    def write_to_cif(self, inds, mode, path):
-        ase_write_cif(self, inds, path, mode)
-
-'''
-from mxtaltools.common.geometry_utils import fractional_transform
-self.pose_aunit()
-self.build_unit_cell()
-positions = fractional_transform(self.unit_cell_pos[self.unit_cell_batch == ind], self.T_cf[ind])
-numbers = self.z[self.batch == ind].repeat(self.sym_mult[ind]).numpy().tolist()
-cell = (lattice, positions, numbers)
-lattice_std, positions_std, numbers_std = spglib.standardize_cell(
-    cell,
-    to_primitive=False,
-    no_idealize=False
-)
-dataset = spglib.get_symmetry_dataset(cell)
-for key in dataset.__dict__.keys():
-    print(key, dataset[key])
-    print('===============================')
-
-'''
+    # def invert_aunit_handedness(self):

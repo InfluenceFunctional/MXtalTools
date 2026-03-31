@@ -121,6 +121,7 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         umbrella_sigma: Optional[float] = None,  # bandwidth term for umbrella sampling
         umbrella_epsilon: Optional[float] = None,  # repulsion term for umbrella sampling
         umbrella_record: Optional[list] = None,
+        rdf_warmup: Optional[torch.tensor] = 500,
 ):
     """
     do a local optimization via gradient descent on some score function
@@ -160,7 +161,7 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
     if target_latent is not None:
         target_latent = target_latent.to(init_sample.device)
 
-    if target_rdf is not None:
+    if False: #target_rdf is not None:  # assumes we already have the box
         fixed_dims = [0, 1, 2, 3, 4, 5]
     else:
         fixed_dims = None
@@ -172,6 +173,7 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         'score_model': score_model,
         'optim_target': optim_target,
         'target_latent': target_latent,
+        'rdf_warmup': rdf_warmup,
     })
 
     aux_config = dict2namespace({
@@ -270,7 +272,7 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                     else:
                         loss_and_backprop(cluster_batch, crystal_batch, grad_norm_clip,
                                           optimizer, outputs, param_module, records,
-                                          loss_config, aux_config)
+                                          loss_config, aux_config, s_ind)
 
                     if s_ind % 10 == 0:
                         gc.collect()
@@ -344,7 +346,10 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
     
     """
     if optim_target == 'rdf_dist':
-        if torch.amin(records['loss']).log() < -2.5:
+        timesteps = torch.arange(s_ind).repeat(init_crystal_batch.num_graphs, 1).T
+        traj_fig(timesteps, torch.log(records['loss']), names=['time', 'loss'])
+
+        if torch.amin(records['loss'][-1]).log() < -2.5:
             print("Found the crystal!")
             good_ind = torch.argmin(records['loss'][-1]).item()
             sample = crystal_batch.batch_to_list()[good_ind]
@@ -403,8 +408,8 @@ def update_record(crystal_batch, outputs, params_record, records, s_ind):
 
 
 def loss_and_backprop(cluster_batch, crystal_batch, grad_norm_clip, optimizer, outputs, param_module, records,
-                      loss_config, aux_config):
-    loss = compute_loss(cluster_batch, crystal_batch, outputs, loss_config)
+                      loss_config, aux_config, opt_step):
+    loss = compute_loss(cluster_batch, crystal_batch, outputs, loss_config, opt_step)
     loss = compute_auxiliary_loss(cluster_batch, loss, outputs, aux_config)
 
     records['loss'].append(loss.detach().cpu())
@@ -541,7 +546,7 @@ def ema_trajectory(traj: torch.Tensor, alpha: float = 0.1) -> torch.Tensor:
     return numer / denom
 
 
-def compute_loss(cluster_batch, crystal_batch, outputs, config):
+def compute_loss(cluster_batch, crystal_batch, outputs, config, opt_step):
     if config.optim_target.lower() == 'lj':  # todo obviate this with analysis keys
         loss = outputs['lj']
 
@@ -573,8 +578,27 @@ def compute_loss(cluster_batch, crystal_batch, outputs, config):
         loss = outputs['uma']
 
     elif config.optim_target.lower() == 'rdf_dist':
+        n_channels = config.target_rdf.shape[-2]  # 120
+        if config.rdf_warmup is not None:
+            # channel_warmup = config.rdf_warmup
+            # channel_onsets = torch.linspace(0, channel_warmup, n_channels)  # evenly spaced turn-on times
+            # channel_weights = torch.sigmoid((opt_step - channel_onsets) / (channel_warmup / n_channels * 0.5))
+
+            n_waves = 3
+            base_periods = torch.tensor([1.0, 1.6, 2.5]) * config.rdf_warmup
+            channel_idx = torch.arange(n_channels, dtype=torch.float32)
+
+            modulation = torch.zeros(n_channels)
+            for i in range(n_waves):
+                modulation += torch.sin(
+                    2 * torch.pi * opt_step / base_periods[i] + 2 * torch.pi * channel_idx / n_channels * (i + 1))
+            modulation = modulation / n_waves
+            channel_weights = 0.5 + 0.5 * modulation
+        else:
+            channel_weights = torch.ones(n_channels)
         loss = compute_rdf_distance(outputs['rdf'][0], config.target_rdf,
-                                    torch.linspace(0, config.cutoff, config.target_rdf.shape[-1]))
+                                    torch.linspace(0, config.cutoff, config.target_rdf.shape[-1]),
+                                    channel_weights=channel_weights)
 
     elif config.optim_target.lower() == 'latent_dist':
         loss = (config.target_latent - crystal_batch.latent_params()).norm(dim=-1)

@@ -12,7 +12,7 @@ from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.mlip_interfaces.uma_utils import init_uma_crystal_predictor
 
 
-def save_umbrella_record(record, new_latents, path, sigma = 0.2, epsilon = 10):
+def save_umbrella_record(record, new_latents, path, sigma=0.2, epsilon=10):
     if len(record) > 0 and len(new_latents) > 0:
         dists = torch.cdist(new_latents, record)
         repulsion = epsilon * torch.exp(-dists ** 2 / (2 * sigma ** 2)).sum(dim=1).clip(max=10)
@@ -21,6 +21,7 @@ def save_umbrella_record(record, new_latents, path, sigma = 0.2, epsilon = 10):
         record = torch.cat([record, new_latents], dim=0)
     torch.save(record, path)
     return record
+
 
 def rdf_clustering(packing_coeff, rdf, rdf_cutoff, rr, samples, vdw, num_cpus=None):
     """cluster samples according to rdf distances"""
@@ -209,13 +210,14 @@ def get_initial_state(config, crystal_batch, device, batch_idx, target):
             crystal_batch.sample_random_crystal_parameters(
                 target_packing_coeff=target_cp,
                 seed=config.opt_seed + int(batch_idx * 10000))
-        standard_cell = target.compute_standard_cell()
-        crystal_batch.cell_lengths = torch.tensor(standard_cell[0, :3], dtype=torch.float32,
-                                                  device=crystal_batch.device).repeat(crystal_batch.num_graphs, 1)
-        crystal_batch.cell_angles = torch.tensor(standard_cell[0, 3:], dtype=torch.float32,
-                                                 device=crystal_batch.device).repeat(crystal_batch.num_graphs,
-                                                                                     1) * torch.pi / 2 / 90
-        crystal_batch.box_analysis()
+        assert False, "Below is deprecated and probably unnecessary for now"
+        # standard_cell = target.compute_standard_cell()
+        # crystal_batch.cell_lengths = torch.tensor(standard_cell[0, :3], dtype=torch.float32,
+        #                                           device=crystal_batch.device).repeat(crystal_batch.num_graphs, 1)
+        # crystal_batch.cell_angles = torch.tensor(standard_cell[0, 3:], dtype=torch.float32,
+        #                                          device=crystal_batch.device).repeat(crystal_batch.num_graphs,
+        #                                                                              1) * torch.pi / 2 / 90
+        # crystal_batch.box_analysis()
 
     else:
         assert False
@@ -228,7 +230,10 @@ def init_samples_to_optim(config, target=None):
     """
     if config.init_sample_method == 'data':
         samples_to_optim = torch.load(config.dataset_path, weights_only=False)
-        index_block = torch.arange(config.mol_seed * config.num_samples, (config.mol_seed + 1) * config.num_samples)
+        if not isinstance(samples_to_optim, list):
+            samples_to_optim = [samples_to_optim]
+        index_block = [0 for _ in range(
+            config.num_samples)]  # torch.arange(config.mol_seed * config.num_samples, (config.mol_seed + 1) * config.num_samples)
         samples_to_optim = [samples_to_optim[ind] for ind in index_block]
         return samples_to_optim
     else:
@@ -305,7 +310,9 @@ def parse_opt_config(opt_config, config, device, target):
         opt_config['elementwise'] = False
         opt_config['atomwise'] = True
         tbatch = collate_data_list([target])
-        out = tbatch.analyze(['rdf'], cutoff=10, rdf_cutoff=10, elementwise=False, atomwise=True, bins=100)
+        out = tbatch.analyze(['rdf'], cutoff=opt_config['cutoff'],
+                             rdf_cutoff=opt_config['cutoff'],
+                             elementwise=False, atomwise=True, bins=100)
         opt_config['target_rdf'] = out['rdf'][0]
     if opt_config['optim_target'] in ['latent_dist']:
         tbatch = collate_data_list([target])
