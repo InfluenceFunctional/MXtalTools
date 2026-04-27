@@ -51,6 +51,13 @@ def lightweight_one_sided_violin(data, n_points=100, bandwidth_factor=1.0, data_
         data_max = data.max()
 
     data_range = data_max - data_min
+    if data_range < 1e-6:
+        # Constant input: show a narrow spike
+        half_w = max(abs(data_min) * 0.01, 0.01)
+        x_vals = np.array([data_min - half_w, data_min, data_min + half_w])
+        y_vals = np.array([0, 0.4, 0])  # 0.4 gives visible but not full-width peak
+        return x_vals, y_vals
+
     x_vals = np.linspace(data_min - 0.1 * data_range,
                          data_max + 0.1 * data_range,
                          n_points)

@@ -195,14 +195,14 @@ def compack_fig(matches, rmsds, write_fig):
         fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\mxt_code\compack_fig.png', width=900, height=900)
 
 
-def batch_compack(best_sample_inds, optimized_samples, reference_cluster_batch): # todo refactor into analysis code
+def batch_compack(best_sample_inds, optimized_samples, reference_cluster_batch, ref_ind: int = 0): # todo refactor into analysis code
     # generate the crystals in ccdc format
     best_crystals_batch = collate_data_list([optimized_samples[ind] for ind in best_sample_inds])
-    best_cluster_batch = best_crystals_batch.mol2cluster().to('cpu')
+    best_cluster_batch = best_crystals_batch.mol2cluster(cutoff=10).to('cpu')
     _ = cluster_batch_to_ccdc_crystals(best_cluster_batch, np.arange(best_cluster_batch.num_graphs))
-    mol = ase_mol_from_crystaldata(reference_cluster_batch, index=0, mode='unit cell')
-    #mol.info['spacegroup'] = Spacegroup(int(best_cluster_batch.sg_ind[0]), setting=1)
-    mol.write('DAFMUV.cif')
+    mol = ase_mol_from_crystaldata(reference_cluster_batch, index=ref_ind, mode='unit cell')
+    mol.info['spacegroup'] = Spacegroup(int(reference_cluster_batch.sg_ind[ref_ind]), setting=1)
+    mol.write('compack_placeholder.cif')
 
     print(f"Running COMPACK on {len(best_sample_inds)} crystals")
     pool = mp.Pool(8)
@@ -225,7 +225,7 @@ def batch_compack(best_sample_inds, optimized_samples, reference_cluster_batch):
 
 
 def single_compack_run(ind):
-    ref_crystal = CrystalReader('DAFMUV.cif')[0]
+    ref_crystal = CrystalReader('compack_placeholder.cif')[0]
     sample_crystal = CrystalReader(f'temp_{ind}.cif')[0]
     similarity_engine = PackingSimilarity()
     similarity_engine.settings.distance_tolerance = 0.4

@@ -15,16 +15,7 @@ from mxtaltools.crystal_search.utils import get_initial_state, init_samples_to_o
     recover_opt_state, process_target, save_umbrella_record
 from mxtaltools.dataset_utils.utils import collate_data_list
 
-if __name__ == '__main__':
-    args = parse_args()  # call config with "python run_search.py --config /path/to/config.yaml
-    source_dir = Path(__file__).resolve().parent.parent.parent
-    if args.config is None:
-        config_path = source_dir / 'configs' / 'crystal_searches' / 'base.yaml'
-    else:
-        config_path = Path(args.config)
-
-    config = dict2namespace(load_yaml(config_path))
-
+def crystal_search(config):
     device = config.device
     umbrella_path = config.umbrella_path
 
@@ -102,14 +93,6 @@ if __name__ == '__main__':
                     umbrella_record = torch.load(umbrella_path, weights_only=False)
                     save_umbrella_record(umbrella_record, new_latents, umbrella_path, opt_config['umbrella_sigma'], opt_config['umbrella_epsilon'])
 
-                # cursor = 0
-                # bsz = config.batch_size
-                # while cursor < len(opt_outs):
-                #     batch = collate_data_list(opt_outs[cursor:cursor + bsz])
-                #     en = batch.elj
-                #     print([en.quantile(ii) for ii in torch.linspace(0, 1, 10)])
-                #     cursor += bsz
-
             cursor += config.batch_size
             prev_best_samples = None
             pbar.update(min(config.batch_size, num_samples - cursor))  # safe final update
@@ -143,6 +126,9 @@ if __name__ == '__main__':
             else:
                 raise e
 
+
+    return opt_outs
+
     print(f"Sampling complete! Optimized a total of {len(opt_outs)} crystal samples.")
 
     # batch = collate_data_list(opt_outs)
@@ -151,6 +137,19 @@ if __name__ == '__main__':
     # batch.plot_batch_density_funnel(split_by_sg=True)
 
     aa = 1
+
+if __name__ == '__main__':
+    args = parse_args()  # call config with "python run_search.py --config /path/to/config.yaml
+    source_dir = Path(__file__).resolve().parent.parent.parent
+    if args.config is None:
+        config_path = source_dir / 'configs' / 'crystal_searches' / 'base.yaml'
+    else:
+        config_path = Path(args.config)
+
+    config = dict2namespace(load_yaml(config_path))
+
+    crystal_search(config)
+
 """
 
 

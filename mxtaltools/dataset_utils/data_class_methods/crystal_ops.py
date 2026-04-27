@@ -963,25 +963,36 @@ class MolCrystalOps:
         orientation_means = torch.tensor([[0, 0, torch.pi / 2]], dtype=torch.float32, device=self.device)
         return std_aunit_orientation * orientation_stds + orientation_means
 
-    def _build_feature_labels(self):
+    def _build_feature_labels(self, space):
         lattice_features = ['a', 'b', 'c',
                             r'$\alpha$', r'$\beta$', r'$\gamma$']
         if self.max_z_prime == 1:
             lattice_features.extend([
                 f'u', f'v', f'w',
             ])
-            lattice_features.extend([
-                f'x', f'y', f'z'
-            ])
+            if space == 'latent':
+                lattice_features.extend([
+                    f'θ', f'φ', f'r'
+                ])
+            else:
+                lattice_features.extend([
+                    f'x', f'y', f'z'
+                ])
+
         else:
             for zp in range(self.max_z_prime):
                 lattice_features.extend([
                     f'aunit{zp} u', f'aunit{zp} v', f'aunit{zp} w',
                 ])
             for zp in range(self.max_z_prime):
-                lattice_features.extend([
-                    f'x{zp}', f'y{zp}', f'z{zp}'
-                ])
+                if space == 'latent':
+                    lattice_features.extend([
+                        f'θ{zp}', f'φ{zp}', f'r{zp}'
+                    ])
+                else:
+                    lattice_features.extend([
+                        f'x{zp}', f'y{zp}', f'z{zp}'
+                    ])
         return lattice_features
 
     def _set_cell_ranges(self, space, samples):
@@ -1225,7 +1236,7 @@ class MolCrystalOps:
             print("Cell statistics only works for a batch of crystal data objects")
             return None
 
-        lattice_features = self._build_feature_labels()
+        lattice_features = self._build_feature_labels(space=space)
         samples = self._get_samples(space)
         num_dists, dist_names, dists = self._collect_sample_dists(samples, ref_dist, quantiles, split_by_sg,
                                                                   split_by_zp, aux_dists, override_energy)
@@ -1270,6 +1281,10 @@ class MolCrystalOps:
         #     showgrid=False, zeroline=False, ticks='outside',
         #     tickwidth=1, mirror=True
         # )
+        fig.update_yaxes(
+            showgrid=False, zeroline=False, showticklabels=False, ticks='',
+            mirror=True
+        )
         if len(dists) > 1:
             fig.update_traces(opacity=0.5)
         if show:
@@ -1290,7 +1305,7 @@ class MolCrystalOps:
                              ref_dist=None,
                              ):
 
-        labels = self._build_feature_labels()
+        labels = self._build_feature_labels(space=space)
         samples = self._get_samples(space)
         if torch.is_tensor(samples):
             samples = samples.detach().cpu().numpy()

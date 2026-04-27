@@ -162,7 +162,7 @@ def coarse_crystal_filter(lj_record, lj_cutoff, packing_coeff_record, packing_cu
 
 def get_initial_state(config, crystal_batch, device, batch_idx, target):
     # sample initial parameters
-    if config.init_sample_method == 'data':
+    if config.init_sample_method == 'data' or config.init_sample_method == 'in_config':
         return crystal_batch
 
     if config.init_target_cp == 'std':
@@ -235,6 +235,9 @@ def init_samples_to_optim(config, target=None):
         index_block = [0 for _ in range(
             config.num_samples)]  # torch.arange(config.mol_seed * config.num_samples, (config.mol_seed + 1) * config.num_samples)
         samples_to_optim = [samples_to_optim[ind] for ind in index_block]
+        return samples_to_optim
+    elif config.init_sample_method == 'in_config':
+        samples_to_optim = config.samples_to_optim
         return samples_to_optim
     else:
         if target is None:

@@ -1663,8 +1663,8 @@ def compute_latent_distance(latents1: torch.Tensor,
 
     rot_dists = []
     for zp in range(z_prime):  # this should be replaced with a proper vector distance
-        rmat1 = rotvec2rotmat(lat_sph_rotvec1[...,3 * zp:3 * zp + 3], 'spherical')
-        rmat2 = rotvec2rotmat(lat_sph_rotvec2[...,3 * zp:3 * zp + 3], 'spherical')
+        rmat1 = rotvec2rotmat(lat_sph_rotvec1[..., 3 * zp:3 * zp + 3], 'spherical')
+        rmat2 = rotvec2rotmat(lat_sph_rotvec2[..., 3 * zp:3 * zp + 3], 'spherical')
 
         R_delta = rmat1 @ rmat2.transpose(-1, -2)
 
@@ -1676,10 +1676,11 @@ def compute_latent_distance(latents1: torch.Tensor,
     rot_dists = torch.stack(rot_dists).sum(0)
 
     "overall distance metric"
-    #dists = 0.5 * box_dist + 0.25 * (positions_dist / z_prime / 2.5) + 0.25 * (rot_dists / z_prime / 2)
-    #scales = [2 * sqrt(6), 2*sqrt(3), torch.pi] # maximum variation per dist
-    scales = [1, 0.836, 0.293]# [0.0127, 0.0152, 0.0433]  # empirical std over CSD samples
-    dists = scales[0] * 0.5 * box_dist + scales[1] * 0.25 * (positions_dist / z_prime) + scales[2] * 0.25 * (rot_dists / z_prime)
+    # dists = 0.5 * box_dist + 0.25 * (positions_dist / z_prime / 2.5) + 0.25 * (rot_dists / z_prime / 2)
+    # scales = [2 * sqrt(6), 2*sqrt(3), torch.pi] # maximum variation per dist
+    scales = [1, 0.836, 0.293]  # [0.0127, 0.0152, 0.0433]  # empirical std over CSD samples
+    dists = scales[0] * 0.5 * box_dist + scales[1] * 0.25 * (positions_dist / z_prime) + scales[2] * 0.25 * (
+                rot_dists / z_prime)
 
     return dists
 

@@ -19,12 +19,12 @@ mol_seed: 0
 opt_seed: 0
 sampling_mode: all # 'all' or 'random' or 'ordered'
 mols_to_sample: 2
-num_samples: 1000 # per mol, per space group, per Zp
+num_samples: 10000 # per mol, per space group, per Zp
 
 sgs_to_search: [ 14 ]
 zp_to_search: [ 1 ]
 
-batch_size: 50
+batch_size: 2000
 grow_batch_size: false
 
 init_target_cp: 0.6828  # a float, null (use target value), 'wide' (0.0-0.7) or 'std' target packing coefficient for initial structure sampling
@@ -56,15 +56,15 @@ opt:
   - optim_target: 'rdf_dist' # lj qlj elj silu ellipsoid classification_score rdf_score rdf_dist latent_dist
     enforce_reduced: false
     compression_factor: 0.0
-    cutoff: 4  # can be as low as 6 for SiLU, 10 otherwise
+    cutoff: 10 # can be as low as 6 for SiLU, 10 otherwise
     init_lr: 0.001
-    convergence_eps: 0.000001
+    convergence_eps: 0.0001
     optimizer_func: 'rprop'  # NOTE rprop is by far the fastest and most reliable
     anneal_lr: false
     grad_norm_clip: 0.1
     show_tqdm: true
-    max_num_steps: 40000
-    rdf_warmup: 100
+    max_num_steps: 500
+    rdf_warmup: null
     target_packing_coeff: 0.6828
     umbrella: false
     umbrella_sigma: 0.25
