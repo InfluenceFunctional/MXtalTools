@@ -1,5 +1,11 @@
 .idea/
 __pycache__/
+
+# Sphinx build output (generated at build time, not committed)
+docs/_build/
+
+# Auto-generated API stubs (rebuilt by sphinx-build via autosummary_generate=True)
+docs/source/_autosummary/
 /parallelTest.py
 /old/processDatasetChunks.py
 /req.out

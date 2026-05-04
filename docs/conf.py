@@ -1,135 +1,154 @@
 # Configuration file for the Sphinx documentation builder.
 #
-# This file only contains a selection of the most common options. For a full
-# list see the documentation:
+# For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
-# -- Path setup --------------------------------------------------------------
-
-# If extensions (or modules to document with autodoc) are in another directory,
-# add these directories to sys.path here. If the directory is relative to the
-# documentation root, use os.path.abspath to make it absolute, like shown here.
 import os
 import sys
+import types
 
 sys.path.insert(0, os.path.abspath("../"))
-sys.path.insert(0, os.path.abspath("../mxtaltools/"))
+
+# -- Mock heavy dependencies before any imports ------------------------------
+# Sphinx's autodoc_mock_imports doesn't handle issubclass() properly for
+# class inheritance (e.g., class MyModel(torch.nn.Module)).
+# We create mock modules with real classes that support subclassing.
+
+
+class _MockBase:
+    """Base class that supports being subclassed by documented code."""
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __init_subclass__(cls, **kwargs):
+        pass
+
+    def __call__(self, *args, **kwargs):
+        return self
+
+    def __getattr__(self, name):
+        if name.startswith('_'):
+            raise AttributeError(name)
+        return type(name, (_MockBase,), {'__module__': 'mock'})
+
+
+class _MockModule(types.ModuleType):
+    """A mock module that returns subclassable objects for any attribute."""
+
+    def __init__(self, name='mock'):
+        super().__init__(name)
+        self.__all__ = []
+        self.__path__ = [name]
+        self.__file__ = ''
+        self.__package__ = name
+
+    def __getattr__(self, name):
+        if name.startswith('_'):
+            raise AttributeError(name)
+        # Check if a child mock module exists in sys.modules
+        child = self.__name__ + '.' + name
+        if child in sys.modules:
+            return sys.modules[child]
+        # Otherwise return a subclassable class
+        return type(name, (_MockBase,), {'__module__': self.__name__})
+
+
+_MOCK_MODULES = [
+    # PyTorch ecosystem
+    'torch', 'torch.nn', 'torch.nn.functional', 'torch.nn.modules',
+    'torch.nn.modules.module', 'torch.optim', 'torch.optim.lr_scheduler',
+    'torch.utils', 'torch.utils.data', 'torch.cuda', 'torch.autograd',
+    'torch.distributions', 'torch.linalg', 'torch.fft',
+    'torch.random', 'torch.serialization',
+    # PyTorch Geometric
+    'torch_geometric', 'torch_geometric.data', 'torch_geometric.data.data',
+    'torch_geometric.data.storage',
+    'torch_geometric.nn', 'torch_geometric.nn.conv',
+    'torch_geometric.nn.pool', 'torch_geometric.nn.aggr',
+    'torch_geometric.nn.dense', 'torch_geometric.nn.dense.linear',
+    'torch_geometric.nn.inits',
+    'torch_geometric.loader', 'torch_geometric.loader.dataloader',
+    'torch_geometric.utils', 'torch_geometric.transforms',
+    'torch_geometric.typing',
+    # PyTorch extensions
+    'torch_scatter', 'torch_cluster', 'torch_sparse',
+    # RDKit
+    'rdkit', 'rdkit.Chem', 'rdkit.Chem.AllChem', 'rdkit.Chem.Descriptors',
+    'rdkit.Chem.rdMolTransforms', 'rdkit.Chem.rdmolops',
+    'rdkit.Chem.Draw', 'rdkit.Chem.rdchem', 'rdkit.Geometry',
+    # CSD
+    'ccdc', 'ccdc.io', 'ccdc.crystal', 'ccdc.molecule',
+    'ccdc.descriptors', 'ccdc.search',
+    # ASE
+    'ase', 'ase.io', 'ase.build', 'ase.optimize', 'ase.calculators',
+    'ase.spacegroup', 'ase.geometry', 'ase.cell', 'ase.visualize',
+    # MACE / E3NN
+    'mace', 'mace.calculators',
+    'e3nn', 'e3nn.o3',
+    # Ovito
+    'ovito', 'ovito.io', 'ovito.data', 'ovito.modifiers', 'ovito.pipeline',
+    # Wandb
+    'wandb',
+]
+
+for _mod_name in _MOCK_MODULES:
+    sys.modules[_mod_name] = _MockModule(_mod_name)
+
 
 # -- Project information -----------------------------------------------------
 
 project = "MXtalTools"
-copyright = "2024, Michael Kilgour"
+copyright = "2024-2026, Michael Kilgour"
 author = "Michael Kilgour"
-
-# The full version, including alpha/beta/rc tags
 version = "0.1.0"
 release = "0.1"
 
 # -- General configuration ---------------------------------------------------
 
 extensions = [
-    'sphinx.ext.duration',
-    'sphinx.ext.doctest',
     'sphinx.ext.autodoc',
     'sphinx.ext.autosummary',
     'sphinx.ext.intersphinx',
     'sphinx.ext.napoleon',
     'sphinx.ext.viewcode',
+    'sphinx.ext.duration',
 ]
 
 intersphinx_mapping = {
     'python': ('https://docs.python.org/3/', None),
-    'sphinx': ('https://www.sphinx-doc.org/en/master/', None),
+    'numpy': ('https://numpy.org/doc/stable/', None),
+    'torch': ('https://pytorch.org/docs/stable/', None),
 }
-intersphinx_disabled_domains = ['std']
 
 templates_path = ['_templates']
-#autodoc_mock_imports = ["torch", "torch_geometric", "torch_scatter", 'torch_cluster', 'rdkit','ccdc']
+exclude_patterns = ['_build', 'docs', 'Thumbs.db', '.DS_Store']
 
-# -- Options for HTML output
+# -- Autodoc / Autosummary --------------------------------------------------
 
-html_theme = 'sphinx_rtd_theme'
+autosummary_generate = True
+autosummary_imported_members = False
 
-# -- Options for EPUB output
-epub_show_urls = 'footnote'
-
-# Napoleon settings
-napoleon_google_docstring = True
-napoleon_numpy_docstring = True
-napoleon_include_init_with_doc = True
-napoleon_include_private_with_doc = True
-napoleon_include_special_with_doc = True
-napoleon_use_admonition_for_examples = False
-napoleon_use_admonition_for_notes = False
-napoleon_use_admonition_for_references = False
-napoleon_use_ivar = False
-napoleon_use_param = True
-napoleon_use_rtype = True
-
-# Add any Sphinx extension module names here, as strings. They can be
-# extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
-# ones.
-# extensions = ['sphinx.ext.autodoc', 'sphinx.ext.doctest', 'sphinx.ext.todo',
-#               'sphinx.ext.coverage', 'sphinx.ext.pngmath', 'sphinx.ext.ifconfig',
-#               'epub2', 'mobi', 'autoimage', 'code_example']
-#
-# todo_include_todos = True
-# templates_path = ['_templates']
-# source_suffix = '.rst'
-# master_doc = 'index'
-# exclude_patterns = []
-# add_function_parentheses = True
-#
-# # -- Options for HTML output ---------------------------------------------------
-#
-# html_theme = 'book'
-# html_theme_path = ['themes']
-# html_title = "Music for Geeks and Nerds"
-# #html_short_title = None
-# #html_logo = None
-# #html_favicon = None
-# html_static_path = ['_static']
-# html_domain_indices = False
-# html_use_index = False
-# html_show_sphinx = False
-# htmlhelp_basename = 'MusicforGeeksandNerdsdoc'
-# html_show_sourcelink = False
-#
-# # List of patterns, relative to source directory, that match files and
-# # directories to ignore when looking for source files.
-# # This pattern also affects html_static_path and html_extra_path.
-# exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
-#
-#
-#
-# intersphinx_mapping = {
-#     "python": ("https://docs.python.org/3", None),
-#     "numpy": ("https://numpy.org/doc/stable/", None),
-#     "pytorch": ("https://pytorch.org/docs/stable/", None),
-#     "torch_geometric": ("https://pytorch-geometric.readthedocs.io/en/latest/", None),
-#     "ase": ("https://wiki.fysik.dtu.dk/ase/", None),
-# }
-#
 autodoc_default_options = {
     "inherited-members": False,
     "show-inheritance": True,
-    "autosummary": True,
-    "autosummary_generate": False,  # because building on read the docs is annoying, we build locally and upload
+    "members": True,
+    "undoc-members": True,
 }
-#
-# # The reST default role to use for all documents.
-# default_role = "any"
-#
-# # -- Options for HTML output -------------------------------------------------
-#
-# # The theme to use for HTML and HTML Help pages.  See the documentation for
-# # a list of builtin themes.
-# #
-# html_theme = "sphinx_rtd_theme"
-#
-# # Add any paths that contain custom static files (such as style sheets) here,
-# # relative to this directory. They are copied after the builtin static files,
-# # so a file named "default.css" will overwrite the builtin "default.css".
-# # html_static_path = ['_static']
-#
-# myst_update_mathjax = False
+
+# -- Napoleon settings -------------------------------------------------------
+
+napoleon_google_docstring = True
+napoleon_numpy_docstring = True
+napoleon_include_init_with_doc = True
+napoleon_include_private_with_doc = False
+napoleon_include_special_with_doc = False
+napoleon_use_param = True
+napoleon_use_rtype = True
+
+# -- Options for HTML output -------------------------------------------------
+
+html_theme = 'sphinx_rtd_theme'
+
+# -- Options for EPUB output -------------------------------------------------
+
+epub_show_urls = 'footnote'

@@ -13,7 +13,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "License :: OSI Approved :: BSD License",
 ]
-include=[
+include = [
     "LICENSE",
     "README.md",
     "main.py",
@@ -21,55 +21,75 @@ include=[
     "mxtaltools/**/*.yaml",
     "configs/**/*.yaml",
     "misc/**/*.py",
-    "tests/**/*.py"
+    "tests/**/*.py",
 ]
-exclude=[
+exclude = [
     "**/old/**",
     "**/*.model",
-    "**/*.pt"
+    "**/*.pt",
 ]
 
 [tool.poetry.urls]
 "repository" = "https://github.com/InfluenceFunctional/MXtalTools"
-"issues" = "https://github.com/InfluenceFunctional/MXtalTools/issues"
+"issues"     = "https://github.com/InfluenceFunctional/MXtalTools/issues"
 "documentation" = "https://mxtaltools.readthedocs.io/en/latest/index.html"
 
-#[tool.poetry.scripts]
-#test = "pytest"
+# ---------------------------------------------------------------------------
+# NOTE: PyTorch, PyTorch Geometric, and their C extensions (torch-scatter,
+# torch-sparse, torch-cluster, pyg_lib, torch_spline_conv) must be installed
+# manually before running `pip install mxtaltools`, because the correct
+# wheels depend on your CUDA version.  See the Installation docs for the
+# exact commands.
+# ---------------------------------------------------------------------------
 
 [tool.poetry.dependencies]
 python = ">=3.9"
-ase=">=3.22.1"
-kaleido=">=0.2.1"
-matplotlib="*"
-numpy="*"
-pandas=">=2.1.1"
-pathtools=">=0.1.2"
-Pillow=">=10.0.1"
-plotly=">=5.17.0"
-PyYAML=">=6.0.1"
-scikit-learn=">=1.2.2"
-scipy=">=1.11.3"
-tqdm="*"
-umap-learn=">=0.5.5"
-wandb=">=0.15.12"
-rdkit=">=2024.03.5"
-#csd-python-api="*"
-pytest=">=7.4.2"
 
-#[tool.poetry.sources]
-#ccdc = { url = "https://pip.ccdc.cam.ac.uk/", priority = "supplemental" }
+# Scientific stack
+numpy        = "*"
+scipy        = ">=1.11.3"
+pandas       = ">=2.1.1"
+numba        = "*"
+scikit-learn = ">=1.2.2"
+scikit-image = "*"
+networkx     = "*"
 
-## NOTE have to set custom cuda dependencies
-#torch=">=2.1.0"
-#torch_geometric=">=2.4.0"
+# Molecular / crystal utilities
+ase   = ">=3.22.1"
+rdkit = ">=2024.03.5"
 
-#torch-scatter = ">=2.1.2"#+pt20cu118"
-#torch-sparse = ">=0.6.18"#+pt20cu118"
-#torch-cluster = ">=1.6.3"#+pt20cu118"
-#pynvml
+# ML utilities
+einops  = "*"
+msgpack = "*"
+POT     = "*"          # Python Optimal Transport
+
+# Visualisation & reporting
+matplotlib = "*"
+plotly     = ">=5.17.0"
+kaleido    = ">=0.2.1"
+seaborn    = "*"
+Pillow     = ">=10.0.1"
+tqdm       = "*"
+
+# Config / IO
+PyYAML    = ">=6.0.1"
+pathtools = ">=0.1.2"
+
+# Experiment tracking & testing
+wandb  = ">=0.15.12"
+pytest = ">=7.4.2"
+
+# Optional: CSD Python API (requires a valid CCDC licence)
+# csd-python-api = "*"
+
+[tool.poetry.extras]
+# Install UMA model support with:  pip install mxtaltools[uma]
+uma = ["fairchem-core"]
+
+[tool.poetry.dependencies.fairchem-core]
+version  = "*"
+optional = true
 
 [build-system]
-requires = ["poetry-core"]
+requires      = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-
