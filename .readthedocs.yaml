@@ -1,19 +1,21 @@
-# Read the Docs configuration file for MkDocs projects
+# Read the Docs configuration file
 # See https://docs.readthedocs.io/en/stable/config-file/v2.html for details
 
-# Required
 version: 2
 
-# Set the version of Python and other tools you might need
 build:
   os: ubuntu-22.04
   tools:
-    python: "3.9"
+    python: "3.11"
 
 python:
   install:
-#    - method: pip
-#      path: .
+    # Install the package (without torch/PyG — those are mocked in conf.py).
+    # This brings in all pure-Python deps (numpy, scipy, rdkit, etc.) so
+    # Sphinx can import the parts of mxtaltools that don't touch torch.
+    - method: pip
+      path: .
+    # Sphinx and theme
     - requirements: docs/requirements.txt
 
 sphinx:
