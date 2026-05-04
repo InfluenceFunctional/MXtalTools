@@ -410,6 +410,7 @@ def batch_get_furthest_node_vector(all_coords: torch.FloatTensor, batch: torch.L
 
 
 def nan_hook(name, tensor_ref, batch):
+    """Return a backward hook that prints debug info and halts on NaN gradients."""
     def _hook(grad):
         if torch.isnan(grad).any():
             print(f"NaNs in grad of {name}")
@@ -693,18 +694,18 @@ def cell_vol_torch(v: torch.tensor, a: torch.tensor):
 
 def batch_cell_vol_torch(v: torch.tensor, a: torch.tensor):
     """
-    compute the volume of a parallelpiped given basis vector lengths and internal angles
+    Batched computation of unit cell volumes given basis vector lengths and internal angles.
+
     Parameters
     ----------
-    v : torch.tensor(3)
-        [a b c]
-    a : torch.tensor(3)
-        [alpha beta gamma]
+    v : torch.tensor(n, 3)
+        batch of [a, b, c] lengths
+    a : torch.tensor(n, 3)
+        batch of [alpha, beta, gamma] angles in radians
 
     Returns
     -------
-    cell_volume : float
-
+    cell_volumes : torch.tensor(n)
     """
     ''' Calculate cos and sin of cell angles '''
     cos_a = torch.cos(a)  # in natural units
@@ -719,6 +720,18 @@ def batch_cell_vol_torch(v: torch.tensor, a: torch.tensor):
 
 
 def cell_vol_angle_factor(cell_angles):
+    """
+    Compute the angular factor sqrt(1 - cos²α - cos²β - cos²γ + 2cosα cosβ cosγ) used in cell volume calculations.
+
+    Parameters
+    ----------
+    cell_angles : torch.tensor(..., 3)
+        [alpha, beta, gamma] in radians; leading batch dimensions are supported
+
+    Returns
+    -------
+    factor : torch.tensor(...)
+    """
     cos_a = torch.cos(cell_angles)  # in natural units
 
     return torch.sqrt(
@@ -861,6 +874,28 @@ def batch_compute_molecule_volume(
         num_graphs: int,
         vdw_radii_tensor: torch.Tensor
 ):
+    """
+    Estimate molecular vdW volumes for a batch of molecules using a sphere-overlap correction.
+
+    Sums atomic sphere volumes then subtracts pairwise sphere-sphere intersection volumes
+    scaled by an empirical correction factor (~0.73) to approximate triple overlaps.
+
+    Parameters
+    ----------
+    atom_types : torch.LongTensor(n)
+        Atomic numbers used to index vdw_radii_tensor
+    pos : torch.FloatTensor(n, 3)
+        Atomic coordinates
+    batch : torch.LongTensor(n)
+        Graph index for each atom
+    num_graphs : int
+    vdw_radii_tensor : torch.Tensor
+        Lookup table of vdW radii indexed by atomic number
+
+    Returns
+    -------
+    corrected_mol_volume : torch.FloatTensor(num_graphs)
+    """
     atom_volumes = 4 / 3 * torch.pi * vdw_radii_tensor[atom_types] ** 3
     raw_vdw_volumes = scatter(atom_volumes, batch, dim=0, dim_size=num_graphs, reduce='sum')
     bonds_i, bonds_j = radius(pos, pos,
@@ -904,6 +939,35 @@ def probe_compute_molecule_volume(
         max_iters: int = 1000,
         min_iters: int = 5
 ):
+    """
+    Estimate molecular vdW volumes via Monte Carlo probe sampling, iterating until convergence.
+
+    Random probes are scattered within each molecule's bounding box; the fraction inside
+    any atomic vdW sphere gives the volume estimate. Runs until the relative change in
+    the running mean drops below eps for min_iters consecutive iterations.
+
+    Parameters
+    ----------
+    atom_types : torch.LongTensor(n)
+    pos : torch.FloatTensor(n, 3)
+    batch : torch.LongTensor(n)
+    num_graphs : int
+    vdw_radii_tensor : torch.Tensor
+        Lookup table of vdW radii indexed by atomic number
+    probes_per_mol : int
+        Number of random probes per molecule per iteration
+    eps : float
+        Convergence threshold on relative change in running mean
+    max_iters : int
+        Maximum number of sampling iterations
+    min_iters : int
+        Minimum iterations before convergence is checked
+
+    Returns
+    -------
+    volumes : torch.FloatTensor(num_graphs)
+        Converged volume estimates
+    """
     volume_record = []
     converged = False
     iter = 0
@@ -1105,7 +1169,7 @@ def components2angle(components: torch.tensor, norm_components=True):
 
 def angle2components(angle: torch.tensor):
     """
-    Tecompose an angle input into sin(angle) and cos(angle)
+    Decompose an angle into sin(angle) and cos(angle)
 
     Parameters
     ----------
@@ -1347,9 +1411,15 @@ def cell_parameters_to_box_vectors(opt: str,
 
 def compute_mol_radius(coords: torch.FloatTensor) -> Tensor:
     """
-    compute centroid for each molecule
-    then the distance of all atoms to the centroid
-    most distant atom defines the 'radius'
+    Compute the radius of a single molecule as the maximum distance from the centroid to any atom.
+
+    Parameters
+    ----------
+    coords : torch.FloatTensor(n, 3)
+
+    Returns
+    -------
+    radius : torch.FloatTensor scalar
     """
     centroid = coords.mean(0)
     return torch.amax(torch.linalg.norm(coords - centroid, dim=-1))
@@ -1361,9 +1431,18 @@ def batch_compute_mol_radius(coords: torch.FloatTensor,
                              nodes_per_graph: torch.LongTensor,
                              ) -> Tensor:
     """
-    compute centroid for each molecule
-    then the distance of all atoms to the centroid
-    most distant atom defines the 'radius'
+    Batched version of compute_mol_radius.
+
+    Parameters
+    ----------
+    coords : torch.FloatTensor(n, 3)
+    batch : torch.LongTensor(n)
+    num_graphs : int
+    nodes_per_graph : torch.LongTensor(num_graphs)
+
+    Returns
+    -------
+    radii : torch.FloatTensor(num_graphs)
     """
     centroids = get_batch_centroids(coords, batch, num_graphs)
     dists = torch.linalg.norm(coords - centroids.repeat_interleave(nodes_per_graph, 0), dim=-1)
@@ -1374,6 +1453,19 @@ def get_batch_centroids(coords: torch.FloatTensor,
                         batch: torch.LongTensor,
                         num_graphs: int,
                         ) -> Tensor:
+    """
+    Compute the centroid (mean position) for each graph in a batch.
+
+    Parameters
+    ----------
+    coords : torch.FloatTensor(n, 3)
+    batch : torch.LongTensor(n)
+    num_graphs : int
+
+    Returns
+    -------
+    centroids : torch.FloatTensor(num_graphs, 3)
+    """
     return scatter(coords, batch, dim=0, dim_size=num_graphs, reduce='mean')
 
 
@@ -1384,6 +1476,25 @@ def center_batch(coords: torch.FloatTensor,
                  center_on_heavy_atoms: bool = False,
                  atom_types: Optional[torch.LongTensor] = None,
                  ) -> Tensor:
+    """
+    Subtract the centroid from each graph's coordinates, returning zero-centered positions.
+
+    Parameters
+    ----------
+    coords : torch.FloatTensor(n, 3)
+    batch : torch.LongTensor(n)
+    num_graphs : int
+    nodes_per_graph : torch.LongTensor(num_graphs)
+    center_on_heavy_atoms : bool
+        If True, compute the centroid using only heavy atoms (atom_types > 1)
+        but translate all atoms
+    atom_types : torch.LongTensor(n), optional
+        Required when center_on_heavy_atoms is True
+
+    Returns
+    -------
+    coords_centered : torch.FloatTensor(n, 3)
+    """
     if center_on_heavy_atoms:
         mask = atom_types > 1
         centroids = get_batch_centroids(coords[mask], batch[mask], num_graphs)
@@ -1397,11 +1508,41 @@ def batch_compute_mol_mass(z: torch.LongTensor,
                            batch: torch.LongTensor,
                            masses_tensor: torch.FloatTensor,
                            num_graphs: int) -> Tensor:
+    """
+    Sum atomic masses for each graph in a batch.
+
+    Parameters
+    ----------
+    z : torch.LongTensor(n)
+        Atomic numbers used to index masses_tensor
+    batch : torch.LongTensor(n)
+    masses_tensor : torch.FloatTensor
+        Lookup table of atomic masses indexed by atomic number
+    num_graphs : int
+
+    Returns
+    -------
+    masses : torch.FloatTensor(num_graphs)
+    """
     return scatter(masses_tensor[z], batch, dim=0, dim_size=num_graphs, reduce='sum')
 
 
 def compute_mol_mass(z: torch.LongTensor,
                      masses_tensor: torch.FloatTensor) -> Tensor:
+    """
+    Sum atomic masses for a single molecule.
+
+    Parameters
+    ----------
+    z : torch.LongTensor(n)
+        Atomic numbers
+    masses_tensor : torch.FloatTensor
+        Lookup table of atomic masses indexed by atomic number
+
+    Returns
+    -------
+    mass : torch.FloatTensor scalar
+    """
     return torch.sum(masses_tensor[z])
 
 
@@ -1439,6 +1580,18 @@ def rotvec2rotmat(mol_rotation: torch.tensor, basis='cartesian'):
 
 def extract_rotmat(target_position: torch.FloatTensor,
                    original_position: torch.FloatTensor) -> Tensor:
+    """
+    Compute the rotation matrix R such that R @ original_position ≈ target_position.
+
+    Parameters
+    ----------
+    target_position : torch.FloatTensor(n, 3, 3) or (3, 3)
+    original_position : torch.FloatTensor(n, 3, 3) or (3, 3)
+
+    Returns
+    -------
+    rotmat : torch.FloatTensor(n, 3, 3) or (3, 3)
+    """
     if target_position.ndim == 3:
         return torch.einsum('nji, njk -> nik', target_position, torch.linalg.inv(original_position))
     elif target_position.ndim == 2:
@@ -1448,10 +1601,40 @@ def extract_rotmat(target_position: torch.FloatTensor,
 
 
 def apply_rotation_to_batch(elems, rotations, batch):
+    """
+    Apply per-graph rotation matrices to a batch of vectors.
+
+    Parameters
+    ----------
+    elems : torch.FloatTensor(n, 3)
+    rotations : torch.FloatTensor(num_graphs, 3, 3)
+    batch : torch.LongTensor(n)
+
+    Returns
+    -------
+    rotated : torch.FloatTensor(n, 3)
+    """
     return torch.einsum('nij, nj -> ni', rotations[batch], elems)
 
 
 def rotmat2rotvec(rotation_matrix_list, warn_on_bad_determinant=True):
+    """
+    Convert a batch of rotation matrices to rotation vectors (axis-angle).
+
+    Uses the Rodrigues formula: axis from the skew-symmetric part, angle from the trace.
+    Degenerate cases (near-identity or near-pi rotations) are handled by clamping to a
+    fallback rotation of pi around [1,1,1].
+
+    Parameters
+    ----------
+    rotation_matrix_list : torch.FloatTensor(n, 3, 3)
+    warn_on_bad_determinant : bool
+        Print a warning if any matrix has det < 0 (i.e. is a reflection, not a rotation)
+
+    Returns
+    -------
+    rotvecs : torch.FloatTensor(n, 3)
+    """
     # Fixed!
     if warn_on_bad_determinant:
         det = torch.linalg.det(rotation_matrix_list)
@@ -1499,6 +1682,20 @@ old version
 
 
 def sample_random_valid_rotvecs(num_samples):
+    """
+    Sample uniformly random rotation vectors with theta restricted to the upper half-sphere (z ≥ 0).
+
+    Directions are drawn from a Gaussian (giving uniform spherical coverage) and norms
+    are drawn uniformly from (0, 2π].
+
+    Parameters
+    ----------
+    num_samples : int
+
+    Returns
+    -------
+    rotvecs : torch.FloatTensor(num_samples, 3)
+    """
     # random directions on the sphere, getting naturally the correct distribution of theta, phi
     random_vectors = torch.randn(size=(num_samples, 3))
     # set norms uniformly between 0-2pi
@@ -1538,6 +1735,22 @@ def fractional_transform(coords, transform_matrix):
 
 
 def fractional_transform_np(coords, transform_matrix):
+    """
+    Apply a fractional/cartesian transform to numpy coordinate arrays.
+
+    Dispatches on the combination of coords and transform_matrix dimensionality:
+    (n,3)+(3,3) → per-point transform; (n,m,3)+(3,3) → per-atom-in-molecule;
+    (n,3)+(n,3,3) → per-graph batched transform.
+
+    Parameters
+    ----------
+    coords : np.ndarray
+    transform_matrix : np.ndarray
+
+    Returns
+    -------
+    transformed : np.ndarray
+    """
     if coords.ndim == 2 and transform_matrix.ndim == 2:
         return np.einsum('nj,ij->ni', coords, transform_matrix)
     elif coords.ndim == 3 and transform_matrix.ndim == 2:
@@ -1547,6 +1760,20 @@ def fractional_transform_np(coords, transform_matrix):
 
 
 def fractional_transform_torch(coords, transform_matrix):
+    """
+    Apply a fractional/cartesian transform to torch coordinate tensors.
+
+    Same dispatch logic as fractional_transform_np.
+
+    Parameters
+    ----------
+    coords : torch.FloatTensor
+    transform_matrix : torch.FloatTensor
+
+    Returns
+    -------
+    transformed : torch.FloatTensor
+    """
     if coords.ndim == 2 and transform_matrix.ndim == 2:
         return torch.einsum('nj,ij->ni', (coords, transform_matrix))
     elif coords.ndim == 3 and transform_matrix.ndim == 2:
@@ -1556,6 +1783,18 @@ def fractional_transform_torch(coords, transform_matrix):
 
 
 def compute_ellipsoid_volume(e):
+    """
+    Compute ellipsoid volumes from semi-axis vectors.
+
+    Parameters
+    ----------
+    e : torch.FloatTensor(..., 3, 3)
+        Each row is a semi-axis vector; volume = (4/3)π * product of semi-axis lengths
+
+    Returns
+    -------
+    volumes : torch.FloatTensor(...)
+    """
     return 4 / 3 * torch.pi * e.norm(dim=-1).prod(dim=-1)
 
 
@@ -1573,6 +1812,21 @@ def compute_cosine_similarity_matrix(e1, e2):
 
 
 def safe_batched_eigh(covs, chunk=10000):
+    """
+    Chunked symmetric eigendecomposition with a CPU fallback for CUSOLVER failures.
+
+    Parameters
+    ----------
+    covs : torch.FloatTensor(n, d, d)
+        Batch of symmetric matrices
+    chunk : int
+        Number of matrices per kernel call
+
+    Returns
+    -------
+    eigenvalues : torch.FloatTensor(n, d)
+    eigenvectors : torch.FloatTensor(n, d, d)
+    """
     out_vals, out_vecs = [], []
     for i in range(0, covs.shape[0], chunk):
         cchunk = covs[i:i + chunk]
@@ -1593,6 +1847,25 @@ def safe_batched_eigh(covs, chunk=10000):
 
 
 def lat2sph_rotvec(lat_orientations, z_prime):
+    """
+    Map latent orientation parameters (normalized to [-1, 1]) to spherical rotation vectors.
+
+    Inverse of sph_rotvec2lat. The three latent dimensions map as:
+      theta ∈ [-1,1] → [π/4, 3π/4]  (upper half-sphere polar angle)
+      phi   ∈ [-1,1] → [-π, π]       (azimuthal angle)
+      r     ∈ [-1,1] → [0, 2π]       (rotation magnitude)
+
+    Parameters
+    ----------
+    lat_orientations : torch.FloatTensor(..., z_prime * 3)
+    z_prime : int
+        Number of asymmetric units
+
+    Returns
+    -------
+    sph_rotvec : torch.FloatTensor(..., z_prime * 3)
+        Spherical rotation vectors [theta, phi, r] for each asymmetric unit
+    """
     lat = lat_orientations.view(*lat_orientations.shape[:-1], z_prime, 3)
 
     # allocate output
@@ -1742,6 +2015,22 @@ def crystal_parameter_distmat(
 
 
 def sph_rotvec2lat(sph_rotvec, z_prime):
+    """
+    Map spherical rotation vectors to latent orientation parameters normalized to [-1, 1].
+
+    Inverse of lat2sph_rotvec.
+
+    Parameters
+    ----------
+    sph_rotvec : torch.FloatTensor(..., z_prime * 3)
+        Spherical rotation vectors [theta, phi, r] for each asymmetric unit
+    z_prime : int
+        Number of asymmetric units
+
+    Returns
+    -------
+    lat_orientations : torch.FloatTensor(..., z_prime * 3)
+    """
     sph = sph_rotvec.view(*sph_rotvec.shape[:-1], z_prime, 3)
 
     # allocate output
