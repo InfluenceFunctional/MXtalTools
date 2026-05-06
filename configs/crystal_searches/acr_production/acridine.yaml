@@ -1,10 +1,20 @@
 device: cuda
 mol_path: /scratch/mk8347/csd_runs/datasets/acridine/acridine_conformer.pt
+dataset_path: null #D:\crystal_datasets\xuldud\xuldud_sg61_zp1.pt
+target_path: null #D:\crystal_datasets\nehzor\nehzor.pt
+umbrella_path:  null
 out_dir: /scratch/mk8347/csd_runs/datasets/acridine
 run_name: acr_prod_dataset
-
+target_identifier: null
+save_trajs: false
+uma_predictor_path: '/scratch/mk8347/models/uma/esen_s.pt'
 mace_predictor_path: /scratch/mk8347/data/acr_112025_mh1_stagetwo.model
 
+init_sample_method: random  # 'random' 'reasonable' 'data'
+init_reduced: true
+
+# if method is 'data' optimize provided pre-built crystals
+# else, from random initial conditions
 mol_seed: 0
 opt_seed: 0
 sampling_mode: all # 'all' or 'random' or 'ordered'
@@ -17,7 +27,6 @@ zp_to_search: [ 1, 2 ]
 batch_size: 20000
 grow_batch_size: false
 
-init_sample_method: random  # 'random' 'reasonable'
 init_target_cp: 0.1 #std  # float, null or 'std' target packing coefficient for initial structure sampling
 
 # Optimization can have multiple stages by duplicating the opt block below and adjusting params

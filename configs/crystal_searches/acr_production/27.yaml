@@ -1,12 +1,15 @@
 batch_size: 20000
+dataset_path: null
 device: cuda
 grow_batch_size: false
+init_reduced: true
 init_sample_method: random
 init_target_cp: 0.1
+mace_predictor_path: /scratch/mk8347/data/acr_112025_mh1_stagetwo.model
 mol_path: /scratch/mk8347/csd_runs/datasets/acridine/acridine_conformer.pt
 mol_seed: 0
 mols_to_sample: 1
-num_samples: 50000
+num_samples: 2500
 opt:
 - anneal_lr: false
   compression_factor: 1.0
@@ -42,7 +45,12 @@ opt_seed: 7
 out_dir: /scratch/mk8347/csd_runs/datasets/acridine
 run_name: may_acridine_sg14_zp2_7
 sampling_mode: all
+save_trajs: false
 sgs_to_search:
 - 14
+target_identifier: null
+target_path: null
+uma_predictor_path: /scratch/mk8347/models/uma/esen_s.pt
+umbrella_path: null
 zp_to_search:
 - 2
