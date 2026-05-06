@@ -1,6 +1,7 @@
 import os
 from itertools import product
 
+import numpy as np
 import yaml
 from pathlib import Path
 from copy import deepcopy
@@ -27,15 +28,18 @@ if __name__ == "__main__":
 
     ind = 0
     for zp in [1, 2]:
-        for sg in [2, 4, 9, 14, 15, 19, 33, 61, 1, 5, 7, 12, 13, 18, 29, 33, 60, 62, 146]:
-            config = deepcopy(base)
-            config['sgs_to_search'] = [sg]
-            config['zp_to_search'] = [zp]
-            config['run_name'] = f'acridine_sg{sg}_zp{zp}'
-            config['num_samples'] = 100000
+        for sg in [14]:
+            for seed_ind in np.arange(20):
+                seed_ind = int(seed_ind)
+                config = deepcopy(base)
+                config['opt_seed'] = seed_ind
+                config['sgs_to_search'] = [sg]
+                config['zp_to_search'] = [zp]
+                config['run_name'] = f'may_acridine_sg{sg}_zp{zp}_{seed_ind}'
+                config['num_samples'] = int(50000/20)
 
-            config_path = f'acridine_{ind}.yaml'
-            with open(config_path, 'w') as f:
-                yaml.dump(config, f, default_flow_style=False)
+                config_path = f'{ind}.yaml'
+                with open(config_path, 'w') as f:
+                    yaml.dump(config, f, default_flow_style=False)
 
-            ind += 1
+                ind += 1

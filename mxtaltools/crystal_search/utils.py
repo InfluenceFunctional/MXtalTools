@@ -9,6 +9,7 @@ from mxtaltools.analysis.crystal_rdf import compute_rdf_distmat_parallel, comput
 from mxtaltools.common.training_utils import load_crystal_score_model
 from mxtaltools.dataset_utils.data_classes import MolCrystalData
 from mxtaltools.dataset_utils.utils import collate_data_list
+from mxtaltools.mlip_interfaces.AL_mace_utils import load_mace_model
 from mxtaltools.mlip_interfaces.uma_utils import init_uma_crystal_predictor
 
 
@@ -160,7 +161,7 @@ def coarse_crystal_filter(lj_record, lj_cutoff, packing_coeff_record, packing_cu
     return bad_inds, good_inds
 
 
-def get_initial_state(config, crystal_batch, device, batch_idx, target):
+def get_initial_state(config, crystal_batch, device, batch_idx):
     # sample initial parameters
     if config.init_sample_method == 'data' or config.init_sample_method == 'in_config':
         return crystal_batch
@@ -232,8 +233,7 @@ def init_samples_to_optim(config, target=None):
         samples_to_optim = torch.load(config.dataset_path, weights_only=False)
         if not isinstance(samples_to_optim, list):
             samples_to_optim = [samples_to_optim]
-        index_block = [0 for _ in range(
-            config.num_samples)]  # torch.arange(config.mol_seed * config.num_samples, (config.mol_seed + 1) * config.num_samples)
+        index_block = torch.arange(config.mol_seed * config.num_samples, (config.mol_seed + 1) * config.num_samples)
         samples_to_optim = [samples_to_optim[ind] for ind in index_block]
         return samples_to_optim
     elif config.init_sample_method == 'in_config':
@@ -308,7 +308,10 @@ def parse_opt_config(opt_config, config, device, target):
         opt_config['score_model'] = score_model
     if opt_config['optim_target'] in ['uma']:
         pred_path = config.uma_predictor_path  # smaller mol crystal model
-        opt_config['uma_predictor'] = init_uma_crystal_predictor(pred_path, device=device)
+        opt_config['predictor'] = init_uma_crystal_predictor(pred_path, device=device)
+    if opt_config['optim_target'] in ['mace']:
+        pred_path = config.mace_predictor_path  # smaller mol crystal model
+        opt_config['predictor'] = load_mace_model(pred_path, device=device, dtype=torch.float32)
     if opt_config['optim_target'] in ['rdf_dist']:
         opt_config['elementwise'] = False
         opt_config['atomwise'] = True

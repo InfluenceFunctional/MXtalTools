@@ -106,7 +106,7 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         enforce_reduced: Optional[bool] = False,
         supercell_size: Optional[int] = 10,
         anneal_lr: Optional[bool] = False,
-        uma_predictor: Optional = None,
+        predictor: Optional = None,
         mc_kT: float = 0.5,
         log_noise_range=[-2, -1],
         target_rdf: torch.tensor = None,
@@ -132,20 +132,19 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
     min_num_steps = 50
     num_samples = init_crystal_batch.num_graphs
 
-    if optim_target.lower() == 'silu':
-        energy_computes.append('silu')
-    elif optim_target.lower() == 'qlj':
-        energy_computes.append('qlj')
-    # elif optim_target.lower() == 'elj': # always do this
-    #     energy_computes.append('elj')
-    elif optim_target.lower() == 'ellipsoid':
-        energy_computes.append('ellipsoid')
-    elif optim_target.lower() == 'reduce':
-        energy_computes.append('reduction_en')
-    elif optim_target.lower() == 'uma':
-        energy_computes.append('uma')
-    elif optim_target.lower() == 'rdf_dist':
-        energy_computes.append('rdf')
+    target_map = {
+        'silu': 'silu',
+        'qlj': 'qlj',
+        'ellipsoid': 'ellipsoid',
+        'reduce': 'reduction_en',
+        'uma': 'uma',
+        'mace': 'mace',
+        'rdf_dist': 'rdf',
+        'elj': 'elj',
+        'lj':'lj'
+    }
+    energy_computes.append(target_map[optim_target.lower()])
+    energy_computes = list(set(energy_computes))
 
     if enforce_reduced:  # use an energy based penalty to enforce sampling in the reduced subspace
         energy_computes.append('reduction_en')
@@ -194,7 +193,7 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                                                              energy_computes, enforce_reduced, init_crystal_batch,
                                                              mc_kT, optim_target, param_module, score_model,
                                                              std_margin, supercell_size, target_packing_coeff,
-                                                             uma_predictor, target_rdf, target_latent)
+                                                             predictor, target_rdf, target_latent)
 
     if anneal_lr:
         lr_factor = get_annealing_factor(1, 0.01, int(max_num_steps * 0.75), 1)
@@ -248,7 +247,7 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                         surface_padding=0,
                         std_orientation=True,
                         margin=std_margin,
-                        predictor=uma_predictor,
+                        predictor=predictor,
                         elementwise=elementwise,
                         atomwise=atomwise,
                         assign_outputs=True,
@@ -314,7 +313,7 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         return_cluster=False,
         repulsion=repulsion,
         surface_padding=0,
-        predictor=uma_predictor,
+        predictor=predictor,
         assign_outputs=True,
         elementwise=False,
         atomwise=True,
@@ -573,6 +572,9 @@ def compute_loss(cluster_batch, crystal_batch, outputs, config, opt_step):
 
     elif config.optim_target.lower() == 'uma':
         loss = outputs['uma']
+
+    elif config.optim_target.lower() == 'mace':
+        loss = outputs['mace']
 
     elif config.optim_target.lower() == 'rdf_dist':
         n_channels = config.target_rdf.shape[-2]  # 120

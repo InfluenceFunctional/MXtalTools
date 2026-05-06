@@ -1,0 +1,48 @@
+batch_size: 20000
+device: cuda
+grow_batch_size: false
+init_sample_method: random
+init_target_cp: 0.1
+mol_path: /scratch/mk8347/csd_runs/datasets/acridine/acridine_conformer.pt
+mol_seed: 0
+mols_to_sample: 1
+num_samples: 50000
+opt:
+- anneal_lr: false
+  compression_factor: 1.0
+  convergence_eps: 0.001
+  cutoff: 10
+  enforce_reduced: true
+  grad_norm_clip: 0.1
+  init_lr: 0.05
+  max_num_steps: 350
+  optim_target: mace
+  optimizer_func: rprop
+  show_tqdm: true
+  target_packing_coeff: null
+  umbrella: false
+  umbrella_epsilon: 7.5
+  umbrella_sigma: 0.25
+- anneal_lr: true
+  compression_factor: 0.0
+  convergence_eps: 1.0e-05
+  cutoff: 10
+  enforce_reduced: true
+  grad_norm_clip: 0.1
+  init_lr: 0.01
+  max_num_steps: 150
+  optim_target: mace
+  optimizer_func: rprop
+  show_tqdm: true
+  target_packing_coeff: null
+  umbrella: false
+  umbrella_epsilon: 7.5
+  umbrella_sigma: 0.25
+opt_seed: 10
+out_dir: /scratch/mk8347/csd_runs/datasets/acridine
+run_name: may_acridine_sg14_zp2_10
+sampling_mode: all
+sgs_to_search:
+- 14
+zp_to_search:
+- 2

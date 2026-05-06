@@ -1,283 +1,178 @@
-from typing import Optional
+from mace.tools.torch_geometric.dataloader import Collater
 
-import numpy as np
 import torch
-from ase import Atoms
+from mace.data import AtomicData, get_neighborhood, utils
+from mace.tools import to_one_hot, atomic_numbers_to_indices
 
+from mxtaltools.common.geometry_utils import fractional_transform
 from mxtaltools.common.utils import is_cuda_oom
 
-# NOTE: MACE / e3nn imports are deferred to init_* functions so that importing
-# this module does not require MACE to be installed.
 
-
-# ---------------------------------------------------------------------------
-# torch.load monkeypatch (MACE checkpoints predate weights_only=True default)
-# ---------------------------------------------------------------------------
-_original_torch_load = torch.load
-_patched = False
-
-
-def _patch_torch_load():
-    """Force weights_only=False for MACE checkpoint compatibility."""
-    global _patched
-    if _patched:
-        return
+def load_mace_model(model_path, device, dtype):
+    _original_torch_load = torch.load
 
     def patched_torch_load(*args, **kwargs):
+        # Force weights_only=False if not specified
         if 'weights_only' not in kwargs:
             kwargs['weights_only'] = False
         return _original_torch_load(*args, **kwargs)
 
     torch.load = patched_torch_load
-    _patched = True
 
+    from mace.cli.convert_e3nn_cueq import run as run_e3nn_to_cueq
+    model = torch.load(f=model_path, map_location=device)
 
-# ---------------------------------------------------------------------------
-# Safe predict
-# ---------------------------------------------------------------------------
-def safe_predict_mace(predictor,
-                      mace_batch):
-    """
-    Run MACE forward with CUDA OOM handling, mirroring safe_predict_uma.
-    Returns (output_dict, crashed_flag).
-    """
     try:
-        torch.cuda.synchronize()
-        out = predictor["model"](
-            mace_batch,
-            compute_force=False,
-            compute_stress=False,
-        )
-        torch.cuda.synchronize()
-        return out, False
+        import cuequivariance  # noqa: F401
+        import cuequivariance_torch  # noqa: F401
+        import cuequivariance_ops_torch  # noqa: F401
+        _CUEQ_AVAILABLE = True
+    except ImportError:
+        _CUEQ_AVAILABLE = False
+
+    use_cueq = _CUEQ_AVAILABLE and torch.cuda.is_available()
+    if use_cueq:
+        print("cuequivariance (with ops) detected, enabling...")
+        model = run_e3nn_to_cueq(model)
+
+    model.to(device, dtype=dtype)
+    model.eval()
+
+    return model
+
+
+def mxt_crystal_to_mace_atomicdata(batch,
+                                   unit_cell_batch,
+                                   unit_cell_pos,
+                                   mol_z,
+                                   sym_mult,
+                                   T_fc,
+                                   dtype, cutoff, z_table, ind, pbc):
+    mask = batch == ind
+    ucell_mask = unit_cell_batch == ind
+    pos = unit_cell_pos[ucell_mask]
+    cell = T_fc[ind].T
+    sample_z = mol_z[mask].repeat(sym_mult[ind])
+
+    edge_index, shifts, unit_shifts, cell = get_neighborhood(
+        positions=pos.cpu().detach().numpy(), cutoff=cutoff,
+        pbc=[pbc, pbc, pbc], cell=cell.cpu().detach().numpy()
+    )
+    indices = atomic_numbers_to_indices(sample_z.cpu().numpy(), z_table=z_table)
+    one_hot = to_one_hot(torch.tensor(indices, dtype=torch.long).unsqueeze(-1), num_classes=len(z_table))
+    num_atoms = len(sample_z)
+
+    mace_data = AtomicData(
+        edge_index=torch.tensor(edge_index, dtype=torch.long),
+        positions=pos,
+        shifts=torch.tensor(shifts, dtype=dtype),
+        unit_shifts=torch.tensor(unit_shifts, dtype=dtype),
+        cell=cell,
+        node_attrs=one_hot,
+        head=torch.tensor(0, dtype=torch.long),  # → tensor(0)
+        pbc=torch.tensor([[pbc, pbc, pbc]], dtype=torch.bool),
+        weight=torch.tensor(1.0, dtype=dtype),
+        energy_weight=torch.tensor(1.0, dtype=dtype),
+        forces_weight=torch.tensor(1.0, dtype=dtype),
+        stress_weight=torch.tensor(1.0, dtype=dtype),
+        virials_weight=torch.tensor(1.0, dtype=dtype),
+        dipole_weight=torch.tensor([[1.0, 1.0, 1.0]], dtype=dtype),
+        charges_weight=torch.tensor(1.0, dtype=dtype),
+        polarizability_weight=torch.tensor([[[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [1.0, 1.0, 1.0]]], dtype=dtype),
+        energy=torch.tensor(0.0, dtype=dtype),
+        forces=torch.zeros(num_atoms, 3, dtype=dtype),
+        stress=torch.zeros(1, 3, 3, dtype=dtype),
+        virials=torch.zeros(1, 3, 3, dtype=dtype),
+        dipole=torch.zeros(1, 3, dtype=dtype),
+        charges=torch.zeros(num_atoms, dtype=dtype),
+        polarizability=torch.zeros(1, 3, 3, dtype=dtype),
+        elec_temp=torch.tensor(0.0, dtype=dtype),
+        total_charge=torch.tensor(0.0, dtype=dtype),
+        total_spin=torch.tensor(1.0, dtype=dtype),
+    )
+    return mace_data
+
+
+def compute_crystal_mace_on_mxt_batch(batch, model, std_orientation=True, pbc: bool=True, force_rebuild: bool = False):
+    dataset = batch_to_mace_atomicdata(batch, force_rebuild, model, std_orientation, pbc=pbc)
+    collater = Collater([None], [None])
+    mbatch = collater(dataset)
+    mbatch = mbatch.to(batch.device)
+    input_data = mbatch.to_dict()
+
+    frac_pos = fractional_transform(batch.unit_cell_pos, batch.T_cf[batch.unit_cell_batch])
+    cart_pos = fractional_transform(frac_pos, batch.T_fc[batch.unit_cell_batch])
+    input_data['positions'] = cart_pos.to(batch.device)
+
+    graph_ind = batch.unit_cell_batch[mbatch.edge_index[0].cpu()]
+    unit_shifts = input_data['unit_shifts']
+    input_data['shifts'] = fractional_transform(unit_shifts, batch.T_fc[graph_ind].to(batch.device))
+    output, crashed = safe_predict_mace(model, input_data)
+    if crashed:
+        energy = torch.zeros(batch.num_graphs, dtype=torch.float32, device=batch.device)
+    else:
+        energy = output['energy']
+    return energy
+
+
+def safe_predict_mace(model, input_data):
+    try:
+        torch.cuda.synchronize()  # flush prior kernels
+        out = model(input_data, compute_force=False, compute_stress=False)
+        torch.cuda.synchronize()  # force errors to surface *here*
+        return out, False  # False = no failure
 
     except RuntimeError as e:
         if not is_cuda_oom(e):
-            print("MACE error")
+            print("UMA error")
             print(str(e))
+            # reset the cuda context fully
             torch.cuda.synchronize()
             torch.cuda.empty_cache()
-            return None, True
+            return None, True  # signal failure
         else:
             raise e
 
 
-# ---------------------------------------------------------------------------
-# Batch -> MACE AtomicData
-# ---------------------------------------------------------------------------
-def batch_to_mace_atomicdata(batch,
-                             predictor,
-                             std_orientation: bool = True,
-                             pbc: bool = True,
-                             force_rebuild: bool = False):
-    """
-    Convert an mxt batch to a batched MACE AtomicData object, routed through ASE.
-    Reuses batch_to_ase_ucell_list from the UMA utils to avoid duplication.
-    """
-    # Deferred MACE imports
-    from mace import data as mace_data
-    from mace.tools import torch_geometric
+def batch_to_mace_atomicdata(batch, force_rebuild, model, std_orientation, pbc: bool=True):
+    do_rebuild = False
+    if not hasattr(batch, 'unit_cell_pos'):
+        do_rebuild = True
+    elif batch.unit_cell_pos is None:
+        do_rebuild = True
+    if force_rebuild:
+        do_rebuild = True
 
-    # Reuse the existing ASE conversion from the UMA utils
-    from mxtaltools.models.functions.AL_uma_utils import batch_to_ase_ucell_list
+    if do_rebuild:
+        if batch.z_prime.amax() > 1:
+            zp1_batch = batch.split_to_zp1_batch()
+            zp1_batch.pose_aunit(std_orientation=std_orientation)
+            zp1_batch.build_unit_cell()
+            batch.join_zp1_ucell_batch(zp1_batch)
+        else:
+            batch.pose_aunit(std_orientation=std_orientation)
+            batch.build_unit_cell()
 
-    atoms_list = batch_to_ase_ucell_list(
-        batch,
-        std_orientation=std_orientation,
-        pbc=pbc,
-        force_rebuild=force_rebuild,
-    )
+        mol_z = batch.z
+        mol_batch_inds = batch.batch
 
-    configs = [mace_data.config_from_atoms(atoms) for atoms in atoms_list]
+    elif hasattr(batch, 'aux_ind'):
+        mol_z = batch.z[batch.aux_ind == 0]
+        mol_batch_inds = batch.batch[batch.aux_ind == 0]
 
-    atomic_data_list = [
-        mace_data.AtomicData.from_config(
-            config,
-            z_table=predictor["z_table"],
-            cutoff=predictor["r_max"],
-            heads=predictor["heads"],
-        )
-        for config in configs
-    ]
-
-    # Collate into a single batch (equivalent to a DataLoader with batch_size=len)
-    loader = torch_geometric.dataloader.DataLoader(
-        dataset=atomic_data_list,
-        batch_size=len(atomic_data_list),
-        shuffle=False,
-        drop_last=False,
-    )
-    mace_batch = next(iter(loader)).to(predictor["device"])
-    return mace_batch.to_dict()
-
-
-def molecule_batch_to_mace_atomicdata(batch, predictor, pbc: bool = False):
-    """
-    Non-periodic molecule variant: convert an mxt batch's ASU/molecule positions
-    directly to MACE AtomicData without any unit-cell construction.
-    """
-    from mace import data as mace_data
-    from mace.tools import torch_geometric
-
-    device = predictor["device"]
-
-    cpu_z = batch.z.cpu().detach().numpy()
-    cpu_pos = batch.pos.cpu().detach().numpy()
-    cpu_batch_ind = batch.batch.cpu().detach().numpy()
-
-    atoms_list = []
-    for ind in range(batch.num_graphs):
-        mask = cpu_batch_ind == ind
-        atoms = Atoms(
-            numbers=cpu_z[mask],
-            positions=cpu_pos[mask],
-        )
-        atoms.set_pbc(pbc)
-        atoms_list.append(atoms)
-
-    configs = [mace_data.config_from_atoms(atoms) for atoms in atoms_list]
-    atomic_data_list = [
-        mace_data.AtomicData.from_config(
-            config,
-            z_table=predictor["z_table"],
-            cutoff=predictor["r_max"],
-            heads=predictor["heads"],
-        )
-        for config in configs
-    ]
-
-    loader = torch_geometric.dataloader.DataLoader(
-        dataset=atomic_data_list,
-        batch_size=len(atomic_data_list),
-        shuffle=False,
-        drop_last=False,
-    )
-    mace_batch = next(iter(loader)).to(device)
-    return mace_batch.to_dict()
-
-
-# ---------------------------------------------------------------------------
-# Top-level entry points (mirror UMA signatures)
-# ---------------------------------------------------------------------------
-def compute_crystal_mace_on_mxt_batch(batch,
-                                      std_orientation: bool = True,
-                                      predictor: Optional = None,
-                                      pbc: bool = True,
-                                      max_cp: float = 2.0,
-                                      force_rebuild: bool = False):
-    """MACE crystal energy prediction on an mxt batch. Energy only."""
-    # Guard against ultra-dense cells (mirrors UMA entry point)
-    while sum(batch.packing_coeff > max_cp) > 0:
-        bad_inds = torch.argwhere(batch.packing_coeff > max_cp)
-        if len(bad_inds) > 0:
-            batch.cell_lengths[bad_inds] += 2
-            batch.box_analysis()
-
-    mace_batch = batch_to_mace_atomicdata(
-        batch,
-        predictor=predictor,
-        std_orientation=std_orientation,
-        pbc=pbc,
-        force_rebuild=force_rebuild,
-    )
-
-    out, crashed = safe_predict_mace(predictor, mace_batch)
-    if crashed:
-        energy = torch.zeros(batch.num_graphs, dtype=torch.float32, device=batch.device)
     else:
-        energy = out["energy"]
-        if energy.ndim == 2:
-            energy = energy.flatten()
+        mol_z = batch.z
+        mol_batch_inds = batch.batch
 
-    return energy
-
-
-def compute_molecule_mace_on_mxt_batch(batch,
-                                       predictor: Optional = None):
-    """MACE molecule energy prediction on an mxt batch (non-periodic). Energy only."""
-    mace_batch = molecule_batch_to_mace_atomicdata(batch, predictor=predictor, pbc=False)
-
-    out, crashed = safe_predict_mace(predictor, mace_batch)
-    if crashed:
-        energy = torch.zeros(batch.num_graphs, dtype=torch.float32, device=batch.device)
-    else:
-        energy = out["energy"]
-        if energy.ndim == 2:
-            energy = energy.flatten()
-
-    return energy
-
-
-# ---------------------------------------------------------------------------
-# Predictor initializers
-# ---------------------------------------------------------------------------
-def _init_mace_predictor(model_path: str,
-                         device: str,
-                         default_dtype: str = 'float64',
-                         enable_cueq: bool = False,
-                         head: Optional[str] = None):
-    """Shared predictor init: loads model, extracts z_table/r_max/heads."""
-    _patch_torch_load()
-
-    # Deferred imports
-    from mace.tools import torch_tools, utils
-
-    torch_tools.set_default_dtype(default_dtype)
-    torch_device = torch_tools.init_device(device)
-
-    model = torch.load(f=model_path, map_location=torch_device)
-
-    if enable_cueq:
-        from mace.cli.convert_e3nn_cueq import run as run_e3nn_to_cueq
-        model = run_e3nn_to_cueq(model)
-
-    model.to(torch_device)
-    model.eval()
-
+    cutoff = float(model.r_max)
     z_table = utils.AtomicNumberTable([int(z) for z in model.atomic_numbers])
-    r_max = float(model.r_max)
-
-    try:
-        heads = model.heads
-    except AttributeError:
-        heads = None
-
-    predictor = {
-        "model": model,
-        "z_table": z_table,
-        "r_max": r_max,
-        "heads": heads,
-        "device": torch_device,
-        "head": head,
-    }
-    return predictor
-
-
-def init_mace_crystal_predictor(model_path: str,
-                                device: str = 'cuda',
-                                default_dtype: str = 'float64',
-                                enable_cueq: bool = False,
-                                head: Optional[str] = None):
-    """Initialize a MACE predictor for periodic crystal energy evaluation."""
-    return _init_mace_predictor(
-        model_path=model_path,
-        device=device,
-        default_dtype=default_dtype,
-        enable_cueq=enable_cueq,
-        head=head,
-    )
-
-
-def init_mace_mol_predictor(model_path: str,
-                            device: str = 'cuda',
-                            default_dtype: str = 'float64',
-                            enable_cueq: bool = False,
-                            head: Optional[str] = None):
-    """Initialize a MACE predictor for non-periodic molecule energy evaluation."""
-    return _init_mace_predictor(
-        model_path=model_path,
-        device=device,
-        default_dtype=default_dtype,
-        enable_cueq=enable_cueq,
-        head=head,
-    )
+    dataset = [mxt_crystal_to_mace_atomicdata(
+        mol_batch_inds,
+        batch.unit_cell_batch,
+        batch.unit_cell_pos,
+        mol_z,
+        batch.sym_mult,
+        batch.T_fc,
+        batch.unit_cell_pos.dtype, cutoff, z_table, ind, pbc=pbc)
+        for ind in range(batch.num_graphs)]
+    return dataset

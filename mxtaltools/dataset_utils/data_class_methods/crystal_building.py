@@ -10,6 +10,8 @@ from mxtaltools.dataset_utils.utils import collate_data_list
 # noinspection PyAttributeOutsideInit
 class MolCrystalBuilding:
     def split_to_zp1_batch(self):
+        # if hasattr(self, "aux_ind"):
+        #     assert self.aux_ind is None, "Not implemented for cluster objects"
         # NOTE this is only an intermediate for crystal building, and will not generate all the correct attributes for
         # subunit crystal graphs such as molecule and crystal properties
         assert self.is_batch, "Method not implemented for single data object"
@@ -25,7 +27,8 @@ class MolCrystalBuilding:
         zp1_batch.num_atoms = atoms_per_subunit
         zp1_batch.batch = new_batch
         assert len(zp1_batch.pos) == len(new_batch)
-        zp1_batch.ptr = torch.cat([torch.zeros(1, dtype=torch.long, device=self.device), torch.cumsum(atoms_per_subunit, dim=0)])
+        zp1_batch.ptr = torch.cat(
+            [torch.zeros(1, dtype=torch.long, device=self.device), torch.cumsum(atoms_per_subunit, dim=0)])
         zp1_batch._num_graphs = new_num_graphs
         # copy over relevant crystal properties
         zp1_batch.sg_ind = self.sg_ind[rep_index]
@@ -36,7 +39,7 @@ class MolCrystalBuilding:
         zp1_batch.symmetry_operators = [self.symmetry_operators[ind] for ind in rep_index]
         zp1_batch.cell_lengths = self.cell_lengths[rep_index]
         zp1_batch.cell_angles = self.cell_angles[rep_index]
-        zp1_batch.num_atoms = (self.num_atoms//self.z_prime)[rep_index]
+        zp1_batch.num_atoms = (self.num_atoms // self.z_prime)[rep_index]
         zp1_batch.radius = self.radius[rep_index]
         zp1_batch.mol_volume = self.mol_volume[rep_index]
         zp1_batch.mass = self.mass[rep_index]
@@ -103,9 +106,8 @@ class MolCrystalBuilding:
         else:
             assert False, "No point in joining batches which area already Z'=1"
 
-
     def pose_aunit(self, std_orientation: Optional[bool] = True,
-                   override_handedness = None):
+                   override_handedness=None):
         if override_handedness is not None:
             handedness = override_handedness
         else:
@@ -165,9 +167,11 @@ class MolCrystalBuilding:
 
             # add the intra-aunit centroid distance to cutoffs
             frac_centroids = self.aunit_centroid.reshape(self.num_graphs * self.max_z_prime, 3)
-            cart_centroids = fractional_transform(frac_centroids,self.T_fc.repeat_interleave(self.max_z_prime,dim=0)[1]).reshape(self.num_graphs, self.max_z_prime, 3)
-            dists = (cart_centroids[:, :, None, :] - cart_centroids[:, None, :, :]).norm(dim=-1) # [n, Zp, Zp, 3]
-            zp_buffer = dists.amax(dim=(1,2)).repeat_interleave(self.z_prime, dim=0)
+            cart_centroids = fractional_transform(frac_centroids,
+                                                  self.T_fc.repeat_interleave(self.max_z_prime, dim=0)[1]).reshape(
+                self.num_graphs, self.max_z_prime, 3)
+            dists = (cart_centroids[:, :, None, :] - cart_centroids[:, None, :, :]).norm(dim=-1)  # [n, Zp, Zp, 3]
+            zp_buffer = dists.amax(dim=(1, 2)).repeat_interleave(self.z_prime, dim=0)
 
             zp1_batch = self.split_to_zp1_batch()
             zp1_batch.pose_aunit(std_orientation=std_orientation)
@@ -181,4 +185,18 @@ class MolCrystalBuilding:
             zp1_batch.pose_aunit(std_orientation=std_orientation)
             zp1_batch.build_unit_cell()
             return zp1_batch.build_cluster(cutoff, supercell_size)
+
+    def mol2ucell(self,
+                  std_orientation: Optional[bool] = True):
+        if self.max_z_prime > 1:
+            zp1_batch = self.split_to_zp1_batch()
+            zp1_batch.pose_aunit()
+            zp1_batch.build_unit_cell()
+
+            self.join_zp1_ucell_batch(zp1_batch)
+
+        else:
+            # split batches here to avoid silently mutating the original crystal
+            self.pose_aunit(std_orientation=std_orientation)
+            self.build_unit_cell()
 

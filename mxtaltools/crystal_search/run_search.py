@@ -52,7 +52,7 @@ def crystal_search(config):
 
             if (prev_best_samples is None) or (
                     prev_best_samples is not None and len(prev_best_samples) < crystal_batch.num_graphs):
-                crystal_batch = get_initial_state(config, crystal_batch, device, batch_idx, target)
+                crystal_batch = get_initial_state(config, crystal_batch, device, batch_idx)
             else:
                 crystal_batch = recover_opt_state(crystal_batch, config, device, batch_idx, prev_best_samples)
 
@@ -74,8 +74,8 @@ def crystal_search(config):
 
                 crystal_batch = collate_data_list(opt_out).to(device)
 
-                if 'uma_predictor' in opt_config.keys():
-                    del opt_config['uma_predictor']
+                if 'predictor' in opt_config.keys():
+                    del opt_config['predictor']
                 if 'score_model' in opt_config.keys():
                     del opt_config['score_model']
 
@@ -112,8 +112,8 @@ def crystal_search(config):
                     assert False, "Cascading bsz error"
                 config.batch_size = max(int(config.batch_size * 0.9), 1)
                 del crystal_batch
-                if 'uma_predictor' in opt_config.keys():
-                    del opt_config['uma_predictor']
+                if 'predictor' in opt_config.keys():
+                    del opt_config['predictor']
                 if 'score_model' in opt_config.keys():
                     del opt_config['score_model']
                 print(f"OOM error: dropping batch size to {config.batch_size}")

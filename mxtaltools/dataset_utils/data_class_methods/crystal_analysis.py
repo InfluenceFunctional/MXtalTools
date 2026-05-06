@@ -11,6 +11,7 @@ from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.common.utils import log_rescale_positive
 from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.dataset_utils.utils import collate_data_list
+from mxtaltools.mlip_interfaces.AL_mace_utils import compute_crystal_mace_on_mxt_batch
 from mxtaltools.mlip_interfaces.uma_utils import compute_crystal_uma_on_mxt_batch
 from mxtaltools.models.functions.radial_graph import build_radial_graph
 
@@ -78,6 +79,9 @@ class MolCrystalAnalysis:
                              'uma_pot': self.compute_crystal_uma,
                              'uma_gas_pot': self.compute_lattice_gas_phase_uma,
                              'uma': self.compute_lattice_uma,
+                             'mace_pot': self.compute_crystal_mace,
+                             'mace_gas_pot': self.compute_lattice_gas_phase_mace,
+                             'mace': self.compute_lattice_mace,
                              }
 
     def compute_ellipsoid_embedding(self):
@@ -324,7 +328,8 @@ class MolCrystalAnalysis:
             split_ens = compute_crystal_uma_on_mxt_batch(zp1_batch,
                                                          std_orientation,
                                                          predictor,
-                                                         pbc=False)
+                                                         pbc=False,
+                                                         force_rebuild=True)
             zp_inds = torch.arange(self.num_graphs, dtype=torch.long, device=self.device
                                    ).repeat_interleave(self.z_prime).to(split_ens.device)
             return scatter(split_ens, zp_inds, reduce='mean', dim=0, dim_size=self.num_graphs)
@@ -338,7 +343,77 @@ class MolCrystalAnalysis:
                                                     std_orientation,
                                                     predictor,
                                                     pbc=False,
-                                                    force_rebuild=True)
+                                                    force_rebuild=True # we don't want to inherit real unit cells so we force rebuild them here
+                                                    )
+
+    def compute_crystal_mace(self,
+                             predictor,
+                             std_orientation: bool = True,
+                             ):
+        if self.is_batch:
+            return compute_crystal_mace_on_mxt_batch(self.clone(),
+                                                     predictor,
+                                                     std_orientation=std_orientation)
+        else:
+            return compute_crystal_mace_on_mxt_batch(collate_data_list(self),
+                                                     predictor,
+                                                     std_orientation=std_orientation)
+
+    def compute_lattice_mace(self,
+                             predictor,
+                             std_orientation: bool = True,
+                             **kwargs):
+        if not hasattr(self, 'mace_gas_pot'):
+            self.add_graph_attr(
+                self.compute_lattice_gas_phase_mace(predictor),
+                'mace_gas_pot')
+
+        if not hasattr(self, 'mace_pot'):
+            self.add_graph_attr(
+                self.compute_crystal_mace(predictor, std_orientation=std_orientation),
+                'mace_pot')
+
+        return ((self.mace_pot / (self.sym_mult * self.z_prime) - self.mace_gas_pot) * 96.485).float()
+
+    def compute_lattice_gas_phase_mace(self,
+                                       predictor,
+                                       std_orientation: bool = True,
+                                       **kwargs,
+                                       ):
+        if self.is_batch:
+            diffuse_batch = self.clone()
+        else:
+            diffuse_batch = collate_data_list(self)
+
+        if hasattr(self, 'aux_ind'):
+            if self.aux_ind is not None:
+                diffuse_batch.pos = self.pos[self.aux_ind == 0].detach().clone()
+                diffuse_batch.batch = self.batch[self.aux_ind == 0].detach().clone()
+                diffuse_batch.z = self.z[self.aux_ind == 0].detach().clone()
+
+        if diffuse_batch.z_prime.amax() > 1:
+            zp1_batch = diffuse_batch.split_to_zp1_batch()
+            zp1_batch.reset_sg_info(sg_ind=1)
+            zp1_batch.cell_lengths *= 100
+            zp1_batch.box_analysis()
+            split_ens = compute_crystal_mace_on_mxt_batch(zp1_batch,
+                                                          predictor,
+                                                          std_orientation=std_orientation,
+                                                          pbc=False,
+                                                          force_rebuild=True)
+            zp_inds = torch.arange(self.num_graphs, dtype=torch.long, device=self.device
+                                   ).repeat_interleave(self.z_prime).to(split_ens.device)
+            return scatter(split_ens, zp_inds, reduce='mean', dim=0, dim_size=self.num_graphs)
+
+        else:
+            diffuse_batch.reset_sg_info(sg_ind=1)
+            diffuse_batch.cell_lengths *= 100
+            diffuse_batch.box_analysis()
+            return compute_crystal_mace_on_mxt_batch(diffuse_batch,
+                                                     predictor,
+                                                     std_orientation=std_orientation,
+                                                     pbc=False,
+                                                     force_rebuild=True)
 
     def compute_rdf(self,  # todo rebuild analyses with a template
                     rdf_cutoff: float = 6,
