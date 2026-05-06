@@ -6,7 +6,7 @@ init_reduced: true
 init_sample_method: random
 init_target_cp: 0.1
 mace_predictor_path: /scratch/mk8347/data/acr_112025_mh1_stagetwo.model
-mol_path: /scratch/mk8347/csd_runs/datasets/acridine/acridine_conformer.pt
+mol_path: /scratch/mk8347/data/crystal_datasets/acridine/acridine_conformer.pt
 mol_seed: 0
 mols_to_sample: 1
 num_samples: 2500

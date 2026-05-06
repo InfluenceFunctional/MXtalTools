@@ -1,5 +1,5 @@
 device: cuda
-mol_path: /scratch/mk8347/csd_runs/datasets/acridine/acridine_conformer.pt
+mol_path: /scratch/mk8347/data/crystal_datasets/acridine/acridine_conformer.pt
 dataset_path: null #D:\crystal_datasets\xuldud\xuldud_sg61_zp1.pt
 target_path: null #D:\crystal_datasets\nehzor\nehzor.pt
 umbrella_path:  null
