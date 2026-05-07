@@ -1,4 +1,4 @@
-batch_size: 100
+batch_size: 10000
 dataset_path: null
 device: cuda
 grow_batch_size: false
@@ -9,7 +9,7 @@ mace_predictor_path: /scratch/mk8347/data/acr_112025_mh1_stagetwo.model
 mol_path: /scratch/mk8347/data/crystal_datasets/acridine/acridine_conformer.pt
 mol_seed: 0
 mols_to_sample: 1
-num_samples: 100
+num_samples: 20000
 opt:
 - anneal_lr: false
   compression_factor: 1.0

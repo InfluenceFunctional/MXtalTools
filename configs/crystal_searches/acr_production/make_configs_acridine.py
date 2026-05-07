@@ -36,7 +36,8 @@ if __name__ == "__main__":
                 config['sgs_to_search'] = [sg]
                 config['zp_to_search'] = [zp]
                 config['run_name'] = f'may_acridine_sg{sg}_zp{zp}_{seed_ind}'
-                config['num_samples'] = 100 #int(50000/20)
+                config['batch_size'] = 10000
+                config['num_samples'] = 20000 #int(50000/20)
 
                 config_path = f'{ind}.yaml'
                 with open(config_path, 'w') as f:
