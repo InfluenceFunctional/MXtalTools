@@ -19,21 +19,22 @@ def load_mace_model(model_path, device, dtype):
 
     torch.load = patched_torch_load
 
-    from mace.cli.convert_e3nn_cueq import run as run_e3nn_to_cueq
     model = torch.load(f=model_path, map_location=device)
 
-    try:
-        import cuequivariance  # noqa: F401
-        import cuequivariance_torch  # noqa: F401
-        import cuequivariance_ops_torch  # noqa: F401
-        _CUEQ_AVAILABLE = True
-    except ImportError:
-        _CUEQ_AVAILABLE = False
+    # from mace.cli.convert_e3nn_cueq import run as run_e3nn_to_cueq
 
-    use_cueq = _CUEQ_AVAILABLE and torch.cuda.is_available()
-    if use_cueq:
-        print("cuequivariance (with ops) detected, enabling...")
-        model = run_e3nn_to_cueq(model)
+    # try:
+    #     import cuequivariance  # noqa: F401
+    #     import cuequivariance_torch  # noqa: F401
+    #     import cuequivariance_ops_torch  # noqa: F401
+    #     _CUEQ_AVAILABLE = True
+    # except ImportError:
+    #     _CUEQ_AVAILABLE = False
+    #
+    # use_cueq = _CUEQ_AVAILABLE and torch.cuda.is_available()
+    # if use_cueq:
+    #     print("cuequivariance (with ops) detected, enabling...")
+    #     model = run_e3nn_to_cueq(model)
 
     model.to(device, dtype=dtype)
     model.eval()
@@ -93,7 +94,8 @@ def mxt_crystal_to_mace_atomicdata(batch,
     return mace_data
 
 
-def compute_crystal_mace_on_mxt_batch(batch, model, std_orientation=True, pbc: bool=True, force_rebuild: bool = False):
+def compute_crystal_mace_on_mxt_batch(batch, model,
+                                      std_orientation=True, pbc: bool=True, force_rebuild: bool = False):
     dataset = batch_to_mace_atomicdata(batch, force_rebuild, model, std_orientation, pbc=pbc)
     collater = Collater([None], [None])
     mbatch = collater(dataset)
@@ -124,7 +126,7 @@ def safe_predict_mace(model, input_data):
 
     except RuntimeError as e:
         if not is_cuda_oom(e):
-            print("UMA error")
+            print("MACE error")
             print(str(e))
             # reset the cuda context fully
             torch.cuda.synchronize()
