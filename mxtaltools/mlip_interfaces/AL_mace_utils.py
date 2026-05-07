@@ -9,6 +9,9 @@ from mxtaltools.common.utils import is_cuda_oom
 
 
 def load_mace_model(model_path, device, dtype):
+    import torch.fx._symbolic_trace as _st
+    if not hasattr(_st, 'is_fx_symbolic_tracing'):
+        _st.is_fx_symbolic_tracing = _st.is_fx_tracing
     _original_torch_load = torch.load
 
     def patched_torch_load(*args, **kwargs):
