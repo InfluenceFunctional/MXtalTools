@@ -27,7 +27,7 @@ if __name__ == "__main__":
     base, spec_dir = load_yaml(base_path)
 
     ind = 0
-    for zp in [1, 2]:
+    for zp in [1]:
         for sg in [14]:
             for seed_ind in np.arange(20):
                 seed_ind = int(seed_ind)
@@ -36,8 +36,8 @@ if __name__ == "__main__":
                 config['sgs_to_search'] = [sg]
                 config['zp_to_search'] = [zp]
                 config['run_name'] = f'may_acridine_sg{sg}_zp{zp}_{seed_ind}'
-                config['batch_size'] = 10000
-                config['num_samples'] = 20000 #int(50000/20)
+                config['batch_size'] = int(40000/20)
+                config['num_samples'] = int(40000/20)
 
                 config_path = f'{ind}.yaml'
                 with open(config_path, 'w') as f:
