@@ -323,7 +323,7 @@ class MolCrystalAnalysis:
         if diffuse_batch.z_prime.amax() > 1:  # do it separately per conformer
             zp1_batch = diffuse_batch.split_to_zp1_batch()
             zp1_batch.reset_sg_info(sg_ind=1)  # big P1 cells
-            zp1_batch.cell_lengths *= 100
+            #zp1_batch.cell_lengths *= 100
             zp1_batch.box_analysis()
             split_ens = compute_crystal_uma_on_mxt_batch(zp1_batch,
                                                          std_orientation,
@@ -337,7 +337,7 @@ class MolCrystalAnalysis:
         else:
             # evaluate a diffuse P1 5ell
             diffuse_batch.reset_sg_info(sg_ind=1)  # big P1 cells
-            diffuse_batch.cell_lengths *= 100
+            #diffuse_batch.cell_lengths *= 100
             diffuse_batch.box_analysis()
             return compute_crystal_uma_on_mxt_batch(diffuse_batch,
                                                     std_orientation,
@@ -394,7 +394,7 @@ class MolCrystalAnalysis:
         if diffuse_batch.z_prime.amax() > 1:
             zp1_batch = diffuse_batch.split_to_zp1_batch()
             zp1_batch.reset_sg_info(sg_ind=1)
-            zp1_batch.cell_lengths *= 100
+            #zp1_batch.cell_lengths *= 100
             zp1_batch.box_analysis()
             split_ens = compute_crystal_mace_on_mxt_batch(zp1_batch,
                                                           predictor,
@@ -407,7 +407,7 @@ class MolCrystalAnalysis:
 
         else:
             diffuse_batch.reset_sg_info(sg_ind=1)
-            diffuse_batch.cell_lengths *= 100
+            #diffuse_batch.cell_lengths *= 100
             diffuse_batch.box_analysis()
             return compute_crystal_mace_on_mxt_batch(diffuse_batch,
                                                      predictor,
