@@ -29,15 +29,15 @@ if __name__ == "__main__":
     ind = 0
     for zp in [1]:
         for sg in [14]:
-            for seed_ind in np.arange(20):
+            for seed_ind in np.arange(40):
                 seed_ind = int(seed_ind)
                 config = deepcopy(base)
                 config['opt_seed'] = seed_ind
                 config['sgs_to_search'] = [sg]
                 config['zp_to_search'] = [zp]
                 config['run_name'] = f'may_acridine_sg{sg}_zp{zp}_{seed_ind}'
-                config['batch_size'] = int(40000/20)
-                config['num_samples'] = int(40000/20)
+                config['batch_size'] = int(40000/40)
+                config['num_samples'] = int(40000/40)
 
                 config_path = f'{ind}.yaml'
                 with open(config_path, 'w') as f:

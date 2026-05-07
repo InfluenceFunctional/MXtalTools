@@ -68,10 +68,10 @@ def mxt_crystal_to_mace_atomicdata(batch,
     num_atoms = len(sample_z)
 
     mace_data = AtomicData(
-        edge_index=torch.tensor(edge_index, dtype=torch.long),
+        edge_index=torch.as_tensor(edge_index, dtype=torch.long),
         positions=pos,
-        shifts=torch.tensor(shifts, dtype=dtype),
-        unit_shifts=torch.tensor(unit_shifts, dtype=dtype),
+        shifts=torch.as_tensor(shifts, dtype=dtype),
+        unit_shifts=torch.as_tensor(unit_shifts, dtype=dtype),
         cell=cell,
         node_attrs=one_hot,
         head=torch.tensor(0, dtype=torch.long),  # → tensor(0)
@@ -123,9 +123,9 @@ def compute_crystal_mace_on_mxt_batch(batch, model,
 
 def safe_predict_mace(model, input_data):
     try:
-        torch.cuda.synchronize()  # flush prior kernels
+        #torch.cuda.synchronize()  # flush prior kernels
         out = model(input_data, compute_force=False, compute_stress=False)
-        torch.cuda.synchronize()  # force errors to surface *here*
+        #torch.cuda.synchronize()  # force errors to surface *here*
         return out, False  # False = no failure
 
     except RuntimeError as e:
