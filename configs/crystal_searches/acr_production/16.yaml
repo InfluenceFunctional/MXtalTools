@@ -1,4 +1,4 @@
-batch_size: 20000
+batch_size: 100
 dataset_path: null
 device: cuda
 grow_batch_size: false
@@ -9,7 +9,7 @@ mace_predictor_path: /scratch/mk8347/data/acr_112025_mh1_stagetwo.model
 mol_path: /scratch/mk8347/data/crystal_datasets/acridine/acridine_conformer.pt
 mol_seed: 0
 mols_to_sample: 1
-num_samples: 2500
+num_samples: 100
 opt:
 - anneal_lr: false
   compression_factor: 1.0
@@ -42,7 +42,7 @@ opt:
   umbrella_epsilon: 7.5
   umbrella_sigma: 0.25
 opt_seed: 16
-out_dir: /scratch/mk8347/csd_runs/datasets/acridine
+out_dir: /scratch/mk8347/data/crystal_datasets/acridine
 run_name: may_acridine_sg14_zp1_16
 sampling_mode: all
 save_trajs: false

@@ -3,7 +3,7 @@ mol_path: /scratch/mk8347/data/crystal_datasets/acridine/acridine_conformer.pt
 dataset_path: null #D:\crystal_datasets\xuldud\xuldud_sg61_zp1.pt
 target_path: null #D:\crystal_datasets\nehzor\nehzor.pt
 umbrella_path:  null
-out_dir: /scratch/mk8347/csd_runs/datasets/acridine
+out_dir: /scratch/mk8347/data/crystal_datasets/acridine
 run_name: acr_prod_dataset
 target_identifier: null
 save_trajs: false
@@ -24,7 +24,7 @@ num_samples: 10000 # per mol, per space group, per Zp
 sgs_to_search: [ 2,4,9,14, 15, 19, 33, 61 ]
 zp_to_search: [ 1, 2 ]
 
-batch_size: 20000
+batch_size: 100
 grow_batch_size: false
 
 init_target_cp: 0.1 #std  # float, null or 'std' target packing coefficient for initial structure sampling
