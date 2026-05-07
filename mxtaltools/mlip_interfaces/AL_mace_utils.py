@@ -20,21 +20,22 @@ def load_mace_model(model_path, device, dtype):
     torch.load = patched_torch_load
 
     model = torch.load(f=model_path, map_location=device)
+    model.to(dtype=dtype)
 
-    # from mace.cli.convert_e3nn_cueq import run as run_e3nn_to_cueq
+    from mace.cli.convert_e3nn_cueq import run as run_e3nn_to_cueq
 
-    # try:
-    #     import cuequivariance  # noqa: F401
-    #     import cuequivariance_torch  # noqa: F401
-    #     import cuequivariance_ops_torch  # noqa: F401
-    #     _CUEQ_AVAILABLE = True
-    # except ImportError:
-    #     _CUEQ_AVAILABLE = False
-    #
-    # use_cueq = _CUEQ_AVAILABLE and torch.cuda.is_available()
-    # if use_cueq:
-    #     print("cuequivariance (with ops) detected, enabling...")
-    #     model = run_e3nn_to_cueq(model)
+    try:
+        import cuequivariance  # noqa: F401
+        import cuequivariance_torch  # noqa: F401
+        import cuequivariance_ops_torch  # noqa: F401
+        _CUEQ_AVAILABLE = True
+    except ImportError:
+        _CUEQ_AVAILABLE = False
+
+    use_cueq = _CUEQ_AVAILABLE and torch.cuda.is_available()
+    if use_cueq:
+        print("cuequivariance (with ops) detected, enabling...")
+        model = run_e3nn_to_cueq(model)
 
     model.to(device, dtype=dtype)
     model.eval()
