@@ -115,6 +115,42 @@ def _pare_cluster_molwise(atoms_per_cluster, cc_centroids, cluster_batch,
     valid = idx < bad_mol_inds.numel()  # safety check for wayward searchsorted outputs > length of tensors
     atoms_in_bad_mols_bool = torch.zeros_like(atom2aunit_ind, dtype=torch.bool)
     atoms_in_bad_mols_bool[valid] = bad_mol_inds[idx[valid]] == atom2aunit_ind[valid]  # atom is actually in a bad mol
+    # --- diagnostic: central aunit must never be marked outside the conv window ---
+    # By construction, the canonical conformer (mol_ind == 0 within each cluster)
+    # is at zero distance from cc_centroids, so it should never appear in bad_mol_inds.
+    # If it does, something upstream produced inf/garbage in cluster_batch.pos or
+    # aunit_centroids, or the centroid invariant has been violated.
+
+    # Per-cluster index of the central aunit in the global aunit_centroids tensor:
+    central_aunit_inds = aunit_ptr  # mol_ind == 0 within each cluster, plus the cluster's offset
+
+    central_dist_sq = mol_to_cc_dist_sq[central_aunit_inds]
+    central_marked_bad = mol_to_cc_dist_sq[central_aunit_inds] > mol_cutoff_sq[central_aunit_inds]
+
+    if central_marked_bad.any():
+        bad_graphs = central_marked_bad.nonzero(as_tuple=True)[0]
+        msg_lines = ["central aunit marked outside conv window — invariant violated"]
+        for g in bad_graphs.tolist():
+            atoms_mask = cluster_batch.batch == g
+            graph_pos = cluster_batch.pos[atoms_mask]
+            graph_aux_zero_count = (cluster_batch.aux_ind[atoms_mask] == 0).sum().item()
+            msg_lines.append(
+                f"  graph={g}: "
+                f"central_dist_sq={central_dist_sq[g].item():.4g}, "
+                f"cutoff_sq={mol_cutoff_sq[central_aunit_inds[g]].item():.4g}, "
+                f"pos_finite={graph_pos.isfinite().all().item()}, "
+                f"pos_absmax={graph_pos.abs().max().item():.4g}, "
+                f"aunit_centroid_finite={aunit_centroids[central_aunit_inds[g]].isfinite().all().item()}, "
+                f"aunit_centroid={aunit_centroids[central_aunit_inds[g]].tolist()}, "
+                f"cc_centroid={cc_centroids[g].tolist()}, "
+                f"cell_lengths={crystal_batch.cell_lengths[g].tolist()}, "
+                f"cell_angles={crystal_batch.cell_angles[g].tolist()}, "
+                f"radius={crystal_batch.radius[g].item():.4g}, "
+                f"current_aux_zeros_in_graph={graph_aux_zero_count}, "
+            )
+        raise AssertionError("\n".join(msg_lines))
+    # --- end diagnostic ---
+
     cluster_batch.aux_ind[atoms_in_bad_mols_bool] = 2  # marker for "outside convolutional field"
 
     return cluster_batch

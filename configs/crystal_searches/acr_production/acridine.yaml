@@ -12,6 +12,7 @@ mace_predictor_path: /scratch/mk8347/data/acr_112025_mh1_stagetwo.model
 
 init_sample_method: random  # 'random' 'reasonable' 'data'
 init_reduced: true
+force_restart_run: false
 
 # if method is 'data' optimize provided pre-built crystals
 # else, from random initial conditions

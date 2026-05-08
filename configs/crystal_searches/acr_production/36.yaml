@@ -1,6 +1,7 @@
 batch_size: 1000
 dataset_path: null
 device: cuda
+force_restart_run: false
 grow_batch_size: false
 init_reduced: true
 init_sample_method: random

@@ -34,7 +34,7 @@ def crystal_search(config):
     num_samples = len(samples_to_optim)
     print(f"Starting optimization of {num_samples} crystal samples")
 
-    if os.path.exists(out_path):
+    if os.path.exists(out_path) and not config.force_restart_run:
         opt_outs = torch.load(out_path, weights_only=False)
         cursor = len(opt_outs)
         batch_idx = (cursor // config.batch_size) - 1  # so batch_idx+=1 lands on the right value
