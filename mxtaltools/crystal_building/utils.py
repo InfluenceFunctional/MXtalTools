@@ -91,8 +91,9 @@ def _pare_cluster_molwise(atoms_per_cluster, cc_centroids, cluster_batch,
     aunit_ptr = torch.cat([torch.zeros(1, device=cluster_batch.device, dtype=torch.long),
                            torch.cumsum(aunits_per_cluster, dim=0)])[:-1]
     atom2aunit_ind = cluster_batch.mol_ind + aunit_ptr.repeat_interleave(atoms_per_cluster, dim=0)
-    # this is extremely memory heavy with float32, we can make huge savings with half/float16
-    aunit_centroids = scatter(cluster_batch.pos.half(), atom2aunit_ind, reduce='mean', dim=0)
+    # this is extremely memory heavy with float32, we can make huge savings with half/float16, but it can overflow
+    aunit_centroids = scatter(cluster_batch.pos, #.half(),
+                              atom2aunit_ind, reduce='mean', dim=0)
     # cc_centroids = scatter(crystal_batch.pos.half(), crystal_batch.batch, reduce='mean', dim=0) # already compute this above
     # get the mol indices within the widest conv cutoff
     molwise_batch = (torch.arange(crystal_batch.num_graphs, device=cc_centroids.device)

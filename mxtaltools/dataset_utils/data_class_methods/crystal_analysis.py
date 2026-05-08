@@ -388,25 +388,25 @@ class MolCrystalAnalysis:
         if hasattr(self, 'aux_ind'):
             if self.aux_ind is not None:
                 mask = self.aux_ind == 0
-
-                # --- diagnostic: every graph must retain at least one canonical-aunit atom ---
-                kept_per_graph = torch.bincount(self.batch[mask], minlength=self.num_graphs)
-                if (kept_per_graph == 0).any():
-                    bad_graphs = (kept_per_graph == 0).nonzero(as_tuple=True)[0]
-                    aux_unique_per_bad = [
-                        self.aux_ind[self.batch == g].unique(return_counts=True)
-                        for g in bad_graphs.tolist()
-                    ]
-                    raise AssertionError(
-                        f"aux_ind == 0 filter produced empty graphs: {bad_graphs.tolist()}\n"
-                        f"  kept_per_graph={kept_per_graph.tolist()}\n"
-                        f"  num_atoms={self.num_atoms.tolist()}\n"
-                        f"  aux_ind values per bad graph (val, count): "
-                        f"{[(v.tolist(), c.tolist()) for v, c in aux_unique_per_bad]}\n"
-                        f"  cell_lengths[bad]={self.cell_lengths[bad_graphs].tolist()}\n"
-                        f"  cell_angles[bad]={self.cell_angles[bad_graphs].tolist()}"
-                    )
-                # --- end diagnostic ---
+                #
+                # # --- diagnostic: every graph must retain at least one canonical-aunit atom ---
+                # kept_per_graph = torch.bincount(self.batch[mask], minlength=self.num_graphs)
+                # if (kept_per_graph == 0).any():
+                #     bad_graphs = (kept_per_graph == 0).nonzero(as_tuple=True)[0]
+                #     aux_unique_per_bad = [
+                #         self.aux_ind[self.batch == g].unique(return_counts=True)
+                #         for g in bad_graphs.tolist()
+                #     ]
+                #     raise AssertionError(
+                #         f"aux_ind == 0 filter produced empty graphs: {bad_graphs.tolist()}\n"
+                #         f"  kept_per_graph={kept_per_graph.tolist()}\n"
+                #         f"  num_atoms={self.num_atoms.tolist()}\n"
+                #         f"  aux_ind values per bad graph (val, count): "
+                #         f"{[(v.tolist(), c.tolist()) for v, c in aux_unique_per_bad]}\n"
+                #         f"  cell_lengths[bad]={self.cell_lengths[bad_graphs].tolist()}\n"
+                #         f"  cell_angles[bad]={self.cell_angles[bad_graphs].tolist()}"
+                #     )
+                # # --- end diagnostic ---
 
                 diffuse_batch.pos = self.pos[self.aux_ind == 0].detach().clone()
                 diffuse_batch.batch = self.batch[self.aux_ind == 0].detach().clone()
