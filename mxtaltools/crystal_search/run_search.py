@@ -36,12 +36,15 @@ def crystal_search(config):
 
     if os.path.exists(out_path):
         opt_outs = torch.load(out_path, weights_only=False)
+        cursor = len(opt_outs)
+        batch_idx = (cursor // config.batch_size) - 1  # so batch_idx+=1 lands on the right value
     else:
         opt_outs = []
+        cursor = 0
+        batch_idx = -1
+
     num_opts = len(config.opt)
-    batch_idx = -1
     finished = False
-    cursor = 0
     pbar = tqdm(total=num_samples, unit="samples")
     prev_best_samples = None
 

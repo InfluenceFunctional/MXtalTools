@@ -227,7 +227,10 @@ def batch_molecule_principal_axes_torch(coords_i: torch.FloatTensor,
     Ipm_fin : list(torch.tensor(3))
     I : list(torch.tensor(3,3))
     """
-
+    assert num_graphs == len(batch.num_atoms), "Batch num graphs desync issue"
+    bc = torch.bincount(batch, minlength=num_graphs)
+    assert torch.equal(bc, nodes_per_graph), \
+        f"bincount(batch) vs num_atoms mismatch:\n  bincount={bc.tolist()}\n  num_atoms={nodes_per_graph.tolist()}"
     coords = center_batch(coords_i, batch, num_graphs, nodes_per_graph,
                           center_on_heavy_atoms=heavy_atoms_only, atom_types=atom_types)
 
