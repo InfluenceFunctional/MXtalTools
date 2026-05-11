@@ -26,8 +26,8 @@ if __name__ == "__main__":
     base_path = 'acridine.yaml'
     base, spec_dir = load_yaml(base_path)
 
-    n_samples = 40000
-    n_parallel = 16
+    n_samples = 100000
+    n_parallel = n_samples // 2000
     bsz = 1000
     zps = []
     sgs = []
