@@ -26,18 +26,21 @@ if __name__ == "__main__":
     base_path = 'acridine.yaml'
     base, spec_dir = load_yaml(base_path)
 
-    ind = 0
+    n_samples = 30000
+    n_parallel = 16
+    bsz = 1000
+    ind = 40
     for zp in [1]:
         for sg in [14]:
-            for seed_ind in np.arange(40):
+            for seed_ind in np.arange(ind, ind + n_parallel):
                 seed_ind = int(seed_ind)
                 config = deepcopy(base)
                 config['opt_seed'] = seed_ind
                 config['sgs_to_search'] = [sg]
                 config['zp_to_search'] = [zp]
                 config['run_name'] = f'may_acridine_sg{sg}_zp{zp}_{seed_ind}'
-                config['batch_size'] = int(40000/40)
-                config['num_samples'] = int(40000/40)
+                config['batch_size'] = bsz
+                config['num_samples'] = int(n_samples/n_parallel)
 
                 config_path = f'{ind}.yaml'
                 with open(config_path, 'w') as f:
