@@ -55,6 +55,8 @@ if __name__ == "__main__":
             config['run_name'] = f'may_acridine_sg{sg}_zp{zp}_{seed_ind}'
             config['batch_size'] = bsz
             config['num_samples'] = int(n_samples/n_parallel)
+            if zp > 1:
+                config['init_target_cp'] = 'std'
 
             config_path = f'{sg}_{zp}_{ind}.yaml'
             with open(config_path, 'w') as f:

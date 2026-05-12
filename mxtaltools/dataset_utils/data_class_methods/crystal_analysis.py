@@ -72,7 +72,7 @@ class MolCrystalAnalysis:
                              'vdw': self.compute_vdW_overlap,
                              'vdw_max': self.compute_max_vdW_overlap,
                              'ellipsoid': self.compute_ellipsoidal_overlap,
-                             'niggli_overlap': self.compute_niggli_overlap,
+                             'niggli_overlap': self.compute_reduction_penalty,
                              'reduction_en': self.compute_cell_reduction_penalty,
                              'rdf': self.compute_rdf,
                              'ellipsoid_emb': self.compute_ellipsoid_embedding,
@@ -457,7 +457,7 @@ class MolCrystalAnalysis:
                                                     )
         return rdf / self.z_prime[:, None, None], bin_edges, rdf_pair_dict
 
-    def compute_niggli_overlap(self, **kwargs):
+    def compute_reduction_penalty(self, **kwargs):
         a, b, c, al, be, ga = self.zp1_cell_parameters()[:, :6].split(1, dim=1)
         ab = a * b
         ac = a * c
@@ -476,7 +476,7 @@ class MolCrystalAnalysis:
         """Compute a penalty term for the given crystal system that pushes it towards
         our canonical / standardized / reduced cell geometry, following spglib"""
         # todo check behaviors / correctness for higher crystal systems
-        cell_parameters = self.full_cell_parameters()
+        #cell_parameters = self.full_cell_parameters()
         cell_lengths, cell_angles, aunit_positions, aunit_orientations = self.split_cell_params()
         if not hasattr(self, 'symmetries_dict'):
             self.symmetries_dict = init_sym_info()
@@ -509,7 +509,7 @@ class MolCrystalAnalysis:
                 E[mask] = reduction_penalties[cs](cell_lengths[mask], cell_angles[mask], margin)
                 if cs == 'triclinic':
                     E[mask] = E[mask] + F.relu(
-                        self.compute_niggli_overlap()[mask] - margin) ** 2  # penalize positive overlaps
+                        self.compute_reduction_penalty()[mask] - margin) ** 2  # penalize positive overlaps
 
         return E
 
