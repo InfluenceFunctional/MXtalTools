@@ -16,6 +16,25 @@ from mxtaltools.mlip_interfaces.uma_utils import compute_crystal_uma_on_mxt_batc
 from mxtaltools.models.functions.radial_graph import build_radial_graph
 
 
+def single_compack_run(ind, test_path, ref_path):
+    from ccdc.io import CrystalReader
+    from ccdc.crystal import PackingSimilarity
+    ref_crystal = CrystalReader(ref_path)[0]
+    sample_crystal = CrystalReader(test_path)[0]
+    similarity_engine = PackingSimilarity()
+    #similarity_engine.settings.distance_tolerance = 0.4
+    #similarity_engine.settings.angle_tolerance = 20
+    #similarity_engine.settings.allow_molecular_differences = True
+    similarity_engine.settings.packing_shell_size = 20
+    try:
+        result = similarity_engine.compare(ref_crystal, sample_crystal)
+        print(f"Crystal {ind} RMSD = {result.rmsd:.3f} Å, {result.nmatched_molecules} mols matched")
+        return result.rmsd, result.nmatched_molecules
+    except AttributeError:
+        print("Analysis failed")
+        return 0, 0
+
+
 # noinspection PyAttributeOutsideInit
 class MolCrystalAnalysis:
 
@@ -439,8 +458,7 @@ class MolCrystalAnalysis:
     def compute_rdf(self,  # todo rebuild analyses with a template
                     rdf_cutoff: float = 6,
                     bins: int = 100,
-                    elementwise: bool = True,
-                    atomwise: bool = False,
+                    rdf_mode: Optional[str] = None,
                     **kwargs,
                     ):
         if not hasattr(self, 'edges_dict'):
@@ -452,8 +470,7 @@ class MolCrystalAnalysis:
                                                     self.edges_dict,
                                                     rrange=(0, rdf_cutoff),
                                                     bins=bins,
-                                                    atomwise=atomwise,
-                                                    elementwise=elementwise,
+                                                    mode=rdf_mode
                                                     )
         return rdf / self.z_prime[:, None, None], bin_edges, rdf_pair_dict
 
@@ -632,3 +649,28 @@ class MolCrystalAnalysis:
         gamma_error = (ga - torch.pi / 2) ** 2
 
         return ab_error + bc_error + alpha_error + beta_error + gamma_error
+
+
+    def batch_compack(self, ref_path, inds_to_check, n_cpus: int = 8): # todo refactor into analysis code
+        import numpy as np
+        import multiprocessing as mp
+
+        self.mol2ucell()
+        self.write_cif(inds_to_check, f'compack', 'unit cell')
+        pool = mp.Pool(n_cpus)
+        results = []
+        for ind in range(len(inds_to_check)):
+            results.append(
+                pool.apply_async(
+                    single_compack_run,
+                    (ind,f'compack_{ind}.cif', ref_path)
+                )
+            )
+        pool.close()
+        pool.join()
+        results = [res.get() for res in results]
+        matches = np.array([res[1] for res in results])
+        rmsds = np.array([res[0] for res in results])
+
+        return matches, rmsds
+

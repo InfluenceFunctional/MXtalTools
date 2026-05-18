@@ -5,14 +5,12 @@ import networkx as nx
 import numpy as np
 import torch
 from rdkit import Chem
-from rdkit.Chem import AllChem
+from rdkit.Chem import AllChem, AllChem as AllChem
 from rdkit.Chem.rdchem import BondType as BT
 from scipy.spatial.distance import cdist
 from scipy.spatial.transform import Rotation as R
 from torch_geometric.data import Data
 from torch_geometric.utils import to_networkx
-
-from mxtaltools.dataset_utils.construction.featurization_utils import get_partial_charges
 
 bonds = {BT.SINGLE: 0, BT.DOUBLE: 1, BT.TRIPLE: 2, BT.AROMATIC: 3}
 
@@ -345,3 +343,8 @@ def generate_random_conformers_from_smiles_list(smiles, dump_path, chunk_ind):
 
     with open(os.path.join(dump_path, f'{chunk_ind}.pkl'), 'wb') as handle:
         pickle.dump(dataset, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def get_partial_charges(rd_mol):
+    AllChem.ComputeGasteigerCharges(rd_mol)
+    return np.array([float(atom.GetProp('_GasteigerCharge')) for atom in rd_mol.GetAtoms()])

@@ -170,4 +170,10 @@ def get_niggli_cell(crystal_batch, index, radians: bool=False):
 def ase_write_cif(batch, inds, path, mode):
     for ind in inds:
         mol = ase_mol_from_crystaldata(batch, ind, mode=mode)
-        mol.write(f"{path}_{ind}.cif")
+        cif_path = f"{path}_{ind}.cif"
+        mol.write(cif_path)
+        with open(cif_path, 'r') as f:
+            content = f.read()
+        content = content.replace('data_image0', f'{path}_{ind}', 1)
+        with open(cif_path, 'w') as f:
+            f.write(content)

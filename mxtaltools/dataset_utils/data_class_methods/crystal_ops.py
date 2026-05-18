@@ -9,6 +9,7 @@ from ase.geometry import cellpar_to_cell, cell_to_cellpar
 from plotly.subplots import make_subplots
 
 from mxtaltools.analysis.crystal_rdf import compute_rdf_distance
+from mxtaltools.common.ase_interface import ase_write_cif
 from mxtaltools.common.geometry_utils import enforce_crystal_system, batch_compute_fractional_transform, \
     cart2sph_rotvec, sph2cart_rotvec, crystal_parameter_distmat, sph_rotvec2lat, lat2sph_rotvec, fractional_transform
 from mxtaltools.common.utils import softplus_shift, log_rescale_positive, get_point_density
@@ -703,12 +704,54 @@ class MolCrystalOps:
         return True
 
     def reparameterize_unit_cell(self,enforce_right_handedness: bool = False):
-        (aunit_centroid, aunit_orientation,
-         handedness_list, is_well_defined, pos) = (
-            parameterize_crystal_batch(self,
-                                       ASYM_UNITS,
-                                       enforce_right_handedness=enforce_right_handedness,
-                                       return_aunit=True))
+        if self.max_z_prime > 1:
+            zp1_batch = self.split_to_zp1_batch()
+            (aunit_centroid, aunit_orientation,
+             handedness_list, is_well_defined, pos) = (
+                parameterize_crystal_batch(zp1_batch,
+                                           ASYM_UNITS,
+                                           enforce_right_handedness=enforce_right_handedness,
+                                           return_aunit=True))
+
+            # have to pad out these to max_z_prime
+            n = self.num_graphs
+            mzp = self.max_z_prime
+            device = aunit_centroid.device
+            zp = self.z_prime.long().to(device)
+            crystal_idx = torch.arange(n, device=device).repeat_interleave(zp)
+            slot_idx = torch.arange(zp.sum(), device=device) - (torch.cumsum(zp, 0) - zp)[crystal_idx]
+
+            aunit_centroid_p = aunit_centroid.new_zeros(n, mzp, 3)
+            aunit_orientation_p = aunit_orientation.new_zeros(n, mzp, 3)
+            handedness_p = handedness_list.new_zeros(n, mzp)
+            iwd_p = torch.ones(n, mzp, dtype=torch.bool, device=device)
+
+            aunit_centroid_p[crystal_idx, slot_idx] = aunit_centroid
+            aunit_orientation_p[crystal_idx, slot_idx] = aunit_orientation
+            handedness_p[crystal_idx, slot_idx] = handedness_list
+            iwd_p[crystal_idx, slot_idx] = torch.as_tensor(is_well_defined, device=device)
+
+            aunit_centroid = aunit_centroid_p.reshape(n, 3 * mzp)
+            aunit_orientation = aunit_orientation_p.reshape(n, 3 * mzp)
+            handedness_list = handedness_p
+            is_well_defined = iwd_p.all(dim=1)
+            combo_pos = []
+            counter = 0
+            for ind in range(self.num_graphs):
+                pos_list = []
+                for i in range(self.z_prime[ind].item()):
+                    pos_list.extend(pos[counter + i])
+                combo_pos.append(torch.stack(pos_list))
+                counter += self.z_prime[ind]
+            pos = combo_pos
+
+        else:
+            (aunit_centroid, aunit_orientation,
+             handedness_list, is_well_defined, pos) = (
+                parameterize_crystal_batch(self,
+                                           ASYM_UNITS,
+                                           enforce_right_handedness=enforce_right_handedness,
+                                           return_aunit=True))
 
         return aunit_centroid, aunit_orientation, handedness_list.long(), is_well_defined, torch.cat(pos)
 
@@ -1524,13 +1567,13 @@ class MolCrystalOps:
         fixed_rotvecs = fixed_flat_rotvecs.reshape(self.num_graphs, self.max_z_prime * 3)
         self.aunit_orientation = fixed_rotvecs
 
-    def compute_standard_cell(self, confirm_transform: bool = False):
+    def compute_standard_cell(self, confirm_transform: bool = False,
+                              enforce_right_handedness: bool = False):
         assert self.is_batch, "Cell standardization currently only implemented for batch objects"
         import spglib
 
         """set up unit cell"""
-        self.pose_aunit()
-        self.build_unit_cell()
+        self.mol2ucell()
 
         target_params = self.full_cell_parameters()
         std_params = []
@@ -1574,34 +1617,48 @@ class MolCrystalOps:
         std_batch.cell_angles = torch.tensor(std_params[:, 3:] / 180 * np.pi, dtype=torch.float32, device=self.device)
         std_batch.box_analysis()
         "transformed cartesian positions (not properly wrapped)"
-        ucell_pos_frac = torch.as_tensor(np.stack(new_positions), dtype=torch.float32, device=self.device)
+        #ucell_pos_frac = torch.as_tensor(np.stack(new_positions), dtype=torch.float32, device=self.device)
+        ucell_pos_frac = torch.as_tensor(np.concatenate(new_positions), dtype=torch.float32, device=self.device)
         ucell_batch = torch.arange(self.num_graphs).repeat_interleave((self.num_atoms * self.sym_mult).long())
-        ucell_pos_cart = fractional_transform(ucell_pos_frac.flatten(0, 1), std_batch.T_fc[ucell_batch])
+        #ucell_pos_cart = fractional_transform(ucell_pos_frac.flatten(0, 1), std_batch.T_fc[ucell_batch])
+        ucell_pos_cart = fractional_transform(ucell_pos_frac, std_batch.T_fc[ucell_batch])
         std_batch.unit_cell_pos = ucell_pos_cart
         std_batch.unit_cell_batch = ucell_batch
+
         "parameterize unit cell (wrapping handled here) and update crystal params"
         (aunit_centroid, aunit_orientation,
-         handedness_list, is_well_defined, pos) = std_batch.reparameterize_unit_cell()
+         handedness_list, is_well_defined, pos) = std_batch.reparameterize_unit_cell(
+            enforce_right_handedness=enforce_right_handedness
+        )
+
         std_batch.symmetry_operators = [SYM_OPS[int(ind)] for ind in
                                         std_batch.sg_ind]  # critical - give standard sym ops!
         std_batch.nonstandard_symmetry.fill_(False)
+
         std_batch.aunit_centroid = aunit_centroid
         std_batch.aunit_orientation = aunit_orientation
-        std_batch.aunit_handedness = handedness_list[:, None]
+        if handedness_list.ndim == 1:
+            std_batch.aunit_handedness = handedness_list[:, None]
+        else:
+            std_batch.aunit_handedness = handedness_list
+
         std_batch.is_well_defined = torch.tensor(is_well_defined, dtype=torch.bool, device=self.device)
+
         std_batch.pos = pos
         std_batch.pose_aunit()
-
 
         if confirm_transform:
             # estimate magnitude of the transform
             # transform_dist = torch.cdist(torch.tensor(transforms.reshape(-1, 9), dtype=torch.float32), torch.eye(3).flatten()[None, :]).flatten()
 
-            rdf1 = self.analyze(['rdf'], )['rdf'][0]
+            rdf1 = self.analyze(['rdf'])['rdf'][0]
             rdf2 = std_batch.analyze(['rdf'])['rdf'][0]
             diffs = compute_rdf_distance(rdf1, rdf2, torch.linspace(0, 10, rdf1.shape[-1],
                                                                     dtype=torch.float32, device=self.device))
-            succeeded = diffs < 1e-3
+
+            penalties = std_batch.compute_cell_reduction_penalty()
+
+            succeeded = (diffs < 1e-3) & (penalties < 1e-3)
             if not succeeded.all():
                 print((~succeeded).sum().item(), " samples failed standardization")
 
@@ -1610,4 +1667,5 @@ class MolCrystalOps:
         else:
             return std_batch
 
-    # def invert_aunit_handedness(self):
+    def write_cif(self, inds, path, mode):
+        ase_write_cif(self,inds, path, mode)

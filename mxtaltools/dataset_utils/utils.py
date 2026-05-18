@@ -1,3 +1,4 @@
+import torch.nn.functional as F
 from random import shuffle
 from typing import Optional
 
@@ -15,6 +16,11 @@ def collate_data_list(data_list, exclude_unit_cell: bool = True,
                       skip_default_exclusion: bool = False):
     if len(data_list) == 0:
         assert False, "Data list is empty!"
+
+    if hasattr(data_list, 'is_batch'):
+        if data_list.is_batch:
+            print("Already batched")
+            return data_list
 
     if not isinstance(data_list, list):
         data_list = [data_list]
@@ -42,6 +48,17 @@ def collate_data_list(data_list, exclude_unit_cell: bool = True,
 
     if exclude_unit_cell:
         exclude_keys_i.append('unit_cell_pos')
+
+    if hasattr(data_list, 'max_z_prime'):
+        batch_max_z_prime = max(int(d.max_z_prime) for d in data_list)
+        for d in data_list:
+            d_zp = int(d.max_z_prime)
+            if d_zp < batch_max_z_prime:
+                pad = batch_max_z_prime - d_zp
+                d.aunit_centroid = F.pad(d.aunit_centroid, (0, 3 * pad))
+                d.aunit_orientation = F.pad(d.aunit_orientation, (0, 3 * pad))
+                d.aunit_handedness = F.pad(d.aunit_handedness, (0, pad))
+                d.max_z_prime = batch_max_z_prime
 
     batch = Batch.from_data_list(data_list,
                                  exclude_keys=list(exclude_keys_i),

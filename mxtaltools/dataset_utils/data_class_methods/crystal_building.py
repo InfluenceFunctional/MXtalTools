@@ -28,7 +28,8 @@ class MolCrystalBuilding:
         zp1_batch.batch = new_batch
         assert len(zp1_batch.pos) == len(new_batch)
         zp1_batch.ptr = torch.cat(
-            [torch.zeros(1, dtype=torch.long, device=self.device), torch.cumsum(atoms_per_subunit, dim=0)])
+            [torch.zeros(1, dtype=torch.long, device=self.device),
+             torch.cumsum(atoms_per_subunit, dim=0)])
         zp1_batch._num_graphs = new_num_graphs
         # copy over relevant crystal properties
         zp1_batch.sg_ind = self.sg_ind[rep_index]
@@ -44,6 +45,11 @@ class MolCrystalBuilding:
         zp1_batch.mol_volume = self.mol_volume[rep_index]
         zp1_batch.mass = self.mass[rep_index]
         zp1_batch.z_prime = torch.ones(new_num_graphs, device=self.device, dtype=torch.long)
+
+        if hasattr(zp1_batch,'unit_cell_pos'):
+            if zp1_batch.unit_cell_pos is not None:
+                atoms_per_sub_ucell = ((self.num_atoms * self.sym_mult) // self.z_prime)[rep_index]
+                zp1_batch.unit_cell_batch = graph_ids.repeat_interleave(atoms_per_sub_ucell)
 
         # extra handling for aunit properties
         subunit_index = torch.arange(new_num_graphs, device=self.device) - torch.repeat_interleave(
@@ -106,6 +112,7 @@ class MolCrystalBuilding:
         else:
             assert False, "No point in joining batches which area already Z'=1"
 
+    # todo add method to just align to the standard orientation
     def pose_aunit(self, std_orientation: Optional[bool] = True,
                    override_handedness=None):
         if override_handedness is not None:

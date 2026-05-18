@@ -31,7 +31,7 @@ if __name__ == "__main__":
     bsz = 1000
     zps = []
     sgs = []
-    zps.append(1) # Form II & XII
+    zps.append(1) # Form II & IX
     sgs.append(14)
     zps.append(2) # Form III & VII
     sgs.append(14)

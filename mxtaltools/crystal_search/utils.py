@@ -232,7 +232,11 @@ def init_samples_to_optim(config, target=None):
     if config.init_sample_method == 'data':
         samples_to_optim = torch.load(config.dataset_path, weights_only=False)
         if not isinstance(samples_to_optim, list):
-            samples_to_optim = [samples_to_optim]
+            if hasattr(samples_to_optim, 'is_batch'):
+                samples_to_optim = samples_to_optim.batch_to_list()
+            else:
+                samples_to_optim = [samples_to_optim]
+        config.num_samples = min(config.num_samples, len(samples_to_optim))
         index_block = torch.arange(config.mol_seed * config.num_samples, (config.mol_seed + 1) * config.num_samples)
         samples_to_optim = [samples_to_optim[ind] for ind in index_block]
         return samples_to_optim

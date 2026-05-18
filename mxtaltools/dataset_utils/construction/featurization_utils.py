@@ -14,6 +14,9 @@ from mxtaltools.constants.asymmetric_units import ASYM_UNITS
 from mxtaltools.constants.atom_properties import ELECTRONEGATIVITY, PERIOD, GROUP, VDW_RADII, ATOMIC_SYMBOLS, \
     ATOMIC_NUMBERS
 from mxtaltools.constants.space_group_info import SPACE_GROUPS
+from mxtaltools.dataset_utils.data_classes import MolData, MolCrystalData
+from mxtaltools.dataset_utils.mol_building import get_partial_charges
+from mxtaltools.dataset_utils.utils import collate_data_list
 
 """
 Utilities for featurizing molecules and crystals for construction of MXtalTools Data objects.
@@ -88,9 +91,11 @@ def extract_crystal_data(identifier, crystal, reduced_crystal, unit_cell):
     crystal_dict['symmetry_operators'] = get_crystal_sym_ops(reduced_crystal)
     crystal_dict['symmetry_multiplicity'] = len(crystal_dict['symmetry_operators'])
     assert (crystal.z_value // crystal.z_prime) == crystal_dict['symmetry_multiplicity']
-    crystal_dict['space_group_number'], crystal_dict['space_group_setting'] = reduced_crystal.spacegroup_number_and_setting
-    crystal_dict['lattice_a'], crystal_dict['lattice_b'], crystal_dict['lattice_c'] = np.asarray(reduced_crystal.cell_lengths,
-                                                                                                 dtype=float)
+    crystal_dict['space_group_number'], crystal_dict[
+        'space_group_setting'] = reduced_crystal.spacegroup_number_and_setting
+    crystal_dict['lattice_a'], crystal_dict['lattice_b'], crystal_dict['lattice_c'] = np.asarray(
+        reduced_crystal.cell_lengths,
+        dtype=float)
     crystal_dict['lattice_alpha'], crystal_dict['lattice_beta'], crystal_dict['lattice_gamma'] = np.asarray(
         reduced_crystal.cell_angles, dtype=float) / 180 * np.pi
     # NOTE this calls a (probably mol volume) calculation which is by far the heaviest part of this function
@@ -98,7 +103,8 @@ def extract_crystal_data(identifier, crystal, reduced_crystal, unit_cell):
     # crystal_dict['packing_coefficient'] = crystal.packing_coefficient
 
     crystal_dict['fc_transform'], crystal_dict['cell_volume'] = (
-        coor_trans_matrix_np('f_to_c', np.asarray(reduced_crystal.cell_lengths), np.asarray(reduced_crystal.cell_angles) / 180 * np.pi,
+        coor_trans_matrix_np('f_to_c', np.asarray(reduced_crystal.cell_lengths),
+                             np.asarray(reduced_crystal.cell_angles) / 180 * np.pi,
                              return_vol=True))
 
     # this uses a pattern over the asymmetric unit molecule, which is sometimes different from the 'molecule' molecule
@@ -111,6 +117,7 @@ def extract_crystal_data(identifier, crystal, reduced_crystal, unit_cell):
     crystal_dict['unit_cell_atomic_numbers'] = [
         np.asarray([atom.atomic_number for atom in component.atoms]) for component in
         unit_cell.components]
+
     # confirm packing above has correct number of components
     assert len(crystal_dict['unit_cell_coordinates']) == int(crystal_dict['symmetry_multiplicity'] * crystal_dict[
         'z_prime']), "crystal multiplicity error in unit cell packing"
@@ -260,10 +267,6 @@ def old_featurize_molecule(crystal, rd_mol, component_num, protonation_state='de
         molecule_dict['atom_partial_charge'] = np.zeros_like(charges)
 
     return molecule_dict
-
-def get_partial_charges(rd_mol):
-    AllChem.ComputeGasteigerCharges(rd_mol)
-    return np.array([float(atom.GetProp('_GasteigerCharge')) for atom in rd_mol.GetAtoms()])
 
 
 # noinspection PyUnreachableCode
@@ -492,3 +495,211 @@ def get_qm9_properties(text):
         "heat_capacity_STP": float(props[15]),
     }
     return molecule_dict, props
+
+
+def canonical_atom_order(pos, z):
+    centroid = np.mean(pos, axis=0)
+    dists = np.linalg.norm(pos - centroid, axis=1)
+    atom_types = np.unique(z)
+
+    indices = []
+    for type in atom_types:
+        elems = np.argwhere(dists[z == type])
+        indices.extend(elems[np.argsort(dists[elems], descending=True)])
+
+    return np.array(indices)
+
+
+def instantiate_crystal(aunit_centroid, aunit_handedness,
+                        aunit_orientation, max_z_prime,
+                        mols, rebuild_batch, z_prime):
+    if z_prime > 1:
+        # instantiate Z'>1 crystal object
+        mol = MolData(
+            z=rebuild_batch.z,
+            pos=rebuild_batch.pos,
+            x=rebuild_batch.x,
+            smiles='|'.join(rebuild_batch.smiles),
+            fingerprint=rebuild_batch.fingerprint.sum(0, keepdim=True),
+            do_mol_analysis=False,  # combine manually below
+        )
+        mol.mass = torch.stack([m.mass for m in mols]).sum()
+        mol.mol_volume = torch.stack([m.mol_volume for m in mols]).sum()
+        mol.radius = torch.stack([m.radius for m in mols]).sum()
+
+        zp1_crystal = MolCrystalData(
+            molecule=mol,
+            sg_ind=rebuild_batch.sg_ind[0],
+            cell_lengths=rebuild_batch.cell_lengths[0],
+            cell_angles=rebuild_batch.cell_angles[0],
+            aunit_orientation=aunit_orientation.flatten(),
+            aunit_centroid=aunit_centroid.flatten(),
+            aunit_handedness=aunit_handedness.flatten(),
+            identifier=rebuild_batch.identifier[0],
+            nonstandard_symmetry=any(rebuild_batch.nonstandard_symmetry),
+            symmetry_operators=rebuild_batch.symmetry_operators[0],
+            z_prime=torch.ones(1, dtype=torch.long) * z_prime,
+            do_box_analysis=True,
+            cocrystal=False,
+            max_z_prime=max_z_prime,
+            mol_ind=torch.arange(z_prime, dtype=torch.long).repeat_interleave(
+                torch.stack([m.num_atoms for m in mols])),
+        )
+
+    else:
+        mol = MolData(
+            z=rebuild_batch.z,
+            pos=rebuild_batch.pos,
+            x=rebuild_batch.x,
+            smiles=rebuild_batch.smiles[0],
+            fingerprint=rebuild_batch.fingerprint,
+            do_mol_analysis=True,  # combine manually below
+        )
+        zp1_crystal = MolCrystalData(
+            molecule=mol,
+            sg_ind=rebuild_batch.sg_ind[0],
+            cell_lengths=rebuild_batch.cell_lengths[0],
+            cell_angles=rebuild_batch.cell_angles[0],
+            aunit_orientation=aunit_orientation.flatten(),
+            aunit_centroid=aunit_centroid.flatten(),
+            aunit_handedness=aunit_handedness.flatten(),
+            identifier=rebuild_batch.identifier[0],
+            nonstandard_symmetry=any(rebuild_batch.nonstandard_symmetry),
+            symmetry_operators=rebuild_batch.symmetry_operators[0],
+            z_prime=torch.ones(1, dtype=torch.long),
+            do_box_analysis=True,
+            cocrystal=False,
+            max_z_prime=max_z_prime,
+            mol_ind=torch.zeros(len(mol.z), dtype=torch.long),
+        )
+    return zp1_crystal
+
+
+def init_zp1_crystals(crystal_dict, mols, sym_ops, sym_ops_are_standard):
+    zp1_crystals = []
+    for mol in mols:
+        cell_lengths = torch.tensor(
+            np.stack([
+                crystal_dict['lattice_a'], crystal_dict['lattice_b'], crystal_dict['lattice_c']
+            ]), dtype=torch.float32)
+        cell_angles = torch.tensor(
+            np.stack([
+                crystal_dict['lattice_alpha'], crystal_dict['lattice_beta'],
+                crystal_dict['lattice_gamma']
+            ]), dtype=torch.float32)
+
+        crystal = MolCrystalData(
+            molecule=mol,
+            sg_ind=int(crystal_dict['space_group_number']),
+            cell_lengths=cell_lengths,
+            cell_angles=cell_angles,
+            aunit_orientation=torch.zeros(3, dtype=torch.float32),  # dummy
+            aunit_centroid=torch.zeros(3, dtype=torch.float32),  # dummy
+            aunit_handedness=torch.zeros(1, dtype=torch.bool),  # dummy
+            identifier=crystal_dict['identifier'],
+            nonstandard_symmetry=not sym_ops_are_standard,
+            symmetry_operators=sym_ops,
+            z_prime=torch.ones(1, dtype=torch.long),
+            do_box_analysis=True,
+            cocrystal=False,
+            max_z_prime=1
+        )
+        zp1_crystals.append(crystal)
+    return zp1_crystals
+
+
+def extract_zp1_pose_info(molwise_ucell_coords, z_prime, zp1_crystals):
+    crystal_batch = collate_data_list(zp1_crystals, max_z_prime=1)
+    if len(zp1_crystals) > 1:
+        crystal_batch.unit_cell_pos = torch.tensor(np.concatenate(molwise_ucell_coords),
+                                                   dtype=torch.float32)
+        crystal_batch.unit_cell_batch = torch.arange(z_prime, dtype=torch.float32).repeat_interleave(
+            crystal_batch.num_atoms * crystal_batch.sym_mult)
+
+    else:
+        crystal_batch.unit_cell_pos = torch.tensor(np.concatenate(molwise_ucell_coords),
+                                                   dtype=torch.float32)
+        crystal_batch.unit_cell_batch = torch.zeros(len(crystal_batch.unit_cell_pos), dtype=torch.float32)
+    aunit_centroid, aunit_orientation, aunit_handedness, is_well_defined, pos = crystal_batch.reparameterize_unit_cell()
+    return aunit_centroid, aunit_handedness, aunit_orientation, crystal_batch, is_well_defined, pos
+
+
+def typed_pair_fingerprint(mol):
+    n = mol.num_atoms
+    d = torch.cdist(mol.pos, mol.pos)
+    z = mol.z
+    iu = torch.triu_indices(n, n, offset=1)
+    zi, zj = z[iu[0]], z[iu[1]]
+    a = torch.minimum(zi, zj)  # unordered pair label
+    b = torch.maximum(zi, zj)
+    dist = d[iu[0], iu[1]]
+    # lexsort by (a, b, distance) — pack into one key
+    key = a.long() * 200_000 + b.long() * 1_000 + (dist * 100).long()
+    order = key.argsort()
+    return torch.stack([a[order].float(), b[order].float(), dist[order]], dim=1)
+
+
+def cocrystal_check(mols):
+    # molecule size
+    if not all([mol.num_atoms == mols[0].num_atoms for mol in mols]):
+        return False
+
+    # check for the same molecule
+    fp = mols[0].smiles
+    for m in mols[1:]:
+        if m.smiles != fp:  # not np.all(fp == m['molecule_fingerprint']):
+            return False
+    #
+    # # same molecular graph — try to align atom orderings to mols[0]
+    # for m in mols:
+    #     perm = torch.argsort(m.z, descending=True, stable=True)
+    #     m.z = m.z[perm]
+    #     m.pos = m.pos[perm]
+    #     m.x = m.x[perm]
+    #
+    # # molecule atom order
+    # if not torch.all(torch.stack([mol.z for mol in mols]).diff(dim=0) == 0):
+    #     return False
+
+    f1 = typed_pair_fingerprint(mols[0])
+    for mol in mols[1:]:
+        if not torch.allclose(f1, typed_pair_fingerprint(mol), atol=1e-1):
+            return False
+
+    # # check if they are identical conformers (this is only a rough method)
+    # d1 = torch.cdist(mols[0].pos, mols[0].pos)
+    # f1 = d1.mean(1).sort(dim=0).values
+    # for mol in mols:
+    #     f2 = torch.cdist(mol.pos, mol.pos).mean(1).sort(dim=0).values
+    #     if not torch.allclose(f1, f2, atol=1e-1):
+    #         return False
+
+    return True
+
+
+def overwrite_conformer_to_zp(mols, rebuild_batch, z_prime):
+    mol = mols[0]
+    for zp in range(1, z_prime):
+        mols[zp] = mol.clone()
+    # we then have to confirm this doesn't overly distort crystal construction
+    crystal_pos = torch.cat([m.pos for m in mols])
+    crystal_z = torch.cat([m.z for m in mols])
+    crystal_x = torch.cat([m.x for m in mols])
+    aligned_batch = rebuild_batch.clone()
+    aligned_batch.pos = crystal_pos
+    aligned_batch.z = crystal_z
+    aligned_batch.x = crystal_x
+    return aligned_batch
+
+
+def check_zp_mol_alignment(aligned_batch, rebuild_batch):
+    same_atom_types = (torch.bincount(rebuild_batch.z) == torch.bincount(aligned_batch.z)).all()
+    aligned_batch.pose_aunit()
+    rebuild_batch.pose_aunit()
+    distmat = torch.cdist(aligned_batch.pos, rebuild_batch.pos)
+    furthest_nn = distmat.amin(0).amax()
+    e1 = aligned_batch.analyze(['elj'])['elj']
+    e2 = rebuild_batch.analyze(['elj'])['elj']
+    diff = (e1 - e2).abs() / (e2 + 1e-3).abs()
+    failed = (not same_atom_types) or (furthest_nn > 0.5) or (diff.amax() > 0.01)
+    return not failed

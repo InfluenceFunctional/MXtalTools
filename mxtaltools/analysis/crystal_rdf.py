@@ -14,8 +14,7 @@ def crystal_rdf(crystal_batch,
                 precomputed_distances_dict=None,
                 rrange: Tuple[float, float] = (0, 10),
                 bins: int = 100,
-                elementwise: bool = False,
-                atomwise: bool = False,
+                mode: Optional[str] = None,
                 atomic_numbers_override: Optional[torch.LongTensor] = None
                 ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     """
@@ -32,8 +31,10 @@ def crystal_rdf(crystal_batch,
 
     # compute all the dists
     dists = torch.linalg.norm(crystal_batch.pos[edges[0]] - crystal_batch.pos[edges[1]], dim=1)
-
-    assert not (elementwise and atomwise)
+    envwise = mode == 'envwise'
+    elementwise = mode == 'elementwise'
+    atomwise = mode == 'atomwise'
+    assert not (elementwise and atomwise) or (elementwise and envwise) or (atomwise and envwise)
 
     '''
     efficiently gather the relevant distances
@@ -52,9 +53,12 @@ def crystal_rdf(crystal_batch,
         rdf = hist / shell_volumes[None, None, :] / rdf_density[..., None]  # un-smoothed radial density
 
     elif atomwise:  # todo this is only implemented for an identical atom indexing (assumes batch is repetition of same molecule)
-        graph_indexed_pairs, rdfs_dict = get_atomwise_dists(crystal_batch.z,
+        # todo add flag that this won't work on mixed batches
+        mol_size = crystal_batch.num_atoms[0].item()
+        tot_num_repeats = len(crystal_batch.z) // mol_size
+        atom_inds = torch.arange(mol_size, device=device).repeat(tot_num_repeats)
+        graph_indexed_pairs, rdfs_dict = get_atomwise_dists(atom_inds,
                                                             edges,
-                                                            device,
                                                             edge_batch,
                                                             crystal_batch.num_atoms)
 
@@ -63,6 +67,21 @@ def crystal_rdf(crystal_batch,
         # volume of the shell at radius r+dr
         shell_volumes = (4 / 3) * torch.pi * ((bin_edges[:-1] + torch.diff(bin_edges)) ** 3 - bin_edges[:-1] ** 3)
         rdf = hist / shell_volumes[None, None, :] / rdf_density[..., None]  # un-smoothed radial density
+
+    elif envwise:  # distinguish 2WL intramolecular environments. Will combine symmetry classes.
+        # todo add flag that this won't work on mixed batches
+        labels = get_1WL_env_labels(crystal_batch, precomputed_distances_dict)
+        graph_indexed_pairs, rdfs_dict = get_atomwise_dists(labels,
+                                                            edges,
+                                                            edge_batch,
+                                                            crystal_batch.num_atoms)
+
+        num_pairs = len(rdfs_dict.keys())
+        hist, rdf_density = smooth_1d_histogram(bins, device, dists, graph_indexed_pairs, num_graphs, num_pairs, rrange)
+        # volume of the shell at radius r+dr
+        shell_volumes = (4 / 3) * torch.pi * ((bin_edges[:-1] + torch.diff(bin_edges)) ** 3 - bin_edges[:-1] ** 3)
+        rdf = hist / shell_volumes[None, None, :] / rdf_density[..., None]  # un-smoothed radial density
+
     else:
         dists_per_hist = [torch.sum(edge_batch == n) for n in range(num_graphs)]
         sorted_dists = torch.cat([dists[edge_batch == n] for n in range(num_graphs)])
@@ -73,6 +92,7 @@ def crystal_rdf(crystal_batch,
         shell_volumes = (4 / 3) * torch.pi * ((bin_edges[:-1] + torch.diff(bin_edges)) ** 3 - bin_edges[
             :-1] ** 3)  # volume of the shell at radius r+dr
         rdf = hist / shell_volumes[None, :] / rdf_density[:, None]  # un-smoothed radial density
+        rdf = rdf[:, None, :]  # rdf format is [n, channels, bins]
 
     bin_centers = (bin_edges[:-1] + torch.diff(bin_edges)).requires_grad_()  # todo move this to discriminator code
 
@@ -80,6 +100,106 @@ def crystal_rdf(crystal_batch,
     smoothed_rdf = rdf * envelope_func.to(rdf.device)
     return smoothed_rdf, bin_centers, rdfs_dict
 
+
+def get_1WL_env_labels(crystal_batch, precomputed_distances_dict):
+    intra_edges = precomputed_distances_dict['edge_index']
+    intra_dists = precomputed_distances_dict['intramolecular_dist']
+
+    def bond_edges_from_distances(edge_index, intramolecular_dist,
+                                  bond_cutoff=1.8):
+        """Filter a distance-cutoff edge list down to covalent bonds."""
+        mask = intramolecular_dist < bond_cutoff
+        return edge_index[:, mask]
+
+    edge_index = bond_edges_from_distances(intra_edges, intra_dists)
+    max_iter = 32
+    asym_mask = crystal_batch.aux_ind == 0
+    z = crystal_batch.z[asym_mask]
+    device = z.device
+    N = z.shape[0]
+    # global → local-asym remap; -1 for non-asym atoms
+    global_to_local = torch.full(
+        (crystal_batch.z.shape[0],), -1, dtype=torch.long, device=device
+    )
+    global_to_local[asym_mask] = torch.arange(N, device=device)
+    src = global_to_local[edge_index[0]]
+    dst = global_to_local[edge_index[1]]
+    assert (src >= 0).all() and (dst >= 0).all(), \
+        "bond edges touch a non-asym atom — check aux_ind / edge_index consistency"
+    degree = torch.zeros(N, dtype=torch.long, device=device).scatter_add_(
+        0, src, torch.ones_like(src, dtype=torch.long)
+    )
+    max_deg = int(degree.max().item())
+    # Initial invariant: (Z, degree). Adding degree just speeds convergence.
+    init = torch.stack([z.long(), degree], dim=1)
+    _, labels = torch.unique(init, dim=0, return_inverse=True)
+    num_classes = int(labels.max().item()) + 1
+    offset = torch.zeros(N, dtype=torch.long, device=device)
+    offset[1:] = degree.cumsum(0)[:-1]
+    for iter in range(max_iter):
+        K = int(labels.max().item()) + 1
+        msg = labels[dst]
+        # Lex-sort edges by (src, neighbor-label) → within each src, msgs are sorted
+        order = (src * K + msg).argsort()
+        src_s, msg_s = src[order], msg[order]
+        within = torch.arange(src_s.numel(), device=device) - offset[src_s]
+
+        # [N, max_deg] padded sorted-neighbor-label matrix
+        pad = torch.full((N, max_deg), -1, dtype=labels.dtype, device=device)
+        pad[src_s, within] = msg_s
+
+        sig = torch.cat([labels[:, None], pad], dim=1)
+        _, new_labels = torch.unique(sig, dim=0, return_inverse=True)
+        new_num = int(new_labels.max().item()) + 1
+
+        labels = new_labels
+        if new_num == num_classes:
+            break
+        num_classes = new_num
+
+    # doesn't work on mixed / Z'>1 batches
+    # labels_full = torch.empty(crystal_batch.z.shape[0], dtype=torch.long, device=device)
+    # for g in range(crystal_batch.num_graphs):
+    #     node_mask = crystal_batch.batch == g  # all atoms in graph g
+    #     asym_g_mask = node_mask & asym_mask  # asym atoms in graph g
+    #     labels_g = labels[global_to_local[asym_g_mask]]  # asym-unit labels for g
+    #     n_copies_g = int(node_mask.sum().item()) // labels_g.shape[0]
+    #     labels_full[node_mask] = labels_g.repeat(n_copies_g)
+    labels_full = torch.full((crystal_batch.z.shape[0],), -1, dtype=torch.long, device=device)
+    node_idx = torch.arange(crystal_batch.z.shape[0], device=device)
+
+    for g in range(crystal_batch.num_graphs):
+        node_mask = crystal_batch.batch == g
+        asym_g_mask = node_mask & asym_mask
+        labels_g = labels[global_to_local[asym_g_mask]]
+
+        z_prime_g = int(crystal_batch.z_prime[g].item())
+        n_asym = labels_g.shape[0]
+        assert n_asym % z_prime_g == 0, f"graph {g}: n_asym={n_asym} not divisible by Z'={z_prime_g}"
+        atoms_per_mol = n_asym // z_prime_g
+
+        # asym mol_inds, one per Z'-mol, in asym-block order
+        asym_block_ids = crystal_batch.mol_ind[asym_g_mask][::atoms_per_mol]
+
+        cluster_mi = crystal_batch.mol_ind[node_mask]
+        global_idx_g = node_idx[node_mask]
+
+        for z in range(z_prime_g):
+            lower = asym_block_ids[z]
+            upper = asym_block_ids[z + 1] if z + 1 < z_prime_g else cluster_mi.max() + 1
+            sub_mask = (cluster_mi >= lower) & (cluster_mi < upper)
+
+            n_sub = int(sub_mask.sum().item())
+            assert n_sub % atoms_per_mol == 0, (
+                f"graph {g} Z'-mol {z}: cluster atoms {n_sub} not divisible by {atoms_per_mol}"
+            )
+            n_copies_z = n_sub // atoms_per_mol
+            labels_mol = labels_g[z * atoms_per_mol:(z + 1) * atoms_per_mol]
+            labels_full[global_idx_g[sub_mask]] = labels_mol.repeat(n_copies_z)
+
+    assert (labels_full >= 0).all(), "some atoms were not labelled"
+
+    return labels_full
 
 def smooth_cutoff(d, rc, ron):
     # d: distances
@@ -249,20 +369,16 @@ def get_atomwise_dists_old(atom_types: torch.LongTensor,
     return dists_per_hist, sorted_dists, rdfs_dict
 
 
-def get_atomwise_dists(atom_types: torch.LongTensor,
+def get_atomwise_dists(atom_inds,
                        edges: torch.LongTensor,
-                       device: Union[torch.device, str],
                        edge_in_crystal_number: torch.LongTensor,
                        mol_num_atoms: torch.LongTensor,
                        ) -> Tuple[torch.Tensor, dict]:
-    assert torch.all(mol_num_atoms == mol_num_atoms[0]), "atomwise rdf not set up for variable molecule sizes"
 
-    A = mol_num_atoms[0].item()  # atoms per molecule
+    A = len(torch.unique(atom_inds))
     num_pairs = A * (A + 1) // 2
 
     # --- get atom indices per edge ---
-    tot_num_repeats = len(atom_types) // A
-    atom_inds = torch.arange(A, device=device).repeat(tot_num_repeats)
     i = atom_inds[edges[0]].long()
     j = atom_inds[edges[1]].long()
 
@@ -501,17 +617,18 @@ def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None, return_num
         torch_rdf1 = rdf1
         torch_rdf2 = rdf2
 
+    assert torch_rdf1.shape[-2] == torch_rdf2.shape[-2], "RDF distance must be done over equal channel sizes"
+
     if not torch.is_tensor(rr):
         torch_range = torch.Tensor(rr)
     else:
         torch_range = rr
 
-    if n_parallel_rdf2 is not None:
+    if n_parallel_rdf2 is not None: # todo consider deprecating
         torch_rdf1_f = torch_rdf1.tile(n_parallel_rdf2, 1, 1)
     else:
         torch_rdf1_f = torch_rdf1
 
-    #bin_range = (torch_range[-1] - torch_range[0])
     bin_width = torch_range[1] - torch_range[0]
 
     # RDF should measure how much mass needs to move, by how far
