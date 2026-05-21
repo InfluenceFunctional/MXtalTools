@@ -5,7 +5,7 @@ target_path: null #D:\crystal_datasets\nacjaf\nacjaf_nikos.pt
 umbrella_path: null #D:\crystal_datasets\opt_outputs\nehzor_test_umbrella.pt # null
 target_identifier: null #Target_XXII_10581_0242_0005_P1211_02_01_07_1 #MIPCAS
 out_dir: D:\crystal_datasets\opt_outputs
-run_name: acrdin_mace_test
+run_name: opt_acrdin
 save_trajs: false
 
 uma_predictor_path: D:\crystal_datasets\esen_s.pt
@@ -59,13 +59,13 @@ opt:
     enforce_reduced: false
     compression_factor: 0.0
     cutoff: 10 # can be as low as 6 for SiLU, 10 otherwise
-    init_lr: 0.001
+    init_lr: 0.0001
     convergence_eps: 0.00000001
     optimizer_func: 'rprop'  # NOTE rprop is by far the fastest and most reliable
     anneal_lr: false
     grad_norm_clip: 0.1
     show_tqdm: true
-    max_num_steps: 100
+    max_num_steps: 500
     rdf_warmup: null
     target_packing_coeff: null
     umbrella: false

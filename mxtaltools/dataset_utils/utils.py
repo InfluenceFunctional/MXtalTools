@@ -49,7 +49,7 @@ def collate_data_list(data_list, exclude_unit_cell: bool = True,
     if exclude_unit_cell:
         exclude_keys_i.append('unit_cell_pos')
 
-    if hasattr(data_list, 'max_z_prime'):
+    if hasattr(data_list[0], 'max_z_prime'):
         batch_max_z_prime = max(int(d.max_z_prime) for d in data_list)
         for d in data_list:
             d_zp = int(d.max_z_prime)
