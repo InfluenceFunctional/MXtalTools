@@ -281,6 +281,15 @@ view([m1, m2])
 """
 
 if __name__ == '__main__':
+
+    process_cifs_to_chunks(n_chunks=1,
+                           cifs_path=r"D:\crystal_datasets\acridine\adam_opt",
+                           chunks_path=r"D:\crystal_datasets\acridine\adam_opt",
+                           chunk_prefix='',
+                           use_filenames_for_identifiers=False,
+                           target_identifiers=None,
+                           filter_by_targets=False,
+                           protonation_state='protonated')
     # full dataset processing
     # process_cifs_to_chunks(n_chunks=1000,
     #                        cifs_path='D:/crystal_datasets/CSD_dump/',
@@ -327,14 +336,14 @@ if __name__ == '__main__':
     #                        filter_by_targets=False,
     #                        protonation_state='deprotonated')
 
-    process_cifs_to_chunks(n_chunks=1,
-                           cifs_path='D:/crystal_datasets/acridine/canonical_structures',
-                           chunks_path='D:/crystal_datasets/acridine/canonical_structures',
-                           chunk_prefix='',
-                           use_filenames_for_identifiers=False,
-                           target_identifiers=None,
-                           filter_by_targets=False,
-                           protonation_state='protonated')
+    # process_cifs_to_chunks(n_chunks=1,
+    #                        cifs_path='D:/crystal_datasets/acridine/canonical_structures',
+    #                        chunks_path='D:/crystal_datasets/acridine/canonical_structures',
+    #                        chunk_prefix='',
+    #                        use_filenames_for_identifiers=False,
+    #                        target_identifiers=None,
+    #                        filter_by_targets=False,
+    #                        protonation_state='protonated')
 
     # process_cifs_to_chunks(n_chunks=1,
     #                        cifs_path='D:/crystal_datasets/CSD_dump/',

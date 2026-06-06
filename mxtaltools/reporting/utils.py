@@ -1,3 +1,4 @@
+import torch
 import numpy as np
 import wandb
 from plotly import graph_objects as go
@@ -27,46 +28,43 @@ target_identifiers = {
     'XXXI_2': '2199673_1_0',
     # 'XXXI_3': '2199672_1_0',
 }
-
 def lightweight_one_sided_violin(data, n_points=100, bandwidth_factor=1.0, data_min=None, data_max=None):
     """Create lightweight one-sided violin data using KDE with minimal points"""
 
     if len(data) == 0:
         return np.array([]), np.array([])
 
-    # Create KDE
-    try:
-        kde = gaussian_kde(data, bw_method=bandwidth_factor)
-    except:
-        kde = gaussian_kde(data + np.random.randn(len(data))*0.01, bw_method=bandwidth_factor)
+    if torch.is_tensor(data):
+        data = data.detach().cpu().numpy()
+    data = np.asarray(data).ravel()
 
-    # Create evaluation points
-    if data_min is not None:
-        pass
-    else:
-        data_min = data.min()
-    if data_max is not None:
-        pass
-    else:
-        data_max = data.max()
+    # Actual spread of the data — used to detect (near-)constant dimensions.
+    actual_min = float(data.min())
+    actual_max = float(data.max())
+    actual_range = actual_max - actual_min
 
-    data_range = data_max - data_min
-    if data_range < 1e-6:
-        # Constant input: show a narrow spike
-        half_w = max(abs(data_min) * 0.01, 0.01)
-        x_vals = np.array([data_min - half_w, data_min, data_min + half_w])
-        y_vals = np.array([0, 0.4, 0])  # 0.4 gives visible but not full-width peak
+    # Axis range for the evaluation grid (falls back to the data spread).
+    if data_min is None:
+        data_min = actual_min
+    if data_max is None:
+        data_max = actual_max
+    axis_range = data_max - data_min
+
+    # "Constant" = data spread is tiny relative to the axis it lives on.
+    if actual_range < 1e-3 * max(axis_range, 1e-12):
+        center = 0.5 * (actual_min + actual_max)
+        half_w = 0.01 * max(axis_range, abs(center), 1.0)
+        x_vals = np.array([center - half_w, center, center + half_w])
+        y_vals = np.array([0.0, 0.4, 0.0])  # 0.4 ~ visible but below a full peak (~0.5)
         return x_vals, y_vals
 
-    x_vals = np.linspace(data_min - 0.1 * data_range,
-                         data_max + 0.1 * data_range,
+    x_vals = np.linspace(data_min - 0.1 * axis_range,
+                         data_max + 0.1 * axis_range,
                          n_points)
 
-    # Evaluate KDE
+    kde = gaussian_kde(data, bw_method=bandwidth_factor)
     y_vals = kde(x_vals)
-
-    # Normalize for consistent width (optional)
-    y_vals = y_vals / (1e-3 + y_vals.max() * 2)  # Scale to max width of 2
+    y_vals = y_vals / (1e-3 + y_vals.max() * 2)
 
     x_vals = np.concatenate([[x_vals[0]], x_vals, [x_vals[-1]]])
     y_vals = np.concatenate([[0], y_vals, [0]])
