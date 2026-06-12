@@ -1,9 +1,9 @@
 device: cuda
-mol_path: /scratch/mk8347/data/crystal_datasets/acridine/acridine_conformer.pt
+mol_path: /scratch/mk8347/data/crystal_datasets/acridine/opt_acridine_conformer.pt
 dataset_path: null #D:\crystal_datasets\xuldud\xuldud_sg61_zp1.pt
 target_path: null #D:\crystal_datasets\nehzor\nehzor.pt
 umbrella_path:  null
-out_dir: /scratch/mk8347/data/crystal_datasets/acridine
+out_dir: /scratch/mk8347/data/crystal_datasets/acridine/opt_outs
 run_name: acr_prod_dataset
 target_identifier: null
 save_trajs: false

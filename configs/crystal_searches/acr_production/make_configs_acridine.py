@@ -35,7 +35,7 @@ if __name__ == "__main__":
     sgs.append(14)
     zps.append(2) # Form III & VII
     sgs.append(14)
-    zps.append(2) # Form VI
+    zps.append(2) # Form VI & Form VIII
     sgs.append(9)
     zps.append(3) # Form IV
     sgs.append(19)
@@ -43,9 +43,9 @@ if __name__ == "__main__":
     # zps.append(2) # Form V
     # sgs.append(14)
 
+    ind = 0
 
     for zp, sg in zip(zps, sgs):
-        ind = 0
         for seed_ind in np.arange(ind, ind + n_parallel):
             seed_ind = int(seed_ind)
             config = deepcopy(base)
@@ -58,7 +58,7 @@ if __name__ == "__main__":
             if zp > 1:
                 config['init_target_cp'] = 'std'
 
-            config_path = f'{sg}_{zp}_{ind}.yaml'
+            config_path = f'{ind}.yaml'
             with open(config_path, 'w') as f:
                 yaml.dump(config, f, default_flow_style=False)
 
