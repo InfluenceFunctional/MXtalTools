@@ -595,13 +595,13 @@ class MolCrystalOps:
         noised_params = latents + torch.randn_like(latents) * noise_level
         self.latent_to_cell_params(noised_params)
 
-    def log_noise_latent_parameters(self, log_min: float, log_max: float):
+    def log_noise_latent_parameters(self, log_min: float, log_max: float, eps = 1e-6):
         latents = self.latent_params()
         rand_dir = torch.randn_like(latents)
         rand_dir = rand_dir / rand_dir.norm(dim=-1, keepdim=True)
         u = torch.rand(len(latents), device=self.device)
         rand_magnitude = 10 ** (log_min + (log_max - log_min) * u)
-        noised_latents = (latents + rand_dir * rand_magnitude[:, None]).clip(min=-1, max=1)
+        noised_latents = (latents + rand_dir * rand_magnitude[:, None]).clip(min=-1 + eps, max=1 - eps)
         self.latent_to_cell_params(noised_latents)
         self.clean_cell_parameters(mode='hard')
 
@@ -812,7 +812,7 @@ class MolCrystalOps:
         for zp in range(self.max_z_prime):
             norm = torch.linalg.norm(self.aunit_orientation[:, zp * 3:3 + zp * 3], dim=1)
             new_norm = enforce_1d_bound(norm, x_span=0.999 * torch.pi, x_center=torch.pi, mode=mode)  # MUST be nonzero
-            new_orientation.append(self.aunit_orientation[:, zp * 3:3 + zp * 3] / norm[:, None] * new_norm[:, None])
+            new_orientation.append(self.aunit_orientation[:, zp * 3:3 + zp * 3] / norm[:, None].clamp(min=1e-6) * new_norm[:, None])
         self.aunit_orientation = torch.cat(new_orientation, dim=1)
 
         # enforce agreement with crystal system

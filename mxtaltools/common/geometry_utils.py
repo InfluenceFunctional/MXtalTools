@@ -604,7 +604,7 @@ def cart2sph_rotvec(rotvec):
             rotvec = rotvec[None, :]
             r = torch.Tensor(r)[None]
 
-        unit_vector = rotvec / r[:, None]
+        unit_vector = rotvec / r[:, None].clamp(min=1e-8)
 
         # convert unit vector to angles
         theta = torch.arctan2(torch.sqrt(unit_vector[:, 0] ** 2 + unit_vector[:, 1] ** 2), unit_vector[:, 2])
