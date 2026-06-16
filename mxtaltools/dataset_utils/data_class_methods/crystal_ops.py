@@ -108,7 +108,9 @@ class MolCrystalOps:
                 if isinstance(value, dict) or isinstance(value, torch.nn.Module):
                     continue
 
-                if not torch.is_tensor(value):
+                if not torch.is_tensor(value) and not isinstance(value, str) and not (
+                        isinstance(value, list) and len(value) > 0 and isinstance(value[0], str)
+                ):
                     if isinstance(value, list) and len(value) > 0 and isinstance(value[0], np.ndarray):
                         value = np.asarray(value)
 
