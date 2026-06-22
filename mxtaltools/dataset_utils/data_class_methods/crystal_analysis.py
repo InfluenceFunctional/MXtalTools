@@ -78,11 +78,12 @@ class MolCrystalAnalysis:
         Analyze a crystal cluster according to requests in input dict
         :return:
         """
-        self._init_computes()
+        if not hasattr(self,'computes'):
+            self._init_computes()
         return {key: self.computes[key.lower()](**kwargs) for key in requests}
 
-    def _init_computes(self):
-        if not hasattr(self, 'computes'):
+    def _init_computes(self, override: bool = False):
+        if not hasattr(self, 'computes') or override:
             self.computes = {'lj': self.compute_LJ_energy,
                              'qlj': self.compute_qLJ_energy,
                              'elj': self.compute_eLJ_energy,
@@ -102,7 +103,30 @@ class MolCrystalAnalysis:
                              'mace_pot': self.compute_crystal_mace,
                              'mace_gas_pot': self.compute_lattice_gas_phase_mace,
                              'mace': self.compute_lattice_mace,
+                             'latent_harmonic': self.latent_harmonic_en,
                              }
+            self.computes_requires_cluster = {
+                'lj': True,
+                'qlj': True,
+                'elj': True,
+                'es': True,
+                'bh': True,
+                'silu': True,
+                'vdw': True,
+                'vdw_max': True,
+                'ellipsoid': True,
+                'niggli_overlap': False,
+                'reduction_en': False,
+                'rdf': True,
+                'ellipsoid_emb': True,
+                'uma_pot': True,
+                'uma_gas_pot': True,
+                'uma': True,
+                'mace_pot': True,
+                'mace_gas_pot': True,
+                'mace': True,
+                'latent_harmonic': False,
+            }
 
     def compute_ellipsoid_embedding(self):
         edge_j_good, molwise_batch, norm_factor, normed_v1, normed_v2, v1, v2, x = self.get_ellipsoid_embedding(
@@ -268,17 +292,23 @@ class MolCrystalAnalysis:
                 ):
         """
         full procedure for building and analyzing a molecular crystal
-        """  # todo add a flag to only build cluster if we actually need it - not all computes require it e.g., reduction energy
-        cluster_batch = self.mol2cluster(
-            cutoff, supercell_size,
-            std_orientation=std_orientation)
+        """
+        if not hasattr(self,'computes'):
+            self._init_computes()
+        requires_cluster = any(self.computes_requires_cluster.get(k, False) for k in computes)
+        if requires_cluster:
+            batch_to_analyze = self.mol2cluster(
+                cutoff, supercell_size,
+                std_orientation=std_orientation)
+            if noise is not None:
+                batch_to_analyze.pos += torch.randn_like(batch_to_analyze.pos) * noise
 
-        if noise is not None:
-            cluster_batch.pos += torch.randn_like(cluster_batch.pos) * noise
+            batch_to_analyze.construct_radial_graph(cutoff=cutoff)
+            batch_to_analyze._init_computes(override=True)
+        else:
+            batch_to_analyze = self
 
-        cluster_batch.construct_radial_graph(cutoff=cutoff)
-
-        results = cluster_batch.compute(requests=computes, **kwargs)
+        results = batch_to_analyze.compute(requests=computes, **kwargs)
 
         if assign_outputs:
             for key, value in results.items():
@@ -288,7 +318,7 @@ class MolCrystalAnalysis:
                     self.add_graph_attr(value[0], key)
 
         if return_cluster:
-            return results, cluster_batch
+            return results, batch_to_analyze
         else:
             return results
 
@@ -455,6 +485,15 @@ class MolCrystalAnalysis:
                                                      std_orientation=std_orientation,
                                                      pbc=False,
                                                      force_rebuild=True)
+
+    def latent_harmonic_en(self, modes: torch.tensor = None, scale: float = 10, **kwargs):
+        # a trivial energy function, for testing
+        latents = self.latent_params()
+        if modes is None:
+            modes = torch.zeros((1, latents.shape[-1]), device=self.device)
+        energy = 0.5 * ((latents - modes[0])*scale).pow(2).sum(dim=1)
+        # analytic Z = (2pi*T)^(d/2) * scale ^ (-d)
+        return energy
 
     def compute_rdf(self,  # todo rebuild analyses with a template
                     rdf_cutoff: float = 6,
