@@ -9,6 +9,7 @@ from torch_scatter import scatter, scatter_max
 
 from mxtaltools.common.sym_utils import init_sym_info
 from mxtaltools.constants.atom_properties import VDW_RADII
+from mxtaltools.constants.space_group_info import LATTICE_TO_CODE
 from mxtaltools.models.functions.radial_graph import radius
 
 
@@ -413,6 +414,7 @@ def batch_get_furthest_node_vector(all_coords: torch.FloatTensor, batch: torch.L
 
 def nan_hook(name, tensor_ref, batch):
     """Return a backward hook that prints debug info and halts on NaN gradients."""
+
     def _hook(grad):
         if torch.isnan(grad).any():
             print(f"NaNs in grad of {name}")
@@ -1185,11 +1187,11 @@ def angle2components(angle: torch.tensor):
     return torch.cat((torch.sin(angle)[:, None], torch.cos(angle)[:, None]), dim=1)
 
 
-def enforce_crystal_system(lattice_lengths,
-                           lattice_angles,
-                           sg_inds,
-                           symmetries_dict: Optional[dict] = None
-                           ):
+def old_enforce_crystal_system(lattice_lengths,
+                               lattice_angles,
+                               sg_inds,
+                               symmetries_dict: Optional[dict] = None
+                               ):
     """
     enforce physical bounds on cell parameters
     https://en.wikipedia.org/wiki/Crystal_system
@@ -1364,6 +1366,102 @@ def enforce_crystal_system2(lattice_lengths, lattice_angles, lattices):
         else:
             print(lattice + ' is not a valid crystal lattice!')
             sys.exit()
+
+    return fixed_lengths, fixed_angles
+
+
+def enforce_crystal_system(
+        lattice_lengths,
+        lattice_angles,
+        sg_inds,
+        symmetries_dict: Optional[dict] = None,
+):
+    """
+    Enforce crystal-system constraints on cell parameters.
+
+    lattice_lengths: [B, 3] or [3]
+    lattice_angles:  [B, 3] or [3]
+    sg_inds: scalar or [B]
+    """
+
+    if symmetries_dict is None:
+        symmetries_dict = init_sym_info()
+
+    squeeze = False
+    if lattice_lengths.ndim == 1:
+        lattice_lengths = lattice_lengths[None, :]
+        lattice_angles = lattice_angles[None, :]
+        squeeze = True
+
+    device = lattice_lengths.device
+    dtype = lattice_lengths.dtype
+    bsz = len(lattice_lengths)
+
+    sg_inds = torch.as_tensor(sg_inds, device=device, dtype=torch.long)
+    if sg_inds.ndim == 0:
+        sg_inds = sg_inds.expand(bsz)
+
+    lattice_codes = symmetries_dict["lattice_code"].to(sg_inds.device)[sg_inds.long()]
+
+    if (lattice_codes < 0).any():
+        bad_sgs = sg_inds[lattice_codes < 0].detach().cpu().unique().tolist()
+        raise ValueError(f"Invalid or unmapped space group indices: {bad_sgs}")
+
+    fixed_lengths = lattice_lengths.clone()
+    fixed_angles = lattice_angles.clone()
+
+    half_pi = lattice_lengths.new_tensor(torch.pi / 2)
+    two_pi_over_three = lattice_lengths.new_tensor(2 * torch.pi / 3)
+
+    # 0: triclinic, no-op
+
+    # 1: monoclinic: alpha = gamma = 90
+    m = lattice_codes == LATTICE_TO_CODE["monoclinic"]
+    fixed_angles[m, 0] = half_pi
+    fixed_angles[m, 2] = half_pi
+
+    # 2: orthorhombic: alpha = beta = gamma = 90
+    m = lattice_codes == LATTICE_TO_CODE["orthorhombic"]
+    fixed_angles[m, :] = half_pi
+
+    # 3: tetragonal: a = b, angles = 90
+    m = lattice_codes == LATTICE_TO_CODE["tetragonal"]
+    if m.any():
+        ab_mean = lattice_lengths[m, :2].mean(dim=-1)
+        fixed_lengths[m, 0] = ab_mean
+        fixed_lengths[m, 1] = ab_mean
+        fixed_angles[m, :] = half_pi
+
+    # 4: hexagonal: a = b, alpha = beta = 90, gamma = 120
+    m = lattice_codes == LATTICE_TO_CODE["hexagonal"]
+    if m.any():
+        ab_mean = lattice_lengths[m, :2].mean(dim=-1)
+        fixed_lengths[m, 0] = ab_mean
+        fixed_lengths[m, 1] = ab_mean
+        fixed_angles[m, 0] = half_pi
+        fixed_angles[m, 1] = half_pi
+        fixed_angles[m, 2] = two_pi_over_three
+
+    # 5: rhombohedral: a = b = c, alpha = beta = gamma
+    m = lattice_codes == LATTICE_TO_CODE["rhombohedral"]
+    if m.any():
+        abc_mean = lattice_lengths[m].mean(dim=-1)
+        angle_mean = lattice_angles[m].mean(dim=-1)
+
+        fixed_lengths[m, :] = abc_mean[:, None]
+        fixed_angles[m, :] = angle_mean[:, None]
+
+    # 6: cubic: a = b = c, angles = 90
+    m = lattice_codes == LATTICE_TO_CODE["cubic"]
+    if m.any():
+        abc_mean = lattice_lengths[m].mean(dim=-1)
+
+        fixed_lengths[m, :] = abc_mean[:, None]
+        fixed_angles[m, :] = half_pi
+
+    if squeeze:
+        fixed_lengths = fixed_lengths[0]
+        fixed_angles = fixed_angles[0]
 
     return fixed_lengths, fixed_angles
 
@@ -1955,7 +2053,7 @@ def compute_latent_distance(latents1: torch.Tensor,
     # scales = [2 * sqrt(6), 2*sqrt(3), torch.pi] # maximum variation per dist
     scales = [1, 0.836, 0.293]  # [0.0127, 0.0152, 0.0433]  # empirical std over CSD samples
     dists = scales[0] * 0.5 * box_dist + scales[1] * 0.25 * (positions_dist / z_prime) + scales[2] * 0.25 * (
-                rot_dists / z_prime)
+            rot_dists / z_prime)
 
     return dists
 

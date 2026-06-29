@@ -21,9 +21,9 @@ def single_compack_run(ind, test_path, ref_path):
     ref_crystal = CrystalReader(ref_path)[0]
     sample_crystal = CrystalReader(test_path)[0]
     similarity_engine = PackingSimilarity()
-    #similarity_engine.settings.distance_tolerance = 0.4
-    #similarity_engine.settings.angle_tolerance = 20
-    #similarity_engine.settings.allow_molecular_differences = True
+    # similarity_engine.settings.distance_tolerance = 0.4
+    # similarity_engine.settings.angle_tolerance = 20
+    # similarity_engine.settings.allow_molecular_differences = True
     similarity_engine.settings.packing_shell_size = 20
     try:
         result = similarity_engine.compare(ref_crystal, sample_crystal)
@@ -35,6 +35,28 @@ def single_compack_run(ind, test_path, ref_path):
 
 
 # noinspection PyAttributeOutsideInit
+COMPUTES_REQUIRE_CLUSTER = {'lj': True,
+                            'qlj': True,
+                            'elj': True,
+                            'es': True,
+                            'bh': True,
+                            'silu': True,
+                            'vdw': True,
+                            'vdw_max': True,
+                            'ellipsoid': True,
+                            'niggli_overlap': False,
+                            'reduction_en': False,
+                            'rdf': True,
+                            'ellipsoid_emb': True,
+                            'uma_pot': True,
+                            'uma_gas_pot': True,
+                            'uma': True,
+                            'mace_pot': True,
+                            'mace_gas_pot': True,
+                            'mace': True,
+                            'latent_harmonic': False,
+                            'latent_multiharmonic': False,
+                            }
 
 
 class MolCrystalAnalysis:
@@ -78,7 +100,7 @@ class MolCrystalAnalysis:
         Analyze a crystal cluster according to requests in input dict
         :return:
         """
-        if not hasattr(self,'computes'):
+        if not hasattr(self, 'computes'):
             self._init_computes()
         return {key: self.computes[key.lower()](**kwargs) for key in requests}
 
@@ -104,29 +126,9 @@ class MolCrystalAnalysis:
                              'mace_gas_pot': self.compute_lattice_gas_phase_mace,
                              'mace': self.compute_lattice_mace,
                              'latent_harmonic': self.latent_harmonic_en,
+                             'latent_multiharmonic': self.latent_multiharmonic_en,
                              }
-            self.computes_requires_cluster = {
-                'lj': True,
-                'qlj': True,
-                'elj': True,
-                'es': True,
-                'bh': True,
-                'silu': True,
-                'vdw': True,
-                'vdw_max': True,
-                'ellipsoid': True,
-                'niggli_overlap': False,
-                'reduction_en': False,
-                'rdf': True,
-                'ellipsoid_emb': True,
-                'uma_pot': True,
-                'uma_gas_pot': True,
-                'uma': True,
-                'mace_pot': True,
-                'mace_gas_pot': True,
-                'mace': True,
-                'latent_harmonic': False,
-            }
+            self.computes_requires_cluster = COMPUTES_REQUIRE_CLUSTER
 
     def compute_ellipsoid_embedding(self):
         edge_j_good, molwise_batch, norm_factor, normed_v1, normed_v2, v1, v2, x = self.get_ellipsoid_embedding(
@@ -293,7 +295,7 @@ class MolCrystalAnalysis:
         """
         full procedure for building and analyzing a molecular crystal
         """
-        if not hasattr(self,'computes'):
+        if not hasattr(self, 'computes'):
             self._init_computes()
         requires_cluster = any(self.computes_requires_cluster.get(k, False) for k in computes)
         if requires_cluster:
@@ -373,7 +375,7 @@ class MolCrystalAnalysis:
         if diffuse_batch.z_prime.amax() > 1:  # do it separately per conformer
             zp1_batch = diffuse_batch.split_to_zp1_batch()
             zp1_batch.reset_sg_info(sg_ind=1)  # big P1 cells
-            #zp1_batch.cell_lengths *= 100
+            # zp1_batch.cell_lengths *= 100
             zp1_batch.box_analysis()
             split_ens = compute_crystal_uma_on_mxt_batch(zp1_batch,
                                                          std_orientation,
@@ -387,13 +389,14 @@ class MolCrystalAnalysis:
         else:
             # evaluate a diffuse P1 5ell
             diffuse_batch.reset_sg_info(sg_ind=1)  # big P1 cells
-            #diffuse_batch.cell_lengths *= 100
+            # diffuse_batch.cell_lengths *= 100
             diffuse_batch.box_analysis()
             return compute_crystal_uma_on_mxt_batch(diffuse_batch,
                                                     std_orientation,
                                                     predictor,
                                                     pbc=False,
-                                                    force_rebuild=True # we don't want to inherit real unit cells so we force rebuild them here
+                                                    force_rebuild=True
+                                                    # we don't want to inherit real unit cells so we force rebuild them here
                                                     )
 
     def compute_crystal_mace(self,
@@ -465,7 +468,7 @@ class MolCrystalAnalysis:
         if diffuse_batch.z_prime.amax() > 1:
             zp1_batch = diffuse_batch.split_to_zp1_batch()
             zp1_batch.reset_sg_info(sg_ind=1)
-            #zp1_batch.cell_lengths *= 100
+            # zp1_batch.cell_lengths *= 100
             zp1_batch.box_analysis()
             split_ens = compute_crystal_mace_on_mxt_batch(zp1_batch,
                                                           predictor,
@@ -478,7 +481,7 @@ class MolCrystalAnalysis:
 
         else:
             diffuse_batch.reset_sg_info(sg_ind=1)
-            #diffuse_batch.cell_lengths *= 100
+            # diffuse_batch.cell_lengths *= 100
             diffuse_batch.box_analysis()
             return compute_crystal_mace_on_mxt_batch(diffuse_batch,
                                                      predictor,
@@ -491,9 +494,147 @@ class MolCrystalAnalysis:
         latents = self.latent_params()
         if modes is None:
             modes = torch.zeros((1, latents.shape[-1]), device=self.device)
-        energy = 0.5 * ((latents - modes[0])*scale).pow(2).sum(dim=1)
+        energy = 0.5 * ((latents - modes[0]) * scale).pow(2).sum(dim=1)
         # analytic Z = (2pi*T)^(d/2) * scale ^ (-d)
+        """
+        import numpy as np
+        T=2.5
+        Z = (2*np.pi*T)**(12/2) * scale ** (-12)
+        print(np.log(Z))
+        """
+
         return energy
+
+    def latent_multiharmonic_en(
+            self,
+            n_modes: int = 24,
+            sigma_range: tuple = (0.04, 0.12),
+            depth_range: tuple = (0.0, 4.0),
+            edge_sigmas: float = 4.0,
+            distribution_temperature: float = 1.0,
+            seed: int = 0,
+            **kwargs,
+    ):
+        """
+        Exactly sampleable multi-well toy energy.
+
+        Defines a Gaussian mixture density
+
+            p(x) = sum_k pi_k N(x; mu_k, sigma_k^2 I)
+
+        and returns
+
+            E(x) = -T log p(x)
+
+        so that exp(-E(x) / T) is exactly the GMM density.
+
+        sigma controls well width.
+        depth controls relative basin probability via pi_k ∝ exp(depth_k).
+
+        Most mass is kept inside [-1, 1]^d by placing centers away from edges.
+        """
+        import math
+        import torch
+
+        latents = self.latent_params()
+        d = latents.shape[-1]
+        T = float(distribution_temperature)
+
+        key = (d, seed, n_modes, sigma_range, depth_range, edge_sigmas, T)
+        cache = getattr(self, "_gmm_cache", {})
+
+        if cache.get("key") != key:
+            g = torch.Generator(device="cpu").manual_seed(seed)
+
+            sigma = torch.empty(n_modes).uniform_(*sigma_range, generator=g)
+            depth = torch.empty(n_modes).uniform_(*depth_range, generator=g)
+
+            # Keep centers sufficiently far from the boundary.
+            m = edge_sigmas * float(sigma.max())
+            assert m < 1.0, f"margin {m:.3f} >= 1; shrink sigma_range or edge_sigmas"
+
+            lo, hi = -1.0 + m, 1.0 - m
+            mu = torch.empty(n_modes, d).uniform_(0, 1, generator=g) * (hi - lo) + lo
+
+            log_pi = depth - torch.logsumexp(depth, dim=0)
+
+            cache = {
+                "key": key,
+                "mu": mu,  # (K, d)
+                "sigma": sigma,  # (K,)
+                "log_pi": log_pi,  # (K,)
+                "temperature": T,
+            }
+            self._gmm_cache = cache
+
+        mu = cache["mu"].to(self.device)
+        sigma = cache["sigma"].to(self.device)
+        log_pi = cache["log_pi"].to(self.device)
+
+        x = latents
+        K, d = mu.shape
+
+        inv_var = 1.0 / sigma.pow(2)
+
+        sq = ((x[:, None, :] - mu[None]) ** 2).sum(-1) * inv_var[None]
+
+        # Full normalized Gaussian log density.
+        log_norm = -0.5 * d * math.log(2.0 * math.pi) - d * torch.log(sigma)
+        log_comp = log_pi[None] + log_norm[None] - 0.5 * sq
+
+        log_p = torch.logsumexp(log_comp, dim=1)
+
+        energy = -T * log_p
+
+        # Z=1 by construction at target T
+        # the change in Z if trained at other temperatures generally intractable
+
+        return energy
+
+    def sample_latent_multiharmonic(
+            self,
+            n_samples: int,
+            distribution_temperature: float = 1.0,
+            seed: int = 0,
+            **kwargs,
+    ) -> torch.Tensor:
+        """
+        Exact sampler for latent_gmm_en.
+
+        Note: temperature is checked only for consistency. The actual GMM density
+        is cached by latent_gmm_en at construction time.
+        """
+        import torch
+
+        cache = getattr(self, "_gmm_cache", None)
+        assert cache is not None, "Call latent_gmm_en first to populate cache."
+
+        cached_T = float(cache["temperature"])
+        T = float(distribution_temperature)
+        assert abs(T - cached_T) < 1e-8, (
+            f"Sampler temperature {T} does not match cached energy temperature {cached_T}."
+        )
+
+        mu = cache["mu"].to(self.device)
+        sigma = cache["sigma"].to(self.device)
+        log_pi = cache["log_pi"].to(self.device)
+
+        K, d = mu.shape
+
+        g = torch.Generator(device="cpu").manual_seed(seed)
+
+        component_ids = torch.multinomial(
+            log_pi.exp().cpu(),
+            n_samples,
+            replacement=True,
+            generator=g,
+        ).to(self.device)
+
+        eps = torch.randn(n_samples, d, generator=g, device="cpu").to(self.device)
+
+        samples = mu[component_ids] + sigma[component_ids, None] * eps
+
+        return samples
 
     def compute_rdf(self,  # todo rebuild analyses with a template
                     rdf_cutoff: float = 6,
@@ -518,7 +659,7 @@ class MolCrystalAnalysis:
         """Compute a penalty term for the given crystal system that pushes it towards
         our canonical / standardized / reduced cell geometry, following spglib"""
         # todo check behaviors / correctness for higher crystal systems
-        #cell_parameters = self.full_cell_parameters()
+        # cell_parameters = self.full_cell_parameters()
         cell_lengths, cell_angles, aunit_positions, aunit_orientations = self.split_cell_params()
 
         'get cs masks'
@@ -528,7 +669,7 @@ class MolCrystalAnalysis:
 
         return E
 
-    def batch_compack(self, ref_path, inds_to_check, n_cpus: int = 8): # todo refactor into analysis code
+    def batch_compack(self, ref_path, inds_to_check, n_cpus: int = 8):  # todo refactor into analysis code
         import numpy as np
         import multiprocessing as mp
 
@@ -540,7 +681,7 @@ class MolCrystalAnalysis:
             results.append(
                 pool.apply_async(
                     single_compack_run,
-                    (ind,f'compack_{ind}.cif', ref_path)
+                    (ind, f'compack_{ind}.cif', ref_path)
                 )
             )
         pool.close()
@@ -550,4 +691,3 @@ class MolCrystalAnalysis:
         rmsds = np.array([res[0] for res in results])
 
         return matches, rmsds
-

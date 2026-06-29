@@ -5,6 +5,15 @@ reference file for the following crystal symmetry properties
 as a function of space group numbers
 symmetry operators are for general positions
 """
+LATTICE_TO_CODE = {
+    "triclinic": 0,
+    "monoclinic": 1,
+    "orthorhombic": 2,
+    "tetragonal": 3,
+    "hexagonal": 4,
+    "rhombohedral": 5,
+    "cubic": 6,
+}
 
 POINT_GROUPS = {1: '1', 2: '-1', 3: '2', 4: '2', 5: '2', 6: 'm', 7: 'm', 8: 'm', 9: 'm', 10: '2/m', 11: '2/m',
                 12: '2/m', 13: '2/m', 14: '2/m', 15: '2/m', 16: '222', 17: '222', 18: '222', 19: '222', 20: '222',

@@ -163,7 +163,7 @@ class MXtalBase(BaseData):
     def to_batch(data_list):
         return collate_data_list(data_list)
 
-    def add_graph_attr(self, values: torch.Tensor, name: str, slice_dict = None, inc_dict=None):
+    def add_graph_attr(self, values: torch.Tensor, name: str, slice_dict=None, inc_dict=None):
         """
         Attach a per-graph attribute to this Batch so it survives to_data_list().
 
@@ -211,6 +211,66 @@ class MXtalBase(BaseData):
         self._inc_dict[name] = torch.zeros(len(num_nodes_per_graph),
                                            dtype=torch.long, device=values.device)
 
+    def rebuild_simple_slice_inc_(self):
+        """
+        Rebuild PyG batch bookkeeping from the simple MXtal schema.
+
+        Assumptions:
+          - tensor attrs are either node-level [n, ...], graph-level [g, ...],
+            scalar/length-1 shared metadata, or other shared metadata
+          - list/tuple attrs with len == g are graph-level
+          - all increments are zero
+          - _slice_dict/_inc_dict stay on CPU
+        """
+        assert self.is_batch
+
+        g = self.num_graphs
+        n = int(self.ptr[-1])
+
+        ptr_cpu = self.ptr.detach().cpu().long()
+        graph_slices = torch.arange(g + 1, dtype=torch.long, device='cpu')
+        graph_inc = torch.zeros(g, dtype=torch.long, device='cpu')
+
+        slice_dict = {}
+        inc_dict = {}
+
+        for key, val in self._store.items():
+            if key in ('ptr', 'batch'):
+                continue
+
+            if torch.is_tensor(val):
+                # Shared scalar / length-1 metadata.
+                if val.ndim == 0 or val.size(0) == 1:
+                    continue
+
+                # Node-level tensor.
+                if val.size(0) == n:
+                    slice_dict[key] = ptr_cpu
+                    inc_dict[key] = graph_inc
+
+                # Graph-level tensor.
+                elif val.size(0) == g:
+                    slice_dict[key] = graph_slices
+                    inc_dict[key] = graph_inc
+
+                # Shared tensor metadata.
+                else:
+                    continue
+
+            elif isinstance(val, (list, tuple)):
+                # Graph-level Python attr: smiles, identifier, symmetry_operators, etc.
+                if len(val) == g:
+                    slice_dict[key] = graph_slices
+                    inc_dict[key] = graph_inc
+
+            else:
+                # ints, strings, dicts, other shared metadata.
+                continue
+
+        self.__dict__['_slice_dict'] = slice_dict
+        self.__dict__['_inc_dict'] = inc_dict
+
+        return self
 
     def batch_to_list(self):
         """
@@ -229,6 +289,213 @@ class MXtalBase(BaseData):
             elem.is_well_defined = is_well_defined[ind].unsqueeze(0)
         del batch_to_listify
         return samples_list
+
+    def subsample_new_batch(self, idx):
+        device = self.device
+
+        if isinstance(idx, slice):
+            idx = torch.arange(*idx.indices(self.num_graphs), device=device)
+        elif isinstance(idx, int):
+            idx = torch.tensor([idx], device=device)
+        elif torch.is_tensor(idx) and idx.dtype == torch.bool:
+            idx = idx.nonzero(as_tuple=False).view(-1)
+        elif isinstance(idx, np.ndarray) or isinstance(idx, list):
+            idx = torch.as_tensor(idx, device=device).view(-1)
+
+        idx = idx.to(device=device, dtype=torch.long)
+        idx_cpu = idx.detach().cpu()
+        idx_list = idx_cpu.tolist()
+
+        k = idx.numel()
+
+        old_ptr = self.ptr
+        lengths = old_ptr[idx + 1] - old_ptr[idx]
+        new_ptr = torch.cat([lengths.new_zeros(1), lengths.cumsum(0)])
+
+        total_nodes = int(new_ptr[-1])
+        old_num_nodes = int(old_ptr[-1])
+        old_num_graphs = self.num_graphs
+
+        seg = torch.repeat_interleave(
+            torch.arange(k, device=device, dtype=torch.long),
+            lengths,
+        )
+
+        node_src = old_ptr[idx][seg] + (
+                torch.arange(total_nodes, device=device) - new_ptr[seg]
+        )
+
+        out = self.__class__.__new__(self.__class__)
+        out.__dict__['_store'] = GlobalStorage(_parent=out)
+
+        def index_tensor_first_dim(x, index):
+            return x[index.to(x.device)]
+
+        for key, val in self._store.items():
+            if key in ('ptr', 'batch'):
+                continue
+
+            if torch.is_tensor(val):
+                if val.ndim == 0 or val.size(0) == 1:
+                    # Shared scalar-ish metadata.
+                    out[key] = val
+
+                elif val.size(0) == old_num_nodes:
+                    # Node-level tensor.
+                    out[key] = index_tensor_first_dim(val, node_src)
+
+                elif val.size(0) == old_num_graphs:
+                    # Graph-level tensor.
+                    out[key] = index_tensor_first_dim(val, idx)
+
+                else:
+                    # Shared tensor metadata.
+                    out[key] = val
+
+            elif isinstance(val, list):
+                if len(val) == old_num_graphs:
+                    out[key] = [val[i] for i in idx_list]
+                else:
+                    out[key] = val
+
+            elif isinstance(val, tuple):
+                if len(val) == old_num_graphs:
+                    out[key] = tuple(val[i] for i in idx_list)
+                else:
+                    out[key] = val
+
+            else:
+                out[key] = val
+
+        out.batch = seg
+        out.ptr = new_ptr
+        out.__dict__['_num_graphs'] = k
+
+        out.rebuild_simple_slice_inc_()
+
+        return out
+
+    def append_batch(self, other, *, validate=True):
+        """
+        Append another compatible batch without using PyG slice/inc metadata.
+
+        Handles:
+          - node-level tensors: cat along dim 0
+          - graph-level tensors: cat along dim 0
+          - graph-level lists/tuples: concatenate
+          - shared metadata: keep self's value, optionally validate equality
+
+        Does not handle edge_index offsetting.
+        """
+        device = self.device
+        other = other.to(device)
+
+        n0 = int(self.ptr[-1])
+        n1 = int(other.ptr[-1])
+        g0 = self.num_graphs
+        g1 = other.num_graphs
+
+        out = self.__class__.__new__(self.__class__)
+        out.__dict__['_store'] = GlobalStorage(_parent=out)
+
+        keys = set(self._store.keys()) | set(other._store.keys())
+
+        for key in sorted(keys):
+            if key in ('ptr', 'batch'):
+                continue
+
+            if key not in self._store or key not in other._store:
+                if validate:
+                    raise KeyError(f"Key {key!r} not present in both batches.")
+                continue
+
+            v0 = self[key]
+            v1 = other[key]
+
+            if torch.is_tensor(v0):
+                if not torch.is_tensor(v1):
+                    raise TypeError(f"Field {key!r} tensor/non-tensor mismatch.")
+
+                v1 = v1.to(v0.device)
+
+                # Scalar / length-1 tensor metadata.
+                if v0.ndim == 0 or v0.size(0) == 1:
+                    if validate:
+                        if v0.shape != v1.shape or v0.dtype != v1.dtype:
+                            raise ValueError(
+                                f"Shared tensor field {key!r} differs in shape/dtype."
+                            )
+                        if v0.numel() > 0 and not torch.equal(v0, v1):
+                            raise ValueError(f"Shared tensor field {key!r} differs.")
+                    out[key] = v0
+
+                # Node-level tensor.
+                elif v0.size(0) == n0 and v1.size(0) == n1:
+                    out[key] = torch.cat([v0, v1], dim=0)
+
+                # Graph-level tensor.
+                elif v0.size(0) == g0 and v1.size(0) == g1:
+                    out[key] = torch.cat([v0, v1], dim=0)
+
+                # Shared tensor metadata.
+                else:
+                    if validate:
+                        if v0.shape != v1.shape or v0.dtype != v1.dtype:
+                            raise ValueError(
+                                f"Shared tensor field {key!r} differs in shape/dtype: "
+                                f"{tuple(v0.shape)}, {v0.dtype} vs "
+                                f"{tuple(v1.shape)}, {v1.dtype}"
+                            )
+                        if v0.numel() > 0 and not torch.equal(v0, v1):
+                            raise ValueError(f"Shared tensor field {key!r} differs.")
+                    out[key] = v0
+
+            elif isinstance(v0, list):
+                if not isinstance(v1, list):
+                    raise TypeError(f"Field {key!r} list/non-list mismatch.")
+
+                if len(v0) == g0 and len(v1) == g1:
+                    out[key] = v0 + v1
+                else:
+                    if validate and v0 != v1:
+                        raise ValueError(f"Shared list field {key!r} differs.")
+                    out[key] = v0
+
+            elif isinstance(v0, tuple):
+                if not isinstance(v1, tuple):
+                    raise TypeError(f"Field {key!r} tuple/non-tuple mismatch.")
+
+                if len(v0) == g0 and len(v1) == g1:
+                    out[key] = v0 + v1
+                else:
+                    if validate and v0 != v1:
+                        raise ValueError(f"Shared tuple field {key!r} differs.")
+                    out[key] = v0
+
+            elif isinstance(v0, dict):
+                if not isinstance(v1, dict):
+                    raise TypeError(f"Field {key!r} dict/non-dict mismatch.")
+                out[key] = v0
+
+            else:
+                if validate and v0 != v1:
+                    raise ValueError(f"Shared field {key!r} differs: {v0!r} vs {v1!r}")
+                out[key] = v0
+
+        out.ptr = torch.cat([
+            self.ptr,
+            other.ptr[1:].to(device) + n0,
+        ])
+
+        out.batch = torch.cat([
+            self.batch,
+            other.batch.to(device) + g0,
+        ])
+
+        out.__dict__['_num_graphs'] = g0 + g1
+        out.rebuild_simple_slice_inc_()
+
+        return out
 
 
 # noinspection PyPropertyAccess
@@ -343,7 +610,7 @@ class MolCrystalData(  # order crystal ops first to overwrite any mol ops
     """
 
     def __init__(self,
-                 molecule: Optional[Union[list,MolData]] = None,
+                 molecule: Optional[Union[list, MolData]] = None,
                  sg_ind: Optional[Union[int, torch.Tensor]] = None,
                  sg_name: Optional[str] = None,
                  z_prime: Optional[torch.Tensor] = None,
@@ -384,10 +651,10 @@ class MolCrystalData(  # order crystal ops first to overwrite any mol ops
 
         if aunit_centroid is not None:
             self.aunit_centroid = self._pad_tensor(
-                aunit_centroid, (1, 3*max_z_prime), 0)
+                aunit_centroid, (1, 3 * max_z_prime), 0)
         if aunit_orientation is not None:
             self.aunit_orientation = self._pad_tensor(
-                aunit_orientation, (1, 3*max_z_prime), 1)
+                aunit_orientation, (1, 3 * max_z_prime), 1)
         if aunit_handedness is not None:
             self.aunit_handedness = self._pad_tensor(
                 aunit_handedness, (1, max_z_prime), 1)
@@ -489,7 +756,6 @@ class MolCrystalData(  # order crystal ops first to overwrite any mol ops
     def cell_angles(self) -> Any:
         return self['cell_angles'] if 'cell_angles' in self._store else None
 
-
     @property
     def T_fc(self) -> Any:
         return self['T_fc'] if 'T_fc' in self._store else None
@@ -553,6 +819,7 @@ class MolCrystalData(  # order crystal ops first to overwrite any mol ops
     @property
     def cocrystal(self) -> Any:
         return self['cocrystal'] if 'cocrystal' in self._store else None
+
 
 def size_repr(key: Any, value: Any, indent: int = 0) -> str:
     pad = ' ' * indent

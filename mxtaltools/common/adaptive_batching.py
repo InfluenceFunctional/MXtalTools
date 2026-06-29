@@ -87,9 +87,9 @@ def adaptive_batched_analysis(
             else:
                 raise
 
-    gc.collect()
-    torch.cuda.empty_cache()
-    torch.cuda.synchronize()
+    # gc.collect()
+    # torch.cuda.empty_cache()
+    # torch.cuda.synchronize()
     pbar.close()
     if return_state:
         return collate_data_list(outputs_list), state

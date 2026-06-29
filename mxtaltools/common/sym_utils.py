@@ -1,9 +1,54 @@
 import torch
 from torch.nn import functional as F
 
-from mxtaltools.constants.space_group_info import SYM_OPS, POINT_GROUPS, LATTICE_TYPE, SPACE_GROUPS
+from mxtaltools.constants.space_group_info import SYM_OPS, POINT_GROUPS, LATTICE_TYPE, SPACE_GROUPS, LATTICE_TO_CODE
 
+def make_lattice_code_lookup(lattice_type):
+    """
+    Build lookup tensor for crystallographic space-group indices.
 
+    sg_ind is expected to be in [1, 230].
+    Index 0 is unused and marked invalid.
+    """
+
+    lattice_code = torch.full((231,), -1, dtype=torch.long)
+
+    if isinstance(lattice_type, dict):
+        items = lattice_type.items()
+    else:
+        # If lattice_type is list-like with entries for SG 1..230.
+        # Supports either length 231 with index 0 unused,
+        # or length 230 with SG 1 at list index 0.
+        if len(lattice_type) == 231:
+            items = enumerate(lattice_type)
+        elif len(lattice_type) == 230:
+            items = ((i + 1, lattice) for i, lattice in enumerate(lattice_type))
+        else:
+            raise ValueError(
+                f"Expected lattice_type length 230 or 231, got {len(lattice_type)}"
+            )
+
+    for sg_ind, lattice in items:
+        sg_ind = int(sg_ind)
+
+        if sg_ind == 0:
+            continue
+
+        if not (1 <= sg_ind <= 230):
+            raise ValueError(f"Invalid space-group index {sg_ind}; expected [1, 230]")
+
+        lattice = lattice.lower()
+
+        if lattice not in LATTICE_TO_CODE:
+            raise ValueError(f"{lattice!r} is not a valid crystal lattice")
+
+        lattice_code[sg_ind] = LATTICE_TO_CODE[lattice]
+
+    if (lattice_code[1:] < 0).any():
+        missing = torch.where(lattice_code[1:] < 0)[0].add(1).tolist()
+        raise ValueError(f"Missing lattice types for space groups: {missing}")
+
+    return lattice_code
 def init_sym_info():
     """
     Initialize dict containing symmetry info for crystals with standard settings and general positions.
@@ -16,14 +61,18 @@ def init_sym_info():
     point_groups = POINT_GROUPS
     lattice_type = LATTICE_TYPE
     space_groups = SPACE_GROUPS
-    sym_info = {  # collect space group info into single dict
-        'sym_ops': sym_ops,
-        'point_groups': point_groups,
-        'lattice_type': lattice_type,
-        'space_groups': space_groups}
+
+    lattice_code = make_lattice_code_lookup(lattice_type)
+
+    sym_info = {
+        "sym_ops": sym_ops,
+        "point_groups": point_groups,
+        "lattice_type": lattice_type,
+        "lattice_code": lattice_code,
+        "space_groups": space_groups,
+    }
 
     return sym_info
-
 
 def bounding_penalty(x, lower, upper, margin: float = 0.0):
     return (torch.relu(x - (upper - margin)) ** 2) + (torch.relu((lower + margin) - x) ** 2)

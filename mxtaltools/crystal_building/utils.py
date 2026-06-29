@@ -785,30 +785,56 @@ def get_aunit_positions(mol_batch,
 
 
 def canonicalize_aunit_order(batch):
-    # canonical aunit ordering according to distance to the origin, with x, y, z, tiebreak
-    # TODO implement tiebreak
-    per_aunit_centroids = batch.aunit_centroid.reshape(batch.num_graphs, batch.max_z_prime, 3)
-    # mask out elements with lower z prime than max
-    idx = torch.arange(batch.max_z_prime, device=batch.device)[None, ...]
-    mask = (idx >= (batch.z_prime[..., None]))[..., None].expand(-1, -1, 3)
-    per_aunit_centroids[mask] = 1  # this will put lower Z' options always at the end
-    origin_dists = per_aunit_centroids.norm(dim=2)
+    n, k = batch.num_graphs, batch.max_z_prime
+    per_aunit_centroids = batch.aunit_centroid.reshape(n, k, 3)
+
+    idx = torch.arange(k, device=batch.device)[None, ...]
+    mask = (idx >= batch.z_prime[..., None])[..., None].expand(-1, -1, 3)
+
+    # ordering uses the '1' fill; out-of-place
+    centroids_for_sort = torch.where(mask, torch.ones_like(per_aunit_centroids), per_aunit_centroids)
+    origin_dists = centroids_for_sort.norm(dim=2)
     canonical_order = origin_dists.argsort(dim=1)
-    canonical_order_exp = canonical_order.unsqueeze(-1).expand(-1, -1, 3)  # [n, k, 3]
-    per_aunit_centroids[mask] = 0.5  # this is the placeholder value for 'not being used'
-    sorted_centroids = torch.gather(per_aunit_centroids, dim=1, index=canonical_order_exp)
+    order_exp = canonical_order.unsqueeze(-1).expand(-1, -1, 3)
 
-    aunit_centroid = sorted_centroids.reshape(batch.num_graphs, batch.max_z_prime * 3)
+    # gathered values use the 0.5 placeholder fill; out-of-place, differentiable source
+    centroids_for_gather = torch.where(mask, torch.full_like(per_aunit_centroids, 0.5), per_aunit_centroids)
+    sorted_centroids = torch.gather(centroids_for_gather, 1, order_exp)
+    aunit_centroid = sorted_centroids.reshape(n, k * 3)
 
-    # also reorder the orientations accordingly
-    per_aunit_orient = batch.aunit_orientation.reshape(batch.num_graphs, batch.max_z_prime, 3)
-    per_aunit_orient[mask] = torch.pi / 2  # this places all unused samples in the same state
-    canonical_order_exp = canonical_order.unsqueeze(-1).expand(-1, -1, 3)  # [n, k, 3]
-    sorted_orient = torch.gather(per_aunit_orient, dim=1, index=canonical_order_exp)
-    aunit_orientation = sorted_orient.reshape(batch.num_graphs, batch.max_z_prime * 3)
+    per_aunit_orient = batch.aunit_orientation.reshape(n, k, 3)
+    orient_for_gather = torch.where(mask, torch.full_like(per_aunit_orient, torch.pi / 2), per_aunit_orient)
+    sorted_orient = torch.gather(orient_for_gather, 1, order_exp)
+    aunit_orientation = sorted_orient.reshape(n, k * 3)
 
-    aunit_handedness = torch.gather(batch.aunit_handedness, dim=1, index=canonical_order)
+    aunit_handedness = torch.gather(batch.aunit_handedness, 1, canonical_order)
     return aunit_centroid, aunit_orientation, aunit_handedness
+
+# def canonicalize_aunit_order(batch):  # old
+#     # canonical aunit ordering according to distance to the origin, with x, y, z, tiebreak
+#     # TODO implement tiebreak
+#     per_aunit_centroids = batch.aunit_centroid.reshape(batch.num_graphs, batch.max_z_prime, 3)
+#     # mask out elements with lower z prime than max
+#     idx = torch.arange(batch.max_z_prime, device=batch.device)[None, ...]
+#     mask = (idx >= (batch.z_prime[..., None]))[..., None].expand(-1, -1, 3)
+#     per_aunit_centroids[mask] = 1  # this will put lower Z' options always at the end
+#     origin_dists = per_aunit_centroids.norm(dim=2)
+#     canonical_order = origin_dists.argsort(dim=1)
+#     canonical_order_exp = canonical_order.unsqueeze(-1).expand(-1, -1, 3)  # [n, k, 3]
+#     per_aunit_centroids[mask] = 0.5  # this is the placeholder value for 'not being used'
+#     sorted_centroids = torch.gather(per_aunit_centroids, dim=1, index=canonical_order_exp)
+#
+#     aunit_centroid = sorted_centroids.reshape(batch.num_graphs, batch.max_z_prime * 3)
+#
+#     # also reorder the orientations accordingly
+#     per_aunit_orient = batch.aunit_orientation.reshape(batch.num_graphs, batch.max_z_prime, 3)
+#     per_aunit_orient[mask] = torch.pi / 2  # this places all unused samples in the same state
+#     canonical_order_exp = canonical_order.unsqueeze(-1).expand(-1, -1, 3)  # [n, k, 3]
+#     sorted_orient = torch.gather(per_aunit_orient, dim=1, index=canonical_order_exp)
+#     aunit_orientation = sorted_orient.reshape(batch.num_graphs, batch.max_z_prime * 3)
+#
+#     aunit_handedness = torch.gather(batch.aunit_handedness, dim=1, index=canonical_order)
+#     return aunit_centroid, aunit_orientation, aunit_handedness
 
 
 def protonate_mol(atom_types, coords):

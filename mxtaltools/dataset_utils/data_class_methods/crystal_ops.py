@@ -293,13 +293,14 @@ class MolCrystalOps:
         return self.latent_transform(cell_params=self.full_cell_parameters()).clip(min=-1, max=1)
 
     def latent_transform(self, cell_params):
-        if not hasattr(self, 'asym_unit_dict'):
-            self.asym_unit_dict = self.build_asym_unit_dict()
+        if not hasattr(self, 'asym_unit_lut'):
+            self.build_asym_unit_tensor()
 
         sg_inds = self.sg_ind
         # 'radius' for Z'>1 stuctures is Z'*radius for downstream reasons. Also it's not intensive so we need a scaling
         radius = self.radius / (self.z_prime ** (2 / 3))
-        auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds]).to(self.device)
+        auvs = self.asym_unit_lut[sg_inds]
+        #auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds]).to(self.device)
 
         'convert to latent basis'
         # get aunit lengths
@@ -342,13 +343,14 @@ class MolCrystalOps:
         return latents
 
     def inv_latent_transform(self, latents):
-        if not hasattr(self, 'asym_unit_dict'):
-            self.asym_unit_dict = self.build_asym_unit_dict()
+        if not hasattr(self, 'asym_unit_lut'):
+            self.build_asym_unit_tensor()
 
         sg_inds = self.sg_ind
         radius = self.radius / (self.z_prime ** (
                 2 / 3))  # 'radius' for Z'>1 stuctures is Z'*radius for downstream reasons. Also it's not intensive so we need a scaling        auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds]).to(self.device)
-        auvs = torch.stack([self.asym_unit_dict[str(int(ind))] for ind in sg_inds]).to(self.device)
+
+        auvs = self.asym_unit_lut[sg_inds].to(self.device)
 
         lat_lengths, lat_angles, lat_centroids, lat_orientations = torch.split(latents, [3, 3, 3 * self.max_z_prime,
                                                                                          3 * self.max_z_prime], dim=1)
@@ -491,6 +493,32 @@ class MolCrystalOps:
         for key in sgs_to_tensorize:
             asym_unit_dict[key] = torch.Tensor(asym_unit_dict[key]).to(self.device)
         return asym_unit_dict
+
+    def build_asym_unit_tensor(self):
+        max_sg = 230
+
+        asym_unit_by_sg = torch.zeros(
+            max_sg + 1, 3,
+            dtype=torch.float32,
+            device=self.device,
+        )
+
+        for k, v in ASYM_UNITS.items():
+            asym_unit_by_sg[int(k)] = torch.as_tensor(
+                v,
+                dtype=torch.float32,
+                device=self.device,
+            )
+
+        self.asym_unit_lut = asym_unit_by_sg
+
+    def build_sym_mult_tensor(self):
+        sym_mult_by_sg = torch.zeros(231, dtype=torch.long, device=self.device)
+
+        for sg, sym_ops in SYM_OPS.items():
+            sym_mult_by_sg[int(sg)] = len(sym_ops)
+
+        self.sym_mult_lut = sym_mult_by_sg
 
     def scale_lengths_to_aunit(self):
         """
@@ -1523,30 +1551,36 @@ class MolCrystalOps:
 
     def reset_sg_info(self, sg_ind):
         if isinstance(sg_ind, int):
-            sg_ind_list = torch.ones_like(self.sg_ind, device=self.device) * sg_ind
+            sg_ind_tensor = torch.ones_like(self.sg_ind, device=self.device) * sg_ind
         elif isinstance(sg_ind, list):
-            sg_ind_list = torch.tensor(sg_ind, dtype=torch.long, device=self.device)
+            sg_ind_tensor = torch.tensor(sg_ind, dtype=torch.long, device=self.device)
         elif torch.is_tensor(sg_ind):
-            sg_ind_list = sg_ind * 1
+            sg_ind_tensor = sg_ind * 1
         else:
             raise TypeError("sg_ind must be a tensor or an integer")
 
+        unique_sgs = torch.unique(sg_ind_tensor)
+        num_unique_sgs = len(unique_sgs)
+
         if self.is_batch:
-            self.add_graph_attr(sg_ind_list, 'sg_ind')
+            self.add_graph_attr(sg_ind_tensor, 'sg_ind')
             # reset symmetries will always be standard
             self.add_graph_attr(torch.zeros(self.num_graphs, dtype=torch.bool, device=self.device),
                                 'nonstandard_symmetry')
-
         else:
-            setattr(self, 'sg_ind', sg_ind_list)
+            setattr(self, 'sg_ind', sg_ind_tensor)
             setattr(self, 'nonstandard_symmetry', False)
 
         if self.is_batch:
-            self.symmetry_operators = [np.stack(SYM_OPS[int(ind)]) for ind in self.sg_ind]
-            sym_mult = torch.tensor(
-                [len(sym_ops) for sym_ops in self.symmetry_operators],
-                dtype=torch.long, device=self.device
-            )
+            if num_unique_sgs == 1:
+                self.symmetry_operators = [np.stack(SYM_OPS[int(unique_sgs.item())])] * self.num_graphs
+            else:
+                self.symmetry_operators = [np.stack(SYM_OPS[int(ind)]) for ind in self.sg_ind]
+
+            if not hasattr(self, 'sym_mult_lut'):
+                self.build_sym_mult_tensor()
+
+            sym_mult = self.sym_mult_lut[sg_ind_tensor]
             self.add_graph_attr(sym_mult, 'sym_mult')
 
         else:
