@@ -286,7 +286,7 @@ class MolCrystalAnalysis:
                 computes: list,
                 return_cluster: Optional[bool] = False,
                 noise: Optional[float] = None,
-                cutoff: float = 10,  # todo allow custom cutoff for rdf compute
+                cutoff: float = 10,
                 supercell_size: int = 10,
                 std_orientation: Optional[bool] = True,
                 assign_outputs: Optional[bool] = False,
@@ -318,6 +318,7 @@ class MolCrystalAnalysis:
                     self.add_graph_attr(value, key)
                 else:
                     self.add_graph_attr(value[0], key)
+                    self.add_graph_attr(value[1].repeat(self.num_graphs,1), 'rdf_bins')
 
         if return_cluster:
             return results, batch_to_analyze
@@ -637,7 +638,7 @@ class MolCrystalAnalysis:
         return samples
 
     def compute_rdf(self,  # todo rebuild analyses with a template
-                    rdf_cutoff: float = 6,
+                    rdf_cutoff: float = 10,
                     bins: int = 100,
                     rdf_mode: Optional[str] = None,
                     **kwargs,

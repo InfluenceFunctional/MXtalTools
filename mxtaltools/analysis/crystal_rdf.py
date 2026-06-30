@@ -510,7 +510,7 @@ def parallel_compute_rdf_torch(dists_list: torch.tensor, raw_density=True, rrang
     return rdf, (rr[:-1] + torch.diff(rr)).requires_grad_()  # rdf and x-axis
 
 
-def compute_rdf_distmat(rdf_record, rr, show_tqdm=True, chunk_size=250):
+def compute_rdf_distmat(rdf_record, bins, show_tqdm=True, chunk_size=250):
     rdf_dists = torch.zeros(rdf_record.shape[0], rdf_record.shape[0])
 
     for i in tqdm(range(1, len(rdf_record)), disable=not show_tqdm):
@@ -521,7 +521,7 @@ def compute_rdf_distmat(rdf_record, rr, show_tqdm=True, chunk_size=250):
             rdf_dists[i, start_ind:stop_ind] = compute_rdf_distance(
                 rdf_record[i],
                 rdf_record[start_ind:stop_ind],
-                rr,
+                bins,
                 n_parallel_rdf2=stop_ind - start_ind)
     rdf_dists = rdf_dists + rdf_dists.T  # symmetric distance matrix
     return rdf_dists
