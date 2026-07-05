@@ -11,10 +11,11 @@ from plotly.subplots import make_subplots
 from mxtaltools.analysis.crystal_rdf import compute_rdf_distance
 from mxtaltools.common.ase_interface import ase_write_cif
 from mxtaltools.common.geometry_utils import enforce_crystal_system, batch_compute_fractional_transform, \
-    cart2sph_rotvec, sph2cart_rotvec, crystal_parameter_distmat, sph_rotvec2lat, lat2sph_rotvec, fractional_transform
+    cart2sph_rotvec, sph2cart_rotvec, crystal_parameter_distmat, sph_rotvec2lat, lat2sph_rotvec, fractional_transform, \
+    rotvec2rotmat, rotmat2rotvec
 from mxtaltools.common.utils import softplus_shift, log_rescale_positive, get_point_density
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
-from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE
+from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE, NORMALIZER_OPS
 from mxtaltools.crystal_building.random_crystal_sampling import sample_aunit_lengths, sample_cell_angles, \
     sample_aunit_orientations, sample_aunit_centroids
 from mxtaltools.crystal_building.utils import parameterize_crystal_batch, canonicalize_aunit_order, canonicalize_rotvec
@@ -785,6 +786,176 @@ class MolCrystalOps:
 
         return aunit_centroid, aunit_orientation, handedness_list.long(), is_well_defined, torch.cat(pos)
 
+    def _transform_aunit_params(self, centroid_frac, orientation, handedness, R_frac, t_frac, wrap: bool = True):
+        """
+        Apply one fractional affine operation (R_frac, t_frac) -- a SYM_OPS entry
+        or a normalizer coset representative, the math doesn't care which -- to
+        this batch's (aunit_centroid, aunit_orientation, aunit_handedness),
+        returning the new params describing the same operation applied to every
+        atom. Used by get_fd_params to walk the Euclidean-normalizer cosets.
+        """
+        centroid_frac = centroid_frac[:, :3]
+        orientation = orientation[:, :3]
+        n = centroid_frac.shape[0]
+        device, dtype = centroid_frac.device, centroid_frac.dtype
+
+        if R_frac.ndim == 2:
+            R_frac = R_frac[None].expand(n, -1, -1)
+        if t_frac.ndim == 1:
+            t_frac = t_frac[None].expand(n, -1)
+        R_frac = R_frac.to(device=device, dtype=dtype)
+        t_frac = t_frac.to(device=device, dtype=dtype)
+
+        # centroid: fractional space is native to SYM_OPS/normalizer generators alike
+        new_centroid = torch.einsum('nij,nj->ni', R_frac, centroid_frac) + t_frac
+        if wrap:
+            new_centroid = new_centroid - torch.floor(new_centroid)
+
+        # orientation/handedness: need the CARTESIAN rotation part. This conjugation
+        # is a no-op determinant-wise (det(R_cart) == det(R_frac) always, since
+        # T_cf = inv(T_fc)), but it DOES matter for R_orient_new itself whenever
+        # R_frac isn't central in O(3) -- i.e. for anything except pure inversion.
+        R_cart = self.T_fc @ R_frac @ self.T_cf
+        det = torch.linalg.det(R_cart)  # (N,)
+
+        h_old = handedness.reshape(-1).to(dtype)
+        h_new = det * h_old
+
+        R_orient_old = rotvec2rotmat(orientation)
+        diag_det = torch.zeros(n, 3, 3, device=device, dtype=dtype)
+        diag_det[:, 0, 0] = det
+        diag_det[:, 1, 1] = 1.
+        diag_det[:, 2, 2] = 1.
+        R_orient_new = R_cart @ R_orient_old @ diag_det
+        orientation_new = rotmat2rotvec(R_orient_new)
+
+        return new_centroid, orientation_new, h_new
+
+    def get_fd_params(self, is_chiral: Optional[torch.Tensor] = None, normalizer_table: dict = NORMALIZER_OPS):
+        """
+        Reduce this batch's aunit_{centroid,orientation,handedness} to a canonical
+        representative under the Euclidean normalizer N_E(G). Assumes one sg_ind
+        for the whole batch, matching the rest of the pipeline's calling convention.
+
+        Algorithm: candidate 0 is the batch's current aunit params (assumed
+        already folded into G's box -- true if it came from
+        reparameterize_unit_cell or init_batch's sampling path). For each
+        additional normalizer coset rep g_i: build the candidate via
+        _transform_aunit_params, apply the chirality gate (drop g_i if
+        det(W_i) < 0 and the molecule is chiral -- an improper normalizer element
+        maps a chiral molecule to its enantiomer, a different crystal, not a
+        duplicate description), fold the candidate's centroid back into G's own
+        box by actually rebuilding it and calling the existing
+        pose_aunit -> build_unit_cell -> reparameterize_unit_cell pipeline (reuses
+        identify_canonical_asymmetric_unit exactly as-is, rather than re-deriving
+        G's fold-back symbolically), then canonicalize across all box-landing
+        candidates by the same "distance from origin" tie-break
+        identify_canonical_asymmetric_unit / canonicalize_aunit_order already use.
+
+        is_chiral : (N,) bool, True where the molecule is not superimposable on
+            its mirror image. Not computed here -- pull from wherever your
+            featurization already flags this (RDKit CIP/stereocenter perception
+            on the SMILES, most likely), don't want to silently default this to
+            one value or the other.
+
+        returns: C[best, idx], O[best, idx] -- the canonicalized aunit centroid
+            and orientation, (N, 3) each.
+        """
+        sg_ind = int(self.sg_ind[0])
+        assert torch.all(self.sg_ind == sg_ind), \
+            "get_fd_params assumes one space group per batch, as elsewhere in the pipeline"
+
+        generators = normalizer_table.get(str(sg_ind), [])
+        if len(generators) == 0:
+            raise NotImplementedError(
+                f"No normalizer coset representatives on file for space group {sg_ind}. "
+                f"Pull them from https://www.cryst.ehu.es/cgi-bin/cryst/programs/nph-norm"
+                f"?gnum={sg_ind}&norgens=en (blocks automated fetches -- needs a human) "
+                f"or ITA Vol. A1 Table 15.2, then add an entry to NORMALIZER_OPS."
+            )
+
+        n = self.num_graphs
+        device = self.device
+        dtype = self.aunit_centroid.dtype
+
+        cand_centroids = [self.aunit_centroid[:, :3].clone()]
+        cand_orients = [self.aunit_orientation[:, :3].clone()]
+        cand_valid = [torch.ones(n, dtype=torch.bool, device=device)]
+
+        for (W, w) in generators:
+            W_t = torch.as_tensor(W, dtype=dtype, device=device)
+            w_t = torch.as_tensor(w, dtype=dtype, device=device)
+            det_W = torch.linalg.det(W_t)
+
+            c, o, h = self._transform_aunit_params(
+                self.aunit_centroid, self.aunit_orientation, self.aunit_handedness, W_t, w_t,
+            )
+
+            # fold this candidate back into G's box, reusing the existing pipeline
+            # end to end rather than re-deriving G's own fold-back symbolically
+            trial = self.clone()
+            trial.aunit_centroid = c
+            trial.aunit_orientation = o
+            trial.aunit_handedness = h[:, None]
+            trial.pose_aunit()
+            trial.build_unit_cell()
+            c_folded, o_folded, h_folded, well_defined, _ = trial.reparameterize_unit_cell()
+
+            if is_chiral is None:
+                chirality_ok = (~True) | (det_W > 0)
+            else:
+                chirality_ok = (~is_chiral) | (det_W > 0)
+            valid = chirality_ok & torch.as_tensor(well_defined, device=device, dtype=torch.bool)
+
+            cand_centroids.append(c_folded[:, :3])
+            cand_orients.append(o_folded[:, :3])
+            cand_valid.append(valid)
+
+        C = torch.stack(cand_centroids, dim=0)  # (K, n, 3)
+        O = torch.stack(cand_orients, dim=0)    # (K, n, 3)
+        V = torch.stack(cand_valid, dim=0)      # (K, n)
+
+        # Tie-break: dimension-by-dimension (x, then y, then z, then orientation),
+        # matching identify_canonical_asymmetric_unit's own convention -- NOT a
+        # joint norm. This matters, not just style: found empirically (7/3) that a
+        # joint ||centroid||+||orientation|| norm under-reduces whenever a
+        # normalizer generator's G-refold couples two dimensions together (P21/c's
+        # 21-screw-mediated fold ties x and z into a single joint flip, (x,z) ->
+        # (-x,-z+1/2), rather than touching them independently). A joint norm is
+        # symmetric under swapping such coupled dimensions, so it can't
+        # consistently resolve which one absorbs the extra reduction -- it picks
+        # whichever raw value is smaller, which varies structure to structure and
+        # leaves BOTH dimensions spanning their full pre-reduction range in
+        # aggregate across a dataset, rather than confining either one. Sequential
+        # dimension-ordered comparison fixes this: the first dimension checked
+        # gets to use its full available freedom (quartering, for the coupled
+        # pair), and whatever's left over resolves the next. Verified numerically
+        # against the actual sg-14 orbit structure: joint norm left x and z both
+        # spanning the full [0, 0.5) each; x-first lexicographic confined x to
+        # [0, 0.25] and z to [0, 0.5) -- exactly the missing extra factor of 2.
+        idx = torch.arange(n, device=device)
+        keys = torch.cat([C, O], dim=-1)  # (K, n, 6): centroid xyz, then orientation xyz
+        keys = torch.where(V[..., None].bool(), keys, torch.full_like(keys, float('inf')))
+        still_tied = torch.ones(len(cand_centroids), n, dtype=torch.bool, device=device)
+        atol = 1e-6
+        for d in range(keys.shape[-1]):
+            col = torch.where(still_tied, keys[..., d], torch.full_like(keys[..., d], float('inf')))
+            dim_min = col.min(dim=0, keepdim=True).values
+            still_tied = still_tied & (col <= dim_min + atol)
+        # genuine ties surviving every dimension are measure-zero for generic
+        # (non-special-position) structures; take the first survivor for determinism
+        best = still_tied.float().argmax(dim=0)  # (n,)
+
+        return C[best, idx], O[best, idx]
+
+    def fold_to_fd(self, is_chiral: Optional[torch.Tensor] = None):
+        """
+        In-place counterpart to get_fd_params: overwrites this batch's
+        aunit_centroid and aunit_orientation with their canonical N_E(G)
+        fundamental-domain representatives.
+        """
+        self.aunit_centroid, self.aunit_orientation = self.get_fd_params(is_chiral)
+
     def split_cell_params(self):
         cell_lengths, cell_angles, aunit_positions, aunit_orientations = torch.split(self.full_cell_parameters(),
                                                                                      [3, 3, 3 * self.max_z_prime,
@@ -1315,7 +1486,7 @@ class MolCrystalOps:
                                                                   split_by_zp, aux_dists, override_energy)
         # delete or NaN unused higher Z' elements
         # 1d Histograms
-        fig = make_subplots(rows=2 + 2 * self.max_z_prime,
+        fig = make_subplots(rows=int(2 + 2 * self.max_z_prime),
                             cols=3,
                             subplot_titles=lattice_features)
         colors = self._get_color_set(num_dists)
