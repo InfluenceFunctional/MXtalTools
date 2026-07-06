@@ -601,7 +601,9 @@ def cart2sph_rotvec(rotvec):
                                   axis=-1)  # polar, azimuthal, applied rotation
 
     elif torch.is_tensor(rotvec):
-        r = torch.linalg.norm(rotvec, axis=-1)
+        r = torch.sqrt((rotvec ** 2).sum(-1) + 1e-12)  # eps under sqrt → grad finite at 0, gradient-safe
+        # r = torch.linalg.norm(rotvec, axis=-1)
+
         if rotvec.ndim == 1:
             rotvec = rotvec[None, :]
             r = torch.Tensor(r)[None]

@@ -162,7 +162,7 @@ def batch_to_mace_atomicdata(batch, force_rebuild, model, std_orientation, pbc: 
         mol_z = batch.z
         mol_batch_inds = batch.batch
 
-    elif hasattr(batch, 'aux_ind'):
+    elif batch.aux_ind is not None:
         mol_z = batch.z[batch.aux_ind == 0]
         mol_batch_inds = batch.batch[batch.aux_ind == 0]
 

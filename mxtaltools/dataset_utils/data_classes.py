@@ -26,6 +26,18 @@ from mxtaltools.dataset_utils.utils import collate_data_list
 
 
 class MXtalBase(BaseData):
+    # PyG Batch bookkeeping that some methods here (subsample_new_batch,
+    # append_batch, rebuild_simple_slice_inc_) already write straight into
+    # instance.__dict__. Routing ordinary `self.attr = value` for these same
+    # keys through self._store instead (the default below) would silently
+    # write to a second, shadowed location - self._store lands them in
+    # self._store.__dict__ (underscore-prefixed keys never enter the PyG
+    # mapping), which instance.__dict__ always wins over. That split-brain
+    # let a rebuilt batch "remember" a stale num_graphs/slice/inc from before
+    # a subsample/clone. Keeping every write for these keys in
+    # instance.__dict__ removes the second location entirely.
+    _INSTANCE_DICT_ATTRS = frozenset({'_num_graphs', '_slice_dict', '_inc_dict'})
+
     def __getattr__(self, key: str) -> Any:
         if '_store' not in self.__dict__:
             raise RuntimeError(
@@ -36,10 +48,16 @@ class MXtalBase(BaseData):
         return getattr(self._store, key)
 
     def __setattr__(self, key: str, value: Any):
-        setattr(self._store, key, value)
+        if key in self._INSTANCE_DICT_ATTRS:
+            self.__dict__[key] = value
+        else:
+            setattr(self._store, key, value)
 
     def __delattr__(self, key: str):
-        delattr(self._store, key)
+        if key in self._INSTANCE_DICT_ATTRS:
+            self.__dict__.pop(key, None)
+        else:
+            delattr(self._store, key)
 
     def __getitem__(self, key: str) -> Any:
         return self._store[key]

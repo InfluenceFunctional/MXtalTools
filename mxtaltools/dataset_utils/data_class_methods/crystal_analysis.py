@@ -49,15 +49,26 @@ COMPUTES_REQUIRE_CLUSTER = {'lj': True,
                             'reduction_en': False,
                             'rdf': True,
                             'ellipsoid_emb': True,
-                            'uma_pot': True,
-                            'uma_gas_pot': True,
-                            'uma': True,
-                            'mace_pot': True,
-                            'mace_gas_pot': True,
-                            'mace': True,
+                            'uma_pot': False,
+                            'uma_gas_pot': False,
+                            'uma': False,
+                            'mace_pot': False,
+                            'mace_gas_pot': False,
+                            'mace': False,
                             'latent_harmonic': False,
                             'latent_multiharmonic': False,
                             }
+
+# these need a built unit cell (`unit_cell_pos`/`sym_mult`/`T_fc`) but never touch
+# the exploded supercell cluster or edges_dict, so they don't belong in
+# COMPUTES_REQUIRE_CLUSTER above. The '_gas_phase' variants are excluded here too:
+# they always build their own fresh P1 diffuse cell with force_rebuild=True,
+# ignoring whatever unit cell (if any) is already on the batch.
+COMPUTES_REQUIRE_UNIT_CELL = {'uma_pot': True,
+                              'uma': True,
+                              'mace_pot': True,
+                              'mace': True,
+                              }
 
 
 class MolCrystalAnalysis:
@@ -130,6 +141,7 @@ class MolCrystalAnalysis:
                              'latent_multiharmonic': self.latent_multiharmonic_en,
                              }
             self.computes_requires_cluster = COMPUTES_REQUIRE_CLUSTER
+            self.computes_requires_unit_cell = COMPUTES_REQUIRE_UNIT_CELL
 
     def compute_ellipsoid_embedding(self):
         edge_j_good, molwise_batch, norm_factor, normed_v1, normed_v2, v1, v2, x = self.get_ellipsoid_embedding(
@@ -299,6 +311,7 @@ class MolCrystalAnalysis:
         if not hasattr(self, 'computes'):
             self._init_computes()
         requires_cluster = any(self.computes_requires_cluster.get(k, False) for k in computes)
+        requires_unit_cell = any(self.computes_requires_unit_cell.get(k, False) for k in computes)
         if requires_cluster:
             batch_to_analyze = self.mol2cluster(
                 cutoff, supercell_size,
@@ -308,8 +321,24 @@ class MolCrystalAnalysis:
 
             batch_to_analyze.construct_radial_graph(cutoff=cutoff)
             batch_to_analyze._init_computes(override=True)
+        elif requires_unit_cell:
+            # e.g. mace/uma alone: these only ever read unit_cell_pos/sym_mult/T_fc
+            # (plus z/batch, un-filtered since aux_ind stays None here) - never
+            # edges_dict or periodic images - so build just the home unit cell
+            # instead of the full periodic supercell mol2cluster produces.
+            batch_to_analyze = self.clone()
+            batch_to_analyze.mol2ucell(std_orientation=std_orientation)
+            if noise is not None:
+                batch_to_analyze.pos += torch.randn_like(batch_to_analyze.pos) * noise
+
+            batch_to_analyze._init_computes(override=True)
         else:
             batch_to_analyze = self
+            # NOTE: must force-rebind here too, else a `computes` dict of bound
+            # methods inherited via .clone() from an earlier-analyzed ancestor
+            # (still bound to that ancestor's tensors) gets silently reused,
+            # producing results shaped for the wrong batch.
+            batch_to_analyze._init_computes(override=True)
 
         results = batch_to_analyze.compute(requests=computes, **kwargs)
 
@@ -507,6 +536,23 @@ class MolCrystalAnalysis:
 
         return energy
 
+    def sample_latent_harmonic(self, n_samples: int, modes: torch.tensor = None, scale: float = 10,
+                               target_temperature: float = 1.0, seed=None, **kwargs):
+        """Exact sampler for the target defined by latent_harmonic_en:
+        E(x) = 0.5 * ((x - mode) * scale)^2.sum(-1), pi_T(x) ~ exp(-E/T).
+        This is a single isotropic Gaussian: x ~ N(mode, (T / scale^2) * I)."""
+        d = self.latent_params().shape[-1]
+        if modes is None:
+            modes = torch.zeros((1, d), device=self.device)
+
+        g = torch.Generator(device="cpu")
+        if seed is not None:
+            g.manual_seed(seed)
+        eps = torch.randn(n_samples, d, generator=g, device="cpu").to(self.device)
+
+        std = (float(target_temperature) ** 0.5) / scale
+        return modes[0] + std * eps
+
     # -----------------------------------------------------------------------
     # Conditional multi-well toy. FIXED landscape E(x; c, width); the sampling
     # temperature T is applied ONLY in the reward / sampler (not in the energy).
@@ -606,9 +652,16 @@ class MolCrystalAnalysis:
         Shapes broadcast: c [..., cond_dim] -> mu [..., K, d], log_sigma/log_w [..., K].
         c=None => reference state (zeros). log_w is reference-shifted (unnormalized)."""
         f = self._field
+        if f["base_mu"].device != self.device:
+            for k, v in f.items():
+                if torch.is_tensor(v):
+                    f[k] = v.to(self.device)
         if c is None:
             c = torch.zeros(f["cond_dim"], device=self.device)
-        c = c.to(self.device)
+        if isinstance(c,list):
+            c = torch.tensor(c, dtype=torch.float32, device=self.device)
+        elif torch.is_tensor(c):
+            c = c.to(self.device)
 
         disp = f["disp_max"] * torch.tanh(
             torch.einsum('kdc,...c->...kd', f["pos_proj"], c))  # [...,K,d]

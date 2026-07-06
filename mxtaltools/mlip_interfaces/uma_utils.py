@@ -39,7 +39,7 @@ def batch_to_ase_ucell_list(
         force_rebuild: bool = False,
 ):
     data_list = []
-    if not hasattr(batch, 'unit_cell_pos') or force_rebuild:
+    if batch.unit_cell_pos is None or force_rebuild:
         if batch.z_prime.amax() > 1:
             zp1_batch = batch.split_to_zp1_batch()
             zp1_batch.pose_aunit(std_orientation=std_orientation)
@@ -51,7 +51,7 @@ def batch_to_ase_ucell_list(
         cpuz = batch.z.cpu().detach().numpy()
         cpubatch = batch.batch.cpu().detach().numpy()
 
-    elif hasattr(batch, 'aux_ind'):
+    elif batch.aux_ind is not None:
         cpuz = batch.z[batch.aux_ind == 0].cpu().detach().numpy()
         cpubatch = batch.batch[batch.aux_ind == 0].cpu().detach().numpy()
 
@@ -98,9 +98,7 @@ def compute_crystal_uma_on_mxt_batch(batch,
         if len(bad_inds) > 0:
             batch.cell_lengths[bad_inds] += 2
             batch.box_analysis()
-    # data_list = batch_to_ase_ucell_list(batch, std_orientation, pbc, force_rebuild)
-    # uma_batch = atomicdata_list_to_batch(
-    #     [AtomicData.from_ase(atoms, task_name='omc') for atoms in data_list])
+
     data_list = batch_to_fairchem_atomicdata(batch, std_orientation, pbc, force_rebuild)
     uma_batch = atomicdata_list_to_batch(data_list)
 
@@ -131,7 +129,7 @@ def compute_crystal_uma_on_mxt_batch(batch,
 def batch_to_fairchem_atomicdata(batch, std_orientation, pbc=True, force_rebuild=False, task_name='omc'):
     device = batch.device
     data_list = []
-    if not hasattr(batch, 'unit_cell_pos') or force_rebuild:
+    if batch.unit_cell_pos is None or force_rebuild:
         if batch.z_prime.amax() > 1:
             zp1_batch = batch.split_to_zp1_batch()
             zp1_batch.pose_aunit(std_orientation=std_orientation)
@@ -144,9 +142,12 @@ def batch_to_fairchem_atomicdata(batch, std_orientation, pbc=True, force_rebuild
         batch_ind = batch.batch
 
     elif hasattr(batch, 'aux_ind'):
-        z = batch.z[batch.aux_ind == 0]
-        batch_ind = batch.batch[batch.aux_ind == 0]
-
+        if batch.aux_ind is not None:
+            z = batch.z[batch.aux_ind == 0]
+            batch_ind = batch.batch[batch.aux_ind == 0]
+        else:
+            z = batch.z
+            batch_ind = batch.batch
     else:
         z = batch.z
         batch_ind = batch.batch
