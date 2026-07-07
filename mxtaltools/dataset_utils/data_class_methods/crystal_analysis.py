@@ -520,68 +520,90 @@ class MolCrystalAnalysis:
                                                      pbc=False,
                                                      force_rebuild=True)
 
-    def latent_harmonic_en(self, modes: torch.tensor = None, scale: float = 10, **kwargs):
-        # a trivial energy function, for testing
-        latents = self.latent_params()
+    def latent_harmonic_en(self, modes: torch.Tensor = None, width: float = 0.1, x=None, **kwargs):
+        """
+        E(x) = 0.5 * ((x - mode) / width)^2.sum(-1)
+
+        T-free harmonic energy. At target temperature T, the corresponding
+        sampler has std = sqrt(T) * width.
+        """
+        x = self.latent_params() if x is None else x
+        d = x.shape[-1]
+
         if modes is None:
-            modes = torch.zeros((1, latents.shape[-1]), device=self.device)
-        energy = 0.5 * ((latents - modes[0]) * scale).pow(2).sum(dim=1)
-        # analytic Z = (2pi*T)^(d/2) * scale ^ (-d)
-        """
-        import numpy as np
-        T=2.5
-        Z = (2*np.pi*T)**(12/2) * scale ** (-12)
-        print(np.log(Z))
-        """
+            modes = torch.zeros((1, d), device=x.device, dtype=x.dtype)
 
-        return energy
+        w = torch.as_tensor(width, dtype=x.dtype, device=x.device)
 
-    def sample_latent_harmonic(self, n_samples: int, modes: torch.tensor = None, scale: float = 10,
-                               target_temperature: float = 1.0, seed=None, **kwargs):
-        """Exact sampler for the target defined by latent_harmonic_en:
-        E(x) = 0.5 * ((x - mode) * scale)^2.sum(-1), pi_T(x) ~ exp(-E/T).
-        This is a single isotropic Gaussian: x ~ N(mode, (T / scale^2) * I)."""
+        return 0.5 * (((x - modes[0]) / w) ** 2).sum(-1)
+
+    def sample_latent_harmonic(
+            self,
+            n_samples: int,
+            modes: torch.Tensor = None,
+            width: float = 0.1,
+            target_temperature: float = 1.0,
+            seed=None,
+            **kwargs,
+    ):
+        """
+        Exact sampler for the target defined by latent_harmonic_en:
+
+            E(x) = 0.5 * ((x - mode) / width)^2.sum(-1)
+
+        so at target temperature T,
+
+            pi_T(x) ~ exp(-E(x) / T)
+            x ~ N(mode, T * width^2 * I)
+
+        Old convention:
+            scale = 1 / width
+        """
         d = self.latent_params().shape[-1]
+
         if modes is None:
             modes = torch.zeros((1, d), device=self.device)
 
         g = torch.Generator(device="cpu")
         if seed is not None:
             g.manual_seed(seed)
+
         eps = torch.randn(n_samples, d, generator=g, device="cpu").to(self.device)
 
-        std = (float(target_temperature) ** 0.5) / scale
+        w = torch.as_tensor(width, dtype=eps.dtype, device=self.device)
+        std = (float(target_temperature) ** 0.5) * w
+
         return modes[0] + std * eps
 
-    # -----------------------------------------------------------------------
-    # Conditional multi-well toy. FIXED landscape E(x; c, width); the sampling
-    # temperature T is applied ONLY in the reward / sampler (not in the energy).
-    #
-    #   g(x; c, w) = sum_k what_k(c) * N(x; mu_k(c), (w * sigma_k(c))^2 I)   (unnorm.)
-    #   E(x; c, w) = -log g(x; c, w)                         # T-FREE landscape
-    #   pi_T(x)    = exp(-E / T) / Z(T,c,w) = g^{1/T} / Z    # target at temperature T
-    #
-    #   Z(1, c, w) = sum_k what_k(c)     closed form; == 1 ONLY at reference c (c=0)
-    #   Z(T, c, w) = ∫ g^{1/T}           T!=1: low-variance IS, tempered-GMM proposal
-    #
-    # Knobs (all smooth, exactly-sampleable per (c, w) at T=1):
-    #   width  w : scales every basin's std. Preserves mass ratios pi_k AND Z(1).
-    #              => the honest "sigma" knob; safe to read calibration mid-anneal.
-    #   temp   T : Boltzmann sharpness. Flattens/sharpens mass ratios, moves Z.
-    #              => corrupts pi_k mid-anneal; only T=1 mass ratios are trustworthy.
-    #   cond   c : arbitrary-dim vector; smoothly moves positions, widths, depths,
-    #              and (via sigmoid gates on "ghost" modes) the number of active wells.
-    #              Z(c) grows as ghosts switch on (adding a mode adds mass).
-    #
-    # Usage:
-    #   self._build_latent_field(cond_dim=8, seed=0)                 # once
-    #   c = torch.zeros(8)                                           # reference state
-    #   E   = self.latent_multiharmonic_en(c=c, width=1.0)          # energy on latent_params()
-    #   lr  = self.latent_log_reward(c=c, target_temperature=T, width=w)   # log g^{1/T}
-    #   x   = self.sample_latent_multiharmonic(4096, c=c, target_temperature=T, width=w)
-    #   x   = self.sample_latent_multiharmonic(4096, c=c, ..., exact=True) # SIR -> true target
-    #   lZ  = self.log_partition_latent(c=c, target_temperature=T, width=w)  # ground-truth logZ
-    # -----------------------------------------------------------------------
+        # -----------------------------------------------------------------------
+        # Conditional multi-well toy. FIXED landscape E(x; c, width); the sampling
+        # temperature T is applied ONLY in the reward / sampler (not in the energy).
+        #
+        #   g(x; c, w) = sum_k what_k(c) * N(x; mu_k(c), (w * sigma_k(c))^2 I)   (unnorm.)
+        #   E(x; c, w) = -log g(x; c, w)                         # T-FREE landscape
+        #   pi_T(x)    = exp(-E / T) / Z(T,c,w) = g^{1/T} / Z    # target at temperature T
+        #
+        #   Z(1, c, w) = sum_k what_k(c)     closed form; == 1 ONLY at reference c (c=0)
+        #   Z(T, c, w) = ∫ g^{1/T}           T!=1: low-variance IS, tempered-GMM proposal
+        #
+        # Knobs (all smooth, exactly-sampleable per (c, w) at T=1):
+        #   width  w : scales every basin's std. Preserves mass ratios pi_k AND Z(1).
+        #              => the honest "sigma" knob; safe to read calibration mid-anneal.
+        #   temp   T : Boltzmann sharpness. Flattens/sharpens mass ratios, moves Z.
+        #              => corrupts pi_k mid-anneal; only T=1 mass ratios are trustworthy.
+        #   cond   c : arbitrary-dim vector; smoothly moves positions, widths, depths,
+        #              and (via sigmoid gates on "ghost" modes) the number of active wells.
+        #              Z(c) grows as ghosts switch on (adding a mode adds mass).
+        #
+        # Usage:
+        #   self._build_latent_field(cond_dim=8, seed=0)                 # once
+        #   c = torch.zeros(8)                                           # reference state
+        #   E   = self.latent_multiharmonic_en(c=c, width=1.0)          # energy on latent_params()
+        #   lr  = self.latent_log_reward(c=c, target_temperature=T, width=w)   # log g^{1/T}
+        #   x   = self.sample_latent_multiharmonic(4096, c=c, target_temperature=T, width=w)  # SIR -> true target (default)
+        #   x   = self.sample_latent_multiharmonic(4096, c=c, ..., exact=False) # fast, approximate proposal q_T
+        #   lZ  = self.log_partition_latent(c=c, target_temperature=T, width=w)  # ground-truth logZ
+        # -----------------------------------------------------------------------
 
     def _build_latent_field(
             self,
@@ -589,16 +611,18 @@ class MolCrystalAnalysis:
             n_core: int = 20,
             n_ghost: int = 8,
             sigma_range: tuple = (0.04, 0.12),
+            aniso_scale: float = 0.7,  # NEW: spread of per-axis log-eigstd around base
             depth_range: tuple = (0.0, 4.0),
-            disp_max: float = 0.15,  # max center displacement induced by c
-            logsig_scale: float = 0.5,  # max |Δ log sigma| induced by c (tanh-bounded)
-            gate_steep: float = 4.0,  # steepness of ghost-mode birth/death in c
+            disp_max: float = 0.15,
+            logsig_scale: float = 0.5,
+            gate_steep: float = 4.0,
             edge_sigmas: float = 0.1,
-            max_temperature: float = 3.0,  # containment envelope (build-time)
-            max_width: float = 2.5,  # containment envelope (build-time)
+            max_temperature: float = 3.0,
+            max_width: float = 2.5,
             seed: int = 0,
     ):
-        """Build & cache the conditional GMM field. Deterministic in `seed`."""
+        """Build & cache the conditional GMM field, now with per-mode dense (rotated)
+        covariance Sigma_k = R_k diag(eigstd_k)^2 R_k^T. Deterministic in `seed`."""
         import math
 
         g = torch.Generator(device="cpu").manual_seed(seed)
@@ -607,32 +631,39 @@ class MolCrystalAnalysis:
 
         base_log_sigma = torch.empty(K).uniform_(
             math.log(sigma_range[0]), math.log(sigma_range[1]), generator=g)
+
+        # fixed per-mode random orthonormal frame (not conditioned on c)
+        A = torch.randn(K, d, d, generator=g)
+        base_rot, _ = torch.linalg.qr(A)  # [K,d,d]
+
+        # per-axis anisotropy, zero-mean across d so a mode's overall scale
+        # (and therefore depth/mass bookkeeping) is unaffected by its shape
+        raw = torch.randn(K, d, generator=g)
+        raw = raw - raw.mean(-1, keepdim=True)
+        base_log_eigstd = base_log_sigma[:, None] + aniso_scale * raw  # [K,d]
+
         base_depth = torch.empty(K).uniform_(*depth_range, generator=g)
 
-        # ghost modes: off at c=0, switch on for some c. core modes: on at c=0.
         gate_bias = torch.empty(K)
-        gate_bias[:n_core] = 3.0  # sigmoid(steep * +3) ~ 1  (present)
-        gate_bias[n_core:] = -3.0  # sigmoid(steep * -3) ~ 0  (ghost)
+        gate_bias[:n_core] = 3.0
+        gate_bias[n_core:] = -3.0
 
         scale = 1.0 / math.sqrt(cond_dim)
         gate_dir = torch.randn(K, cond_dim, generator=g) * scale
         pos_proj = torch.randn(K, d, cond_dim, generator=g) * scale
-        logsig_proj = torch.randn(K, cond_dim, generator=g) * scale
+        logsig_proj = torch.randn(K, d, cond_dim, generator=g) * scale  # NEW: per-axis (was [K,cond_dim])
         depth_proj = torch.randn(K, cond_dim, generator=g) * scale
 
-        # Containment margin sized for worst-case broadening over the declared
-        # (max_temperature, max_width) envelope. Guards build-time only.
         sig_eff_max = (max_width
-                       * math.exp(math.log(sigma_range[1]) + logsig_scale)
+                       * math.exp(math.log(sigma_range[1]) + logsig_scale + aniso_scale)
                        * math.sqrt(max_temperature))
         B = disp_max + edge_sigmas * sig_eff_max
         assert B < 1.0, (
-            f"margin {B:.3f} >= 1: shrink sigma_range / edge_sigmas / disp_max, "
+            f"margin {B:.3f} >= 1: shrink sigma_range / edge_sigmas / disp_max / aniso_scale, "
             f"or lower max_temperature / max_width.")
         lo, hi = -1.0 + B, 1.0 - B
         base_mu = torch.empty(K, d).uniform_(0, 1, generator=g) * (hi - lo) + lo
 
-        # reference normalizer: pins Z(T=1, c=0) = 1
         log_gate0 = F.logsigmoid(gate_steep * gate_bias)
         C0 = torch.logsumexp(log_gate0 + base_depth, dim=0)
 
@@ -640,7 +671,8 @@ class MolCrystalAnalysis:
         self._field = dict(
             cond_dim=cond_dim, dim=d, disp_max=disp_max, logsig_scale=logsig_scale,
             gate_steep=gate_steep, n_core=n_core, n_ghost=n_ghost,
-            base_mu=base_mu.to(dev), base_log_sigma=base_log_sigma.to(dev),
+            base_mu=base_mu.to(dev), base_log_eigstd=base_log_eigstd.to(dev),
+            base_rot=base_rot.to(dev),
             base_depth=base_depth.to(dev), gate_bias=gate_bias.to(dev),
             gate_dir=gate_dir.to(dev), pos_proj=pos_proj.to(dev),
             logsig_proj=logsig_proj.to(dev), depth_proj=depth_proj.to(dev),
@@ -648,8 +680,8 @@ class MolCrystalAnalysis:
         )
 
     def _latent_field_params(self, c):
-        """Return (mu, log_sigma, log_w) at condition c.
-        Shapes broadcast: c [..., cond_dim] -> mu [..., K, d], log_sigma/log_w [..., K].
+        """Return (mu [...,K,d], R [K,d,d] fixed, log_eigstd [...,K,d], log_w [...,K]) at
+        condition c. R is not conditioned on c (fixed per-mode frame); everything else is.
         c=None => reference state (zeros). log_w is reference-shifted (unnormalized)."""
         f = self._field
         if f["base_mu"].device != self.device:
@@ -658,7 +690,7 @@ class MolCrystalAnalysis:
                     f[k] = v.to(self.device)
         if c is None:
             c = torch.zeros(f["cond_dim"], device=self.device)
-        if isinstance(c,list):
+        if isinstance(c, list):
             c = torch.tensor(c, dtype=torch.float32, device=self.device)
         elif torch.is_tensor(c):
             c = c.to(self.device)
@@ -666,14 +698,14 @@ class MolCrystalAnalysis:
         disp = f["disp_max"] * torch.tanh(
             torch.einsum('kdc,...c->...kd', f["pos_proj"], c))  # [...,K,d]
         mu = f["base_mu"] + disp
-        log_sigma = f["base_log_sigma"] + f["logsig_scale"] * torch.tanh(
-            torch.einsum('kc,...c->...k', f["logsig_proj"], c))  # [...,K]
+        log_eigstd = f["base_log_eigstd"] + f["logsig_scale"] * torch.tanh(
+            torch.einsum('kdc,...c->...kd', f["logsig_proj"], c))  # [...,K,d]
         log_gate = F.logsigmoid(
             f["gate_steep"] * (torch.einsum('kc,...c->...k', f["gate_dir"], c)
-                               + f["gate_bias"]))  # [...,K]
+                               + f["gate_bias"]))
         raw_depth = f["base_depth"] + torch.einsum('kc,...c->...k', f["depth_proj"], c)
-        log_w = (log_gate + raw_depth) - f["C0"]  # [...,K]
-        return mu, log_sigma, log_w
+        log_w = (log_gate + raw_depth) - f["C0"]
+        return mu, f["base_rot"], log_eigstd, log_w
 
     def latent_multiharmonic_en(self, c=None, width=1.0, x=None, **kwargs):
         """E(x; c, width) = -log g(x; c, width). T-FREE. x defaults to latent_params().
@@ -683,43 +715,63 @@ class MolCrystalAnalysis:
         if getattr(self, "_field", None) is None:
             self._build_latent_field()
         x = self.latent_params() if x is None else x  # [B,d]
-        mu, log_sigma, log_w = self._latent_field_params(c)  # c broadcasts over B
+        mu, R, log_eigstd, log_w = self._latent_field_params(c)  # c broadcasts over B
         w = torch.as_tensor(width, dtype=x.dtype, device=x.device)
         if w.ndim == 1:
             w = w[:, None]  # [B] -> [B,1] over K
-        sigma = w * log_sigma.exp()  # [...,K] effective std
+        eigstd = w[..., None] * log_eigstd.exp()  # [...,K,d]
+
+        diff = x[..., None, :] - mu  # [...,K,d]
+        # rotate into each mode's principal frame: y = R_k^T (x - mu_k)
+        y = torch.einsum('kij,...ki->...kj', R, diff)  # [...,K,d]
+        sq = (y ** 2 / eigstd ** 2).sum(-1)  # [...,K]
         d = mu.shape[-1]
-        sq = ((x[..., None, :] - mu) ** 2).sum(-1) / sigma ** 2  # [...,K]
-        log_N = -0.5 * d * math.log(2 * math.pi) - d * sigma.log() - 0.5 * sq
-        log_g = torch.logsumexp(log_w + log_N, dim=-1)  # [...]
+        log_N = (-0.5 * d * math.log(2 * math.pi)
+                 - eigstd.log().sum(-1)
+                 - 0.5 * sq)
+        log_g = torch.logsumexp(log_w + log_N, dim=-1)
         return -log_g
 
     def latent_log_reward(self, c=None, target_temperature=1.0, width=1.0, x=None):
-        """log pi_T(x) up to Z: = -E/T = (1/T) log g.
-        c, width, target_temperature may all be per-sample (mixed within one batch)."""
-        E = self.latent_multiharmonic_en(c=c, width=width, x=x)  # [B]
+        """Unchanged: log pi_T(x) up to Z: = -E/T = (1/T) log g."""
+        E = self.latent_multiharmonic_en(c=c, width=width, x=x)
         T = torch.as_tensor(target_temperature, dtype=E.dtype, device=E.device)
-        return -E / T  # [B]
+        return -E / T
 
-    def _proposal_logprob(self, x, mu, sigma, log_alpha_norm, T):
+    def _proposal_logprob(self, x, mu, R, eigstd, log_alpha_norm, T):
+        """Log-density of the per-component tempered-GMM proposal q_T, dense-covariance
+        version. mu [K,d], R [K,d,d], eigstd [K,d] (untempered, T applied here)."""
         import math
 
         d = mu.shape[-1]
-        var = T * sigma ** 2  # [K]
-        sq = ((x[:, None, :] - mu[None]) ** 2).sum(-1) / var[None]  # [m,K]
-        log_N = -0.5 * d * math.log(2 * math.pi) - 0.5 * d * torch.log(var)[None] - 0.5 * sq
+        var = T * eigstd ** 2  # [K,d]
+        diff = x[:, None, :] - mu[None]  # [m,K,d]
+        y = torch.einsum('kij,mki->mkj', R, diff)  # [m,K,d]
+        sq = (y ** 2 / var[None]).sum(-1)  # [m,K]
+        log_N = (-0.5 * d * math.log(2 * math.pi)
+                 - 0.5 * var.log().sum(-1)[None]
+                 - 0.5 * sq)
         return torch.logsumexp(log_alpha_norm[None] + log_N, dim=1)  # [m]
 
     def sample_latent_multiharmonic(self, n_samples, c=None, target_temperature: float = 1.0,
-                                    width: float = 1.0, exact: bool = False,
-                                    sir_oversample: int = 8, seed=None, **kwargs):
+                                    width: float = 1.0, exact: bool = True,
+                                    sir_oversample: int = 8, seed=None,
+                                    return_diagnostics: bool = False, **kwargs):
         """Sample the tempered target g^{1/T}/Z at a SINGLE shared condition c.
 
         exact=False : draws from the per-component tempered-GMM proposal q_T.
-                      EXACT at T=1; near-exact for well-separated modes at T!=1.
-        exact=True  : SIR-reweights q_T to the true target. Near-exact for separated
-                      modes; degrades as basins overlap/percolate (large width /
-                      small separation) -> trust ground truth at physical width only.
+                      EXACT at T=1; near-exact for well-separated modes at T!=1
+                      (anisotropy/rotation doesn't change this — only mode
+                      separation does; watch overlap if you push aniso_scale up).
+        exact=True  : SIR-reweights q_T to the true target (default).
+        return_diagnostics : if True, also return a dict with `ess_frac`
+                      (effective-sample-size / m) and `max_weight_frac` from
+                      the SIR weights. Low ess_frac (e.g. <1%) means
+                      sir_oversample is too small for this config and the
+                      resample is dominated by a handful of proposal draws —
+                      not trustworthy regardless of what the output looks
+                      like. See check_latent_sampler_accuracy for a fuller
+                      diagnostic including ground-truth comparison.
         (For per-sample c, loop over conditions; energy/reward/logZ are batched.)"""
         import math
 
@@ -727,12 +779,14 @@ class MolCrystalAnalysis:
             self._build_latent_field()
         T = float(target_temperature)
         d = self._field["dim"]
-        mu, log_sigma, log_w = self._latent_field_params(c)
+        mu, R, log_eigstd, log_w = self._latent_field_params(c)
         assert mu.dim() == 2, "sampler expects a single shared c of shape [cond_dim]"
-        sigma = float(width) * log_sigma.exp()  # [K]
+        eigstd = float(width) * log_eigstd.exp()  # [K,d]
 
-        # per-component tempered proposal: N(mu_k, T sigma_k^2), weight ~ w_k^{1/T} Z_k(T)
-        logZk = 0.5 * d * (1 - 1 / T) * torch.log(2 * math.pi * sigma ** 2) + 0.5 * d * math.log(T)
+        # per-component tempered proposal: N(mu_k, T Sigma_k), weight ~ w_k^{1/T} Z_k(T)
+        logZk = (0.5 * d * (1 - 1 / T) * math.log(2 * math.pi)
+                 + (1 - 1 / T) * eigstd.log().sum(-1)
+                 + 0.5 * d * math.log(T))
         log_alpha = log_w / T + logZk
         log_alpha = log_alpha - torch.logsumexp(log_alpha, 0)  # normalized
 
@@ -741,41 +795,130 @@ class MolCrystalAnalysis:
         if seed is not None:
             g.manual_seed(seed)
         k = torch.multinomial(log_alpha.exp().cpu(), m, replacement=True, generator=g).to(self.device)
-        eps = torch.randn(m, d, generator=g, device="cpu").to(self.device)
-        x = mu[k] + (T ** 0.5) * sigma[k, None] * eps  # ~ q_T
+        eps = torch.randn(m, d, generator=g, device="cpu").to(self.device)  # [m,d]
+        # x = mu_k + sqrt(T) * R_k @ diag(eigstd_k) @ eps
+        scaled_eps = (T ** 0.5) * eigstd[k] * eps  # [m,d]
+        x = mu[k] + torch.einsum('mij,mj->mi', R[k], scaled_eps)  # [m,d]
         if not exact:
-            return x
+            return (x, None) if return_diagnostics else x
 
         log_r = self.latent_log_reward(c=c, target_temperature=T, width=width, x=x)
-        log_q = self._proposal_logprob(x, mu, sigma, log_alpha, T)
+        log_q = self._proposal_logprob(x, mu, R, eigstd, log_alpha, T)
         logw = log_r - log_q
-        idx = torch.multinomial((logw - logw.max()).exp().cpu(), n_samples,
-                                replacement=True, generator=g).to(self.device)
-        return x[idx]
+        w = (logw - logw.max()).exp()
+        idx = torch.multinomial(w.cpu(), n_samples, replacement=True, generator=g).to(self.device)
+        x_out = x[idx]
+        if not return_diagnostics:
+            return x_out
+        ess = (w.sum() ** 2 / (w ** 2).sum()).item()
+        diagnostics = dict(ess=ess, ess_frac=ess / w.shape[0],
+                           max_weight_frac=(w.max() / w.sum()).item())
+        return x_out, diagnostics
+
+    def _mode_log_resp(self, c, width, x):
+        """Log responsibility log[w_k N_k(x) / g(x)] of each mode k for samples x. [...,K]"""
+        import math
+
+        mu, R, log_eigstd, log_w = self._latent_field_params(c)
+        w = torch.as_tensor(width, dtype=x.dtype, device=x.device)
+        if w.ndim == 1:
+            w = w[:, None]
+        eigstd = w[..., None] * log_eigstd.exp()
+        diff = x[..., None, :] - mu
+        y = torch.einsum('kij,...ki->...kj', R, diff)
+        sq = (y ** 2 / eigstd ** 2).sum(-1)
+        d = mu.shape[-1]
+        log_N = (-0.5 * d * math.log(2 * math.pi)
+                 - eigstd.log().sum(-1) - 0.5 * sq)
+        log_joint = log_w + log_N
+        return log_joint - torch.logsumexp(log_joint, dim=-1, keepdim=True)
+
+    def check_latent_sampler_accuracy(self, c=None, target_temperature: float = 1.0,
+                                      width: float = 1.0, n_samples: int = 2_000,
+                                      sir_oversample: int = 8,
+                                      n_samples_ref: int = 2_000, reference_oversample: int = 100,
+                                      seed: int = 0):
+        """Diagnose whether sample_latent_multiharmonic(exact=True) is trustworthy at
+        this (c, T, width, aniso) — vs. just showing the genuine rare high-energy tail
+        of the true target, which increasing sir_oversample will NOT remove.
+
+        NOTE: at target_temperature=1.0, the proposal is EXACT by construction
+        (log_r - log_q is constant in x, so ess_frac=1.0 and weights are uniform
+        REGARDLESS of aniso_scale/overlap) — this check is a no-op there. Run it
+        at the T you actually sample at to see anything meaningful.
+
+        The reference pass uses its own n_samples_ref/reference_oversample,
+        independent of n_samples/sir_oversample — raw proposal draws scale as
+        n_samples_ref * reference_oversample, and per-draw energy evaluation is
+        O(K*d), so keep that product bounded rather than reusing n_samples.
+
+        Returns a dict:
+          ess_frac / max_weight_frac : from the working-config SIR pass (see
+              sample_latent_multiharmonic). Low ess_frac => resample is degenerate;
+              re-run with larger sir_oversample before trusting anything else here.
+          energy_q99_work vs energy_q99_ref, energy_max_work vs energy_max_ref :
+              working-config resample vs. a much-larger-oversample reference resample.
+              Close agreement => the high-energy points you're seeing are a real
+              feature of the target at this config, not SIR bias.
+          mode_occupancy_l1 : (T==1 only) L1 distance between empirical mode
+              occupancy of the working resample and the EXACT mode weights
+              softmax(log_w) (closed form, no approximation at T=1). Near 0 confirms
+              the whole SIR pipeline is faithful to a case with a known-exact answer.
+        """
+        if getattr(self, "_field", None) is None:
+            self._build_latent_field()
+
+        x_work, diag = self.sample_latent_multiharmonic(
+            n_samples, c=c, target_temperature=target_temperature, width=width,
+            exact=True, sir_oversample=sir_oversample, seed=seed, return_diagnostics=True)
+        x_ref, _ = self.sample_latent_multiharmonic(
+            n_samples_ref, c=c, target_temperature=target_temperature, width=width,
+            exact=True, sir_oversample=reference_oversample, seed=seed + 1, return_diagnostics=True)
+
+        E_work = self.latent_multiharmonic_en(c=c, width=width, x=x_work)
+        E_ref = self.latent_multiharmonic_en(c=c, width=width, x=x_ref)
+
+        out = dict(
+            ess_frac=diag["ess_frac"],
+            max_weight_frac=diag["max_weight_frac"],
+            energy_q99_work=E_work.quantile(0.99).item(),
+            energy_q99_ref=E_ref.quantile(0.99).item(),
+            energy_max_work=E_work.max().item(),
+            energy_max_ref=E_ref.max().item(),
+        )
+
+        if abs(float(target_temperature) - 1.0) < 1e-12:
+            mu, R, log_eigstd, log_w = self._latent_field_params(c)
+            true_occ = log_w.softmax(dim=-1)
+            resp = self._mode_log_resp(c, width, x_work).exp().mean(0)
+            out["mode_occupancy_l1"] = (resp - true_occ).abs().sum().item()
+
+        return out
 
     def log_partition_latent(self, c=None, target_temperature: float = 1.0,
                              width: float = 1.0, n_is: int = 200_000, seed: int = 0):
         """Ground-truth log Z(T, c, width).
         T==1: closed form logsumexp(unnormalized weights).
-        T!=1: logmeanexp IS with the tempered-GMM proposal (same estimator family
-              as your prior-IS Z diagnostic; low variance while modes stay separated)."""
+        T!=1: logmeanexp IS with the tempered-GMM proposal."""
         import math
 
         T = float(target_temperature)
         if getattr(self, "_field", None) is None:
             self._build_latent_field()
-        mu, log_sigma, log_w = self._latent_field_params(c)
+        mu, R, log_eigstd, log_w = self._latent_field_params(c)
         if abs(T - 1.0) < 1e-12:
             return torch.logsumexp(log_w, dim=-1)  # exact
 
         x = self.sample_latent_multiharmonic(
             n_is, c=c, target_temperature=T, width=width, exact=False, seed=seed)
-        sigma = float(width) * log_sigma.exp()
+        eigstd = float(width) * log_eigstd.exp()
         d = self._field["dim"]
-        logZk = 0.5 * d * (1 - 1 / T) * torch.log(2 * math.pi * sigma ** 2) + 0.5 * d * math.log(T)
+        logZk = (0.5 * d * (1 - 1 / T) * math.log(2 * math.pi)
+                 + (1 - 1 / T) * eigstd.log().sum(-1)
+                 + 0.5 * d * math.log(T))
         log_alpha = log_w / T + logZk
         log_alpha = log_alpha - torch.logsumexp(log_alpha, 0)
-        log_q = self._proposal_logprob(x, mu, sigma, log_alpha, T)
+        log_q = self._proposal_logprob(x, mu, R, eigstd, log_alpha, T)
         log_r = self.latent_log_reward(c=c, target_temperature=T, width=width, x=x)
         logw = log_r - log_q
         return torch.logsumexp(logw, dim=0) - math.log(logw.shape[0])  # logmeanexp
