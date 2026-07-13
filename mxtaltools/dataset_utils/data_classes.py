@@ -436,8 +436,8 @@ class MXtalBase(BaseData):
 
                 v1 = v1.to(v0.device)
 
-                # Scalar / length-1 tensor metadata.
-                if v0.ndim == 0 or v0.size(0) == 1:
+                # Scalar metadata.
+                if v0.ndim == 0:
                     if validate:
                         if v0.shape != v1.shape or v0.dtype != v1.dtype:
                             raise ValueError(
@@ -447,15 +447,19 @@ class MXtalBase(BaseData):
                             raise ValueError(f"Shared tensor field {key!r} differs.")
                     out[key] = v0
 
-                # Node-level tensor.
+                # Node-level tensor. Checked before the length-1 metadata case so
+                # that a single-node batch (n0 == 1) is still concatenated.
                 elif v0.size(0) == n0 and v1.size(0) == n1:
                     out[key] = torch.cat([v0, v1], dim=0)
 
-                # Graph-level tensor.
+                # Graph-level tensor. Checked before the length-1 metadata case so
+                # that a single-graph batch (g0 == 1) is still concatenated; genuine
+                # shared metadata stays size-1 in both batches and so cannot match
+                # here (it requires v1.size(0) == g1).
                 elif v0.size(0) == g0 and v1.size(0) == g1:
                     out[key] = torch.cat([v0, v1], dim=0)
 
-                # Shared tensor metadata.
+                # Shared / length-1 tensor metadata.
                 else:
                     if validate:
                         if v0.shape != v1.shape or v0.dtype != v1.dtype:

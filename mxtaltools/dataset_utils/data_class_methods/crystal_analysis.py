@@ -520,27 +520,40 @@ class MolCrystalAnalysis:
                                                      pbc=False,
                                                      force_rebuild=True)
 
-    def latent_harmonic_en(self, modes: torch.Tensor = None, width: float = 0.1, x=None, **kwargs):
+    def latent_harmonic_en(self, c: torch.Tensor = None, width: float = 0.1, x=None, **kwargs):
         """
         E(x) = 0.5 * ((x - mode) / width)^2.sum(-1)
 
         T-free harmonic energy. At target temperature T, the corresponding
         sampler has std = sqrt(T) * width.
+
+        c may be a single condition ([d] or [1,d], broadcast over the whole
+        batch) or a per-sample batch ([B,d], one condition per row -- each
+        row scored against its own mode). width may similarly be a scalar
+        or a per-sample [B] tensor (mixed widths in one batch).
+
+        import numpy as np
+        logZ = lambda T, d, w: (d/2) * np.log(2*np.pi*T) + d*np.log(w)
+
         """
         x = self.latent_params() if x is None else x
         d = x.shape[-1]
 
-        if modes is None:
-            modes = torch.zeros((1, d), device=x.device, dtype=x.dtype)
+        if c is None:
+            c = torch.zeros((1, d), device=x.device, dtype=x.dtype)
+        else:
+            c = torch.as_tensor(c, dtype=x.dtype, device=x.device)
 
         w = torch.as_tensor(width, dtype=x.dtype, device=x.device)
+        if w.dim() == 1:
+            w = w.unsqueeze(-1)  # [B] (per-sample) or [1] (scalar-as-tensor) -> broadcasts against x's last dim
 
-        return 0.5 * (((x - modes[0]) / w) ** 2).sum(-1)
+        return 0.5 * (((x - c) / w) ** 2).sum(-1)
 
     def sample_latent_harmonic(
             self,
             n_samples: int,
-            modes: torch.Tensor = None,
+            c: torch.Tensor = None,
             width: float = 0.1,
             target_temperature: float = 1.0,
             seed=None,
@@ -556,13 +569,20 @@ class MolCrystalAnalysis:
             pi_T(x) ~ exp(-E(x) / T)
             x ~ N(mode, T * width^2 * I)
 
+        c may be a single condition ([d] or [1,d], broadcast to every drawn
+        sample) or a per-sample batch ([n_samples,d], one mode per row --
+        each row is centered on its own condition). width may similarly be
+        scalar or a per-sample [n_samples] tensor.
+
         Old convention:
             scale = 1 / width
         """
         d = self.latent_params().shape[-1]
 
-        if modes is None:
-            modes = torch.zeros((1, d), device=self.device)
+        if c is None:
+            c = torch.zeros((1, d), device=self.device)
+        else:
+            c = torch.as_tensor(c, device=self.device)
 
         g = torch.Generator(device="cpu")
         if seed is not None:
@@ -571,9 +591,11 @@ class MolCrystalAnalysis:
         eps = torch.randn(n_samples, d, generator=g, device="cpu").to(self.device)
 
         w = torch.as_tensor(width, dtype=eps.dtype, device=self.device)
+        if w.dim() == 1:
+            w = w.unsqueeze(-1)  # [n_samples] (per-sample) or [1] (scalar-as-tensor) -> broadcasts against eps's last dim
         std = (float(target_temperature) ** 0.5) * w
 
-        return modes[0] + std * eps
+        return c + std * eps
 
         # -----------------------------------------------------------------------
         # Conditional multi-well toy. FIXED landscape E(x; c, width); the sampling
@@ -607,12 +629,13 @@ class MolCrystalAnalysis:
 
     def _build_latent_field(
             self,
-            cond_dim: int = 8,
-            n_core: int = 20,
-            n_ghost: int = 8,
+            cond_dim: int = 3,
+            n_core: int = 4,
+            n_ghost: int = 2,
             sigma_range: tuple = (0.04, 0.12),
             aniso_scale: float = 0.7,  # NEW: spread of per-axis log-eigstd around base
             depth_range: tuple = (0.0, 4.0),
+            mu_scale: float = 0.6,  # NEW: <1 contracts basin centers toward 0 (tighter field)
             disp_max: float = 0.15,
             logsig_scale: float = 0.5,
             gate_steep: float = 4.0,
@@ -662,7 +685,7 @@ class MolCrystalAnalysis:
             f"margin {B:.3f} >= 1: shrink sigma_range / edge_sigmas / disp_max / aniso_scale, "
             f"or lower max_temperature / max_width.")
         lo, hi = -1.0 + B, 1.0 - B
-        base_mu = torch.empty(K, d).uniform_(0, 1, generator=g) * (hi - lo) + lo
+        base_mu = mu_scale * (torch.empty(K, d).uniform_(0, 1, generator=g) * (hi - lo) + lo)
 
         log_gate0 = F.logsigmoid(gate_steep * gate_bias)
         C0 = torch.logsumexp(log_gate0 + base_depth, dim=0)
