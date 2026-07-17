@@ -592,7 +592,8 @@ class MolCrystalAnalysis:
 
         w = torch.as_tensor(width, dtype=eps.dtype, device=self.device)
         if w.dim() == 1:
-            w = w.unsqueeze(-1)  # [n_samples] (per-sample) or [1] (scalar-as-tensor) -> broadcasts against eps's last dim
+            w = w.unsqueeze(
+                -1)  # [n_samples] (per-sample) or [1] (scalar-as-tensor) -> broadcasts against eps's last dim
         std = (float(target_temperature) ** 0.5) * w
 
         return c + std * eps
@@ -630,12 +631,12 @@ class MolCrystalAnalysis:
     def _build_latent_field(
             self,
             cond_dim: int = 3,
-            n_core: int = 4,
-            n_ghost: int = 2,
+            n_core: int = 8,
+            n_ghost: int = 8,
             sigma_range: tuple = (0.04, 0.12),
-            aniso_scale: float = 0.7,  # NEW: spread of per-axis log-eigstd around base
-            depth_range: tuple = (0.0, 4.0),
-            mu_scale: float = 0.6,  # NEW: <1 contracts basin centers toward 0 (tighter field)
+            aniso_scale: float = 0.0,  # NEW: spread of per-axis log-eigstd around base
+            depth_range: tuple = (0.0, 4.0),  # (0.0, 4.0),
+            mu_scale: float = 0.3,  # NEW: <1 contracts basin centers toward 0 (tighter field)
             disp_max: float = 0.15,
             logsig_scale: float = 0.5,
             gate_steep: float = 4.0,

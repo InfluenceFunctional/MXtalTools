@@ -109,9 +109,18 @@ class MolCrystalOps:
                 if isinstance(value, dict) or isinstance(value, torch.nn.Module):
                     continue
 
-                if not torch.is_tensor(value) and not isinstance(value, str) and not (
+                if isinstance(value, str) or (
                         isinstance(value, list) and len(value) > 0 and isinstance(value[0], str)
-                ):
+                ):  # string attrs (e.g. per-graph identifier lists) can't be tensorized;
+                    # copy the source batch's collation metadata so to_data_list() still splits them
+                    setattr(self, key, value)
+                    src_slices = getattr(molecule, '_slice_dict', {})
+                    if key in src_slices:
+                        self._slice_dict[key] = src_slices[key]
+                        self._inc_dict[key] = molecule._inc_dict.get(key)
+                    continue
+
+                if not torch.is_tensor(value):
                     if isinstance(value, list) and len(value) > 0 and isinstance(value[0], np.ndarray):
                         value = np.asarray(value)
 
