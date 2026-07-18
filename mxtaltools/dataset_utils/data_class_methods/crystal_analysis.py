@@ -630,13 +630,13 @@ class MolCrystalAnalysis:
 
     def _build_latent_field(
             self,
-            cond_dim: int = 3,
-            n_core: int = 8,
-            n_ghost: int = 8,
+            cond_dim: int = 2,
+            n_core: int = 16,
+            n_ghost: int = 16,
             sigma_range: tuple = (0.04, 0.12),
             aniso_scale: float = 0.0,  # NEW: spread of per-axis log-eigstd around base
             depth_range: tuple = (0.0, 4.0),  # (0.0, 4.0),
-            mu_scale: float = 0.3,  # NEW: <1 contracts basin centers toward 0 (tighter field)
+            mu_scale: float = 0.7,  # NEW: <1 contracts basin centers toward 0 (tighter field)
             disp_max: float = 0.15,
             logsig_scale: float = 0.5,
             gate_steep: float = 4.0,
