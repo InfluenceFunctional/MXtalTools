@@ -62,6 +62,13 @@ def lightweight_one_sided_violin(data, n_points=100, bandwidth_factor=1.0, data_
                          data_max + 0.1 * axis_range,
                          n_points)
 
+    # KDE evaluate is O(n_data * n_points); beyond a few thousand samples the
+    # extra points change nothing visible, so cap the fit set (range/min/max
+    # above are still taken from the full data).
+    max_kde_points = 3000
+    if data.size > max_kde_points:
+        data = np.random.default_rng(0).choice(data, max_kde_points, replace=False)
+
     kde = gaussian_kde(data, bw_method=bandwidth_factor)
     y_vals = kde(x_vals)
     y_vals = y_vals / (1e-3 + y_vals.max() * 2)

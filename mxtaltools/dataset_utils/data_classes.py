@@ -229,7 +229,31 @@ class MXtalBase(BaseData):
         self._inc_dict[name] = torch.zeros(len(num_nodes_per_graph),
                                            dtype=torch.long, device=values.device)
 
-    def rebuild_simple_slice_inc_(self):
+    def _ptr_cpu(self):
+        """
+        Host mirror of self.ptr, cached by tensor IDENTITY. Reading ptr values
+        off a CUDA-resident batch (int(ptr[-1]), .cpu(), .tolist()) stalls the
+        host on the whole CUDA stream -- and the stall costs whatever happens
+        to be queued, which is what made fixed-size buffer churn take 10ms or
+        2500ms at random. All ptr/size arithmetic goes through this mirror
+        instead. ptr is only ever REBUILT, never mutated in place, so object
+        identity captures staleness exactly; a missed cache is a redundant
+        recompute, never stale data. subsample_new_batch/append_batch stamp
+        mirrors for the ptr tensors they construct, so churned batches never
+        pay the initial D2H at all.
+        """
+        ptr = self.ptr
+        pair = self.__dict__.get('_ptr_cpu_pair')
+        if pair is None or pair[0] is not ptr:
+            pair = (ptr, ptr.detach().to('cpu').long())
+            self.__dict__['_ptr_cpu_pair'] = pair
+        return pair[1]
+
+    def _stamp_ptr_cpu(self, ptr_dev, ptr_cpu):
+        """Record a host mirror for a freshly built ptr (see _ptr_cpu)."""
+        self.__dict__['_ptr_cpu_pair'] = (ptr_dev, ptr_cpu.long())
+
+    def rebuild_simple_slice_inc_(self, ptr_cpu=None, num_nodes=None):
         """
         Rebuild PyG batch bookkeeping from the simple MXtal schema.
 
@@ -239,13 +263,17 @@ class MXtalBase(BaseData):
           - list/tuple attrs with len == g are graph-level
           - all increments are zero
           - _slice_dict/_inc_dict stay on CPU
+
+        ptr_cpu/num_nodes, when the caller already has them host-side (see
+        _ptr_cpu), skip the device sync this used to pay on CUDA batches.
         """
         assert self.is_batch
 
         g = self.num_graphs
-        n = int(self.ptr[-1])
-
-        ptr_cpu = self.ptr.detach().cpu().long()
+        if ptr_cpu is None:
+            ptr_cpu = self._ptr_cpu()
+        ptr_cpu = ptr_cpu.long()
+        n = int(ptr_cpu[-1]) if num_nodes is None else num_nodes
         graph_slices = torch.arange(g + 1, dtype=torch.long, device='cpu')
         graph_inc = torch.zeros(g, dtype=torch.long, device='cpu')
 
@@ -311,32 +339,62 @@ class MXtalBase(BaseData):
     def subsample_new_batch(self, idx):
         device = self.device
 
+        # Normalize idx on the HOST first: every size/pointer quantity below is
+        # computed against the host ptr mirror (_ptr_cpu), so a CUDA-resident
+        # batch pays NO stream sync here -- the previous device-side path hid
+        # three (int(ptr[-1]) x2 and repeat_interleave's data-dependent output
+        # size), each of which stalled the host on everything queued ahead.
+        # Only H2D copies remain, and those don't wait on the stream.
         if isinstance(idx, slice):
-            idx = torch.arange(*idx.indices(self.num_graphs), device=device)
+            idx_cpu = torch.arange(*idx.indices(self.num_graphs), dtype=torch.long)
         elif isinstance(idx, int):
-            idx = torch.tensor([idx], device=device)
-        elif torch.is_tensor(idx) and idx.dtype == torch.bool:
-            idx = idx.nonzero(as_tuple=False).view(-1)
-        elif isinstance(idx, np.ndarray) or isinstance(idx, list):
-            idx = torch.as_tensor(idx, device=device).view(-1)
+            idx_cpu = torch.tensor([idx], dtype=torch.long)
+        elif torch.is_tensor(idx):
+            if idx.dtype == torch.bool:
+                idx = idx.nonzero(as_tuple=False)
+            # device-resident idx is the one input that still costs a sync (its
+            # values must come to the host); buffer callers pass numpy/cpu
+            idx_cpu = idx.detach().reshape(-1).to(device='cpu', dtype=torch.long)
+        else:  # np.ndarray / list / other sequence
+            idx_cpu = torch.as_tensor(idx, dtype=torch.long).reshape(-1)
 
-        idx = idx.to(device=device, dtype=torch.long)
-        idx_cpu = idx.detach().cpu()
-        idx_list = idx_cpu.tolist()
+        # host list indices for python list/tuple attrs, built lazily (tolist
+        # on the host mirror is free; tensor-only stores skip it entirely)
+        idx_list = None
 
-        k = idx.numel()
+        k = idx_cpu.numel()
+
+        ptr_cpu = self._ptr_cpu()
+        lengths_cpu = ptr_cpu[idx_cpu + 1] - ptr_cpu[idx_cpu]
+        new_ptr_cpu = torch.cat([lengths_cpu.new_zeros(1), lengths_cpu.cumsum(0)])
+
+        total_nodes = int(new_ptr_cpu[-1])
+        old_num_nodes = int(ptr_cpu[-1])
+        old_num_graphs = self.num_graphs
 
         old_ptr = self.ptr
-        lengths = old_ptr[idx + 1] - old_ptr[idx]
-        new_ptr = torch.cat([lengths.new_zeros(1), lengths.cumsum(0)])
-
-        total_nodes = int(new_ptr[-1])
-        old_num_nodes = int(old_ptr[-1])
-        old_num_graphs = self.num_graphs
+        if torch.device(device).type == 'cuda':
+            # one PINNED staging tensor + non_blocking for all three uploads:
+            # pageable H2D does a stream synchronize before copying (same stall
+            # as a D2H read), pinned + non_blocking is truly async. torch's
+            # caching host allocator event-tracks the pinned block, so its
+            # reuse is deferred until the copy lands.
+            packed = torch.cat([idx_cpu, lengths_cpu, new_ptr_cpu]).pin_memory()
+            packed_dev = packed.to(device, non_blocking=True)
+            idx = packed_dev[:k]
+            lengths = packed_dev[k:2 * k]
+            # ptr persists on the returned batch: clone off the staging storage
+            new_ptr = packed_dev[2 * k:].clone()
+        else:
+            # cpu: all no-ops; any other device: plain moves, as before
+            idx = idx_cpu.to(device)
+            lengths = lengths_cpu.to(device)
+            new_ptr = new_ptr_cpu.to(device)
 
         seg = torch.repeat_interleave(
             torch.arange(k, device=device, dtype=torch.long),
             lengths,
+            output_size=total_nodes,  # host-precomputed: no device sync
         )
 
         node_src = old_ptr[idx][seg] + (
@@ -372,12 +430,16 @@ class MXtalBase(BaseData):
 
             elif isinstance(val, list):
                 if len(val) == old_num_graphs:
+                    if idx_list is None:
+                        idx_list = idx_cpu.tolist()
                     out[key] = [val[i] for i in idx_list]
                 else:
                     out[key] = val
 
             elif isinstance(val, tuple):
                 if len(val) == old_num_graphs:
+                    if idx_list is None:
+                        idx_list = idx_cpu.tolist()
                     out[key] = tuple(val[i] for i in idx_list)
                 else:
                     out[key] = val
@@ -387,9 +449,10 @@ class MXtalBase(BaseData):
 
         out.batch = seg
         out.ptr = new_ptr
+        out._stamp_ptr_cpu(new_ptr, new_ptr_cpu)
         out.__dict__['_num_graphs'] = k
 
-        out.rebuild_simple_slice_inc_()
+        out.rebuild_simple_slice_inc_(ptr_cpu=new_ptr_cpu, num_nodes=total_nodes)
 
         return out
 
@@ -408,8 +471,11 @@ class MXtalBase(BaseData):
         device = self.device
         other = other.to(device)
 
-        n0 = int(self.ptr[-1])
-        n1 = int(other.ptr[-1])
+        # host ptr mirrors: no device sync for the size math (see _ptr_cpu)
+        self_ptr_cpu = self._ptr_cpu()
+        other_ptr_cpu = other._ptr_cpu()
+        n0 = int(self_ptr_cpu[-1])
+        n1 = int(other_ptr_cpu[-1])
         g0 = self.num_graphs
         g1 = other.num_graphs
 
@@ -504,10 +570,12 @@ class MXtalBase(BaseData):
                     raise ValueError(f"Shared field {key!r} differs: {v0!r} vs {v1!r}")
                 out[key] = v0
 
-        out.ptr = torch.cat([
+        new_ptr = torch.cat([
             self.ptr,
             other.ptr[1:].to(device) + n0,
         ])
+        out.ptr = new_ptr
+        out._stamp_ptr_cpu(new_ptr, torch.cat([self_ptr_cpu, other_ptr_cpu[1:] + n0]))
 
         out.batch = torch.cat([
             self.batch,
@@ -515,7 +583,7 @@ class MXtalBase(BaseData):
         ])
 
         out.__dict__['_num_graphs'] = g0 + g1
-        out.rebuild_simple_slice_inc_()
+        out.rebuild_simple_slice_inc_(num_nodes=n0 + n1)
 
         return out
 
