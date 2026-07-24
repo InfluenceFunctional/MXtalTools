@@ -56,7 +56,7 @@ def lightweight_one_sided_violin(data, n_points=100, bandwidth_factor=1.0, data_
         half_w = 0.01 * max(axis_range, abs(center), 1.0)
         x_vals = np.array([center - half_w, center, center + half_w])
         y_vals = np.array([0.0, 0.4, 0.0])  # 0.4 ~ visible but below a full peak (~0.5)
-        return x_vals, y_vals
+        return x_vals.astype(np.float32), y_vals.astype(np.float32)
 
     x_vals = np.linspace(data_min - 0.1 * axis_range,
                          data_max + 0.1 * axis_range,
@@ -76,7 +76,10 @@ def lightweight_one_sided_violin(data, n_points=100, bandwidth_factor=1.0, data_
     x_vals = np.concatenate([[x_vals[0]], x_vals, [x_vals[-1]]])
     y_vals = np.concatenate([[0], y_vals, [0]])
 
-    return x_vals, y_vals
+    # float32 out: plotly base64-encodes trace arrays, so f8 doubles the bytes
+    # of every violin in a figure for precision a KDE outline can't show. A
+    # 24-panel plot_batch_cell_params carries ~50 of these curves.
+    return x_vals.astype(np.float32), y_vals.astype(np.float32)
 
 
 def plotly_setup(config):
