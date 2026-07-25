@@ -703,6 +703,16 @@ class MolCrystalAnalysis:
             C0=C0.to(dev),
         )
 
+    def _ensure_latent_field(self, **kwargs):
+        """Build the latent field lazily if missing, forwarding only the kwargs
+        _build_latent_field actually accepts (so callers can pass through extra,
+        unrelated kwargs from compute()/analyze() without erroring)."""
+        if getattr(self, "_field", None) is None:
+            import inspect
+            valid_keys = set(inspect.signature(self._build_latent_field).parameters) - {'self'}
+            field_kwargs = {k: v for k, v in kwargs.items() if k in valid_keys}
+            self._build_latent_field(**field_kwargs)
+
     def _latent_field_params(self, c):
         """Return (mu [...,K,d], R [K,d,d] fixed, log_eigstd [...,K,d], log_w [...,K]) at
         condition c. R is not conditioned on c (fixed per-mode frame); everything else is.
@@ -736,8 +746,7 @@ class MolCrystalAnalysis:
         width may be scalar or a per-sample tensor [B] (mixed widths in one batch)."""
         import math
 
-        if getattr(self, "_field", None) is None:
-            self._build_latent_field()
+        self._ensure_latent_field(**kwargs)
         x = self.latent_params() if x is None else x  # [B,d]
         mu, R, log_eigstd, log_w = self._latent_field_params(c)  # c broadcasts over B
         w = torch.as_tensor(width, dtype=x.dtype, device=x.device)
@@ -799,8 +808,7 @@ class MolCrystalAnalysis:
         (For per-sample c, loop over conditions; energy/reward/logZ are batched.)"""
         import math
 
-        if getattr(self, "_field", None) is None:
-            self._build_latent_field()
+        self._ensure_latent_field(**kwargs)
         T = float(target_temperature)
         d = self._field["dim"]
         mu, R, log_eigstd, log_w = self._latent_field_params(c)
@@ -861,7 +869,7 @@ class MolCrystalAnalysis:
                                       width: float = 1.0, n_samples: int = 2_000,
                                       sir_oversample: int = 8,
                                       n_samples_ref: int = 2_000, reference_oversample: int = 100,
-                                      seed: int = 0):
+                                      seed: int = 0, **kwargs):
         """Diagnose whether sample_latent_multiharmonic(exact=True) is trustworthy at
         this (c, T, width, aniso) — vs. just showing the genuine rare high-energy tail
         of the true target, which increasing sir_oversample will NOT remove.
@@ -889,8 +897,7 @@ class MolCrystalAnalysis:
               softmax(log_w) (closed form, no approximation at T=1). Near 0 confirms
               the whole SIR pipeline is faithful to a case with a known-exact answer.
         """
-        if getattr(self, "_field", None) is None:
-            self._build_latent_field()
+        self._ensure_latent_field(**kwargs)
 
         x_work, diag = self.sample_latent_multiharmonic(
             n_samples, c=c, target_temperature=target_temperature, width=width,
@@ -920,15 +927,14 @@ class MolCrystalAnalysis:
         return out
 
     def log_partition_latent(self, c=None, target_temperature: float = 1.0,
-                             width: float = 1.0, n_is: int = 200_000, seed: int = 0):
+                             width: float = 1.0, n_is: int = 200_000, seed: int = 0, **kwargs):
         """Ground-truth log Z(T, c, width).
         T==1: closed form logsumexp(unnormalized weights).
         T!=1: logmeanexp IS with the tempered-GMM proposal."""
         import math
 
         T = float(target_temperature)
-        if getattr(self, "_field", None) is None:
-            self._build_latent_field()
+        self._ensure_latent_field(**kwargs)
         mu, R, log_eigstd, log_w = self._latent_field_params(c)
         if abs(T - 1.0) < 1e-12:
             return torch.logsumexp(log_w, dim=-1)  # exact
