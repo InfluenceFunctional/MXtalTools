@@ -16,6 +16,7 @@ from mxtaltools.dataset_utils.data_class_methods.crystal_analysis import MolCrys
 from mxtaltools.dataset_utils.data_class_methods.crystal_building import MolCrystalBuilding
 from mxtaltools.dataset_utils.data_class_methods.crystal_ops import MolCrystalOps
 from mxtaltools.dataset_utils.data_class_methods.ellipsoid_ops import MolCrystalEllipsoidOps
+from mxtaltools.dataset_utils.data_class_methods.conformer_methods import MolConformerMethods
 from mxtaltools.dataset_utils.data_class_methods.mol_methods import MolDataMethods
 from mxtaltools.dataset_utils.utils import collate_data_list
 
@@ -591,7 +592,7 @@ class MXtalBase(BaseData):
 # noinspection PyPropertyAccess
 
 
-class MolData(MXtalBase, MolDataMethods):
+class MolData(MXtalBase, MolConformerMethods, MolDataMethods):
     r"""
     A graph representing a single molecule
     """
@@ -609,6 +610,7 @@ class MolData(MXtalBase, MolDataMethods):
                  mass: Optional[float] = None,
                  radius: Optional[float] = None,
                  do_mol_analysis: Optional[bool] = False,
+                 build_tree: Optional[bool] = False,
                  **kwargs):
         super().__init__()
         self.__dict__['_store'] = GlobalStorage(_parent=self)
@@ -637,6 +639,12 @@ class MolData(MXtalBase, MolDataMethods):
 
         if do_mol_analysis:
             self.mol_analysis()
+
+        # opt-in: needs `pos` (there is no stored bond topology to build from) and can
+        # legitimately fail on a disconnected or fully-linear molecule, so it is not
+        # forced on every construction. Accessors build it lazily on first use anyway.
+        if build_tree:
+            self.build_conformer_tree()
 
     @property
     def x(self) -> Any:

@@ -19,7 +19,8 @@ from mxtaltools.models.functions.radial_graph import build_radial_graph
 # noinspection PyAttributeOutsideInit
 class MolDataMethods:
     def mol_analysis(self,
-                     force_reanalysis: Optional[bool] = False
+                     force_reanalysis: Optional[bool] = False,
+                     do_intramolecular_energy: Optional[bool] = False,
                      ):
         # only piece of analysis
         if self.radius is None or force_reanalysis:
@@ -28,6 +29,14 @@ class MolDataMethods:
             self.mass = self.mass_calculation()
         if self.mol_volume is None or force_reanalysis:
             self.mol_volume = self.volume_calculation()
+
+        # opt-in: builds the internal-coordinate tree on first use, and fits the simple
+        # force field to *this* conformer, so the bonded terms sit at their minimum and
+        # only the nonbonded term is informative. See MolConformerMethods for scoring
+        # candidates against a shared reference field instead.
+        if do_intramolecular_energy:
+            self.intramolecular_pot = self.intramolecular_energy()
+            self.intramolecular_clash = self.worst_intramolecular_clash()
 
     @classmethod
     def from_smiles(cls,
