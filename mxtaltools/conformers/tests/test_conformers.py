@@ -339,6 +339,99 @@ def _bench(n_mols=1024, device="cuda", dtype=torch.float32):
                 fp32_err=err)
 
 
+def test_ff_from_graph_is_seed_independent():
+    """The whole point of ff_from_graph: identical parameters from any embedding.
+
+    ff_from_reference measures r0/theta0 off a conformer, so ETKDG's seed leaks into
+    the force field -- and from there into log Z. Measured here at ~5e-3 A and ~2.8 deg
+    on butanol, which is small but is *noise with no functional relationship to the
+    graph*: a conditional Z(c) head cannot fit it, because the conditioner cannot see
+    the seed. ff_from_graph types off the graph and must be bit-identical instead.
+    """
+    from mxtaltools.conformers.energy import ff_from_graph, ff_from_reference
+
+    ref, gph = [], []
+    for seed in (0, 2, 7, 42):
+        spec, pos, _ = _reference("CCCCO", seed=seed)
+        tree = collate([spec])
+        fr, fg = ff_from_reference(tree, pos), ff_from_graph(tree)
+        ref.append((fr.r0.numpy(), fr.theta0.numpy()))
+        gph.append((fg.r0.numpy(), fg.theta0.numpy()))
+
+    seed_spread = max(np.ptp([r for r, _ in ref], 0).max(),
+                      np.ptp([t for _, t in ref], 0).max())
+    assert seed_spread > 1e-4, "reference FF unexpectedly seed-stable; test is not probing anything"
+
+    for arr, name in ((np.array([r for r, _ in gph]), "r0"),
+                      (np.array([t for _, t in gph]), "theta0")):
+        assert np.ptp(arr, 0).max() == 0.0, f"ff_from_graph {name} varies with embedding seed"
+    return seed_spread
+
+
+def test_torsion_barriers_match_experiment():
+    """The torsion term reproduces the barriers GAFF was fit to.
+
+    A rigid rotation about (u,v) shifts EVERY tree dihedral whose central bond is (u,v).
+    Moving a single one rotates a single hydrogen and recovers 1/3 of the ethane barrier
+    -- in the free-DoF tree each H carries its own dihedral, and the methyl's 120deg
+    spacing is held by the energy rather than the parameterisation.
+    """
+    from mxtaltools.conformers.energy import ff_from_graph, intramolecular_energy
+
+    out = {}
+    for smiles, expected in (("CC", 2.80), ("CO", 1.00)):
+        spec, pos, _ = _reference(smiles)
+        tree = collate([spec])
+        ff = ff_from_graph(tree)
+        r, th, ph = measure(tree, pos)
+        z = tree.z.numpy()
+
+        groups = {}
+        for row, (_, j, k, _) in enumerate(tree.torsion_index.numpy()):
+            groups.setdefault((int(j), int(k)), []).append(row)
+        rows = next(g for b, g in groups.items() if z[b[0]] > 1 and z[b[1]] > 1)
+
+        prof = []
+        for x in np.linspace(-np.pi, np.pi, 145):
+            ph2 = ph.clone()
+            ph2[rows] = ph[rows] + x
+            _, comp = intramolecular_energy(tree, build(tree, r, th, ph2), ff,
+                                            components=True)
+            prof.append(comp["torsion"].item())
+        prof = np.array(prof)
+        barrier = prof.max() - prof.min()
+        n_min = int((np.diff(np.sign(np.diff(prof))) > 0).sum())
+        assert abs(barrier - expected) < 0.05, f"{smiles}: barrier {barrier} != {expected}"
+        assert n_min == 3, f"{smiles}: {n_min} minima, expected 3-fold"
+        out[smiles] = barrier
+    return out
+
+
+def test_ff_from_reference_has_no_torsion_term():
+    """ff_from_reference stays steric-only, so its zero-at-reference property holds."""
+    from mxtaltools.conformers.energy import ff_from_reference, intramolecular_energy
+
+    spec, pos, _ = _reference("CCCCO")
+    tree = collate([spec])
+    ff = ff_from_reference(tree, pos)
+    assert ff.torsion_index is None
+    _, comp = intramolecular_energy(tree, pos, ff, components=True)
+    assert comp["torsion"].abs().max() == 0.0
+
+
+def test_ff_from_graph_raises_on_untyped():
+    """Missing atom types are a hard error, never a generic default."""
+    from mxtaltools.conformers.energy import ff_from_graph
+
+    spec, _, _ = _reference("CCS")          # sulfur is absent from the table
+    try:
+        ff_from_graph(collate([spec]))
+    except KeyError as e:
+        assert "untyped" in str(e)
+        return
+    raise AssertionError("ff_from_graph silently typed a molecule it has no parameters for")
+
+
 if __name__ == "__main__":
     print(f"roundtrip max distance-matrix error : {test_roundtrip_exact():.3e}")
     print(f"dihedral vs rdkit, max              : {test_dihedral_convention_matches_rdkit():.3e}")
@@ -353,6 +446,12 @@ if __name__ == "__main__":
     test_soft_core_lj();             print("soft-core LJ: C1 at sigma, finite   : ok")
     test_energy_minimised_at_reference(); print("bonded energy zero at reference     : ok")
     test_energy_gradient_through_builder(); print("dE/d(internal) through builder      : ok")
+    print(f"ff_from_reference seed spread       : {test_ff_from_graph_is_seed_independent():.3e}"
+          f"  (ff_from_graph: exactly 0)")
+    test_ff_from_graph_raises_on_untyped(); print("ff_from_graph raises on untyped     : ok")
+    test_ff_from_reference_has_no_torsion_term(); print("ff_from_reference stays steric-only : ok")
+    for k, v in test_torsion_barriers_match_experiment().items():
+        print(f"  torsion barrier {k:<10} {v:.3f} kcal/mol")
     for k, (nr, nb) in test_ring_closure().items():
         print(f"  rings {k:<22} {nr} rings -> {nb} broken bonds")
 

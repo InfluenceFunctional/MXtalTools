@@ -2,8 +2,14 @@
 A simple, differentiable intramolecular force field for evaluating the builder.
 
 Deliberately minimal -- harmonic bonds, harmonic angles, and a soft-core Lennard-Jones
-over nonbonded pairs. **No torsion term**: dihedrals are governed entirely by sterics,
-which is what makes this a real test of the parameterisation rather than a tautology.
+over nonbonded pairs.
+
+**The torsion term is opt-in.** ``ff_from_reference`` still omits it, so dihedrals there
+are governed entirely by sterics -- that is what makes it a real test of the
+parameterisation rather than a tautology, and its zero-at-reference property is what the
+builder tests assert against. ``ff_from_graph`` populates it, because a steric-only
+target is nearly flat (butanol's basins span ~0.27 kcal/mol against ~6.3 for random
+states) and so cannot discriminate mode weighting.
 
 Two choices worth knowing about:
 
@@ -22,12 +28,13 @@ torsion and one that detonates on the first step.
 """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import torch
 
-from mxtaltools.conformers.builder import BatchedTree, bond_angle, bond_length, nonbonded_pairs
+from mxtaltools.conformers.builder import (BatchedTree, bond_angle, bond_length, dihedral,
+                                           nonbonded_pairs)
 
 # van der Waals radii (A), matching mxtaltools.constants.atom_properties.VDW_RADII
 VDW_RADII = {
@@ -67,6 +74,14 @@ class ForceField:
     closure_batch: torch.Tensor
     closure_r0: torch.Tensor      # [n_broken]
 
+    # Proper torsions, OPTIONAL: None means no torsion term, which is what
+    # ff_from_reference produces and what the builder tests assume.
+    torsion_index: Optional[torch.Tensor] = None    # [n_tors, 4] over the whole graph
+    torsion_batch: Optional[torch.Tensor] = None
+    tors_v: Optional[torch.Tensor] = None           # [n_tors] PK/IDIVF, kcal/mol
+    tors_n: Optional[torch.Tensor] = None           # [n_tors] periodicity
+    tors_gamma: Optional[torch.Tensor] = None       # [n_tors] phase, rad
+
     lj_k_factor: float = 2.5      # soft-core stiffness; 2.5 matches mxtaltools' default
     n_mols: int = 1
 
@@ -97,6 +112,34 @@ def graph_angle_index(tree: BatchedTree) -> torch.Tensor:
             for b in range(a + 1, len(nbrs)):
                 triples.append((nbrs[a], apex, nbrs[b]))
     arr = np.asarray(sorted(triples), dtype=np.int64).reshape(-1, 3)
+    return torch.from_numpy(arr).to(tree.device)
+
+
+def graph_torsion_index(tree: BatchedTree) -> torch.Tensor:
+    """Every proper dihedral ``(i, j, k, l)`` with ``j-k`` a graph bond.
+
+    The full redundant set, matching how bonds and angles are handled here rather than
+    the tree's minimal one -- a C-C bond in an alkane contributes all 9 of its H/C
+    quartets, which is what the AMBER-family divisors assume. Terminal bonds contribute
+    nothing, since a degree-1 endpoint has no other substituent to complete the quartet.
+    """
+    bonds = tree.graph_bond_index.cpu().numpy()
+    neigh = {}
+    for i, j in bonds:
+        neigh.setdefault(int(i), []).append(int(j))
+        neigh.setdefault(int(j), []).append(int(i))
+
+    quartets = []
+    for j, k in bonds:
+        j, k = int(j), int(k)
+        for i in sorted(neigh[j]):
+            if i == k:
+                continue
+            for l in sorted(neigh[k]):
+                if l == j or l == i:      # l == i closes a 3-ring: degenerate dihedral
+                    continue
+                quartets.append((i, j, k, l))
+    arr = np.asarray(sorted(quartets), dtype=np.int64).reshape(-1, 4)
     return torch.from_numpy(arr).to(tree.device)
 
 
@@ -161,6 +204,173 @@ def ff_from_reference(tree: BatchedTree,
     )
 
 
+# ---------------------------------------------------- graph-derived parameters
+
+AtomType = Tuple[int, int]      # (atomic number, degree)
+
+# Equilibrium internals keyed by atom TYPE, where a type is ``(element, degree)`` --
+# the same coarse typing prior.py uses, with degree standing in for hybridisation.
+# Every key is read off the molecular graph, so a force field built from these is a
+# deterministic function of the graph and nothing else.
+#
+# That is the entire point of this table's existence next to ff_from_reference: the
+# reference version measures r0/theta0 off whichever conformer RDKit embedded, which
+# makes the energy -- and therefore log Z -- depend on an embedding seed. For a single
+# unconditional molecule that is an arbitrary but harmless convention. For a CONDITIONAL
+# model it is fatal, because log Z(c) acquires a per-molecule offset with no functional
+# relationship to the graph, and the Z head cannot fit what the conditioner cannot see.
+#
+# Values are GAFF-family constants covering the alkane/alcohol subset. Units A, rad,
+# kcal/mol, and k is the coefficient of (x - x0)^2 with no 1/2, matching ff_from_reference.
+BOND_PARAMS: Dict[Tuple[AtomType, AtomType], Tuple[float, float]] = {
+    ((1, 1), (6, 4)): (1.093, 340.0),      # C(sp3)-H
+    ((6, 4), (6, 4)): (1.526, 310.0),      # C(sp3)-C(sp3)
+    ((6, 4), (8, 2)): (1.410, 320.0),      # C(sp3)-O
+    ((1, 1), (8, 2)): (0.960, 553.0),      # O-H
+}
+
+# ``(outer, apex, outer)`` with the two outer types sorted.
+ANGLE_PARAMS: Dict[Tuple[AtomType, AtomType, AtomType], Tuple[float, float]] = {
+    ((1, 1), (6, 4), (1, 1)): (np.deg2rad(109.5), 35.0),
+    ((1, 1), (6, 4), (6, 4)): (np.deg2rad(109.5), 46.0),
+    ((6, 4), (6, 4), (6, 4)): (np.deg2rad(111.0), 63.0),
+    ((1, 1), (6, 4), (8, 2)): (np.deg2rad(109.5), 50.0),
+    ((6, 4), (6, 4), (8, 2)): (np.deg2rad(109.5), 67.0),
+    ((1, 1), (8, 2), (6, 4)): (np.deg2rad(108.5), 47.0),
+}
+
+# Proper torsions, keyed by the sorted pair of CENTRAL atom types -- the AMBER-family
+# "X-A-B-X" general form, where the barrier depends only on the rotated bond.
+# Values are ``(PK/IDIVF, periodicity, phase_rad)``: the PER-DIHEDRAL coefficient, since
+# every quartet about the bond is enumerated and each contributes.
+#
+# GAFF divides by a FIXED IDIVF (9 for c3-c3, 3 for c3-oh) rather than by the realised
+# quartet count. That reproduces experimental barriers when the substituent counts match
+# the assumption -- which they do for every bond in an n-alkanol, so this is exact here.
+# On a tertiary or quaternary centre the realised count differs and the total barrier
+# scales with it, exactly as it does in GAFF itself.
+TORSION_PARAMS: Dict[Tuple[AtomType, AtomType], Tuple[float, int, float]] = {
+    ((6, 4), (6, 4)): (1.40 / 9.0, 3, 0.0),    # ethane-like, 2.8 kcal/mol total barrier
+    ((6, 4), (8, 2)): (0.50 / 3.0, 3, 0.0),    # methanol-like, 1.0 kcal/mol total
+}
+
+
+def atom_types(tree: BatchedTree) -> list:
+    """Per-atom ``(element, degree)`` tuples, in placement order.
+
+    Degree counts bonds in the full molecular graph rather than the spanning tree --
+    a tree degree would type a ring atom differently depending on which bond the tree
+    happened to break.
+    """
+    z = tree.z.cpu().numpy()
+    deg = np.bincount(tree.graph_bond_index.cpu().numpy().reshape(-1),
+                      minlength=tree.n_atoms)
+    return [(int(zi), int(di)) for zi, di in zip(z, deg)]
+
+
+def _lookup(keys: list, table: dict, kind: str) -> Tuple[np.ndarray, np.ndarray]:
+    """Table lookup that reports EVERY missing type at once.
+
+    Raises rather than falling back to a generic constant. A silent default here would
+    produce a force field that is quietly wrong for exactly the atoms it could not type,
+    and the failure would surface thousands of steps later as an unlearnable Z.
+    """
+    missing = sorted({k for k in keys if k not in table})
+    if missing:
+        raise KeyError(
+            f"{len(missing)} untyped {kind} type(s) in BOND_PARAMS/ANGLE_PARAMS: "
+            f"{missing}. Types are (element, degree). Add them to the table in "
+            f"conformers/energy.py -- this raises rather than defaulting because a "
+            f"generic constant would silently misparameterise these terms.")
+    vals = np.array([table[k] for k in keys], dtype=np.float64).reshape(-1, 2)
+    return vals[:, 0], vals[:, 1]
+
+
+def ff_from_graph(tree: BatchedTree,
+                  dtype=torch.float64,
+                  epsilon: float = 0.1,
+                  min_separation: int = 3,
+                  scale_14: float = 0.5,
+                  sigma_scale: float = CONTACT_SIGMA_SCALE,
+                  lj_k_factor: float = 2.5) -> ForceField:
+    """A force field determined entirely by the molecular graph -- no reference conformer.
+
+    Same ``ForceField`` output as ``ff_from_reference``, so it drops into
+    ``intramolecular_energy`` unchanged; the difference is where r0/theta0/k come from.
+    Here they are typed lookups on ``(element, degree)``, so two runs that embed
+    different conformers of the same molecule get bit-identical parameters.
+
+    Still no torsion term -- dihedrals remain governed by sterics, as in
+    ``ff_from_reference``. Adding one is the next step, and it is what makes the target
+    discriminating rather than nearly flat.
+    """
+    device = tree.device
+    types = atom_types(tree)
+
+    bond_index = tree.graph_bond_index
+    bond_pairs = bond_index.cpu().numpy()
+    bond_keys = [tuple(sorted((types[i], types[j]))) for i, j in bond_pairs]
+    r0_np, kb_np = _lookup(bond_keys, BOND_PARAMS, "bond")
+
+    angle_index = graph_angle_index(tree)
+    angle_triples = angle_index.cpu().numpy()
+    angle_keys = [(min(types[i], types[k]), types[j], max(types[i], types[k]))
+                  for i, j, k in angle_triples]
+    th0_np, ka_np = _lookup(angle_keys, ANGLE_PARAMS, "angle")
+
+    tt = lambda a: torch.tensor(a, dtype=dtype, device=device)
+    r0, k_bond = tt(r0_np), tt(kb_np)
+    theta0, k_angle = tt(th0_np), tt(ka_np)
+
+    # torsions are typed on the CENTRAL bond only, so bonds that generate no quartet
+    # (a degree-1 endpoint) never reach the table and need no parameters there
+    torsion_index = graph_torsion_index(tree)
+    quartets = torsion_index.cpu().numpy()
+    tors_keys = [tuple(sorted((types[j], types[k]))) for _, j, k, _ in quartets]
+    missing = sorted({k for k in tors_keys if k not in TORSION_PARAMS})
+    if missing:
+        raise KeyError(
+            f"{len(missing)} untyped torsion centre(s): {missing}. Keys are the sorted "
+            f"pair of central (element, degree) types; add them to TORSION_PARAMS.")
+    tp = np.array([TORSION_PARAMS[k] for k in tors_keys], dtype=np.float64).reshape(-1, 3)
+
+    pair_index, pair_batch, separation = nonbonded_pairs(tree, min_separation)
+
+    radii = torch.zeros(max(VDW_RADII) + 1, dtype=dtype, device=device)
+    for z, r in VDW_RADII.items():
+        radii[z] = r
+    z = tree.z.to(device)
+    sigma = sigma_scale * (radii[z[pair_index[:, 0]]] + radii[z[pair_index[:, 1]]])
+    eps = torch.full_like(sigma, float(epsilon))
+    eps = torch.where(separation.to(device) == 3, eps * scale_14, eps)
+
+    # closure r0 is the TYPED length of that bond, not an as-built one: a ring closure
+    # is an ordinary graph bond and gets the ordinary parameter, which is what keeps
+    # the closure restraint graph-determined along with everything else.
+    closure = tree.broken_bond_index
+    if closure.numel():
+        ckeys = [tuple(sorted((types[i], types[j]))) for i, j in closure.cpu().numpy()]
+        closure_r0 = tt(_lookup(ckeys, BOND_PARAMS, "bond")[0])
+    else:
+        closure_r0 = torch.zeros(0, dtype=dtype, device=device)
+
+    return ForceField(
+        bond_index=bond_index, bond_batch=tree.graph_bond_batch,
+        r0=r0, k_bond=k_bond,
+        angle_index=angle_index, angle_batch=tree.batch[angle_index[:, 1]],
+        theta0=theta0, k_angle=k_angle,
+        pair_index=pair_index, pair_batch=pair_batch,
+        sigma=sigma, epsilon=eps,
+        closure_index=closure, closure_batch=tree.broken_bond_batch,
+        closure_r0=closure_r0,
+        torsion_index=torsion_index,
+        torsion_batch=tree.batch[torsion_index[:, 1]] if torsion_index.numel()
+        else torch.zeros(0, dtype=torch.long, device=device),
+        tors_v=tt(tp[:, 0]), tors_n=tt(tp[:, 1]), tors_gamma=tt(tp[:, 2]),
+        lj_k_factor=lj_k_factor, n_mols=tree.n_mols,
+    )
+
+
 def soft_core_lj(dist: torch.Tensor, sigma: torch.Tensor, epsilon: torch.Tensor,
                  k_factor: float = 2.5) -> torch.Tensor:
     """Lennard-Jones with the repulsive core replaced by a matched exponential.
@@ -200,9 +410,20 @@ def intramolecular_energy(tree: BatchedTree, pos: torch.Tensor, ff: ForceField,
     e_lj = zeros().index_add(0, ff.pair_batch,
                              soft_core_lj(d, ff.sigma, ff.epsilon, ff.lj_k_factor))
 
-    total = e_bond + e_angle + e_lj
+    # V[1 + cos(n phi - gamma)]: unlike the harmonic terms this has no zero at a
+    # reference geometry, so a force field carrying it cannot be tested for
+    # zero-at-reference the way ff_from_reference is.
+    e_tors = zeros()
+    if ff.torsion_index is not None and ff.torsion_index.numel():
+        t = ff.torsion_index
+        phi = dihedral(pos[t[:, 0]], pos[t[:, 1]], pos[t[:, 2]], pos[t[:, 3]])
+        e_tors = zeros().index_add(
+            0, ff.torsion_batch,
+            ff.tors_v * (1.0 + torch.cos(ff.tors_n * phi - ff.tors_gamma)))
+
+    total = e_bond + e_angle + e_lj + e_tors
     if components:
-        return total, {"bond": e_bond, "angle": e_angle, "lj": e_lj}
+        return total, {"bond": e_bond, "angle": e_angle, "lj": e_lj, "torsion": e_tors}
     return total
 
 

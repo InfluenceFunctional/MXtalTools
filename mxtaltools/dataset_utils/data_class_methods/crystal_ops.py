@@ -15,7 +15,8 @@ from mxtaltools.common.geometry_utils import enforce_crystal_system, batch_compu
     rotvec2rotmat, rotmat2rotvec
 from mxtaltools.common.utils import softplus_shift, log_rescale_positive, get_point_density
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
-from mxtaltools.constants.space_group_info import SYM_OPS, LATTICE_TYPE, NORMALIZER_OPS
+from mxtaltools.constants.space_group_info import (SYM_OPS, LATTICE_TYPE, NORMALIZER_OPS,
+                                                   CONTINUOUS_DIMS)
 from mxtaltools.crystal_building.random_crystal_sampling import sample_aunit_lengths, sample_cell_angles, \
     sample_aunit_orientations, sample_aunit_centroids
 from mxtaltools.crystal_building.utils import parameterize_crystal_batch, canonicalize_aunit_order, canonicalize_rotvec
@@ -300,6 +301,12 @@ class MolCrystalOps:
         :return:
         """
         self.canonicalize_zp_aunits()  # latent space is always in the canonical ordering
+        # Gauge-fix the free centroid axes to the same canonical value the projected cell
+        # angles already take (latent 0). MUST be paired with declaring those rows dead in
+        # the GFN: canonicalising here without holding them in the SDE would leave every
+        # buffer row at the constant while the policy flowed the dim freely -- which is
+        # precisely the D33 defect, in the opposite direction.
+        self.canonicalize_free_axes()
         return self.latent_transform(cell_params=self.full_cell_parameters()).clip(min=-1, max=1)
 
     def latent_transform(self, cell_params):
@@ -1767,6 +1774,71 @@ class MolCrystalOps:
             self.symmetry_operators = np.stack(SYM_OPS[int(self.sg_ind)])
             setattr(self, 'sym_mult', torch.tensor(
                 len(self.symmetry_operators), dtype=torch.long, device=self.device)[None])
+
+    def build_free_axis_tensor(self):
+        """
+        [231, 3] bool: which aunit centroid axes are FREE for each space group, i.e.
+        the shared +1 eigenspace of G. Derived from cctbx's structure seminvariants
+        (CONTINUOUS_DIMS, modulus-0 entries), which agrees 230/230 with the direct
+        derivation from SYM_OPS -- see gfn docs/findings.md F-008.
+        """
+        free_by_sg = torch.zeros(231, 3, dtype=torch.bool, device=self.device)
+        for k, vecs in CONTINUOUS_DIMS.items():
+            for vec in vecs:
+                for axis, comp in enumerate(vec):
+                    if comp:
+                        free_by_sg[int(k), axis] = True
+        self.free_axis_lut = free_by_sg
+        return free_by_sg
+
+    def canonicalize_free_axes(self):
+        """
+        Gauge-fix the FREE aunit centroid axes.
+
+        A free axis is a fractional direction d with R_k d = d for every rotation part
+        of G. Moving the aunit centroid along it displaces every symmetry copy by the
+        same d, i.e. rigidly translates the whole crystal -- so the energy, the RDF and
+        every other observable are EXACTLY invariant, and the coordinate carries no
+        information at all. It exists only as an origin choice. 68 of 230 space groups
+        have at least one (P1 has three); the centrosymmetric groups have none, which is
+        why nothing needed this until the polar/Sohncke groups came into scope.
+
+        CONVENTION: put the centroid at the CENTRE of its aunit box along each free
+        axis (frac = auv_d / 2), which is latent 0. Deliberately not 0:
+          * latent 0 is already the canonical value the projected cell angles take, so
+            the whole dead-row mechanism needs no second constant and `_dead_values`
+            stays all-zeros;
+          * frac 0 is the box FACE, and for the 26 space groups whose free axis is also
+            auv == 1 the face is a wrap seam -- pinning a coordinate exactly on the seam
+            is asking for trouble that the box centre simply does not have.
+
+        Z' > 1 IS DELIBERATELY NOT HANDLED. The free translation is ONE GLOBAL shift
+        shared by every asymmetric unit, so the correct operation there is a COMMON
+        offset that lands unit 0 at the centre -- not setting each unit to the centre,
+        which would destroy the relative offsets between the Z' molecules along that
+        axis. Those offsets are physical. The common shift then pushes other units out
+        of [0, auv_d], and re-wrapping a SINGLE unit by auv_d is only a symmetry when
+        auv_d == 1 (a true lattice vector), which holds for 26 of the 42 free-axis
+        groups and not the rest. That is a real open question, not a detail, so this
+        returns untouched at Z' > 1 rather than guessing. sg 9 Z'=2 is the test case.
+        """
+        if int(self.max_z_prime) > 1 or bool(torch.any(self.z_prime > 1)):
+            return False
+        if not hasattr(self, 'free_axis_lut'):
+            self.build_free_axis_tensor()
+        if not hasattr(self, 'asym_unit_lut'):
+            self.build_asym_unit_tensor()
+
+        sg_inds = self.sg_ind.long()
+        free = self.free_axis_lut.to(self.device)[sg_inds]            # [N, 3] bool
+        if not bool(free.any()):
+            return False
+
+        auvs = self.asym_unit_lut.to(self.device)[sg_inds]            # [N, 3]
+        centroid = self.aunit_centroid[:, :3]
+        target = auvs * 0.5
+        self.aunit_centroid = torch.where(free, target, centroid)
+        return True
 
     def canonicalize_zp_aunits(self):
         if self.is_batch:

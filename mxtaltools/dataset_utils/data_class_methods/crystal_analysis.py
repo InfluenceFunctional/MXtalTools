@@ -370,7 +370,12 @@ class MolCrystalAnalysis:
 
     def compute_lattice_uma(self,
                             predictor,
-                            std_orienation: bool = True,
+                            # was `std_orienation` (missing t), so a caller passing
+                            # std_orientation=... had it swallowed by **kwargs and BOTH legs ran at
+                            # the default True. The GFN's analyze_kwargs asks for False, which means
+                            # every uma run so far scored std-oriented crystals while the mace/elj
+                            # runs did not -- the two were not on the same convention.
+                            std_orientation: bool = True,
                             **kwargs):
         if not hasattr(self, 'uma_gas_pot'):
             self.add_graph_attr(
@@ -379,7 +384,7 @@ class MolCrystalAnalysis:
 
         if not hasattr(self, 'uma_pot'):
             self.add_graph_attr(
-                self.compute_crystal_uma(predictor, std_orientation=std_orienation),
+                self.compute_crystal_uma(predictor, std_orientation=std_orientation),
                 'uma_pot')
 
         # lattice energy per molecule, in eV
@@ -388,7 +393,10 @@ class MolCrystalAnalysis:
 
     def compute_lattice_gas_phase_uma(self,
                                       predictor,
-                                      std_orientation: bool = True,
+                                      # off by default for the same reason as the mace twin above:
+                                      # isolated molecule, rotation-invariant energy, and the only
+                                      # thing on this path that can throw in linalg.eigh
+                                      std_orientation: bool = False,
                                       **kwargs,
                                       ):
 
@@ -461,7 +469,20 @@ class MolCrystalAnalysis:
 
     def compute_lattice_gas_phase_mace(self,
                                        predictor,
-                                       std_orientation: bool = True,
+                                       # OFF by default: this leg scores an ISOLATED molecule
+                                       # (pbc=False), and MACE is rotation-equivariant, so standard
+                                       # orientation cannot change the number -- measured at 3e-5
+                                       # kJ/mol against a reference that is constant to 4 decimals.
+                                       # What it CAN do is throw: it is the only thing that puts
+                                       # align_mol_batch_to_standard_axes -> scatter_compute_Ip ->
+                                       # linalg.eigh on this path, and every June 2026 acridine
+                                       # Z'=2 run died there at 18-27k steps ("failed to converge
+                                       # ... ill-conditioned or too many repeated eigenvalues",
+                                       # on the CPU fallback, so the input is genuinely bad).
+                                       # scatter_compute_Ip only lifts degeneracies when
+                                       # requires_grad or add_noise, and the energy path is
+                                       # no-grad. Cost with no benefit; default it off.
+                                       std_orientation: bool = False,
                                        **kwargs,
                                        ):
         if self.is_batch:
