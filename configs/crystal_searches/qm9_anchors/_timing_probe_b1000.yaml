@@ -1,0 +1,69 @@
+# THROWAWAY timing probe -- NOT an anchor-generation config. Measures the rprop step rate
+# and VRAM footprint at batch 1000 so the full run's wall clock can be extrapolated from a
+# measurement instead of a guess. Step counts are cut to the bone (30 + 10 instead of
+# 450 + 50): per-step cost is what is being measured, convergence is not.
+# 100 mols x 10 inits = 1000 structures = exactly one batch.
+
+device: cuda
+
+mol_path: D:\crystal_datasets\conditional\priors\qm9_anchor_mols_200.pt
+dataset_path: null
+target_path: null
+target_identifier: null
+umbrella_path: null
+out_dir: D:\crystal_datasets\conditional\anchors
+run_name: _timing_probe_b1000
+
+save_trajs: false
+
+uma_predictor_path: null
+mace_predictor_path: null
+score_model_checkpoint: null
+
+force_restart_run: true
+
+init_sample_method: random
+init_reduced: true
+init_sample_reduced: true
+init_target_cp: wide
+
+mol_seed: 0
+opt_seed: 0
+sampling_mode: ordered
+mols_to_sample: 100
+num_samples: 10
+
+sgs_to_search: [ 2 ]
+zp_to_search: [ 1 ]
+
+batch_size: 1000
+grow_batch_size: false
+
+opt:
+  - optim_target: 'elj'
+    enforce_reduced: true
+    compression_factor: 1.0
+    cutoff: 10
+    init_lr: 0.05
+    convergence_eps: 0.00001
+    optimizer_func: 'rprop'
+    anneal_lr: false
+    grad_norm_clip: 0.1
+    show_tqdm: true
+    max_num_steps: 30
+    target_packing_coeff: null
+    umbrella: false
+
+  - optim_target: 'elj'
+    enforce_reduced: true
+    compression_factor: 0.0
+    cutoff: 10
+    init_lr: 0.01
+    convergence_eps: 0.00001
+    optimizer_func: 'rprop'
+    anneal_lr: false
+    grad_norm_clip: 0.1
+    show_tqdm: true
+    max_num_steps: 10
+    target_packing_coeff: null
+    umbrella: false

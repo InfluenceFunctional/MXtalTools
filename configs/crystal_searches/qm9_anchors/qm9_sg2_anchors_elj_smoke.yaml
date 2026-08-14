@@ -1,0 +1,79 @@
+# SMOKE variant of qm9_sg2_anchors_elj.yaml -- a few hundred optimizations to check
+# timing, I/O and result quality before committing to the full 9,900.
+#
+# Differences from the full config, and ONLY these:
+#   sampling_mode  all -> ordered   (mol_path was already a random draw from all of QM9,
+#                                    so the first 80 entries are themselves a random subset)
+#   mols_to_sample 198 -> 80
+#   num_samples     50 -> 5         => 400 structures
+#   batch_size    1000 -> 200       => 2 batches, so the cursor/incremental-save path runs
+#   run_name             _smoke     => separate output file
+#
+# NOTE when extrapolating timing: batch 200 saturates the GPU less than the full run's
+# 1000, so per-structure cost here is an OVER-estimate of the full run's.
+
+device: cuda
+
+mol_path: D:\crystal_datasets\conditional\priors\qm9_anchor_mols_200.pt
+dataset_path: null
+target_path: null
+target_identifier: null
+umbrella_path: null
+out_dir: D:\crystal_datasets\conditional\anchors
+run_name: qm9_sg2_anchors_elj_smoke
+
+save_trajs: false
+
+uma_predictor_path: null
+mace_predictor_path: null
+score_model_checkpoint: null
+
+force_restart_run: true
+
+init_sample_method: random
+init_reduced: true
+init_sample_reduced: true
+init_target_cp: wide
+
+mol_seed: 0
+opt_seed: 0
+sampling_mode: ordered
+mols_to_sample: 80
+num_samples: 5
+
+sgs_to_search: [ 2 ]
+zp_to_search: [ 1 ]
+
+batch_size: 200
+grow_batch_size: false
+
+opt:
+  # Stage 1 -- compress hard onto a packed structure.
+  - optim_target: 'elj'
+    enforce_reduced: true
+    compression_factor: 1.0
+    cutoff: 10
+    init_lr: 0.05
+    convergence_eps: 0.00001
+    optimizer_func: 'rprop'
+    anneal_lr: false
+    grad_norm_clip: 0.1
+    show_tqdm: true
+    max_num_steps: 450
+    target_packing_coeff: null
+    umbrella: false
+
+  # Stage 2 -- release the compression and relax to a true elj minimum.
+  - optim_target: 'elj'
+    enforce_reduced: true
+    compression_factor: 0.0
+    cutoff: 10
+    init_lr: 0.01
+    convergence_eps: 0.00001
+    optimizer_func: 'rprop'
+    anneal_lr: false
+    grad_norm_clip: 0.1
+    show_tqdm: true
+    max_num_steps: 50
+    target_packing_coeff: null
+    umbrella: false

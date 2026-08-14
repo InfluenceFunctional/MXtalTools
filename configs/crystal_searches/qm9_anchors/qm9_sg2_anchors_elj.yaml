@@ -1,0 +1,102 @@
+# QM9 SG2/Z'=1 ANCHOR GENERATION -- local optimization from random init, under ELJ.
+#
+# Step 2 of the conditional-crystal plan: anchors are fresh structures generated per
+# molecule, NOT experimental ones. The optimization recipe below is the house ELJ recipe
+# used to converge mipcas and nehzor (configs/crystal_searches/mipcas/mipcas_elj_*.yaml,
+# nehzor/run1/) -- two rprop stages, compress then relax, elj throughout. Do NOT reach for
+# generate_qm9_crystal_chunks.py's settings instead: those optimize `silu` with SGD in one
+# stage at cutoff 6, a different potential from the GFN's reward.
+#
+# optim_target `elj` needs no predictor checkpoint (unlike uma/mace), so this runs
+# self-contained.
+#
+# mol_path molecules MUST already sit at the orient_molecule(mode='std') fixed point --
+# built by gfn_diffusion/energy_sampling/prep_qm9_anchor_mols.py, which also drops the
+# ~1% of QM9 whose inertia frame is degenerate. The GFN re-standardizes at rollout and at
+# buffer admission, so a non-fixed-point molecule would have its generated
+# aunit_orientation silently reinterpreted on admission.
+#
+# Total structures = mols_to_sample * num_samples * |sgs| * |zp| = 198 * 50 = 9900.
+# run_search.py keeps EVERY optimized structure, not just the best per molecule.
+#
+# Run (GPU):
+#   python mxtaltools/crystal_search/run_search.py --config <path to this file>
+
+device: cuda
+
+# 198 standardized QM9 molecules; sampling_mode 'all' uses every one of them, so
+# mols_to_sample is ignored on this path. Kept explicit for when it is switched to 'random'.
+mol_path: D:\crystal_datasets\conditional\priors\qm9_anchor_mols_200.pt
+dataset_path: null
+target_path: null
+target_identifier: null
+umbrella_path: null
+out_dir: D:\crystal_datasets\conditional\anchors
+run_name: qm9_sg2_anchors_elj
+
+# One trajectory file per batch PER OPT STAGE. At 10 batches x 2 stages that is 20 extra
+# files of full optimization history; mipcas set it true for a single-molecule study.
+save_trajs: false
+
+# Unused by optim_target 'elj'; parse_opt_config only reads these for uma/mace/score targets.
+uma_predictor_path: null
+mace_predictor_path: null
+score_model_checkpoint: null
+
+force_restart_run: true
+
+init_sample_method: random   # from random initial conditions, not from stored crystals
+init_reduced: true           # sample directly in the reduced (Niggli) frame, matching enforce_reduced below
+init_sample_reduced: true
+init_target_cp: wide         # packing coeff ~ U(0.1, 0.7); deliberately broad so anchors are not seeded into one basin
+
+mol_seed: 0
+opt_seed: 0
+sampling_mode: all           # every molecule in mol_path; the random draw already happened at prep time
+mols_to_sample: 198
+num_samples: 50              # random inits per molecule, per SG, per Z'
+
+sgs_to_search: [ 2 ]
+zp_to_search: [ 1 ]
+
+# Structures per GPU batch. MEASURED on this card (RTX 5080 Laptop, 16.3 GB): batch 1000
+# peaks at 8.4 GB of the ~14.7 GB free, so 1500 projects to ~12.4 GB and keeps ~2 GB of
+# headroom. Do not push to 2000 (~16.8 GB projected, over free VRAM).
+batch_size: 1500
+
+# Deliberately OFF. It grows the batch 1.2x after every successful batch and relies on the
+# OOM handler (run_search.py:111) to back off 0.9x -- i.e. it finds the ceiling by hitting
+# it. On this machine the driver has taken the whole system down rather than raising a
+# catchable OOM, and a handler can only fire on an error Python actually sees.
+grow_batch_size: false
+
+opt:
+  # Stage 1 -- compress hard onto a packed structure.
+  - optim_target: 'elj'
+    enforce_reduced: true
+    compression_factor: 1.0
+    cutoff: 10
+    init_lr: 0.05
+    convergence_eps: 0.00001
+    optimizer_func: 'rprop'
+    anneal_lr: false
+    grad_norm_clip: 0.1
+    show_tqdm: true
+    max_num_steps: 450
+    target_packing_coeff: null
+    umbrella: false
+
+  # Stage 2 -- release the compression and relax to a true elj minimum.
+  - optim_target: 'elj'
+    enforce_reduced: true
+    compression_factor: 0.0
+    cutoff: 10
+    init_lr: 0.01
+    convergence_eps: 0.00001
+    optimizer_func: 'rprop'
+    anneal_lr: false
+    grad_norm_clip: 0.1
+    show_tqdm: true
+    max_num_steps: 50
+    target_packing_coeff: null
+    umbrella: false
