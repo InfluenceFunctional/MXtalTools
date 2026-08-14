@@ -57,6 +57,7 @@ COMPUTES_REQUIRE_CLUSTER = {'lj': True,
                             'mace': False,
                             'latent_harmonic': False,
                             'latent_multiharmonic': False,
+                            'latent_gaussian': False,
                             }
 
 # these need a built unit cell (`unit_cell_pos`/`sym_mult`/`T_fc`) but never touch
@@ -139,6 +140,12 @@ class MolCrystalAnalysis:
                              'mace': self.compute_lattice_mace,
                              'latent_harmonic': self.latent_harmonic_en,
                              'latent_multiharmonic': self.latent_multiharmonic_en,
+                             # Same compute as latent_harmonic, deliberately a distinct
+                             # NAME so the GFN can keep is_crystal=True: the crystal latent
+                             # layout, enforce_crystal_system and the dead-row machinery all
+                             # stay live while the energy stays a cheap analytic gaussian.
+                             # See gfn docs/decisions.md D33.
+                             'latent_gaussian': self.latent_harmonic_en,
                              }
             self.computes_requires_cluster = COMPUTES_REQUIRE_CLUSTER
             self.computes_requires_unit_cell = COMPUTES_REQUIRE_UNIT_CELL

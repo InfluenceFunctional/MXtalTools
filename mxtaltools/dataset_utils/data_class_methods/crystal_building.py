@@ -174,10 +174,40 @@ class MolCrystalBuilding:
 
             # add the intra-aunit centroid distance to cutoffs
             frac_centroids = self.aunit_centroid.reshape(self.num_graphs * self.max_z_prime, 3)
-            cart_centroids = fractional_transform(frac_centroids,
-                                                  self.T_fc.repeat_interleave(self.max_z_prime, dim=0)[1]).reshape(
-                self.num_graphs, self.max_z_prime, 3)
-            dists = (cart_centroids[:, :, None, :] - cart_centroids[:, None, :, :]).norm(dim=-1)  # [n, Zp, Zp, 3]
+            # THE ERROR, fixed 2026-08-13: this call used to end in `[1]`.
+            #
+            # `repeat_interleave(Zp, 0)` builds a per-centroid stack [g0, g0, g1, g1, ...] so
+            # that each flattened centroid is transformed by ITS OWN crystal's cell. `[1]`
+            # reduced that stack to a single (3, 3) -- always graph 0's, since element 1 of
+            # [g0, g0, ...] is still g0 -- and fractional_transform dispatches (n,3)+(3,3) as
+            # one shared transform. So graph 0's cell metric was applied to every crystal in
+            # the batch, and the index threw away the precise job the repeat_interleave it was
+            # indexing had just done. Silent: the shape stayed legal, only the values moved.
+            #
+            # What it feeds: `zp_buffer`, the extra supercell padding for Z'>1, added to
+            # `cutoff` at TWO sites in crystal_building/utils.py (unit-cell selection, and the
+            # final paring of interacting aunits). Too small truncates the neighbour list.
+            #
+            # COST, measured through the energy on the real sg 9 Z'=2 prior -- NOT inferred
+            # from the buffer geometry, which overstates it badly (that route says 5% of
+            # crystals lost more than the whole nominal cutoff, worst 20.3 A). Median
+            # |d elj| was 1e-4 kJ/mol, numerically nil; 3 of 400 crystals exceeded 1 kJ/mol;
+            # worst was 126 against a median |elj| of ~970, i.e. 13% of that structure's
+            # lattice energy. One of four random 100-crystal batches contained no affected
+            # crystal at all. So: RARE, and severe where it lands -- a generous supercell
+            # absorbs the rest -- and 126 kJ/mol on one sample is enough to make a bad
+            # structure look good and be preferentially replayed.
+            #
+            # Because the governing cell came from whichever crystal sat at index 1, a
+            # structure's energy depended on ITS BATCH-MATES: the same crystal scored
+            # differently across a reshuffled prior. That non-reproducibility, more than the
+            # accuracy loss, is why this is pinned by a batch-composition invariance test
+            # (energy_sampling/test_batch_invariance.py) rather than a golden value.
+            cart_centroids = fractional_transform(
+                frac_centroids,
+                self.T_fc.repeat_interleave(self.max_z_prime, dim=0)
+            ).reshape(self.num_graphs, self.max_z_prime, 3)
+            dists = (cart_centroids[:, :, None, :] - cart_centroids[:, None, :, :]).norm(dim=-1)  # [n, Zp, Zp]
             zp_buffer = dists.amax(dim=(1, 2)).repeat_interleave(self.z_prime, dim=0)
 
             zp1_batch = self.split_to_zp1_batch()

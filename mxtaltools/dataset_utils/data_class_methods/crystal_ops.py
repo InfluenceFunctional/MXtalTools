@@ -277,9 +277,23 @@ class MolCrystalOps:
 
         min_vals = -torch.ones(latents.shape[-1], dtype=torch.float32, device=self.device)
         min_vals[:3] = -0.99  # DO NOT allow micro cells to be instantiated
-        # also do not allow rotation length = 0 to be instantiated
+        # also do not allow rotation length = 0 to be instantiated.
+        #
+        # The layout is [3 lengths | 3 angles | 3*Zp centroids | 3*Zp orientations], with
+        # BOTH aunit blocks flattened, so aunit `ind`'s rotation magnitude (component 2 of
+        # its rotvec) is at 6 + 3*Zp + 3*ind + 2. The old expression `5 + 6*(1 + ind)`
+        # gives 11 + 6*ind, which is correct ONLY at Zp=1 and only by coincidence:
+        #   Zp=1: clamps [11]          correct [11]        -- identical, so this is a NO-OP
+        #   Zp=2: clamped [11, 17]     correct [14, 17]    -- 11 is centroid[1][z]
+        #   Zp=3: clamped [11, 17, 23] correct [17, 20, 23]
+        # i.e. only the LAST aunit was ever protected, and at Zp>=2 a centroid row was
+        # clamped instead. MEASURED at Zp=2, sg 9: latent row 14 at -1.0 gave |rotvec|
+        # EXACTLY 0.0 for aunit 0 -- the r=0 singularity this line exists to prevent, and
+        # the one compute_jacobian's log(sin(r/2)) clamps at ~37 nats. Row 17 (the last
+        # aunit) correctly floored at 0.0314. It never IndexErrors, because the wrong
+        # index 5+6*Zp is exactly width-1: silent by construction.
         for ind in range(self.max_z_prime):
-            min_vals[5 + 6 * (1 + ind)] = -0.99
+            min_vals[6 + 3 * self.max_z_prime + 3 * ind + 2] = -0.99
 
         max_vals = torch.ones(latents.shape[-1], dtype=torch.float32, device=self.device)
         max_vals[
