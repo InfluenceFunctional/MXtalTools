@@ -1,5 +1,7 @@
 from mace.tools.torch_geometric.dataloader import Collater
 
+import time
+
 import torch
 from mace.data import AtomicData, get_neighborhood, utils
 from mace.tools import to_one_hot, atomic_numbers_to_indices
@@ -98,11 +100,55 @@ def mxt_crystal_to_mace_atomicdata(batch,
     return mace_data
 
 
+#: Where a mace energy call's seconds go, accumulated across calls and drained by
+#: MolecularCrystal.drain_energy_timing into energy/mace_* metrics.
+#:
+#: THE QUESTION IT ANSWERS. `build` + `collate` is the part a vectorised AtomicData
+#: builder would replace; `forward` is the part it cannot touch. Vectorising is worth
+#: doing iff the first is a large share of the total -- and that is NOT safe to assume.
+#: The same argument for UMA produced a 52-249x microbenchmark and 1.38x end to end,
+#: because the UMA forward turned out to be >99% of the call. MEASURE, then decide.
+#:
+#: Honest because safe_predict_mace synchronises: without that drain the forward
+#: returns immediately and its time is charged to whichever later statement touches
+#: the result, which would put the split exactly backwards.
+_PHASE_SECONDS = {'build': 0.0, 'collate': 0.0, 'xfer': 0.0, 'forward': 0.0}
+_PHASE_CALLS = 0
+
+
+def drain_mace_phase_timing():
+    """Pop the accumulated per-phase seconds. {} when nothing was timed, so a stage
+    that never calls mace (bwd/dataset MLE) logs nothing rather than zeros."""
+    global _PHASE_CALLS
+    if not _PHASE_CALLS:
+        return {}
+    total = sum(_PHASE_SECONDS.values())
+    out = {f'energy/mace_{k}_s': v for k, v in _PHASE_SECONDS.items()}
+    out['energy/mace_calls'] = _PHASE_CALLS
+    if total > 0:
+        # THE decision number: what fraction of a mace call is vectorisable host work
+        out['energy/mace_host_frac'] = (_PHASE_SECONDS['build']
+                                        + _PHASE_SECONDS['collate']) / total
+        out['energy/mace_forward_frac'] = _PHASE_SECONDS['forward'] / total
+    for k in _PHASE_SECONDS:
+        _PHASE_SECONDS[k] = 0.0
+    _PHASE_CALLS = 0
+    return out
+
+
 def compute_crystal_mace_on_mxt_batch(batch, model,
                                       std_orientation=True, pbc: bool=True, force_rebuild: bool = False):
+    global _PHASE_CALLS
+    _t = time.perf_counter()
     dataset = batch_to_mace_atomicdata(batch, force_rebuild, model, std_orientation, pbc=pbc)
+    _PHASE_SECONDS['build'] += time.perf_counter() - _t
+
+    _t = time.perf_counter()
     collater = Collater([None], [None])
     mbatch = collater(dataset)
+    _PHASE_SECONDS['collate'] += time.perf_counter() - _t
+
+    _t = time.perf_counter()
     mbatch = mbatch.to(batch.device)
     input_data = mbatch.to_dict()
 
@@ -113,7 +159,13 @@ def compute_crystal_mace_on_mxt_batch(batch, model,
     graph_ind = batch.unit_cell_batch[mbatch.edge_index[0].cpu()]
     unit_shifts = input_data['unit_shifts']
     input_data['shifts'] = fractional_transform(unit_shifts, batch.T_fc[graph_ind].to(batch.device))
+    _PHASE_SECONDS['xfer'] += time.perf_counter() - _t
+
+    _t = time.perf_counter()
     output, crashed = safe_predict_mace(model, input_data)
+    _PHASE_SECONDS['forward'] += time.perf_counter() - _t
+    _PHASE_CALLS += 1
+
     if crashed:
         energy = torch.zeros(batch.num_graphs, dtype=torch.float32, device=batch.device)
     else:
@@ -123,9 +175,29 @@ def compute_crystal_mace_on_mxt_batch(batch, model,
 
 def safe_predict_mace(model, input_data):
     try:
-        #torch.cuda.synchronize()  # flush prior kernels
+        # RESTORED 2026-08-14, to match safe_predict_uma, which never lost them.
+        #
+        # These were commented out here and left live on the UMA path, and that is the
+        # one structural difference between the two routes -- which is also how they
+        # behave in production: the UMA arms run, the MACE arms collapse their batch
+        # and get cancelled for low occupancy.
+        #
+        # They do more than surface errors. Without a drain the host runs ahead and
+        # queues several calls' worth of kernels before any of their intermediates are
+        # released, so peak RESERVED reflects several in-flight chunks rather than one.
+        # `cuda_memory_fraction` is applied as a hard per-process cap, so that inflated
+        # peak is not merely untidy -- it is the thing a later allocation fails against,
+        # and the caller then reads the failure as "this batch is too big" and shrinks
+        # a batch that was never the problem.
+        #
+        # Cost is one drain per energy call on a route where the MLIP forward is >99%
+        # of that call. Measure it against vram/cached_mb and vram/peak_reserved_mb
+        # (train.py vram_ledger) before concluding either way.
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()  # flush prior kernels
         out = model(input_data, compute_force=False, compute_stress=False)
-        #torch.cuda.synchronize()  # force errors to surface *here*
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()  # force errors to surface *here*
         return out, False  # False = no failure
 
     except RuntimeError as e:
