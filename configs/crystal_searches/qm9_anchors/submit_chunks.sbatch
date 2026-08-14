@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --time=12:00:00
+#SBATCH --time=01:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=4
@@ -9,7 +9,6 @@
 #SBATCH --array=0-49
 #SBATCH --account=torch_pr_226_chemistry
 #SBATCH --job-name=qm9_anchors
-#SBATCH --output=/scratch/mk8347/projects/gfn_cond/MXtalTools/slurm_logs/qm9_anchors_%A_%a.out
 
 # qm9_anchors :: one array task per molecule chunk.
 # Config names are index-keyed (qm9c100k_chunk<k>.yaml), so the array id selects the config
@@ -30,10 +29,16 @@ if [ ! -f "${CONFIG}" ]; then
     exit 1
 fi
 
+# fail here rather than after hours of optimisation at the first torch.save
+if [ ! -d "${DATA_ROOT}/anchors" ]; then
+    echo "missing output dir: ${DATA_ROOT}/anchors" >&2
+    exit 1
+fi
+
 # run_search writes opt_intermediates.pt into the CWD under an unnamed, run-agnostic path;
-# on a shared CWD one task's OOM salvage can be read back by another. One CWD per task.
-TASKDIR=/scratch/mk8347/tmp/qm9_anchors/${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}
-mkdir -p "${TASKDIR}" "${DATA_ROOT}/anchors"
+# on a shared CWD one task's OOM salvage can be read back by another. Ephemeral CWD per task.
+TASKDIR=$(mktemp -d)
+trap 'rm -rf "${TASKDIR}"' EXIT
 
 # ---- run ----
 srun singularity exec --nv \
@@ -45,11 +50,8 @@ srun singularity exec --nv \
     /bin/bash -c "
         source /ext3/env.sh
         export PYTHONPATH=${MXT_ROOT}:\$PYTHONPATH
-        python ${MXT_ROOT}/mxtaltools/crystal_search/run_search.py --config ${CONFIG}
+        nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+        # unbuffered: run_search prints its OOM/batch-size messages to stdout, and a killed
+        # job loses the whole buffer -- which is how chunk 0 died with no message at all
+        python -u ${MXT_ROOT}/mxtaltools/crystal_search/run_search.py --config ${CONFIG}
     "
-STATUS=$?
-
-if [ ${STATUS} -eq 0 ]; then
-    rm -rf "${TASKDIR}"
-fi
-exit ${STATUS}

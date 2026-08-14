@@ -2,9 +2,12 @@ qm9_anchors -- cluster launch sequence. 50 disjoint QM9 chunks, SG2 Z'=1, house 
 ============================================================================================
 
 WHAT RUNS
-  50 array tasks, one per chunk. Each chunk holds ~2000 standardized molecules x 10 random
-  inits = ~20k structures = 20 batches of 1000, two rprop stages (450 compress + 50 relax).
-  Chunks are disjoint and write distinct outputs, so tasks need no coordination.
+  50 array tasks, one per chunk. 9750 standardized molecules total, 195 per chunk, x 10
+  random inits = 1950 structures = 2 batches of 1000, two rprop stages (450 compress + 50
+  relax). Chunks are disjoint and write distinct outputs, so tasks need no coordination.
+  The qm9c100k tag counts CRYSTALS, not molecules: 9750 x 10 inits = 97,500 anchors.
+
+  Measured on job 15745882_0: 2.99 samples/s, so ~11 min/chunk. Header asks 1 hour.
 
 CONFIGS
   ./qm9c100k_chunk<k>.yaml, k = 0..49, carrying /scratch paths -- these are cluster configs
@@ -40,14 +43,24 @@ SUBMIT
   Then the rest:
     sbatch --array=1-49 configs/crystal_searches/qm9_anchors/submit_chunks.sbatch
 
-WALLTIME
-  12:00:00 is unverified -- the b1000 timing probe was written but no rate was recorded.
-  Take the wall clock off the --array=0 smoke and reset the header before the full submit.
-  An underestimate is recoverable but wasteful: force_restart_run is false and run_search
-  torch.saves after every batch, so resubmitting a timed-out task resumes at its cursor.
-  Caveat: batch_idx is reconstructed as (cursor // batch_size) - 1, so if a task hit OOM and
-  shrank its batch, the resumed run re-seeds inits off a different index. Partition and
-  outputs stay correct; only the random inits of the resumed batches differ.
+RESUME
+  force_restart_run is false and run_search torch.saves after every batch, so resubmitting a
+  killed task picks up at its cursor -- a chunk that died after one batch restarts at 900 or
+  1000, not 0. Caveat: batch_idx is reconstructed as (cursor // batch_size) - 1, so a task
+  that hit OOM and shrank its batch re-seeds inits off a different index on resume. The
+  partition and the outputs stay correct; only the random inits of resumed batches differ.
+
+READING A LIVE LOG -- job 15745882
+  A running task looks dead. tqdm rewrites one line with \r, so cat shows the bar frozen at
+  the last COMPLETED batch, and every task in an array sits at the same point at the same
+  time -- 26 identical-looking .out files is what a healthy array looks like mid-flight.
+  Check the outputs, not the log: a finished chunk is 1950 crystals at ~3.0 KB each, so
+  ~5.7 MB. A task stuck after one batch would be ~2.8 MB.
+
+  That job also shows the bar at 900/1950 where a clean first batch prints 950, so batch
+  1000 took one CUDA OOM and the handler cut it to 900. Absorbed, chunks completed. It costs
+  one wasted 500-step optimisation per chunk; batch_size 900 in the configs would avoid it.
+  gpu:1 and 32G are what that job ran on, so they stay.
 
 CHECK
   Expect 50 files, /scratch/mk8347/data/crystal_datasets/conditional/anchors/qm9c100k_chunk<k>.pt.
