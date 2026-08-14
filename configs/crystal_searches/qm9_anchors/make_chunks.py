@@ -38,15 +38,17 @@ def opt_stage(target, compression, lr, steps):
 
 
 def build(args, k):
-    mol_path = Path(args.mol_dir) / f"{args.mol_stem}_chunk{k}.pt"
+    # as_posix, not str: a cluster config set is generated on Windows, and a Path join there
+    # turns /scratch/... into backslashes that no longer resolve on the target machine
+    mol_path = (Path(args.mol_dir) / f"{args.mol_stem}_chunk{k}.pt").as_posix()
     return {
         'device': 'cuda',
-        'mol_path': str(mol_path),
+        'mol_path': mol_path,
         'dataset_path': None,
         'target_path': None,
         'target_identifier': None,
         'umbrella_path': None,
-        'out_dir': str(args.out_dir),
+        'out_dir': Path(args.out_dir).as_posix(),
         'run_name': f"{args.tag}_chunk{k}",
         'save_trajs': False,
         'uma_predictor_path': None,

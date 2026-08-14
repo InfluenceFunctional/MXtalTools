@@ -1,0 +1,55 @@
+qm9_anchors -- cluster launch sequence. 50 disjoint QM9 chunks, SG2 Z'=1, house ELJ recipe.
+============================================================================================
+
+WHAT RUNS
+  50 array tasks, one per chunk. Each chunk holds ~2000 standardized molecules x 10 random
+  inits = ~20k structures = 20 batches of 1000, two rprop stages (450 compress + 50 relax).
+  Chunks are disjoint and write distinct outputs, so tasks need no coordination.
+
+CONFIGS
+  ./qm9c100k_chunk<k>.yaml, k = 0..49, carrying /scratch paths -- these are cluster configs
+  and will not resolve on the Windows box. Regenerate with:
+
+    python make_chunks.py --chunks 50 --num-samples 10 --tag qm9c100k \
+        --mol-stem qm9_cluster_mols \
+        --mol-dir /scratch/mk8347/data/crystal_datasets/conditional/priors \
+        --out-dir /scratch/mk8347/data/crystal_datasets/conditional/anchors \
+        --dest .
+
+  --num-samples 10 and --tag qm9c100k are NOT the script defaults (50 / qm9cluster). Omitting
+  either silently produces a different, wrongly named set.
+
+  Same command with --mol-dir/--out-dir under D:/crystal_datasets/conditional rebuilds a
+  local-path set, if a chunk ever needs to run on the workstation.
+
+  The three non-chunk yamls here (qm9_sg2_anchors_elj, its smoke, the b1000 timing probe)
+  are the local runs already on disk and still point at D:. They are not part of the array.
+
+BEFORE FIRST SUBMIT
+  1. Molecule chunks on the cluster (50 files, ~5.3 MB each, ~265 MB total):
+       rsync -av D:/crystal_datasets/conditional/priors/qm9_cluster_mols_chunk*.pt \
+           mk8347@greene:/scratch/mk8347/data/crystal_datasets/conditional/priors/
+  2. Log dir must exist -- sbatch opens --output before any line of the script runs:
+       mkdir -p /scratch/mk8347/projects/gfn_cond/MXtalTools/slurm_logs
+  3. MXtalTools checkout at /scratch/mk8347/projects/gfn_cond/MXtalTools, current enough to
+     contain the 50 qm9c100k_chunk<k>.yaml with /scratch paths.
+
+SUBMIT
+  Smoke one chunk first -- the walltime below is a guess, not a measurement:
+    sbatch --array=0 configs/crystal_searches/qm9_anchors/submit_chunks.sbatch
+  Then the rest:
+    sbatch --array=1-49 configs/crystal_searches/qm9_anchors/submit_chunks.sbatch
+
+WALLTIME
+  12:00:00 is unverified -- the b1000 timing probe was written but no rate was recorded.
+  Take the wall clock off the --array=0 smoke and reset the header before the full submit.
+  An underestimate is recoverable but wasteful: force_restart_run is false and run_search
+  torch.saves after every batch, so resubmitting a timed-out task resumes at its cursor.
+  Caveat: batch_idx is reconstructed as (cursor // batch_size) - 1, so if a task hit OOM and
+  shrank its batch, the resumed run re-seeds inits off a different index. Partition and
+  outputs stay correct; only the random inits of the resumed batches differ.
+
+CHECK
+  Expect 50 files, /scratch/mk8347/data/crystal_datasets/conditional/anchors/qm9c100k_chunk<k>.pt.
+  A short file means the task died mid-run rather than that the chunk was small -- compare
+  len(torch.load(...)) against 10 x (molecules in that chunk).

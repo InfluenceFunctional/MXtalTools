@@ -8,7 +8,7 @@ init_sample_method: random
 init_sample_reduced: true
 init_target_cp: wide
 mace_predictor_path: null
-mol_path: D:\crystal_datasets\conditional\priors\qm9_cluster_mols_chunk20.pt
+mol_path: /scratch/mk8347/data/crystal_datasets/conditional/priors/qm9_cluster_mols_chunk20.pt
 mol_seed: 0
 mols_to_sample: 0
 num_samples: 10
@@ -40,7 +40,7 @@ opt:
   target_packing_coeff: null
   umbrella: false
 opt_seed: 20
-out_dir: D:/crystal_datasets/conditional/anchors
+out_dir: /scratch/mk8347/data/crystal_datasets/conditional/anchors
 run_name: qm9c100k_chunk20
 sampling_mode: all
 save_trajs: false
