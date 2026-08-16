@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Optional
 
 import numpy as np
@@ -36,6 +37,136 @@ torch.serialization.add_safe_globals([slice])  # necessary for UMA loading on to
 #: switch, and an A/B between the two paths must run identical source or it is
 #: measuring the edit as well as the change.
 USE_VECTORISED_ATOMICDATA = os.environ.get('MXT_VECTORISED_ATOMICDATA', '1') != '0'
+
+#: Per-phase seconds for the UMA energy call, mirroring AL_mace_utils' _PHASE_SECONDS.
+#: The MACE route has had this since the hoist landed; this route had nothing, so
+#: "the UMA forward is >99% of the call" rested on no standing measurement.
+#:
+#: 'graph' IS NESTED INSIDE 'forward' and does not add to the total. That is the whole
+#: reason this exists: mxtaltools hands fairchem an empty edge_index and
+#: crystal_inference_settings sets external_graph_gen=False, so the model runs
+#: otf_graph and builds the neighbour list ITSELF, inside the forward. A plain
+#: build/forward split therefore charges graph construction to the forward and
+#: concludes the forward dominates -- which is true, uninformative, and exactly the
+#: reading that would retire the neighbour-list question for the wrong reason.
+#: drain_uma_phase_timing reports forward_ex_graph so the parts sum.
+#:
+#: Honest because safe_predict_uma synchronises on both sides; without that drain the
+#: forward returns immediately and its cost lands on whichever later statement touches
+#: the result.
+_PHASE_SECONDS = {'guard': 0.0, 'build': 0.0, 'forward': 0.0, 'graph': 0.0}
+_PHASE_CALLS = 0
+_GRAPH_CALLS = 0
+
+
+_install_done = False
+
+
+def install_uma_graph_timer() -> bool:
+    """
+    Wrap fairchem's generate_graph so the on-device neighbour build can be separated
+    from the rest of the forward. Returns whether anything was actually wrapped.
+
+    OFF BY DEFAULT: production never calls this, so the shipping path takes no extra
+    wrapper. Call it from a profiling harness.
+
+    PATCHES THE CALLER'S NAMESPACE, NOT THE DEFINING MODULE. escn_md does
+    `from fairchem.core.graph.compute import generate_graph` at import, which binds
+    the function object into escn_md's globals; rebinding
+    fairchem.core.graph.compute.generate_graph afterwards leaves that copy untouched
+    and the timer silently reads zero -- a swallowed diagnostic that presents as
+    "graph construction is free". Both namespaces are patched, and the return value
+    reports whether a binding was found at all rather than assuming one was.
+
+    Idempotent: a second call is a no-op, so a harness that re-enters cannot stack
+    wrappers and multiply-count the same call.
+    """
+    global _install_done
+    if _install_done:
+        return True
+
+    targets = []
+    try:
+        import fairchem.core.graph.compute as _compute
+        targets.append(_compute)
+    except ImportError:
+        pass
+    try:
+        import fairchem.core.models.uma.escn_md as _escn
+        targets.append(_escn)
+    except ImportError:
+        pass
+
+    wrapped_any = False
+    for mod in targets:
+        orig = getattr(mod, 'generate_graph', None)
+        if orig is None:
+            continue
+
+        def _timed(*args, _orig=orig, **kwargs):
+            global _GRAPH_CALLS
+            _t = time.perf_counter()
+            try:
+                return _orig(*args, **kwargs)
+            finally:
+                # the graph build queues kernels; without a drain its cost lands on a
+                # later phase and this timer reads near zero for the wrong reason
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                _PHASE_SECONDS['graph'] += time.perf_counter() - _t
+                _GRAPH_CALLS += 1
+
+        setattr(mod, 'generate_graph', _timed)
+        wrapped_any = True
+
+    _install_done = wrapped_any
+    return wrapped_any
+
+
+#: Install at import when MXT_UMA_GRAPH_TIMER is set, so a RUN can have the graph
+#: split without a code change -- the same reasoning as the other kill switches here.
+#:
+#: OFF by default: it adds a synchronise per graph build, and a measurement cost has
+#: no business riding along on every production step. Turn it on for a profiling arm,
+#: where `energy/uma_graph_frac_of_forward` is the only thing that separates on-device
+#: graph construction from the rest of the forward -- measured at 2.6-6.1%, which is
+#: why this is diagnostic rather than something to leave running.
+if os.environ.get('MXT_UMA_GRAPH_TIMER', '0') != '0':
+    install_uma_graph_timer()
+
+
+def drain_uma_phase_timing():
+    """Pop the accumulated per-phase seconds. {} when nothing was timed, so a stage
+    that never calls uma logs nothing rather than zeros."""
+    global _PHASE_CALLS, _GRAPH_CALLS
+    if not _PHASE_CALLS:
+        return {}
+    # 'graph' is nested inside 'forward', so it is excluded from the total
+    total = sum(v for k, v in _PHASE_SECONDS.items() if k != 'graph')
+    out = {f'energy/uma_{k}_s': v for k, v in _PHASE_SECONDS.items() if k != 'graph'}
+    out['energy/uma_calls'] = _PHASE_CALLS
+    if total > 0:
+        out['energy/uma_host_frac'] = (_PHASE_SECONDS['guard']
+                                       + _PHASE_SECONDS['build']) / total
+        out['energy/uma_forward_frac'] = _PHASE_SECONDS['forward'] / total
+    # which construction path ran, for the same reason the mace drain records its
+    # flags: two arms otherwise log identical key sets with nothing to tell them apart
+    out['energy/uma_flag_vectorised'] = int(USE_VECTORISED_ATOMICDATA)
+    # only report the graph split when the timer was installed AND fired; a zero here
+    # would otherwise be indistinguishable from "graph construction costs nothing"
+    if _GRAPH_CALLS:
+        out['energy/uma_graph_s'] = _PHASE_SECONDS['graph']
+        out['energy/uma_graph_calls'] = _GRAPH_CALLS
+        out['energy/uma_forward_ex_graph_s'] = (_PHASE_SECONDS['forward']
+                                                - _PHASE_SECONDS['graph'])
+        if _PHASE_SECONDS['forward'] > 0:
+            out['energy/uma_graph_frac_of_forward'] = (_PHASE_SECONDS['graph']
+                                                       / _PHASE_SECONDS['forward'])
+    for k in _PHASE_SECONDS:
+        _PHASE_SECONDS[k] = 0.0
+    _PHASE_CALLS = 0
+    _GRAPH_CALLS = 0
+    return out
 
 
 def safe_predict_uma(predictor, uma_batch):
@@ -118,19 +249,27 @@ def compute_crystal_uma_on_mxt_batch(batch,
                                      max_cp: float = 2.0,
                                      force_rebuild: bool = False):
     "UMA sometimes fails on ultra-dense cells, so we'll manually prevent that. These are obviously terrible cells anyway."
+    global _PHASE_CALLS
+    _t = time.perf_counter()
     while sum(batch.packing_coeff > max_cp) > 0:
         bad_inds = torch.argwhere(batch.packing_coeff > max_cp)
         if len(bad_inds) > 0:
             batch.cell_lengths[bad_inds] += 2
             batch.box_analysis()
+    _PHASE_SECONDS['guard'] += time.perf_counter() - _t
 
+    _t = time.perf_counter()
     if USE_VECTORISED_ATOMICDATA:
         uma_batch = batch_to_fairchem_batch(batch, std_orientation, pbc, force_rebuild)
     else:
         uma_batch = atomicdata_list_to_batch(
             batch_to_fairchem_atomicdata(batch, std_orientation, pbc, force_rebuild))
+    _PHASE_SECONDS['build'] += time.perf_counter() - _t
 
+    _t = time.perf_counter()
     out, crashed = safe_predict_uma(predictor, uma_batch)
+    _PHASE_SECONDS['forward'] += time.perf_counter() - _t
+    _PHASE_CALLS += 1
     if crashed:
         energy = torch.zeros(batch.num_graphs, dtype=torch.float32, device=batch.device)
     else:

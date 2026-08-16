@@ -119,7 +119,13 @@ def mxt_crystal_to_mace_atomicdata(batch,
 #: Honest because safe_predict_mace synchronises: without that drain the forward
 #: returns immediately and its time is charged to whichever later statement touches
 #: the result, which would put the split exactly backwards.
-_PHASE_SECONDS = {'build': 0.0, 'collate': 0.0, 'xfer': 0.0, 'forward': 0.0}
+#:
+#: 'neighbours' is NESTED INSIDE 'build' and excluded from the total, the same way
+#: uma's 'graph' sits inside 'forward'. It is broken out because the neighbour list is
+#: what both MLIP flags actually change, and a 'build' that merely got faster does not
+#: say whether the GPU list ran, fell back, or was never reached.
+_PHASE_SECONDS = {'build': 0.0, 'collate': 0.0, 'xfer': 0.0, 'forward': 0.0,
+                  'neighbours': 0.0}
 _PHASE_CALLS = 0
 
 
@@ -129,7 +135,8 @@ def drain_mace_phase_timing():
     global _PHASE_CALLS
     if not _PHASE_CALLS:
         return {}
-    total = sum(_PHASE_SECONDS.values())
+    # 'neighbours' is nested inside 'build', so it must not be summed into the total
+    total = sum(v for k, v in _PHASE_SECONDS.items() if k != 'neighbours')
     out = {f'energy/mace_{k}_s': v for k, v in _PHASE_SECONDS.items()}
     out['energy/mace_calls'] = _PHASE_CALLS
     if total > 0:
@@ -137,6 +144,17 @@ def drain_mace_phase_timing():
         out['energy/mace_host_frac'] = (_PHASE_SECONDS['build']
                                         + _PHASE_SECONDS['collate']) / total
         out['energy/mace_forward_frac'] = _PHASE_SECONDS['forward'] / total
+    if _PHASE_SECONDS['build'] > 0:
+        out['energy/mace_nl_frac_of_build'] = (_PHASE_SECONDS['neighbours']
+                                               / _PHASE_SECONDS['build'])
+    # WHICH PATH RAN. Without this an A/B is unreadable after the fact: two runs with
+    # different flags log identical key sets and nothing says which was which, and a
+    # config block that is simply ABSENT reads as "feature off" with no error.
+    out['energy/mace_flag_batched_nl'] = int(USE_BATCHED_MACE_NEIGHBOURS)
+    out['energy/mace_flag_gpu_batch'] = int(USE_GPU_MACE_BATCH)
+    out['energy/mace_flag_hoisted'] = int(USE_HOISTED_MACE_ATOMICDATA)
+    from mxtaltools.mlip_interfaces.pbc_neighbours import drain_neighbour_path_counts
+    out.update(drain_neighbour_path_counts())
     for k in _PHASE_SECONDS:
         _PHASE_SECONDS[k] = 0.0
     _PHASE_CALLS = 0
@@ -146,26 +164,42 @@ def drain_mace_phase_timing():
 def compute_crystal_mace_on_mxt_batch(batch, model,
                                       std_orientation=True, pbc: bool=True, force_rebuild: bool = False):
     global _PHASE_CALLS
+    # the device-built dict needs the batched neighbour list -- a per-graph host
+    # neighbour list would put back the loop it exists to remove
+    gpu_batch = USE_GPU_MACE_BATCH and USE_BATCHED_MACE_NEIGHBOURS and pbc
+
     _t = time.perf_counter()
-    builder = (batch_to_mace_atomicdata_hoisted if USE_HOISTED_MACE_ATOMICDATA
-               else batch_to_mace_atomicdata)
-    dataset = builder(batch, force_rebuild, model, std_orientation, pbc=pbc)
+    if gpu_batch:
+        input_data = batch_to_mace_input_dict(batch, force_rebuild, model,
+                                              std_orientation, pbc=pbc)
+    else:
+        builder = (batch_to_mace_atomicdata_hoisted if USE_HOISTED_MACE_ATOMICDATA
+                   else batch_to_mace_atomicdata)
+        dataset = builder(batch, force_rebuild, model, std_orientation, pbc=pbc)
     _PHASE_SECONDS['build'] += time.perf_counter() - _t
 
     _t = time.perf_counter()
-    collater = Collater([None], [None])
-    mbatch = collater(dataset)
+    if not gpu_batch:
+        collater = Collater([None], [None])
+        mbatch = collater(dataset)
     _PHASE_SECONDS['collate'] += time.perf_counter() - _t
 
     _t = time.perf_counter()
-    mbatch = mbatch.to(batch.device)
-    input_data = mbatch.to_dict()
+    if not gpu_batch:
+        mbatch = mbatch.to(batch.device)
+        input_data = mbatch.to_dict()
 
     frac_pos = fractional_transform(batch.unit_cell_pos, batch.T_cf[batch.unit_cell_batch])
     cart_pos = fractional_transform(frac_pos, batch.T_fc[batch.unit_cell_batch])
     input_data['positions'] = cart_pos.to(batch.device)
 
-    graph_ind = batch.unit_cell_batch[mbatch.edge_index[0].cpu()]
+    # `.cpu()` only on the collated path: there edge_index may still be a host tensor,
+    # and indexing a CUDA tensor with it would fail. On the device-built path it is
+    # already on the GPU, so the sync is not merely unnecessary -- it is one forced
+    # drain per energy call, which is exactly the cost this path removes.
+    edge_src = (input_data['edge_index'][0] if gpu_batch
+                else mbatch.edge_index[0].cpu())
+    graph_ind = batch.unit_cell_batch[edge_src]
     unit_shifts = input_data['unit_shifts']
     input_data['shifts'] = fractional_transform(unit_shifts, batch.T_fc[graph_ind].to(batch.device))
     _PHASE_SECONDS['xfer'] += time.perf_counter() - _t
@@ -288,6 +322,208 @@ def _mace_resolve_aunit_z(batch, force_rebuild, std_orientation):
     return batch.z, batch.batch
 
 
+#: Build the collated MACE input dict directly on device, with no per-graph AtomicData
+#: and no Collater.
+#:
+#: DEFAULT OFF, same gate as the batched neighbour list it depends on: this path is
+#: only reachable with MXT_BATCHED_MACE_NEIGHBOURS on, because a per-graph host
+#: neighbour list would reintroduce exactly the loop this removes.
+USE_GPU_MACE_BATCH = os.environ.get('MXT_GPU_MACE_BATCH', '0') != '0'
+
+
+def _z_index_lut(z_table, device):
+    """z -> model element index, as a gather table instead of np.vectorize over a dict.
+
+    -1 for absent elements so a z the model cannot represent produces an out-of-range
+    index rather than silently selecting the wrong column: atomic_numbers_to_indices
+    RAISES on an unknown element, and losing that would turn a wrong-element batch
+    into a plausible wrong energy.
+    """
+    zs = [int(z) for z in z_table.zs]
+    lut = torch.full((max(zs) + 1,), -1, dtype=torch.long, device=device)
+    lut[torch.tensor(zs, dtype=torch.long, device=device)] = torch.arange(
+        len(zs), dtype=torch.long, device=device)
+    return lut
+
+
+def batch_to_mace_input_dict(batch, force_rebuild, model, std_orientation,
+                             pbc: bool = True):
+    """
+    The collated MACE input dict, built directly on device.
+
+    WHAT IT REPLACES. The shipping path builds one AtomicData per crystal, then hands
+    the list to PyG's Collater. Measured at 128 graphs, once the neighbour list is on
+    the GPU the remainder is still ~27 ms of host work -- ~14 ms of it the Collater --
+    with the card idle throughout. On a usage-policed cluster that idle time is the
+    number jobs are cancelled on, so moving it is worth doing even at parity.
+
+    WHY A DICT AND NOT A COLLATED Batch. compute_crystal_mace_on_mxt_batch calls
+    .to_dict() on the collated object immediately and the model reads only dict keys,
+    so the Batch is a way station. Building the dict skips it AND skips reproducing
+    PyG's _slice_dict/_inc_dict internals, which is the risk the hoist docstring
+    flagged when it left the Collater alone.
+
+    HOW THE COLLATION RULES ARE REPRODUCED (mace.tools.torch_geometric.batch):
+      * keys matching (index|face) concatenate on dim -1 and are incremented by the
+        running node count -- edge_index only. batched_pbc_neighbour_list already
+        emits GLOBAL atom indices, so that increment is already applied;
+      * 0-dim tensors are unsqueezed and stacked, giving [num_graphs];
+      * everything else concatenates on dim 0. cell is (3,3) per graph, so the
+        collated form is [3*num_graphs, 3], NOT [num_graphs, 3, 3].
+
+    Bit-identical to the shipping path with the same neighbour list, enforced by
+    verify_mace_input_dict_equivalence rather than asserted.
+    """
+    if not pbc:
+        # the non-periodic branch REWRITES the cell in place inside get_neighborhood
+        # and the caller uses the returned cell; that side effect is deliberately left
+        # on the reference path rather than reimplemented here
+        raise ValueError('batch_to_mace_input_dict is periodic-only; the pbc=False '
+                         'leg stays on the reference builder')
+
+    from mxtaltools.mlip_interfaces.pbc_neighbours import batched_pbc_neighbour_list
+
+    z, batch_ind = _mace_resolve_aunit_z(batch, force_rebuild, std_orientation)
+    device = batch.unit_cell_pos.device
+    num_graphs = batch.num_graphs
+    cutoff = float(model.r_max)
+    z_table = utils.AtomicNumberTable([int(zz) for zz in model.atomic_numbers])
+
+    gather, out_n = _tiled_gather_index(batch_ind, batch.sym_mult, num_graphs)
+    sample_z_all = z[gather]
+    pos_all = batch.unit_cell_pos
+    n_tot = pos_all.shape[0]
+    if int(out_n.sum()) != n_tot:
+        raise RuntimeError(
+            f'unit_cell_pos has {n_tot} atoms but sum(n_i * sym_mult_i) is '
+            f'{int(out_n.sum())} -- positions and elements are misaligned')
+
+    dtype = pos_all.dtype
+    cells_t = batch.T_fc.transpose(-2, -1)                       # [G, 3, 3]
+
+    # --- one-hot, on device. Same construction as mace.tools.to_one_hot: zeros in the
+    #     DEFAULT dtype (not the position dtype) scattered with 1. ---
+    lut = _z_index_lut(z_table, device)
+    zl = sample_z_all.long()
+    # CLAMP BEFORE THE GATHER. The table only spans up to the model's largest element,
+    # so a z ABOVE that range would index out of bounds -- which raises, but as a bare
+    # IndexError from inside the gather rather than as the element error it actually
+    # is. Clamp into range, then treat out-of-range and absent alike as -1.
+    idx = torch.where(zl < lut.numel(), lut[zl.clamp(max=lut.numel() - 1)],
+                      torch.full_like(zl, -1))
+    if bool((idx < 0).any()):
+        bad = sorted({int(v) for v in sample_z_all[idx < 0].unique()})
+        raise ValueError(f'atomic numbers {bad} are not in the model element table')
+    node_attrs = torch.zeros((n_tot, len(z_table)), device=device)
+    node_attrs.scatter_(dim=-1, index=idx.unsqueeze(-1), value=1)
+
+    # --- neighbours, global indices, sorted by graph so the layout matches the
+    #     per-graph concatenation the Collater would have produced ---
+    ucell_graph = torch.repeat_interleave(
+        torch.arange(num_graphs, device=device), out_n)
+    _t_nl = time.perf_counter()
+    e_i, e_s, e_g = batched_pbc_neighbour_list(
+        pos_all, ucell_graph, cells_t, cutoff, pbc=True)
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()      # or the cost lands on whatever blocks next
+    _PHASE_SECONDS['neighbours'] += time.perf_counter() - _t_nl
+    order = torch.argsort(e_g, stable=True)
+    edge_index = e_i[:, order]
+    unit_shifts = e_s[order].to(dtype)
+    # detached for the same reason as _split_batched_neighbours: this value is a
+    # placeholder that compute_crystal_mace_on_mxt_batch overwrites differentiably
+    shifts = torch.einsum('ed,edc->ec', unit_shifts,
+                          cells_t[e_g[order]].detach().to(dtype))
+
+    ones = lambda *s: torch.ones(*s, dtype=dtype, device=device)
+    zeros = lambda *s: torch.zeros(*s, dtype=dtype, device=device)
+    return {
+        'edge_index': edge_index,
+        'positions': pos_all,
+        'shifts': shifts,
+        'unit_shifts': unit_shifts,
+        # (3,3) per graph concatenated on dim 0
+        'cell': cells_t.reshape(-1, 3).to(dtype),
+        'node_attrs': node_attrs,
+        'batch': ucell_graph,
+        'ptr': torch.cat([torch.zeros(1, dtype=torch.long, device=device),
+                          torch.cumsum(out_n, 0)]).to(torch.long),
+        'head': torch.zeros(num_graphs, dtype=torch.long, device=device),
+        'pbc': torch.full((num_graphs, 3), bool(pbc), dtype=torch.bool, device=device),
+        'weight': ones(num_graphs),
+        'energy_weight': ones(num_graphs),
+        'forces_weight': ones(num_graphs),
+        'stress_weight': ones(num_graphs),
+        'virials_weight': ones(num_graphs),
+        'dipole_weight': ones(num_graphs, 3),
+        'charges_weight': ones(num_graphs),
+        'polarizability_weight': ones(num_graphs, 3, 3),
+        'energy': zeros(num_graphs),
+        'forces': zeros(n_tot, 3),
+        'stress': zeros(num_graphs, 3, 3),
+        'virials': zeros(num_graphs, 3, 3),
+        'dipole': zeros(num_graphs, 3),
+        'charges': zeros(n_tot),
+        'polarizability': zeros(num_graphs, 3, 3),
+        'elec_temp': zeros(num_graphs),
+        'total_charge': zeros(num_graphs),
+        'total_spin': ones(num_graphs),
+    }
+
+
+def _split_batched_neighbours(e_i, e_s, e_g, cells_t, offsets_t, num_graphs, dtype):
+    """
+    Reshape one batched neighbour list into per-graph slices, ONCE for the batch.
+
+    WHAT THIS REPLACES. The obvious consumer is `m = e_g == ind` inside the per-graph
+    loop, and it has two costs that the neighbour-list kernel's own speedup does not
+    pay for and does not show:
+
+      * the mask scans every edge once per graph, so the loop is O(G*E) -- superlinear
+        in batch size at fixed atoms/graph. Measured on CPU at 128 graphs it cost MORE
+        than the matscipy call it exists to replace, i.e. the batched path was a net
+        loss there even with a free kernel;
+      * three .cpu() calls per graph, so 3*G device->host syncs. Each one drains the
+        queue, which is exactly the stall the batching was meant to remove.
+
+    Sorting once by graph makes the per-graph edges contiguous, so the slices are
+    views, the shift product is one batched op, and the transfers are three in total
+    rather than three per graph.
+
+    The sort is `stable=True` so the layout is a deterministic function of the input.
+    Edge ORDER within a graph is not part of the contract (matscipy's own order is not
+    reproduced by anything, and MACE sums over edges) -- but a nondeterministic order
+    would make a mismatch impossible to bisect, which is a debugging property worth
+    the negligible cost.
+
+    Returns numpy (edge_index_local, unit_shifts, shifts) for the whole batch plus the
+    per-graph (start, count) into them.
+    """
+    order = torch.argsort(e_g, stable=True)
+    g_sorted = e_g[order]
+    counts = torch.bincount(g_sorted, minlength=num_graphs)
+    starts = torch.cumsum(counts, 0) - counts
+
+    unit_shifts = e_s[order].to(dtype)
+    # per-edge cell, so every graph's shifts come out of one op. Distinct subscripts
+    # for the edge and lattice indices: reusing one silently broadcasts.
+    #
+    # DETACHED, matching the reference path, which builds shifts from cell_np_all --
+    # itself `T_fc.detach().cpu().numpy()`. Two reasons it must stay detached:
+    # `.numpy()` below raises on a grad-carrying tensor, which is why this only ever
+    # failed under gradients; and compute_crystal_mace_on_mxt_batch OVERWRITES
+    # input_data['shifts'] with a differentiable fractional_transform of T_fc before
+    # the forward, so the value built here is a placeholder in BOTH paths and
+    # carrying grad through it would be dead weight even if it worked.
+    shifts = torch.einsum('ed,edc->ec', unit_shifts,
+                          cells_t[g_sorted].detach().to(dtype))
+    # global atom indices -> per-graph local, by each edge's own graph offset
+    edge_local = e_i[:, order] - offsets_t.to(e_i.dtype)[g_sorted].unsqueeze(0)
+
+    return (edge_local.cpu().numpy(), unit_shifts.cpu().numpy(),
+            shifts.cpu().numpy(), starts.cpu().numpy(), counts.cpu().numpy())
+
+
 def batch_to_mace_atomicdata_hoisted(batch, force_rebuild, model, std_orientation,
                                      pbc: bool = True):
     """
@@ -373,9 +609,16 @@ def batch_to_mace_atomicdata_hoisted(batch, force_rebuild, model, std_orientatio
         cells_t = batch.T_fc.transpose(-2, -1)
         ucell_graph = torch.repeat_interleave(
             torch.arange(batch.num_graphs, device=pos_all.device), out_n)
+        _t_nl = time.perf_counter()
         e_i, e_s, e_g = batched_pbc_neighbour_list(
             pos_all, ucell_graph, cells_t, cutoff, pbc=True)
-        nl = (e_i, e_s, e_g)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        _PHASE_SECONDS['neighbours'] += time.perf_counter() - _t_nl
+        # split ONCE for the batch, not with a full-edge mask per graph -- see
+        # _split_batched_neighbours for what that costs
+        nl = _split_batched_neighbours(e_i, e_s, e_g, cells_t, offsets_t,
+                                       batch.num_graphs, dtype)
 
     dataset = []
     for ind in range(batch.num_graphs):
@@ -383,18 +626,19 @@ def batch_to_mace_atomicdata_hoisted(batch, force_rebuild, model, std_orientatio
         hi = lo + int(counts[ind])
         pos = pos_all[lo:hi]
         if nl is None:
+            _t_nl = time.perf_counter()
             edge_index, shifts, unit_shifts, cell = get_neighborhood(
                 positions=pos_np_all[lo:hi], cutoff=cutoff,
                 pbc=[pbc, pbc, pbc], cell=cell_np_all[ind])
+            _PHASE_SECONDS['neighbours'] += time.perf_counter() - _t_nl
         else:
-            e_i, e_s, e_g = nl
-            m = e_g == ind
-            edge_index = (e_i[:, m] - lo).cpu().numpy()      # global -> per-graph
-            unit_shifts = e_s[m].to(pos_all.dtype)
+            ei_np, us_np, sh_np, e_start, e_count = nl
+            a = int(e_start[ind])
+            b = a + int(e_count[ind])
+            edge_index = ei_np[:, a:b]                       # already per-graph local
+            unit_shifts = us_np[a:b]
+            shifts = sh_np[a:b]
             cell = cell_np_all[ind]
-            shifts = (unit_shifts @ torch.as_tensor(
-                cell, dtype=pos_all.dtype, device=pos_all.device)).cpu().numpy()
-            unit_shifts = unit_shifts.cpu().numpy()
         num_atoms = hi - lo
         dataset.append(AtomicData(
             edge_index=torch.as_tensor(edge_index, dtype=torch.long),
@@ -438,6 +682,61 @@ def verify_mace_atomicdata_equivalence(batch, force_rebuild, model, std_orientat
     if bad:
         raise AssertionError('hoisted mace AtomicData differs from the list path:\n  '
                              + '\n  '.join(bad))
+    return True
+
+
+def verify_mace_input_dict_equivalence(batch, force_rebuild, model, std_orientation,
+                                       pbc: bool = True, atol: float = 0.0):
+    """
+    The device-built input dict must match what the shipping path hands the model.
+
+    COMPARED AGAINST THE BATCHED-NEIGHBOUR PATH, not the matscipy one, and that choice
+    is the whole point: matscipy emits edges in its own cell-list order, so an
+    element-wise comparison against it would fail on ORDER alone and prove nothing.
+    With the same neighbour list on both sides every tensor is directly comparable,
+    and the edge-set equivalence to matscipy is already pinned separately
+    (tests/test_pbc_neighbours.py and test_batched_neighbours_build_the_same_atomicdata).
+
+    Returns True or raises. atol defaults to EXACT: this is a construction change, so
+    any difference is a bug, not a rounding artefact.
+    """
+    prev = globals()['USE_BATCHED_MACE_NEIGHBOURS']
+    globals()['USE_BATCHED_MACE_NEIGHBOURS'] = True
+    try:
+        ref_batch = Collater([None], [None])(
+            batch_to_mace_atomicdata_hoisted(batch, force_rebuild, model,
+                                             std_orientation, pbc=pbc))
+    finally:
+        globals()['USE_BATCHED_MACE_NEIGHBOURS'] = prev
+    ref = ref_batch.to(batch.device).to_dict()
+    new = batch_to_mace_input_dict(batch, force_rebuild, model, std_orientation,
+                                   pbc=pbc)
+
+    bad = []
+    for field in _MACE_COMPARE_FIELDS + ('ptr',):
+        a, b = ref.get(field), new.get(field)
+        if a is None or b is None:
+            if a is not b:
+                bad.append(f'{field}: reference={type(a).__name__} '
+                           f'device-built={type(b).__name__}')
+            continue
+        if not torch.is_tensor(a) or not torch.is_tensor(b):
+            continue
+        a = a.to(b.device)
+        if a.shape != b.shape:
+            bad.append(f'{field}: shape {tuple(a.shape)} vs {tuple(b.shape)}')
+        elif a.dtype != b.dtype:
+            bad.append(f'{field}: dtype {a.dtype} vs {b.dtype}')
+        elif atol == 0.0:
+            if not torch.equal(a, b):
+                n = int((a != b).sum())
+                bad.append(f'{field}: {n} of {a.numel()} elements differ '
+                           f'(max |d| {float((a - b).abs().max()) if a.is_floating_point() else "n/a"})')
+        elif not torch.allclose(a.float(), b.float(), atol=atol, rtol=0):
+            bad.append(f'{field}: max |d| {float((a - b).abs().max()):.3e} > {atol}')
+    if bad:
+        raise AssertionError('device-built mace input dict differs from the '
+                             'collated path:\n  ' + '\n  '.join(bad))
     return True
 
 
