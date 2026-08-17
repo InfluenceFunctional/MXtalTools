@@ -118,6 +118,14 @@ class InternalPrior:
     torsions: Dict = field(default_factory=dict)
     rings: Dict = field(default_factory=dict)
     n_fitted: int = 0
+    # Bumped whenever ring_systems' signature changes shape. A fit made under an older
+    # version has ring keys that simply do not resolve, and the symptom is indistinguishable
+    # from "this molecule's ring was never fitted" -- every ring silently falls through to
+    # the caller's fallback. Consumers should read it via getattr(prior, 'ring_sig_version',
+    # 1), since priors pickled before this field existed will not carry it.
+    #   1 = (size, element multiset)                 -- collides benzene/cyclohexane
+    #   2 = (size, sorted (element, degree) multiset)
+    ring_sig_version: int = 2
 
     # ------------------------------------------------------------------- typing
 
@@ -177,10 +185,26 @@ class InternalPrior:
             for s, comp in enumerate(nx.connected_components(rg)):
                 comp = sorted(comp)
                 sysid[comp] = s
-                # size + element multiset only. Carrying per-atom degree made the
-                # signature nearly unique per molecule (67 signatures / 150 molecules),
-                # so almost every held-out ring fell through to the uniform fallback.
-                sigs[s] = (len(comp), tuple(sorted(int(keys[a][0]) for a in comp)))
+                # size + the sorted (element, degree) MULTISET.
+                #
+                # Element alone is too coarse and collides across hybridisation: benzene
+                # and cyclohexane shared a bank, as did pyridine and piperidine. Measured
+                # consequence -- benzene drew its ring from a bank half full of chairs and
+                # came out at a median |ring torsion| of 47 deg, with 75% of draws past
+                # 20 deg. An aromatic ring puckered to 47 deg is not an aromatic ring, and
+                # nothing in ff_from_reference objects, since it carries no torsion term
+                # and bond angles stay near 120 deg through a pucker.
+                #
+                # An earlier note here justified dropping degree on the grounds that it
+                # made the signature "nearly unique per molecule". That is true of an
+                # ORDERED per-atom key; it is not true of the sorted multiset used here,
+                # which is substitution-invariant by construction: benzene, toluene,
+                # phenol, styrene and ibuprofen's ring all give ((6,3),)*6, and
+                # cyclohexane, methylcyclohexane and cyclohexanol all give ((6,4),)*6.
+                # Twelve test molecules resolve to six buckets, each grouping exactly the
+                # rings that should share statistics.
+                sigs[s] = (len(comp),
+                           tuple(sorted(tuple(int(v) for v in keys[a]) for a in comp)))
         return sysid, sigs
 
     # ---------------------------------------------------------------------- fit

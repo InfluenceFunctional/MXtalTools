@@ -271,8 +271,12 @@ USE_HOISTED_MACE_ATOMICDATA = os.environ.get('MXT_HOISTED_MACE_ATOMICDATA', '1')
 #: test_mace_gpu_real_batches.py::test_energies_match_with_batched_neighbours has run
 #: on hardware that can execute a MACE forward.
 #:
-#: Measured 10.8x over matscipy at 256 graphs on GPU, and the gap widens with batch
-#: size because the GPU cost is launch-dominated and nearly flat.
+#: The GPU cost is launch-dominated and nearly flat, so the gap widens with batch
+#: size -- and it INVERTS below ~24 graphs, where launch overhead exceeds the whole
+#: matscipy call. Enabling this unconditionally is therefore wrong; it belongs behind
+#: a batch-size condition. Re-measure rather than trusting a pinned ratio: an earlier
+#: 10.8x reading did not reproduce, and the figure moved by more than 3x once the
+#: consumer loop and the radius cap were fixed.
 USE_BATCHED_MACE_NEIGHBOURS = os.environ.get('MXT_BATCHED_MACE_NEIGHBOURS', '0') != '0'
 
 #: Fields the two builders must agree on EXACTLY. Everything the model reads, plus
@@ -530,11 +534,17 @@ def batch_to_mace_atomicdata_hoisted(batch, force_rebuild, model, std_orientatio
     The same AtomicData list, with every per-graph operation that does NOT need to be
     per-graph hoisted out of the loop.
 
-    WHAT MOVES, and why these and not others. Measured split of the build at 128
-    graphs (scratch profile, 2026-08-14): get_neighborhood 64.9%, collate 10.4%,
-    AtomicData construction 9.5%, tensor slicing 8.5%, one-hot 5.8%, .cpu()/.numpy()
-    0.9%. The neighbour list genuinely cannot be batched -- every graph has its own
-    cell, so every graph needs its own call -- but everything around it can:
+    WHAT MOVES, and why these and not others. The build is dominated by the neighbour
+    list, with the Collater a distant second and everything else small. The neighbour
+    list cannot be batched BY THIS BUILDER -- every graph has its own cell, so every
+    graph needs its own matscipy call -- but everything around it can, and that is
+    what this function does. (batched_pbc_neighbour_list does batch it, on device;
+    see USE_BATCHED_MACE_NEIGHBOURS.)
+
+    NO PINNED PERCENTAGES HERE ON PURPOSE. Hoisting shrinks the denominator without
+    touching the neighbour list, so the neighbour list's SHARE rises every time this
+    function gets faster -- a number written down here is stale the moment it is true.
+    `energy/mace_nl_frac_of_build` reports the current split per run.
 
       * ONE host transfer for the whole batch instead of three per graph
         (positions, cell, atomic numbers). At 1000 graphs that is 3 syncs, not 3000.

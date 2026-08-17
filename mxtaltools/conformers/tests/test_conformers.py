@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -18,7 +19,26 @@ from mxtaltools.conformers import (build, closure_length, collate, log_jacobian,
                         nonbonded_pairs, spec_from_smiles)
 from mxtaltools.conformers.topology import reference_dihedral
 
-torch.set_default_dtype(torch.float64)
+# This suite needs double precision -- gradcheck and the log|J| vs numeric-determinant
+# comparison below have no margin in float32.
+#
+# Applied PER TEST, not at import. pytest imports every collected module before it runs
+# any test, so setting the default dtype at module scope leaks into the whole session:
+# every other test file collected alongside this one silently builds its tensors and
+# models in double, whatever it was written against. That is not hypothetical -- it
+# broke the bitwise-identity assertions in gfn_diffusion's test_dead_latent_rows.py,
+# which pass alone and failed only when co-collected with this file.
+DTYPE = torch.float64
+
+
+@pytest.fixture(autouse=True)
+def _default_dtype():
+    prev = torch.get_default_dtype()
+    torch.set_default_dtype(DTYPE)
+    try:
+        yield
+    finally:
+        torch.set_default_dtype(prev)
 
 ACYCLIC = ["CC", "CCO", "CCCC", "CC(C)(C)C", "CC(=O)NC", "CCOC(=O)C",
            "CCCCCCO", "CC(C)CC(N)C(=O)O", "OCC(O)C(O)C(O)C(O)CO"]
@@ -433,6 +453,8 @@ def test_ff_from_graph_raises_on_untyped():
 
 
 if __name__ == "__main__":
+    # the autouse fixture above is pytest-only; the direct runner has no other setter
+    torch.set_default_dtype(DTYPE)
     print(f"roundtrip max distance-matrix error : {test_roundtrip_exact():.3e}")
     print(f"dihedral vs rdkit, max              : {test_dihedral_convention_matches_rdkit():.3e}")
     print(f"batched vs individual, max          : {test_batched_matches_individual():.3e}")

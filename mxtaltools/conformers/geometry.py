@@ -64,6 +64,20 @@ def dihedral(pa: torch.Tensor, pb: torch.Tensor, pc: torch.Tensor, pn: torch.Ten
     return torch.atan2(y, x)
 
 
+def wilson_angle(pi: torch.Tensor, pj: torch.Tensor, pk: torch.Tensor,
+                 pn: torch.Tensor) -> torch.Tensor:
+    """Out-of-plane angle of bond j->i from the plane (j, k, n). ``j`` is CENTRAL.
+
+    In (-pi/2, pi/2]: zero when i lies in the k-j-n plane, +-pi/2 when the bond is
+    normal to it. Every energy term that uses this squares it, so the sign convention
+    is not load-bearing here.
+    """
+    a = pi - pj
+    n = _unit(torch.linalg.cross(pk - pj, pn - pj, dim=-1))
+    s = (a * n).sum(-1) / a.norm(dim=-1).clamp_min(1e-12)
+    return torch.asin(s.clamp(-1.0, 1.0))
+
+
 def place_nerf(pa: torch.Tensor, pb: torch.Tensor, pc: torch.Tensor,
                r: torch.Tensor, theta: torch.Tensor, phi: torch.Tensor) -> torch.Tensor:
     """Natural Extension Reference Frame placement.
