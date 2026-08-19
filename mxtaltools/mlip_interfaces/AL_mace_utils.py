@@ -128,6 +128,14 @@ _PHASE_SECONDS = {'build': 0.0, 'collate': 0.0, 'xfer': 0.0, 'forward': 0.0,
                   'neighbours': 0.0}
 _PHASE_CALLS = 0
 
+#: Calls that actually EXECUTED each optimised path, as opposed to what the module
+#: flags were set to. The a100_stab_aug16 battery ran an arm with MXT_GPU_MACE_BATCH
+#: alone, the branch (which also requires the batched neighbour list) was never taken,
+#: and the logged flag said 1 -- the third switch in that battery to report success
+#: without reaching the code. These counters are incremented AT the branch, so the
+#: logged value is the executed path, not the configuration.
+_EXEC_CALLS = {'gpu_batch': 0, 'batched_nl': 0}
+
 
 def drain_mace_phase_timing():
     """Pop the accumulated per-phase seconds. {} when nothing was timed, so a stage
@@ -147,16 +155,19 @@ def drain_mace_phase_timing():
     if _PHASE_SECONDS['build'] > 0:
         out['energy/mace_nl_frac_of_build'] = (_PHASE_SECONDS['neighbours']
                                                / _PHASE_SECONDS['build'])
-    # WHICH PATH RAN. Without this an A/B is unreadable after the fact: two runs with
-    # different flags log identical key sets and nothing says which was which, and a
-    # config block that is simply ABSENT reads as "feature off" with no error.
-    out['energy/mace_flag_batched_nl'] = int(USE_BATCHED_MACE_NEIGHBOURS)
-    out['energy/mace_flag_gpu_batch'] = int(USE_GPU_MACE_BATCH)
+    # WHICH PATH RAN -- the fraction of calls that EXECUTED each branch, not the flag
+    # value. A flag can be set and the branch unreachable (gpu_batch without the
+    # batched neighbour list, or pbc=False), and logging the flag in that state
+    # reported a run that never happened. 1.0 = every call took the path.
+    out['energy/mace_flag_batched_nl'] = _EXEC_CALLS['batched_nl'] / _PHASE_CALLS
+    out['energy/mace_flag_gpu_batch'] = _EXEC_CALLS['gpu_batch'] / _PHASE_CALLS
     out['energy/mace_flag_hoisted'] = int(USE_HOISTED_MACE_ATOMICDATA)
     from mxtaltools.mlip_interfaces.pbc_neighbours import drain_neighbour_path_counts
     out.update(drain_neighbour_path_counts())
     for k in _PHASE_SECONDS:
         _PHASE_SECONDS[k] = 0.0
+    for k in _EXEC_CALLS:
+        _EXEC_CALLS[k] = 0
     _PHASE_CALLS = 0
     return out
 
@@ -167,6 +178,13 @@ def compute_crystal_mace_on_mxt_batch(batch, model,
     # the device-built dict needs the batched neighbour list -- a per-graph host
     # neighbour list would put back the loop it exists to remove
     gpu_batch = USE_GPU_MACE_BATCH and USE_BATCHED_MACE_NEIGHBOURS and pbc
+    # executed-path accounting, at the branch: only the hoisted builder has a
+    # batched-neighbour leg, so the flag conditions alone do not imply it ran
+    if gpu_batch:
+        _EXEC_CALLS['gpu_batch'] += 1
+        _EXEC_CALLS['batched_nl'] += 1
+    elif USE_BATCHED_MACE_NEIGHBOURS and pbc and USE_HOISTED_MACE_ATOMICDATA:
+        _EXEC_CALLS['batched_nl'] += 1
 
     _t = time.perf_counter()
     if gpu_batch:
@@ -264,20 +282,22 @@ USE_HOISTED_MACE_ATOMICDATA = os.environ.get('MXT_HOISTED_MACE_ATOMICDATA', '1')
 #: Replace the per-graph matscipy neighbour list with the batched on-device one
 #: (pbc_neighbours.batched_pbc_neighbour_list).
 #:
-#: DEFAULT OFF, deliberately. The edge SETS are verified identical to matscipy on
-#: synthetic and real crystals, but as of 2026-08-14 no ENERGY has ever been computed
-#: through this path -- and an edge-set match is a necessary, not sufficient,
-#: condition for an unchanged energy. Flip it on only once
-#: test_mace_gpu_real_batches.py::test_energies_match_with_batched_neighbours has run
-#: on hardware that can execute a MACE forward.
+#: DEFAULT ON since 2026-08-19. The gates the old default-off waited on have run:
+#: edge sets identical to matscipy on synthetic and real crystals, energies through a
+#: real MACE forward inside the same-path nondeterminism control
+#: (test_mace_gpu_real_batches.py), and the a100_stab_aug16 battery measured the
+#: production effect on the A100 (see docs/design/phase6_handoff.md §3.1). A
+#: behaviour that large must not depend on someone remembering to set an env var;
+#: the env var remains as a kill switch only.
 #:
-#: The GPU cost is launch-dominated and nearly flat, so the gap widens with batch
-#: size -- and it INVERTS below ~24 graphs, where launch overhead exceeds the whole
-#: matscipy call. Enabling this unconditionally is therefore wrong; it belongs behind
-#: a batch-size condition. Re-measure rather than trusting a pinned ratio: an earlier
-#: 10.8x reading did not reproduce, and the figure moved by more than 3x once the
-#: consumer loop and the radius cap were fixed.
-USE_BATCHED_MACE_NEIGHBOURS = os.environ.get('MXT_BATCHED_MACE_NEIGHBOURS', '0') != '0'
+#: UNCONDITIONAL ON PURPOSE -- no batch-size branch. An earlier note here suggested a
+#: ~24-graph crossover below which the launch-dominated GPU list loses to matscipy.
+#: Re-measured 2026-08-19 (RTX 5080, acridine fixture, full build+collate+xfer): the
+#: crossover is ~10 graphs and the penalty below it is single-digit milliseconds per
+#: call against a forward two orders of magnitude larger, while at 128 graphs the
+#: device path builds 9.6x faster. A branch there would add a mode to test and buy
+#: milliseconds on batch sizes the MLIP routes never run.
+USE_BATCHED_MACE_NEIGHBOURS = os.environ.get('MXT_BATCHED_MACE_NEIGHBOURS', '1') != '0'
 
 #: Fields the two builders must agree on EXACTLY. Everything the model reads, plus
 #: the bookkeeping that decides how it is read.
@@ -329,10 +349,14 @@ def _mace_resolve_aunit_z(batch, force_rebuild, std_orientation):
 #: Build the collated MACE input dict directly on device, with no per-graph AtomicData
 #: and no Collater.
 #:
-#: DEFAULT OFF, same gate as the batched neighbour list it depends on: this path is
-#: only reachable with MXT_BATCHED_MACE_NEIGHBOURS on, because a per-graph host
-#: neighbour list would reintroduce exactly the loop this removes.
-USE_GPU_MACE_BATCH = os.environ.get('MXT_GPU_MACE_BATCH', '0') != '0'
+#: DEFAULT ON since 2026-08-19, same gates as the batched neighbour list it depends
+#: on: dict bit-identity on CPU and GPU, energies and grads through a real forward
+#: inside the same-path nondeterminism control (test_mace_gpu_real_batches.py). This
+#: path is only reachable with the batched neighbour list also on -- a per-graph host
+#: neighbour list would reintroduce exactly the loop this removes -- and
+#: energy/mace_flag_gpu_batch now reports the EXECUTED fraction, so an inert
+#: configuration announces itself. Env var is a kill switch only.
+USE_GPU_MACE_BATCH = os.environ.get('MXT_GPU_MACE_BATCH', '1') != '0'
 
 
 def _z_index_lut(z_table, device):
@@ -446,8 +470,12 @@ def batch_to_mace_input_dict(batch, force_rebuild, model, std_orientation,
         'positions': pos_all,
         'shifts': shifts,
         'unit_shifts': unit_shifts,
-        # (3,3) per graph concatenated on dim 0
-        'cell': cells_t.reshape(-1, 3).to(dtype),
+        # (3,3) per graph concatenated on dim 0. DETACHED to match both reference
+        # paths, where the cell reaches the model via numpy and is grad-free: with
+        # compute_stress=False the model should not read it, but a grad-carrying
+        # cell on one path only is a grad-flow asymmetry waiting for an upstream
+        # version to expose it.
+        'cell': cells_t.detach().reshape(-1, 3).to(dtype),
         'node_attrs': node_attrs,
         'batch': ucell_graph,
         'ptr': torch.cat([torch.zeros(1, dtype=torch.long, device=device),
@@ -682,12 +710,23 @@ def verify_mace_atomicdata_equivalence(batch, force_rebuild, model, std_orientat
     Must run on a batch whose unit cell is ALREADY built. The no-unit-cell branch
     MUTATES `batch` (it builds unit_cell_pos), so on a fresh batch the second path
     would take a different branch than the first and the two would not be comparable.
+
+    THE NEIGHBOUR LIST IS PINNED TO MATSCIPY ON BOTH SIDES, whatever the module flag
+    says: this verifies the HOIST, and the list path has no batched-NL leg, so with
+    the batched list on (the default) the two would differ on edge ORDER alone and
+    prove nothing. The batched list is verified separately -- edge sets in
+    test_pbc_neighbours.py, energies in test_mace_gpu_real_batches.py.
     """
-    collate = Collater([None], [None])
-    ref = collate(batch_to_mace_atomicdata(batch, force_rebuild, model,
-                                           std_orientation, pbc=pbc))
-    new = collate(batch_to_mace_atomicdata_hoisted(batch, force_rebuild, model,
-                                                   std_orientation, pbc=pbc))
+    prev = globals()['USE_BATCHED_MACE_NEIGHBOURS']
+    globals()['USE_BATCHED_MACE_NEIGHBOURS'] = False
+    try:
+        collate = Collater([None], [None])
+        ref = collate(batch_to_mace_atomicdata(batch, force_rebuild, model,
+                                               std_orientation, pbc=pbc))
+        new = collate(batch_to_mace_atomicdata_hoisted(batch, force_rebuild, model,
+                                                       std_orientation, pbc=pbc))
+    finally:
+        globals()['USE_BATCHED_MACE_NEIGHBOURS'] = prev
     bad = mace_batch_differences(ref, new)
     if bad:
         raise AssertionError('hoisted mace AtomicData differs from the list path:\n  '

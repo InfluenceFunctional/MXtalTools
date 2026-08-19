@@ -38,6 +38,32 @@ torch.serialization.add_safe_globals([slice])  # necessary for UMA loading on to
 #: measuring the edit as well as the change.
 USE_VECTORISED_ATOMICDATA = os.environ.get('MXT_VECTORISED_ATOMICDATA', '1') != '0'
 
+#: Build the neighbour list OURSELVES (pbc_neighbours.batched_pbc_neighbour_list) and
+#: hand it to fairchem, instead of letting the model run otf_graph inside its forward.
+#:
+#: WHY. Measured on the A100 (phase6_handoff.md §3.2): 26.8% of the UMA forward is
+#: fairchem's internal graph construction. That is the same neighbour-list problem the
+#: MACE route already solved, with the same builder.
+#:
+#: THIS IS NOT ONLY A SPEEDUP -- IT IS A CORRECTNESS CHANGE, in our favour, and the
+#: energies can MOVE where the internal path was wrong:
+#:   * fairchem's radius_graph_pbc_v2 documents that it "assumes that all atoms are
+#:     within the unit cell": its shift range has no term for atoms outside the cell,
+#:     and unit_cell_pos is NOT wrapped (measured fractional spread up to 2.4 cell
+#:     widths on real CSD crystals). Our builder wraps internally and corrects the
+#:     shifts exactly, so it cannot lose those edges.
+#:   * the internal path truncates at max_neighbors=300 per atom. Physical cells top
+#:     out ~141 so it never bites there, but the degenerate cells a policy emits
+#:     early in training reach ~2710 neighbours and ARE truncated. Our list is exact.
+#: Both differences appear at high-energy / unphysical configurations; on physical
+#: cells the edge sets agree and the gate below holds the energies to the
+#: nondeterminism floor.
+#:
+#: The flag sets the DEFAULT for crystal_inference_settings.external_graph_gen; the
+#: call site keys off the predictor's own setting, so a predictor built either way
+#: gets a consistent input. Env var is a kill switch only.
+USE_UMA_EXTERNAL_GRAPH = os.environ.get('MXT_UMA_EXTERNAL_GRAPH', '1') != '0'
+
 #: Per-phase seconds for the UMA energy call, mirroring AL_mace_utils' _PHASE_SECONDS.
 #: The MACE route has had this since the hoist landed; this route had nothing, so
 #: "the UMA forward is >99% of the call" rested on no standing measurement.
@@ -54,9 +80,16 @@ USE_VECTORISED_ATOMICDATA = os.environ.get('MXT_VECTORISED_ATOMICDATA', '1') != 
 #: Honest because safe_predict_uma synchronises on both sides; without that drain the
 #: forward returns immediately and its cost lands on whichever later statement touches
 #: the result.
-_PHASE_SECONDS = {'guard': 0.0, 'build': 0.0, 'forward': 0.0, 'graph': 0.0}
+#: 'ext_graph' is the EXTERNAL neighbour-list build (ours, outside the forward) and is
+#: part of the total; 'graph' is fairchem's INTERNAL one (inside the forward, timed
+#: only when install_uma_graph_timer is on) and is not. At most one of them is nonzero
+#: on a given predictor, which is itself a diagnostic: both nonzero means two graph
+#: builds are being paid for.
+_PHASE_SECONDS = {'guard': 0.0, 'build': 0.0, 'forward': 0.0, 'graph': 0.0,
+                  'ext_graph': 0.0}
 _PHASE_CALLS = 0
 _GRAPH_CALLS = 0
+_EXT_GRAPH_CALLS = 0
 
 
 _install_done = False
@@ -138,10 +171,11 @@ if os.environ.get('MXT_UMA_GRAPH_TIMER', '0') != '0':
 def drain_uma_phase_timing():
     """Pop the accumulated per-phase seconds. {} when nothing was timed, so a stage
     that never calls uma logs nothing rather than zeros."""
-    global _PHASE_CALLS, _GRAPH_CALLS
+    global _PHASE_CALLS, _GRAPH_CALLS, _EXT_GRAPH_CALLS
     if not _PHASE_CALLS:
         return {}
-    # 'graph' is nested inside 'forward', so it is excluded from the total
+    # 'graph' is nested inside 'forward', so it is excluded from the total;
+    # 'ext_graph' happens outside the forward and counts
     total = sum(v for k, v in _PHASE_SECONDS.items() if k != 'graph')
     out = {f'energy/uma_{k}_s': v for k, v in _PHASE_SECONDS.items() if k != 'graph'}
     out['energy/uma_calls'] = _PHASE_CALLS
@@ -152,6 +186,10 @@ def drain_uma_phase_timing():
     # which construction path ran, for the same reason the mace drain records its
     # flags: two arms otherwise log identical key sets with nothing to tell them apart
     out['energy/uma_flag_vectorised'] = int(USE_VECTORISED_ATOMICDATA)
+    # the EXECUTED fraction, not the flag: a predictor built with external_graph_gen
+    # off ignores the module flag entirely, and a flag that reports a branch that
+    # never ran is how the a100_stab_aug16 battery lost an arm
+    out['energy/uma_flag_external_graph'] = _EXT_GRAPH_CALLS / _PHASE_CALLS
     # only report the graph split when the timer was installed AND fired; a zero here
     # would otherwise be indistinguishable from "graph construction costs nothing"
     if _GRAPH_CALLS:
@@ -166,6 +204,7 @@ def drain_uma_phase_timing():
         _PHASE_SECONDS[k] = 0.0
     _PHASE_CALLS = 0
     _GRAPH_CALLS = 0
+    _EXT_GRAPH_CALLS = 0
     return out
 
 
@@ -242,6 +281,67 @@ def batch_to_ase_ucell_list(
     return data_list
 
 
+def _predictor_wants_external_graph(predictor) -> bool:
+    """The predictor's OWN setting, not the module flag: a predictor built with
+    external_graph_gen=False runs otf_graph and must not be handed edges it will
+    ignore, and one built True asserts if they are missing. The predictor is the
+    single source of truth so the two cannot disagree."""
+    settings = getattr(predictor, 'inference_settings', None)
+    return bool(getattr(settings, 'external_graph_gen', False))
+
+
+def _predictor_cutoff(predictor) -> float:
+    """The backbone's neighbour cutoff -- the radius its internal otf_graph would
+    have used, so the external list is built to the model's own definition rather
+    than a pinned constant that rots when the checkpoint changes."""
+    return float(predictor.model.module.backbone.cutoff)
+
+
+def attach_external_graph(uma_batch, cutoff: float, pbc: bool):
+    """
+    Fill edge_index / cell_offsets / nedges on a collated fairchem batch, replacing
+    the model's internal otf_graph (see USE_UMA_EXTERNAL_GRAPH for why).
+
+    CONVENTION MAPPING, pinned by tests/test_uma_external_graph.py against fairchem's
+    own generate_graph. Our batched_pbc_neighbour_list emits (i, j, S) meaning
+    displacement = pos[j] + S @ cell - pos[i]. fairchem's eSCNMD external branch
+    computes edge_distance_vec = pos[edge_index[0]] - pos[edge_index[1]] + cell_offsets
+    @ cell, i.e. edge_index = [source, target] with the offset belonging to the
+    SOURCE image. So source = j, target = i, cell_offsets = S.
+
+    Edges are sorted by graph (stable) because the model recovers each edge's cell
+    via cell.repeat_interleave(nedges), which requires the per-graph blocks to be
+    contiguous and in graph order.
+
+    SELF-PAIR SEMANTICS DIFFER AT MEASURE ZERO, deliberately not papered over:
+    fairchem drops any pair at EXACTLY distance 0 (including two distinct coincident
+    atoms); ours drops only the true self-pair (i == j, S == 0). Two atoms at
+    bitwise-identical positions is a degenerate configuration whose energy is junk
+    either way.
+    """
+    from mxtaltools.mlip_interfaces.pbc_neighbours import batched_pbc_neighbour_list
+
+    num_graphs = len(uma_batch.natoms)
+    e_i, e_s, e_g = batched_pbc_neighbour_list(
+        uma_batch.pos.detach(), uma_batch.batch, uma_batch.cell.detach(),
+        cutoff, pbc=pbc)
+    order = torch.argsort(e_g, stable=True)
+    src, tgt = e_i[1][order], e_i[0][order]
+    uma_batch.edge_index = torch.stack((src, tgt))
+    # float32 to match what atomicdata_list_to_batch produces for this field
+    uma_batch.cell_offsets = e_s[order].to(torch.float32)
+    nedges = torch.bincount(e_g, minlength=num_graphs)
+    uma_batch.nedges = nedges.to(torch.long)
+
+    # keep the collation bookkeeping consistent: get_example/batch_to_atomicdata_list
+    # slice edges through __slices__, and leaving the zero-edge slices in place would
+    # hand every re-split graph an empty edge set with no error anywhere
+    if getattr(uma_batch, '__slices__', None) is not None:
+        edge_slices = [0] + torch.cumsum(nedges, 0).tolist()
+        for key in ('edge_index', 'cell_offsets'):
+            uma_batch.__slices__[key] = edge_slices
+
+
 def compute_crystal_uma_on_mxt_batch(batch,
                                      std_orientation: bool = True,
                                      predictor: Optional = None,
@@ -265,6 +365,15 @@ def compute_crystal_uma_on_mxt_batch(batch,
         uma_batch = atomicdata_list_to_batch(
             batch_to_fairchem_atomicdata(batch, std_orientation, pbc, force_rebuild))
     _PHASE_SECONDS['build'] += time.perf_counter() - _t
+
+    if _predictor_wants_external_graph(predictor):
+        global _EXT_GRAPH_CALLS
+        _t = time.perf_counter()
+        attach_external_graph(uma_batch, _predictor_cutoff(predictor), pbc)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()   # or the build's cost lands on the forward
+        _PHASE_SECONDS['ext_graph'] += time.perf_counter() - _t
+        _EXT_GRAPH_CALLS += 1
 
     _t = time.perf_counter()
     out, crashed = safe_predict_uma(predictor, uma_batch)
@@ -582,7 +691,8 @@ def compute_molecule_uma_on_mxt_batch(batch,
 
 def crystal_inference_settings(activation_checkpointing: bool = True,
                                compile: bool = False,
-                               edge_chunk_size: Optional[int] = None):
+                               edge_chunk_size: Optional[int] = None,
+                               external_graph_gen: Optional[bool] = None):
     """
     Our own InferenceSettings, rather than the 'default' preset mutated in place.
 
@@ -627,12 +737,19 @@ def crystal_inference_settings(activation_checkpointing: bool = True,
     composition/charge/spin, which a batch of different crystals violates. That is
     why the 'turbo' preset cannot be adopted wholesale despite its other flags.
     """
+    if external_graph_gen is None:
+        # resolved at CALL time, not def time, so a test or harness that flips the
+        # module flag before building a predictor gets what it asked for
+        external_graph_gen = USE_UMA_EXTERNAL_GRAPH
     return InferenceSettings(
         tf32=True,                      # what the old code set, minus the global mutation
         activation_checkpointing=activation_checkpointing,
         merge_mole=False,               # never safe for a multi-crystal batch
         compile=compile,
-        external_graph_gen=False,
+        # True = we build the neighbour list and hand it in; the model skips its
+        # internal otf_graph entirely. See USE_UMA_EXTERNAL_GRAPH for the measured
+        # case and the two places the internal path is silently wrong on our data.
+        external_graph_gen=external_graph_gen,
         internal_graph_gen_version=2,
         edge_chunk_size=edge_chunk_size,
     )

@@ -142,7 +142,7 @@ def _energy_with(batch, model, hoisted, batched_nl):
 @pytest.mark.parametrize('n', [1, 2])
 def test_energies_match_with_batched_neighbours(crystals, model, gpu, n):
     """
-    THE GATE ON MXT_BATCHED_MACE_NEIGHBOURS. Until this passes, that flag ships off.
+    THE GATE ON MXT_BATCHED_MACE_NEIGHBOURS (passed 2026-08-19; the flag defaults on).
 
     The CPU suite already proves the batched neighbour list yields the same EDGE SET
     as matscipy, on synthetic cells and on real crystals. That is necessary and not
@@ -196,6 +196,99 @@ def test_batched_neighbour_count_matches(crystals, model, gpu):
         assert a.edge_index.shape == c.edge_index.shape, (
             f'graph {g}: {a.edge_index.shape[1]} edges from matscipy vs '
             f'{c.edge_index.shape[1]} from the batched list')
+
+
+def _energy_paths(batch, model, hoisted, batched_nl, gpu_batch):
+    """One crystal-leg energy with all three module switches set explicitly.
+    Returns the LIVE tensor (grads intact) so the grad tests can reuse it."""
+    from mxtaltools.mlip_interfaces import AL_mace_utils as M
+    prev = (M.USE_HOISTED_MACE_ATOMICDATA, M.USE_BATCHED_MACE_NEIGHBOURS,
+            M.USE_GPU_MACE_BATCH)
+    M.USE_HOISTED_MACE_ATOMICDATA = hoisted
+    M.USE_BATCHED_MACE_NEIGHBOURS = batched_nl
+    M.USE_GPU_MACE_BATCH = gpu_batch
+    try:
+        return M.compute_crystal_mace_on_mxt_batch(
+            batch, model, std_orientation=False, pbc=True)
+    finally:
+        (M.USE_HOISTED_MACE_ATOMICDATA, M.USE_BATCHED_MACE_NEIGHBOURS,
+         M.USE_GPU_MACE_BATCH) = prev
+
+
+@pytest.mark.parametrize('n', [1, 2])
+def test_energies_match_with_gpu_batch_dict(crystals, model, gpu, n):
+    """
+    THE GATE ON MXT_GPU_MACE_BATCH -- the path the a100_stab_aug16 battery never
+    reached (its arm set the flag without the batched neighbour list, so the branch
+    was inert and the arm measured a control).
+
+    The CPU suite proves the device-built dict is bit-identical to the collated one
+    at fixed neighbour list; this closes the same gap the batched-NL energy test
+    closes above it: only a real forward proves the model reads the dict the same way.
+    Same nondeterminism-control bar as the other energy tests, same reason.
+    """
+    b = _built(crystals, n, gpu)
+    a1 = _energy_paths(b, model, hoisted=True, batched_nl=True,
+                       gpu_batch=False).detach().float().cpu()
+    a2 = _energy_paths(b, model, hoisted=True, batched_nl=True,
+                       gpu_batch=False).detach().float().cpu()   # control
+    h1 = _energy_paths(b, model, hoisted=True, batched_nl=True,
+                       gpu_batch=True).detach().float().cpu()
+
+    control = (a1 - a2).abs().max().item()
+    cross = (a1 - h1).abs().max().item()
+    scale = a1.abs().max().item()
+    assert torch.isfinite(h1).all(), 'gpu-batch dict path produced non-finite energies'
+    bar = max(10 * control, 1e-4 * max(scale, 1.0))
+    assert cross <= bar, (
+        f'cross-path |d| {cross:.3e} exceeds {bar:.3e} (same-path control '
+        f'{control:.3e}, scale {scale:.3e}) -- the device-built dict changes the '
+        f'energy by more than nondeterminism explains')
+
+
+def _grads(batch, model, hoisted, batched_nl, gpu_batch):
+    """d(sum E)/d(unit_cell_pos, T_fc) through the chosen path.
+
+    These are the two differentiable inputs at this interface: the caller overwrites
+    positions and shifts with differentiable transforms of exactly these tensors
+    before the forward, on every path. allow_unused so a path that silently DROPPED a
+    grad channel returns None and fails the comparison loudly instead of erroring.
+    """
+    batch.unit_cell_pos.requires_grad_(True)
+    batch.T_fc.requires_grad_(True)
+    e = _energy_paths(batch, model, hoisted, batched_nl, gpu_batch)
+    g_pos, g_cell = torch.autograd.grad(
+        e.sum(), (batch.unit_cell_pos, batch.T_fc), allow_unused=True)
+    assert g_pos is not None, 'no gradient reached unit_cell_pos'
+    assert g_cell is not None, 'no gradient reached T_fc'
+    return g_pos.detach().float().cpu(), g_cell.detach().float().cpu()
+
+
+@pytest.mark.parametrize('path', ['batched_nl', 'gpu_batch'])
+def test_grads_match_across_paths(crystals, model, gpu, path):
+    """
+    ENERGIES MATCHING IS NOT ENOUGH: the sampler trains on gradients, and a path
+    could produce the right energy from a graph that routes grad differently (the
+    dict path's cell entry did exactly that until it was detached to match). Same
+    control-comparison shape as the energy tests -- backward kernels are no more
+    bit-reproducible than forward ones, so the bar is the same-path grad spread.
+    """
+    b = _built(crystals, 2, gpu)
+    ref1_p, ref1_c = _grads(b, model, hoisted=True, batched_nl=False, gpu_batch=False)
+    ref2_p, ref2_c = _grads(b, model, hoisted=True, batched_nl=False, gpu_batch=False)
+    new_p, new_c = _grads(b, model, hoisted=True, batched_nl=True,
+                          gpu_batch=(path == 'gpu_batch'))
+
+    for name, r1, r2, nw in (('unit_cell_pos', ref1_p, ref2_p, new_p),
+                             ('T_fc', ref1_c, ref2_c, new_c)):
+        control = (r1 - r2).abs().max().item()
+        cross = (r1 - nw).abs().max().item()
+        scale = r1.abs().max().item()
+        assert torch.isfinite(nw).all(), f'{path}: non-finite grad on {name}'
+        bar = max(10 * control, 1e-4 * max(scale, 1.0))
+        assert cross <= bar, (
+            f'{path}: grad on {name} differs by {cross:.3e} > {bar:.3e} '
+            f'(same-path control {control:.3e}, scale {scale:.3e})')
 
 
 def test_hoisted_is_not_slower(crystals, model, gpu):

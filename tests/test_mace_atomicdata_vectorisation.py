@@ -163,10 +163,21 @@ def _compare_fresh(make_batch, model):
     verify_mace_atomicdata_equivalence cannot be used here: the fresh-build branch
     MUTATES the batch, so the second path would take the already-built branch and the
     two would not be comparable. Each path therefore gets its own untouched copy.
+
+    The neighbour list is pinned to matscipy on both sides for the same reason the
+    verifier pins it: this compares the HOIST, and only the hoisted builder has a
+    batched-NL leg, so at the module default (batched on) the two would differ on
+    edge order alone. The batched list has its own edge-set and energy gates.
     """
-    collate = Collater([None], [None])
-    ref = collate(batch_to_mace_atomicdata(make_batch(), False, model, False))
-    new = collate(batch_to_mace_atomicdata_hoisted(make_batch(), False, model, False))
+    import mxtaltools.mlip_interfaces.AL_mace_utils as M
+    prev = M.USE_BATCHED_MACE_NEIGHBOURS
+    M.USE_BATCHED_MACE_NEIGHBOURS = False
+    try:
+        collate = Collater([None], [None])
+        ref = collate(batch_to_mace_atomicdata(make_batch(), False, model, False))
+        new = collate(batch_to_mace_atomicdata_hoisted(make_batch(), False, model, False))
+    finally:
+        M.USE_BATCHED_MACE_NEIGHBOURS = prev
     bad = mace_batch_differences(ref, new)
     assert not bad, 'fresh-build paths differ:\n  ' + '\n  '.join(bad)
 
@@ -215,8 +226,8 @@ def test_batched_neighbours_build_the_same_atomicdata(crystals, model, n, monkey
     that is order-independent IS compared, exactly.
 
     This is the CPU half of validating MXT_BATCHED_MACE_NEIGHBOURS. The other half is
-    energies through a real forward (test_mace_gpu_real_batches.py), which needs
-    hardware that can run MACE; until that has passed the flag stays default-off.
+    energies through a real forward (test_mace_gpu_real_batches.py); both halves
+    passed 2026-08-19 and the flag now defaults on.
     """
     import mxtaltools.mlip_interfaces.AL_mace_utils as M
 
@@ -331,18 +342,18 @@ def test_device_built_input_dict_matches_the_collated_one(crystals, model, n):
     assert verify_mace_input_dict_equivalence(_built(crystals, n), False, model, False)
 
 
-def test_device_built_dict_stays_on_device_and_is_off_by_default():
+def test_device_built_dict_is_on_by_default():
     """
-    Two properties that would each silently defeat the point of this path.
-
-    A tensor left on the host means the caller pays a transfer per energy call, which
-    is the cost the whole change exists to remove -- and it would still produce
-    correct energies, so nothing else would catch it.
+    The fast path must be the DEFAULT, not an env var someone has to remember: the
+    a100_stab_aug16 battery measured the slow path shipping by omission (occupancy
+    54% vs 82%), and phase6_handoff.md §3.1 turned that into the requirement that
+    this behaviour live in code. The energy/grad gates it waited on are in
+    test_mace_gpu_real_batches.py and passed 2026-08-19.
     """
     import mxtaltools.mlip_interfaces.AL_mace_utils as M
-    assert M.USE_GPU_MACE_BATCH is False, (
-        'MXT_GPU_MACE_BATCH defaults ON -- it depends on the batched neighbour list, '
-        'which itself ships off pending cluster validation')
+    assert M.USE_GPU_MACE_BATCH is True, (
+        'MXT_GPU_MACE_BATCH defaults OFF -- the measured fast path must ship as the '
+        'default, with the env var as a kill switch only')
 
     if not torch.cuda.is_available() or torch.cuda.device_count() == 0:
         pytest.skip('device residency needs a GPU')
@@ -367,13 +378,15 @@ def test_unknown_element_raises_rather_than_mislabelling(crystals):
         batch_to_mace_input_dict(b, False, narrow, False)
 
 
-def test_batched_neighbours_are_off_by_default():
-    """The flag must ship OFF until the energy validation has run. A default that
-    quietly flips is how an unvalidated path reaches production."""
+def test_batched_neighbours_are_on_by_default():
+    """The measured fast path must ship as the DEFAULT (phase6_handoff.md §3.1: the
+    slow path shipping by omission cost 27% of the step and 27 points of occupancy).
+    The energy validation the old default-off waited on ran 2026-08-19
+    (test_mace_gpu_real_batches.py, energies and grads)."""
     import mxtaltools.mlip_interfaces.AL_mace_utils as M
-    assert M.USE_BATCHED_MACE_NEIGHBOURS is False, (
-        'MXT_BATCHED_MACE_NEIGHBOURS defaults ON -- no energy has been computed '
-        'through that path yet')
+    assert M.USE_BATCHED_MACE_NEIGHBOURS is True, (
+        'MXT_BATCHED_MACE_NEIGHBOURS defaults OFF -- the validated fast path must '
+        'ship in code, with the env var as a kill switch only')
 
 
 def test_pbc_false(crystals, model):

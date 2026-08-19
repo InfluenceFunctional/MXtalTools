@@ -1,3 +1,6 @@
+> **Status: PACKAGE OVERVIEW / WORKFLOW GUIDANCE UNVERIFIED.**
+> This README is not canonical installation or training guidance for the current tree. MXtalTools has no universal training configuration, and the quick-start, installation, and linked documentation below have not been verified in this milestone. Read `AGENTS.md` for current scope and authority, then verify any command against the current package metadata, implementation, and focused tests before relying on it.
+
 ![image](https://github.com/InfluenceFunctional/MXtalTools/assets/30198118/ecc49717-b9b4-4901-9b59-8e4c8b919813)
 # MXtalTools: Toolbox for machine learning on molecular crystals
 

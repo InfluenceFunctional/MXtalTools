@@ -1,5 +1,6 @@
 import gc
 import time
+import warnings
 from typing import Union
 
 import numpy as np
@@ -8,6 +9,20 @@ from tqdm import tqdm
 
 from mxtaltools.common.utils import is_cuda_oom
 from mxtaltools.dataset_utils.utils import collate_data_list
+
+#: Warn once per process, not once per chunk -- a bulk scan calls this hundreds of
+#: times and a repeated warning is noise nobody reads.
+_GRAD_WARNED = False
+
+_GRAD_WARNING = (
+    'adaptive_batched_analysis called with gradients ENABLED. This helper is only '
+    'ever used for offline bulk scoring, and fairchem leaves grad on by design '
+    '(its _run_inference picks nullcontext whenever direct_forces is False, which '
+    'the crystal predictor sets), so every scored row comes back carrying grad_fn '
+    'and pins its activations -- measured at 100-250 MB PER CRYSTAL. The symptom is '
+    'not a crash: the OOM handler below shrinks the batch and makes that size '
+    'sticky, so the scan merely runs slower and slower. If you are not '
+    'differentiating these energies, wrap the call in torch.no_grad().')
 
 
 def adaptive_batched_analysis(
@@ -42,6 +57,14 @@ def adaptive_batched_analysis(
     -------
     Collated batch object with outputs assigned.
     """
+    # WARN, DO NOT SILENTLY FORCE no_grad. Overriding grad semantics inside a shared
+    # helper is how a legitimate gradient path would start reading zero with nothing
+    # to show for it. The caller owns the decision; this only makes the cost visible.
+    global _GRAD_WARNED
+    if torch.is_grad_enabled() and not _GRAD_WARNED:
+        warnings.warn(_GRAD_WARNING, RuntimeWarning, stacklevel=2)
+        _GRAD_WARNED = True
+
     if not hasattr(state, 'batch_size'):
         state["batch_size"] = initial_batch_size
 
@@ -74,8 +97,14 @@ def adaptive_batched_analysis(
         except (RuntimeError, ValueError) as e:
             if is_cuda_oom(e):
                 if state["batch_size"] == 1:
+                    # name the likeliest cause in the failure itself: one crystal
+                    # does not exhaust a card, but a few hundred retained autograd
+                    # graphs do, and that reads as "this crystal is too big"
+                    hint = ('  GRAD WAS ENABLED -- retained autograd graphs are the '
+                            'usual cause; see the warning at call entry.'
+                            if torch.is_grad_enabled() else '')
                     raise RuntimeError(
-                        "Cascading OOM failure: batch_size already 1"
+                        f"Cascading OOM failure: batch_size already 1.{hint}"
                     ) from e
                 state["batch_size"] = max(int(state["batch_size"] * shrink_factor), 1)
                 gc.collect()
