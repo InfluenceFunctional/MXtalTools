@@ -208,6 +208,86 @@ def test_nonbonded_exclusions():
             f"{smiles}: {pair_index.shape[0]} pairs vs expected {expected}"
 
 
+def test_replicated_batch_pairs_match_the_per_molecule_loop():
+    """The tiled fast path must be BITWISE what the per-molecule BFS produces.
+
+    A batch of one molecule repeated skips the loop and tiles molecule 0's answer, which
+    is what makes a large prior draw affordable (50k copies of a 26-atom molecule: 154 s
+    of enumeration, against 2.6 s to collate them). Tiling the wrong thing would give
+    every replica a shifted or truncated exclusion set, which changes the energy without
+    changing any shape -- so the comparison is against the loop itself, forced by
+    disabling the fast path, rather than against a remembered number.
+    """
+    from mxtaltools.conformers import builder
+
+    real = builder._replica_count
+    try:
+        for smiles in ["CCCO", "c1ccccc1", "CCC1CCCCC1", "CC(=O)NC"]:
+            spec, _, _ = _reference(smiles)
+            for n in (2, 3, 5):
+                tree = collate([spec] * n)
+                builder._replica_count = real
+                pf, bf, sf = nonbonded_pairs(tree, min_separation=3)
+                builder._replica_count = lambda *a, **k: 1
+                ps, bs, ss = nonbonded_pairs(tree, min_separation=3)
+                assert torch.equal(pf, ps), f"{smiles} n={n}: pair_index differs"
+                assert torch.equal(bf, bs), f"{smiles} n={n}: pair_batch differs"
+                assert torch.equal(sf, ss), f"{smiles} n={n}: separation differs"
+    finally:
+        builder._replica_count = real
+
+
+def test_fast_path_refused_for_same_size_different_molecules():
+    """Equal atom counts are NOT enough to license tiling.
+
+    Two isomers collate into a batch with uniform sizes; taking the fast path there would
+    hand the second molecule the first one's exclusion set, silently. The guard compares
+    bond blocks, so it refuses -- and this test is only meaningful because the two pair
+    sets genuinely differ, which it asserts rather than assumes.
+    """
+    from mxtaltools.conformers import builder
+
+    a, _, _ = _reference("CCCCO")
+    b, _, _ = _reference("CC(C)CO")
+    assert a.n_atoms == b.n_atoms, (a.n_atoms, b.n_atoms)
+
+    mixed = collate([a, b])
+    assert builder._replica_count(mixed.ptr.numpy(), mixed.graph_bond_index.numpy(),
+                                  mixed.graph_bond_batch.numpy(), mixed.n_mols) == 1
+    p, pb, _ = nonbonded_pairs(mixed, min_separation=3)
+    assert not torch.equal(p[pb == 0], p[pb == 1] - a.n_atoms), \
+        "the two isomers share a pair set, so this test cannot detect a bad fast path"
+
+    # a batch of DIFFERENT sizes must refuse too
+    c, _, _ = _reference("CCCO")
+    het = collate([a, c, a])
+    assert builder._replica_count(het.ptr.numpy(), het.graph_bond_index.numpy(),
+                                  het.graph_bond_batch.numpy(), het.n_mols) == 1
+
+
+def test_mmff_pair_parameters_are_the_single_molecule_answer_tiled():
+    """``ff_from_mmff`` on n copies == its n=1 answer repeated n times.
+
+    The per-pair MMFF lookup runs once per molecule rather than once per batch row. The
+    n=1 build goes through the unchanged RDKit loop, so it is the ground truth here; a
+    mistiling would show up as a shifted or truncated parameter vector.
+    """
+    from mxtaltools.conformers.energy import ff_from_mmff
+
+    for smiles in ["CCCO", "CCC1CCCCC1", "CC(=O)NC"]:
+        spec, pos, mol = _reference(smiles)
+        ff1 = ff_from_mmff(collate([spec]), mol, spec.perm, dtype=DTYPE,
+                           min_separation=3)
+        for n in (2, 4):
+            ffn = ff_from_mmff(collate([spec] * n), mol, spec.perm, dtype=DTYPE,
+                               min_separation=3)
+            for field in ("sigma", "epsilon", "ele_qq", "ele_scale", "vdw_rstar",
+                          "closure_r0"):
+                one, many = getattr(ff1, field), getattr(ffn, field)
+                assert torch.equal(many, one.repeat(n)), \
+                    f"{smiles} n={n}: {field} is not the n=1 answer tiled"
+
+
 def _tree_shape(mol):
     """The element-labelled tree: what each slot *means*, independent of which atom fills it."""
     from mxtaltools.conformers.topology import spec_from_mol

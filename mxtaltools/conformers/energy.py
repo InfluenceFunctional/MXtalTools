@@ -418,6 +418,30 @@ def ff_from_graph(tree: BatchedTree,
     )
 
 
+def _repeated_block(rows: np.ndarray, n_mols: int):
+    """``(first block, repeat count)`` if ``rows`` is one block repeated, else ``(rows, 1)``.
+
+    MMFF parameters are a function of the atom pair, so a batch that is one molecule
+    replicated repeats the first molecule's answers and they can be looked up once and
+    tiled -- which is what every other term in ``ff_from_mmff`` already does. Querying
+    RDKit per batch row instead made that loop scale with the batch (12.45M pairs for a
+    50k-row draw on a 26-atom molecule).
+
+    The repetition is CHECKED, never inferred from ``n_mols``: the index arrays reaching
+    here are reduced modulo the molecule size, so a genuinely heterogeneous batch can
+    still have a divisible row count, and tiling one there would give every replica the
+    first molecule's parameters with nothing to report it.
+    """
+    if n_mols < 2 or len(rows) % n_mols:
+        return rows, 1
+    k = len(rows) // n_mols
+    first = rows[:k]
+    if not np.array_equal(rows.reshape(n_mols, *first.shape),
+                          np.broadcast_to(first, (n_mols, *first.shape))):
+        return rows, 1
+    return first, n_mols
+
+
 def ff_from_mmff(tree: BatchedTree, rdkit_mol, perm, dtype=torch.float64,
                  min_separation: int = 3, lj_k_factor: float = 2.5,
                  vdw_softcore_frac: float = 0.0, dielectric: float = 1.0):
@@ -579,10 +603,11 @@ def ff_from_mmff(tree: BatchedTree, rdkit_mol, perm, dtype=torch.float64,
 
     pair_index, pair_batch, separation = nonbonded_pairs(tree, min_separation)
     pi_np = pair_index.detach().cpu().numpy() % n_at            # back to one molecule
+    pi_unique, pair_reps = _repeated_block(pi_np, n_mols)
     from rdkit import Chem as _Chem
     path = _Chem.GetDistanceMatrix(rdkit_mol)                   # bonds between atoms
     sig, eps, rstar, qq, qscale = [], [], [], [], []
-    for a, b in pi_np:
+    for a, b in pi_unique:
         ra, rb = int(perm[int(a)]), int(perm[int(b)])
         # GetMMFFVdWParams returns (R*, eps, R*_da, eps_da): the LAST TWO carry MMFF's
         # donor-acceptor rescaling (DARAD 0.8 / DAEPS 0.5). Using the first two silently
@@ -595,15 +620,20 @@ def ff_from_mmff(tree: BatchedTree, rdkit_mol, perm, dtype=torch.float64,
         qq.append(props.GetMMFFPartialCharge(ra) * props.GetMMFFPartialCharge(rb))
         qscale.append(MMFF_ELE_14_SCALE if path[ra, rb] == 3 else 1.0)
 
+    pair_val = lambda v: torch.as_tensor(
+        np.tile(np.asarray(v, dtype=np.float64), pair_reps), dtype=dtype, device=device)
+
     closure = tree.broken_bond_index
     if closure.numel():
-        cl = closure.detach().cpu().numpy() % n_at
+        # same tiling as the pairs: each replica repeats the first molecule's closure bonds
+        cl_unique, cl_reps = _repeated_block(closure.detach().cpu().numpy() % n_at, n_mols)
         cr0 = []
-        for a, b in cl:
+        for a, b in cl_unique:
             pr = props.GetMMFFBondStretchParams(rdkit_mol, int(perm[int(a)]),
                                                 int(perm[int(b)]))
             cr0.append(pr[2] if pr is not None else 1.5)
-        closure_r0 = torch.as_tensor(np.asarray(cr0), dtype=dtype, device=device)
+        closure_r0 = torch.as_tensor(np.tile(np.asarray(cr0), cl_reps),
+                                     dtype=dtype, device=device)
     else:
         closure_r0 = torch.zeros(0, dtype=dtype, device=device)
 
@@ -613,8 +643,7 @@ def ff_from_mmff(tree: BatchedTree, rdkit_mol, perm, dtype=torch.float64,
         angle_index=tile_idx(ai), angle_batch=batch_of(len(ai)),
         theta0=tile_val(th0), k_angle=tile_val(ka),
         pair_index=pair_index, pair_batch=pair_batch,
-        sigma=torch.as_tensor(np.asarray(sig), dtype=dtype, device=device),
-        epsilon=torch.as_tensor(np.asarray(eps), dtype=dtype, device=device),
+        sigma=pair_val(sig), epsilon=pair_val(eps),
         closure_index=closure, closure_batch=tree.broken_bond_batch,
         closure_r0=closure_r0,
         torsion_index=tile_idx(ti) if ti else None,
@@ -636,10 +665,9 @@ def ff_from_mmff(tree: BatchedTree, rdkit_mol, perm, dtype=torch.float64,
         oop_index=tile_idx(oi) if oi else None,
         oop_batch=batch_of(len(oi)) if oi else None,
         oop_k=tile_val(ok_) if oi else None,
-        ele_qq=torch.as_tensor(np.asarray(qq), dtype=dtype, device=device),
-        ele_scale=torch.as_tensor(np.asarray(qscale), dtype=dtype, device=device),
+        ele_qq=pair_val(qq), ele_scale=pair_val(qscale),
         ele_dielectric=dielectric,
-        vdw_rstar=torch.as_tensor(np.asarray(rstar), dtype=dtype, device=device),
+        vdw_rstar=pair_val(rstar),
         vdw_softcore_frac=vdw_softcore_frac,
     )
 

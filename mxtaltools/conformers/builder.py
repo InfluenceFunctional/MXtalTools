@@ -231,6 +231,55 @@ def closure_length(tree: BatchedTree, pos: torch.Tensor) -> torch.Tensor:
     return bond_length(pos[e[:, 0]], pos[e[:, 1]])
 
 
+def _pairs_one(adj_edges, size: int, min_separation: int):
+    """One molecule's ``(pairs [p, 2], separations [p])``, atom indices from zero.
+
+    ``adj_edges`` is that molecule's bond list already shifted to a zero base.
+    """
+    adj = np.zeros((size, size), dtype=np.int8)
+    adj[adj_edges[:, 0], adj_edges[:, 1]] = 1
+    adj[adj_edges[:, 1], adj_edges[:, 0]] = 1
+
+    sep = np.full((size, size), min_separation + 1, dtype=np.int64)
+    np.fill_diagonal(sep, 0)
+    reach = adj.copy()
+    for d in range(1, min_separation + 1):
+        hit = (reach > 0) & (sep > d)
+        sep[hit] = d
+        if d < min_separation:
+            reach = ((reach @ adj) > 0).astype(np.int8)
+
+    iu = np.triu_indices(size, k=1)
+    keep = sep[iu] >= min_separation
+    return np.stack([iu[0][keep], iu[1][keep]], axis=1), sep[iu][keep]
+
+
+def _replica_count(ptr, bonds, bond_batch, n_mols: int) -> int:
+    """``n_mols`` if the batch is one molecule tiled, else 1.
+
+    PROVED, NOT ASSUMED. Equal atom counts are not enough -- a batch of distinct
+    isomers passes that and would then inherit the first molecule's exclusion set with
+    nothing to report it. This additionally requires every molecule's bond block to be
+    the first block shifted by its atom offset, which is exactly what ``collate`` emits
+    for repeated copies of one ``TreeSpec``.
+    """
+    if n_mols < 2:
+        return 1
+    sizes = np.diff(ptr)
+    size = int(sizes[0])
+    if not np.all(sizes == size):
+        return 1
+    counts = np.bincount(bond_batch, minlength=n_mols)
+    if not np.all(counts == counts[0]):
+        return 1
+    # bond_batch must be grouped and ascending for the reshape to mean what it says
+    if np.any(np.diff(bond_batch) < 0):
+        return 1
+    blocks = bonds.reshape(n_mols, int(counts[0]), 2)
+    off = (np.arange(n_mols, dtype=np.int64) * size)[:, None, None]
+    return n_mols if np.array_equal(blocks, blocks[:1] + off) else 1
+
+
 def nonbonded_pairs(tree: BatchedTree, min_separation: int = 4):
     """Intramolecular atom pairs separated by at least ``min_separation`` bonds.
 
@@ -244,6 +293,15 @@ def nonbonded_pairs(tree: BatchedTree, min_separation: int = 4):
     a 1-4 scaling factor would silently become a global epsilon multiplier.
 
     Boolean BFS layers per molecule -- O(N^2 * min_separation), run once and cached.
+
+    A batch of IDENTICAL molecules takes a tiled fast path. The BFS reads only the bond
+    graph, so replicas produce the same block shifted by the atom offset, and the loop is
+    ``n_mols`` repetitions of one answer -- which dominated startup for a large prior
+    draw (50k copies of a 26-atom molecule: 154 s, against 2.6 s to collate them). The
+    fast path is TAKEN ONLY WHEN THE TILING IS PROVED, by comparing every molecule's bond
+    block against the first: a batch that merely happens to be uniform in atom count is
+    not a batch of one molecule, and guessing wrong would give every replica the first
+    molecule's exclusion set silently.
     """
     device = tree.device
     pair_idx, pair_batch, seps = [], [], []
@@ -251,29 +309,22 @@ def nonbonded_pairs(tree: BatchedTree, min_separation: int = 4):
     bonds = tree.graph_bond_index.cpu().numpy()
     bond_batch = tree.graph_bond_batch.cpu().numpy()
 
+    replicas = _replica_count(ptr, bonds, bond_batch, tree.n_mols)
+    if replicas > 1:
+        size = int(ptr[1])
+        p0, s0 = _pairs_one(bonds[bond_batch == 0], size, min_separation)
+        off = (np.arange(replicas, dtype=np.int64) * size)[:, None, None]
+        tile = lambda a: torch.from_numpy(np.ascontiguousarray(a)).to(device)
+        return (tile((p0[None] + off).reshape(-1, 2)),
+                tile(np.repeat(np.arange(replicas, dtype=np.int64), len(p0))),
+                tile(np.tile(s0, replicas)))
+
     for m in range(tree.n_mols):
         lo, hi = int(ptr[m]), int(ptr[m + 1])
-        size = hi - lo
-        adj = np.zeros((size, size), dtype=np.int8)
-        eb = bonds[bond_batch == m] - lo
-        adj[eb[:, 0], eb[:, 1]] = 1
-        adj[eb[:, 1], eb[:, 0]] = 1
-
-        sep = np.full((size, size), min_separation + 1, dtype=np.int64)
-        np.fill_diagonal(sep, 0)
-        reach = adj.copy()
-        for d in range(1, min_separation + 1):
-            hit = (reach > 0) & (sep > d)
-            sep[hit] = d
-            if d < min_separation:
-                reach = ((reach @ adj) > 0).astype(np.int8)
-
-        iu = np.triu_indices(size, k=1)
-        keep = sep[iu] >= min_separation
-        rows, cols = iu[0][keep] + lo, iu[1][keep] + lo
-        pair_idx.append(np.stack([rows, cols], axis=1))
-        pair_batch.append(np.full(rows.shape[0], m, dtype=np.int64))
-        seps.append(sep[iu][keep])
+        p, s = _pairs_one(bonds[bond_batch == m] - lo, hi - lo, min_separation)
+        pair_idx.append(p + lo)
+        pair_batch.append(np.full(p.shape[0], m, dtype=np.int64))
+        seps.append(s)
 
     cat = lambda parts, shape: torch.from_numpy(
         np.concatenate(parts) if parts else np.zeros(shape, dtype=np.int64)).to(device)
