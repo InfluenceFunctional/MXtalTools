@@ -25,6 +25,7 @@ import pytest
 import torch
 
 from mace.data import get_neighborhood
+import mxtaltools.mlip_interfaces.pbc_neighbours as nb
 from mxtaltools.mlip_interfaces.pbc_neighbours import (
     batched_pbc_neighbour_list, lattice_shift_range, get_neighborhood_batched_numpy)
 
@@ -345,3 +346,88 @@ def test_empty_result_is_well_formed():
         torch.tensor(pos), torch.zeros(2, dtype=torch.long),
         torch.tensor(cell).unsqueeze(0), 3.0)
     assert ei.shape == (2, 0) and us.shape == (0, 3) and gid.shape == (0,)
+
+
+# --------------------------------------------------------------- edge cap ---
+# The per-node edge cap is the module's ONE deliberate approximation, so these
+# test it in both directions: that it is inert when it should be, that it fires
+# when it should, and that what it keeps is the SHORTEST edges rather than
+# whatever the search happened to return first.
+
+def _degenerate_batch(squash, n_graphs=4, n_atoms=24, cutoff=6.0):
+    """A batch whose FIRST cell is squashed and whose others are physical."""
+    base = torch.tensor([[11.0, 0, 0], [0, 6.0, 0], [0, 0, 14.0]])
+    cells = base.repeat(n_graphs, 1, 1).clone()
+    cells[0, 2, 2] *= squash
+    torch.manual_seed(0)
+    pos = torch.rand(n_graphs * n_atoms, 3) @ base
+    gi = torch.arange(n_graphs).repeat_interleave(n_atoms)
+    return pos, gi, cells, cutoff
+
+
+def test_edge_cap_is_inert_when_k_exceeds_degree():
+    """THE SAFETY PROPERTY. With the cap above the true max degree the edge set
+    must be IDENTICAL -- a cap that perturbs a structure it is not binding on
+    would silently change energies everywhere, which is the F-047 failure."""
+    pos, gi, cells, cut = _degenerate_batch(1.0)
+    nb._EDGE_CAP_COUNTS.update(calls=0, capped=0, max_degree=0,
+                               edges_in=0, edges_out=0)
+    ref = nb.batched_pbc_neighbour_list(pos, gi, cells, cut, pbc=True)
+    max_deg = nb._EDGE_CAP_COUNTS['max_degree']
+    assert max_deg > 0, 'no edges built; the fixture proves nothing'
+    got = nb._apply_edge_cap(ref[0][0], ref[0][1], ref[1], ref[2],
+                             pos, cells, max_deg + 1)
+    assert torch.equal(got[0], ref[0][0]) and torch.equal(got[1], ref[0][1])
+    assert nb._EDGE_CAP_COUNTS['capped'] == 0, 'cap fired when it should not have'
+
+
+def test_edge_cap_binds_on_a_degenerate_cell_and_bounds_the_total():
+    """The cap must actually FIRE, and the bound must be the promised
+    n_nodes * K -- a cap that is never exercised is not a cap."""
+    pos, gi, cells, cut = _degenerate_batch(0.01)
+    nb._EDGE_CAP_COUNTS.update(calls=0, capped=0, max_degree=0,
+                               edges_in=0, edges_out=0)
+    uncapped = nb.batched_pbc_neighbour_list(pos, gi, cells, cut, pbc=True)
+    max_deg = nb._EDGE_CAP_COUNTS['max_degree']
+    assert max_deg > 50, f'fixture is not degenerate enough (max degree {max_deg})'
+    K = 8
+    i, j, s, g = nb._apply_edge_cap(uncapped[0][0], uncapped[0][1], uncapped[1],
+                                    uncapped[2], pos, cells, K)
+    assert i.numel() < uncapped[0].shape[1], 'cap discarded nothing'
+    assert int(torch.bincount(i).max()) <= K, 'a node kept more than K edges'
+    assert i.numel() <= pos.shape[0] * K, 'total edges exceed the n_nodes * K bound'
+
+
+def test_edge_cap_keeps_the_shortest_edges():
+    """WHICH edges survive is the whole safety argument -- MACE's radial basis
+    decays to zero at r_max, so dropping the LONGEST is what makes the error
+    tolerable. Keeping an arbitrary K (what torch_cluster's own
+    max_num_neighbors does) would not be defensible."""
+    pos, gi, cells, cut = _degenerate_batch(0.05)
+    full = nb.batched_pbc_neighbour_list(pos, gi, cells, cut, pbc=True)
+    i_f, j_f, s_f, g_f = full[0][0], full[0][1], full[1], full[2]
+
+    def dists(i, j, s, g):
+        off = torch.einsum('ec,ecd->ed', s.to(cells.dtype), cells[g])
+        return (pos[j] + off - pos[i]).norm(dim=1)
+
+    K = 5
+    i, j, s, g = nb._apply_edge_cap(i_f, j_f, s_f, g_f, pos, cells, K)
+    d_all, d_keep = dists(i_f, j_f, s_f, g_f), dists(i, j, s, g)
+    node = int(torch.bincount(i_f).argmax())          # the busiest node
+    ref = d_all[i_f == node].sort().values[:K]
+    assert torch.allclose(d_keep[i == node].sort().values, ref), \
+        'the kept edges are not the K shortest at that node'
+
+
+def test_edge_cap_never_orphans_a_node():
+    """Per-NODE rather than per-graph, precisely so this cannot happen: an
+    isolated node receives no messages, so its features are garbage while it
+    still contributes to the energy sum."""
+    pos, gi, cells, cut = _degenerate_batch(0.01)
+    full = nb.batched_pbc_neighbour_list(pos, gi, cells, cut, pbc=True)
+    had = torch.bincount(full[0][0], minlength=pos.shape[0]) > 0
+    i, _, _, _ = nb._apply_edge_cap(full[0][0], full[0][1], full[1], full[2],
+                                    pos, cells, 1)
+    still = torch.bincount(i, minlength=pos.shape[0]) > 0
+    assert torch.equal(had, still), 'a node that had edges lost all of them'

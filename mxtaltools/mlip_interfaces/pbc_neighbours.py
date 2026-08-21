@@ -127,9 +127,24 @@ def drain_neighbour_path_counts():
            'energy/nl_shift_max_requested': _SHIFT_CAP_CALLS['max_requested'],
            # 1.0 = fast path throughout; anything less means the fallback is running
            # and the neighbour list is costing orders of magnitude more than it should
-           'energy/nl_fastpath_frac': _PATH_CALLS['radius'] / total}
+           'energy/nl_fastpath_frac': _PATH_CALLS['radius'] / total,
+           # REPORTED WITH THE CAP OFF TOO. max_degree is the only edge-count
+           # instrument in the stack, and it is what says whether a cap WOULD bind
+           # before one is allowed to change an energy. Every memory conclusion
+           # about the MLIP path so far was inferred from batch size and VRAM
+           # because nothing measured this.
+           'energy/nl_max_degree': _EDGE_CAP_COUNTS['max_degree'],
+           'energy/nl_edges_per_call':
+               _EDGE_CAP_COUNTS['edges_in'] / max(_EDGE_CAP_COUNTS['calls'], 1),
+           # >0 means edges were DISCARDED -- see MAX_EDGES_PER_NODE. Read it against
+           # sample acceptance: a capped structure must never be accepted.
+           'energy/nl_edge_cap_frac':
+               _EDGE_CAP_COUNTS['capped'] / max(_EDGE_CAP_COUNTS['calls'], 1),
+           'energy/nl_edge_kept_frac':
+               _EDGE_CAP_COUNTS['edges_out'] / max(_EDGE_CAP_COUNTS['edges_in'], 1)}
     _PATH_CALLS['radius'] = _PATH_CALLS['allpairs'] = 0
     _SHIFT_CAP_CALLS.update(calls=0, capped=0, max_requested=0)
+    _EDGE_CAP_COUNTS.update(calls=0, capped=0, max_degree=0, edges_in=0, edges_out=0)
     return out
 
 
@@ -297,6 +312,76 @@ def _pairs_by_radius_search(pos_w, batch_ind, cells, shifts, cutoff, num_graphs)
         f'wrong')
 
 
+#: Per-node edge cap: keep only the K SHORTEST edges at each atom. 0 = OFF.
+#:
+#: WHY THIS EXISTS. A degenerate cell is thin enough that every atom sits within
+#: the cutoff of hundreds of its own periodic images, so the edge count explodes
+#: while the atom count does not. Measured on acridine (92-atom cell, 6 A cutoff),
+#: one cell squashed x0.01 carries ~2630 edges/node against ~89 physical -- 30x --
+#: and MACE's per-edge tensors are what fills the card. Capping per NODE (not per
+#: graph) bounds total edges at n_nodes * K, and n_nodes does NOT vary with
+#: degeneracy, so the bound is exact and known before the forward runs.
+#:
+#: THIS IS A DELIBERATE APPROXIMATION, and the module otherwise refuses to make one
+#: (`_pairs_by_radius_search` escalates its search cap and RAISES rather than
+#: truncate). The justification is not that the error is small -- where this binds
+#: hard it discards ~90% of a node's edges and the energy error is large -- but that
+#: it only binds on structures whose energy is far outside the reward range and which
+#: are rejected whatever number we return. That argument has a checkable
+#: consequence: A CAPPED STRUCTURE MUST NEVER BE ACCEPTED. If `nl_edge_cap_frac` is
+#: nonzero while capped samples reach the buffer or the reward range, the
+#: approximation has leaked somewhere it matters.
+#:
+#: Longest-first discard is deliberate: MACE's radial basis decays smoothly to zero
+#: at r_max, so the edges dropped are the ones already weighted least. NOTE this is
+#: NOT what torch_cluster's own `max_num_neighbors` does -- that keeps the first K
+#: FOUND, in arbitrary order, which is why the search treats hitting it as an error
+#: rather than an acceptable cap.
+MAX_EDGES_PER_NODE = int(os.environ.get('MXT_MAX_EDGES_PER_NODE', '0'))
+
+#: max_degree is recorded on EVERY call, cap on or off -- it is the instrument that
+#: says whether a cap would bind, and nothing else in the stack reports edge counts.
+_EDGE_CAP_COUNTS = {'calls': 0, 'capped': 0, 'max_degree': 0,
+                    'edges_in': 0, 'edges_out': 0}
+
+
+def _apply_edge_cap(i_g, j_g, s_g, g_g, pos, cells, k):
+    """Keep the k shortest edges per source node. Returns the filtered tuple.
+
+    Always measures max degree; only filters when k > 0 and the cap actually
+    binds, so with k == 0 (or k above the true max degree) the returned tensors
+    are the SAME OBJECTS and the path is provably inert.
+    """
+    n_nodes = pos.shape[0]
+    _EDGE_CAP_COUNTS['calls'] += 1
+    _EDGE_CAP_COUNTS['edges_in'] += int(i_g.numel())
+    if i_g.numel() == 0:
+        return i_g, j_g, s_g, g_g
+    deg = torch.bincount(i_g, minlength=n_nodes)
+    max_deg = int(deg.max())
+    _EDGE_CAP_COUNTS['max_degree'] = max(_EDGE_CAP_COUNTS['max_degree'], max_deg)
+    if k <= 0 or max_deg <= k:
+        _EDGE_CAP_COUNTS['edges_out'] += int(i_g.numel())
+        return i_g, j_g, s_g, g_g
+
+    # distance for every edge: |pos[j] + S @ cell - pos[i]|, row-vector lattice,
+    # matching the (i, j, S) convention this module returns
+    off = torch.einsum('ec,ecd->ed', s_g.to(cells.dtype), cells[g_g])
+    d = (pos[j_g] + off - pos[i_g]).norm(dim=1)
+
+    # rank within each source node by distance: sort by d, then STABLE-sort by node
+    o1 = torch.argsort(d)
+    order = o1[torch.argsort(i_g[o1], stable=True)]
+    starts = torch.cat([deg.new_zeros(1), deg.cumsum(0)[:-1]])
+    rank = (torch.arange(i_g.numel(), device=i_g.device)
+            - starts.repeat_interleave(deg))
+    keep = order[rank < k]
+
+    _EDGE_CAP_COUNTS['capped'] += 1
+    _EDGE_CAP_COUNTS['edges_out'] += int(keep.numel())
+    return i_g[keep], j_g[keep], s_g[keep], g_g[keep]
+
+
 def batched_pbc_neighbour_list(pos: torch.Tensor,
                                batch_ind: torch.Tensor,
                                cells: torch.Tensor,
@@ -339,7 +424,9 @@ def batched_pbc_neighbour_list(pos: torch.Tensor,
             s_true = s_w + wrap_v[i_g] - wrap_v[j_g]
             keep = ~((i_g == j_g) & (s_true == 0).all(dim=1))
             i_g, j_g, s_true = i_g[keep], j_g[keep], s_true[keep]
-            return (torch.stack((i_g, j_g)), s_true, batch_ind[i_g])
+            i_g, j_g, s_true, _g = _apply_edge_cap(
+                i_g, j_g, s_true, batch_ind[i_g], pos, cells, MAX_EDGES_PER_NODE)
+            return (torch.stack((i_g, j_g)), s_true, _g)
 
     # --- pad to [G, n_max, 3] so every shift pass is one batched op ---
     slot = torch.arange(pos.shape[0], device=device) - starts[batch_ind]
@@ -382,8 +469,10 @@ def batched_pbc_neighbour_list(pos: torch.Tensor,
         return (empty, torch.zeros((0, 3), dtype=torch.long, device=device),
                 torch.zeros((0,), dtype=torch.long, device=device))
 
-    return (torch.stack((torch.cat(out_i), torch.cat(out_j))),
-            torch.cat(out_s), torch.cat(out_g))
+    _i, _j, _s, _g = _apply_edge_cap(
+        torch.cat(out_i), torch.cat(out_j), torch.cat(out_s), torch.cat(out_g),
+        pos, cells, MAX_EDGES_PER_NODE)
+    return torch.stack((_i, _j)), _s, _g
 
 
 def get_neighborhood_batched_numpy(positions, cutoff, pbc, cell):
