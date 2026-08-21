@@ -49,6 +49,12 @@ from mxtaltools.mlip_interfaces.AL_mace_utils import (
 from mxtaltools.mlip_interfaces.uma_utils import _tiled_gather_index
 from mace.tools.torch_geometric.dataloader import Collater
 
+#: RANDOM CSD, deliberately -- this file tests the BUILDER, not the energy.
+#: Element tables, Z'-mixed batches and the unknown-element guard all need
+#: chemical DIVERSITY, and an acridine-only fixture is C/H/N, which is exactly
+#: this model's table [1,6,7] -- so `test_unknown_element_raises_rather_than_
+#: mislabelling` would have no unknown element to raise on. The energy
+#: equivalence tests live in test_mace_gpu_real_batches.py and DO use acridine.
 DATASET = os.path.join(os.path.dirname(__file__), 'datasets', 'mini_new_csd.pt')
 MODEL_ENV = 'MACE_CHECKPOINT'
 

@@ -30,7 +30,19 @@ import torch
 
 from mxtaltools.dataset_utils.utils import collate_data_list
 
-DATASET = os.path.join(os.path.dirname(__file__), 'datasets', 'mini_new_csd.pt')
+#: ACRIDINE, not random CSD. This checkpoint (acr_112025_mh1_stagetwo) is
+#: FINE-TUNED FOR ACRIDINE, so a random-CSD fixture is off-distribution in cell
+#: shape and energy alike -- its molecules ran 19-34 atoms at sym_mult 2-4 and
+#: gave max edges/node of 64-78, where real acridine sits at 92-104. Any
+#: threshold or tolerance calibrated on the CSD fixture is calibrated on the
+#: wrong population.
+#:
+#: Three tiers, tagged `fixture_tier`: the 7 canonical experimental polymorphs,
+#: 15 prior samples (what the buffer holds), 15 noised samples (thermalized).
+#: NOTE five polymorphs are Z'>1 and only build through the MACE split path
+#: (`_mace_resolve_aunit_z`), so the buildability filter below keeps 2 of 7 --
+#: that is the Z'>1 coverage gap, not a broken fixture.
+DATASET = os.path.join(os.path.dirname(__file__), 'datasets', 'mini_acridine.pt')
 MODEL_ENV = 'MACE_CHECKPOINT'
 
 #: Never raise this without re-reading the module docstring. Both limits above bite.
@@ -306,3 +318,149 @@ def test_hoisted_is_not_slower(crystals, model, gpu):
         t[hoisted] = time.perf_counter() - t0
     assert t[True] <= t[False] * 1.5, (
         f'hoisted {t[True]*1e3:.0f} ms vs list {t[False]*1e3:.0f} ms at 2 graphs')
+
+
+# ------------------------------------------------------------ Z' > 1 energies ---
+# THE HALF THAT WAS MISSING. test_mace_atomicdata_vectorisation.py covers Z'>1 for
+# AtomicData CONSTRUCTION (test_zprime_gt_1_fresh_build, test_zprime_mixed_batch),
+# but nothing covered it for ENERGIES or GRADIENTS -- this file had no z_prime test
+# at all, and its `crystals` fixture filters on direct buildability, which silently
+# drops every Z'>1 crystal for the wrong reason: pose_aunit and build_unit_cell are
+# Z'=1 operations, and the valid route is the split_to_zp1 / join detour that
+# `_mace_resolve_aunit_z` performs internally when the cell is NOT prebuilt.
+#
+# That gap predates the acridine fixture: mini_new_csd.pt carried 5 Z'=2 crystals
+# and 0 of them survived the same filter. It matters because prod0810 arms 5 and 6
+# (acridine_sg14_zp2_mace, acridine_sg9_zp2_mace) run Z'=2 on this very path.
+#
+# The acridine fixture is better material for it than random CSD was: 5 of the 7
+# canonical polymorphs are Z'>1 (z_prime 2 and 3 across sg 9, 14 and 19), so these
+# are real experimental structures in the checkpoint's own distribution.
+
+
+@pytest.fixture(scope='module')
+def zp2_crystals(model):
+    """Z'>1 crystals, selected WITHOUT the buildability filter -- see above."""
+    if not os.path.exists(DATASET):
+        pytest.skip(f'{DATASET} not present')
+    allowed = set(int(z) for z in model.atomic_numbers)
+    raw = torch.load(DATASET, weights_only=False, map_location='cpu')
+    out = [c for c in raw if int(c.z_prime.max()) > 1
+           and set(int(z) for z in c.z).issubset(allowed)]
+    if not out:
+        pytest.skip("fixture has no Z'>1 crystals in this model's table")
+    return out
+
+
+def _fresh(crystals, n, device):
+    """A batch with NO unit cell built, so the energy call performs the rebuild
+    itself and takes the Z'>1 split branch. `_built` cannot be used here: it calls
+    build_unit_cell directly, which is what raises on Z'>1."""
+    pool = (crystals * (n // len(crystals) + 1))[:n]
+    return collate_data_list([c.clone() for c in pool]).to(device)
+
+
+@pytest.mark.parametrize('n', [1, 2])
+def test_zprime_gt_1_energies_match_across_paths(zp2_crystals, model, gpu, n):
+    """Same cross-path comparison the Z'=1 tests make, on the split branch.
+
+    A path that mis-assembles the Z'>1 unit cell would produce a WRONG energy
+    rather than an error -- the join step reorders atoms, and a reordering bug is
+    invisible to the builder tests, which compare structure rather than energy."""
+    def e(hoisted, batched_nl, gpu_batch):
+        return _energy_paths(_fresh(zp2_crystals, n, gpu), model,
+                             hoisted, batched_nl, gpu_batch)
+    ref1 = e(True, False, False)
+    ref2 = e(True, False, False)
+    for label, new in (('batched_nl', e(True, True, False)),
+                       ('gpu_batch', e(True, True, True))):
+        control = (ref1 - ref2).abs().max().item()
+        cross = (ref1 - new).abs().max().item()
+        scale = ref1.abs().max().item()
+        assert torch.isfinite(new).all(), f"{label}: non-finite Z'>1 energy"
+        bar = max(10 * control, 1e-4 * max(scale, 1.0))
+        assert cross <= bar, (
+            f"{label}: Z'>1 cross-path |dE| {cross:.3e} exceeds {bar:.3e} "
+            f'(same-path control {control:.3e}, scale {scale:.3e})')
+
+
+def test_zprime_gt_1_grads_reach_the_inputs(zp2_crystals, model, gpu):
+    """Gradients through the split/join detour, not just energies.
+
+    The sampler trains on these. join_zp1_ucell_batch rebuilds unit_cell_pos from
+    the split batch, so a detach anywhere in that detour would leave the Z'>1 arms
+    training on nothing while their energies still looked right."""
+    b = _fresh(zp2_crystals, 2, gpu)
+    # NOT unit_cell_pos: on the rebuild branch it does not exist yet (it is
+    # DERIVED inside the call from T_fc and the aunit parameters), so requiring
+    # grad on it raises AttributeError before the forward. T_fc is the real
+    # differentiable input here, and it is what the assertions below check.
+    b.T_fc.requires_grad_(True)
+    en = _energy_paths(b, model, hoisted=True, batched_nl=True, gpu_batch=True)
+    g_pos, g_cell = torch.autograd.grad(
+        en.sum(), (b.unit_cell_pos, b.T_fc), allow_unused=True)
+    assert g_cell is not None, "no gradient reached T_fc on the Z'>1 path"
+    assert torch.isfinite(g_cell).all(), "non-finite T_fc grad on the Z'>1 path"
+    assert g_cell.abs().max() > 0, "T_fc gradient is identically zero on Z'>1"
+
+
+# --- additions to the Z'>1 coverage above -----------------------------------
+# Those two tests compare ENERGIES across paths and check that a gradient
+# REACHES T_fc. Neither compares gradients across paths, and neither mixes Z'
+# within one batch -- and a batch that is ragged in z_prime AND sym_mult at once
+# is exactly the shape a batch-wide maximum in the neighbour list gets wrong.
+# The neighbour list has since gained a shift cap and a per-node edge cap, both
+# of which take such maxima, so these two shapes are worth asserting directly.
+
+@pytest.mark.parametrize('path', ['batched_nl', 'gpu_batch'])
+def test_zprime_gt_1_grads_match_across_paths(zp2_crystals, model, gpu, path):
+    """Gradients AGREE across paths on Z'>1, not merely exist.
+
+    A path can produce the right energy from a graph that routes gradient
+    differently -- the dict path's cell entry did exactly that until it was
+    detached to match. Same nondeterminism-control bar as the energy tests."""
+    def g(batched_nl, gpu_batch):
+        b = _fresh(zp2_crystals, 2, gpu)
+        b.T_fc.requires_grad_(True)
+        en = _energy_paths(b, model, True, batched_nl, gpu_batch)
+        (gc,) = torch.autograd.grad(en.sum(), (b.T_fc,), allow_unused=True)
+        assert gc is not None, "no gradient reached T_fc"
+        return gc.detach().float().cpu()
+
+    r1, r2 = g(False, False), g(False, False)
+    new = g(True, path == 'gpu_batch')
+    control = (r1 - r2).abs().max().item()
+    cross = (r1 - new).abs().max().item()
+    scale = r1.abs().max().item()
+    assert torch.isfinite(new).all(), f"{path}: non-finite Z'>1 T_fc grad"
+    bar = max(10 * control, 1e-4 * max(scale, 1.0))
+    assert cross <= bar, (
+        f"Z'>1 {path}: cross-path grad |d| {cross:.3e} exceeds {bar:.3e} "
+        f'(control {control:.3e}, scale {scale:.3e})')
+
+
+def test_zprime_mixed_batch_energies(crystals, zp2_crystals, model, gpu):
+    """Z'=1 and Z'>1 in ONE batch -- ragged in sym_mult AND z_prime at once,
+    which neither pure batch exercises. Per-graph shift ranges and per-node
+    degrees both vary far more here than within a pure batch, so a cap that
+    takes a batch-wide maximum shows up here and nowhere else."""
+    zp1 = [c for c in crystals if int(c.z_prime.max()) == 1]
+    if not zp1:
+        pytest.skip("need Z'=1 crystals too")
+    mixed = [zp1[0], zp2_crystals[0]]
+
+    def e(batched_nl, gpu_batch):
+        b = collate_data_list([c.clone() for c in mixed]).to(gpu)
+        return _energy_paths(b, model, True, batched_nl,
+                             gpu_batch).detach().float().cpu()
+
+    a1, a2 = e(False, False), e(False, False)
+    new = e(True, True)
+    control = (a1 - a2).abs().max().item()
+    cross = (a1 - new).abs().max().item()
+    scale = a1.abs().max().item()
+    assert torch.isfinite(new).all(), 'non-finite energy on a mixed-Z batch'
+    bar = max(10 * control, 1e-4 * max(scale, 1.0))
+    assert cross <= bar, (
+        f'mixed-Z batch: cross-path |d| {cross:.3e} exceeds {bar:.3e} '
+        f'(control {control:.3e}, scale {scale:.3e})')

@@ -136,15 +136,19 @@ def drain_neighbour_path_counts():
            'energy/nl_max_degree': _EDGE_CAP_COUNTS['max_degree'],
            'energy/nl_edges_per_call':
                _EDGE_CAP_COUNTS['edges_in'] / max(_EDGE_CAP_COUNTS['calls'], 1),
-           # >0 means edges were DISCARDED -- see MAX_EDGES_PER_NODE. Read it against
+           # >0 means edges were DISCARDED -- see EDGE_CAP_FACTOR. Read it against
            # sample acceptance: a capped structure must never be accepted.
            'energy/nl_edge_cap_frac':
                _EDGE_CAP_COUNTS['capped'] / max(_EDGE_CAP_COUNTS['calls'], 1),
+           # the DERIVED budget: a log reporting only the factor cannot be
+           # checked against the degrees beside it
+           'energy/nl_edge_cap_k': _EDGE_CAP_COUNTS['k'],
            'energy/nl_edge_kept_frac':
                _EDGE_CAP_COUNTS['edges_out'] / max(_EDGE_CAP_COUNTS['edges_in'], 1)}
     _PATH_CALLS['radius'] = _PATH_CALLS['allpairs'] = 0
     _SHIFT_CAP_CALLS.update(calls=0, capped=0, max_requested=0)
-    _EDGE_CAP_COUNTS.update(calls=0, capped=0, max_degree=0, edges_in=0, edges_out=0)
+    _EDGE_CAP_COUNTS.update(calls=0, capped=0, max_degree=0, edges_in=0,
+                            edges_out=0, k=0)
     return out
 
 
@@ -337,12 +341,44 @@ def _pairs_by_radius_search(pos_w, batch_ind, cells, shifts, cutoff, num_graphs)
 #: NOT what torch_cluster's own `max_num_neighbors` does -- that keeps the first K
 #: FOUND, in arbitrary order, which is why the search treats hitting it as an error
 #: rather than an acceptable cap.
-MAX_EDGES_PER_NODE = int(os.environ.get('MXT_MAX_EDGES_PER_NODE', '0'))
+#: THE KNOB IS A FACTOR, NOT A COUNT, because the count is not transferable.
+#: Per-node degree is the number of atoms inside the cutoff sphere,
+#: (4/3) pi r^3 rho -- so it scales with NUMBER DENSITY, which barely moves
+#: across organic molecular crystals, and with the CUBE of the cutoff, which
+#: moves a lot. Measured on acridine (max degree, 2 polymorphs + 8 priors):
+#:
+#:     r_cut    4     5     6     8    10
+#:     max     32    64   104   243   461      ~= 0.47-0.51 * r^3
+#:
+#: rho was 0.1056 (polymorphs) vs 0.0992 (priors) -- a 6% spread -- so a factor
+#: fixed for organics transfers across chemistry. A fixed COUNT does not: K=256
+#: is 2.46x headroom at r_cut 6, but only 1.05x at 8 and 0.56x at 10, where it
+#: would discard 45% of the edges of a PHYSICAL structure.
+#:
+#: factor 1.25 -> ~2.5x headroom over physical (K=270 at r_cut 6). The cluster
+#: arm that held batch 100 with zero OOMs ran K=256, i.e. factor 1.185.
+#: 0 = OFF, which is the shipping default.
+#:
+#: NOT FOR THE UMA PATH. fairchem's internal graph truncates at 300 neighbours
+#: per atom and our external builder exists partly to avoid exactly that (F-047);
+#: UMA physical cells reach ~141, so enabling this there would reintroduce by
+#: hand the truncation that path was built to remove. Scope it per-arm to MACE.
+EDGE_CAP_FACTOR = float(os.environ.get('MXT_EDGE_CAP_FACTOR', '0'))
+
+
+def edge_cap_k(cutoff) -> int:
+    """The per-node edge budget implied by the factor at this cutoff.
+
+    Returns 0 (meaning OFF) when the factor is unset, so the cap costs nothing
+    and changes nothing unless a run asks for it."""
+    if EDGE_CAP_FACTOR <= 0:
+        return 0
+    return max(1, int(EDGE_CAP_FACTOR * float(cutoff) ** 3))
 
 #: max_degree is recorded on EVERY call, cap on or off -- it is the instrument that
 #: says whether a cap would bind, and nothing else in the stack reports edge counts.
 _EDGE_CAP_COUNTS = {'calls': 0, 'capped': 0, 'max_degree': 0,
-                    'edges_in': 0, 'edges_out': 0}
+                    'edges_in': 0, 'edges_out': 0, 'k': 0}
 
 
 def _apply_edge_cap(i_g, j_g, s_g, g_g, pos, cells, k):
@@ -354,6 +390,7 @@ def _apply_edge_cap(i_g, j_g, s_g, g_g, pos, cells, k):
     """
     n_nodes = pos.shape[0]
     _EDGE_CAP_COUNTS['calls'] += 1
+    _EDGE_CAP_COUNTS['k'] = int(k)
     _EDGE_CAP_COUNTS['edges_in'] += int(i_g.numel())
     if i_g.numel() == 0:
         return i_g, j_g, s_g, g_g
@@ -425,7 +462,8 @@ def batched_pbc_neighbour_list(pos: torch.Tensor,
             keep = ~((i_g == j_g) & (s_true == 0).all(dim=1))
             i_g, j_g, s_true = i_g[keep], j_g[keep], s_true[keep]
             i_g, j_g, s_true, _g = _apply_edge_cap(
-                i_g, j_g, s_true, batch_ind[i_g], pos, cells, MAX_EDGES_PER_NODE)
+                i_g, j_g, s_true, batch_ind[i_g], pos, cells,
+                edge_cap_k(cutoff))
             return (torch.stack((i_g, j_g)), s_true, _g)
 
     # --- pad to [G, n_max, 3] so every shift pass is one batched op ---
@@ -471,7 +509,7 @@ def batched_pbc_neighbour_list(pos: torch.Tensor,
 
     _i, _j, _s, _g = _apply_edge_cap(
         torch.cat(out_i), torch.cat(out_j), torch.cat(out_s), torch.cat(out_g),
-        pos, cells, MAX_EDGES_PER_NODE)
+        pos, cells, edge_cap_k(cutoff))
     return torch.stack((_i, _j)), _s, _g
 
 
