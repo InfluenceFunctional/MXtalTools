@@ -140,6 +140,62 @@ def test_shift_range_grows_with_the_fractional_spread():
     assert (r_out > r_in).any(), 'the spread term is not doing anything here'
 
 
+def test_shift_range_cap_never_binds_on_physical_cells():
+    """THE DIRECTION THAT MATTERS. The cap is a memory bound, and it must never be
+    the thing deciding a real crystal's edge set. Measured on the acridine prior,
+    physical cells want n_i <= 3 at a 6 A cutoff; every fixture here must sit well
+    under MAX_SHIFT_RANGE with the counter untouched."""
+    from mxtaltools.mlip_interfaces.pbc_neighbours import (
+        MAX_SHIFT_RANGE, _SHIFT_CAP_CALLS, drain_neighbour_path_counts)
+    drain_neighbour_path_counts()                       # zero the counters
+    for name, cell in (('cubic', _cubic(6.0)), ('triclinic', _triclinic())):
+        c = torch.tensor(cell, dtype=torch.float64).unsqueeze(0)
+        rng = lattice_shift_range(c, 6.0, torch.ones_like(c[:, :, 0]))
+        assert int(rng.max()) < MAX_SHIFT_RANGE, (
+            f'{name} wants {int(rng.max())} shifts, at or above the cap '
+            f'{MAX_SHIFT_RANGE} -- the cap would be deciding a PHYSICAL edge set')
+    assert _SHIFT_CAP_CALLS['capped'] == 0
+
+
+def test_shift_range_cap_binds_on_a_degenerate_cell_and_says_so():
+    """The other direction, without which the test above passes on a cap that does
+    nothing. A flattened cell has interplanar spacing -> 0, so the requested range
+    is unbounded; it must be refused, COUNTED, and reported."""
+    from mxtaltools.mlip_interfaces.pbc_neighbours import (
+        MAX_SHIFT_RANGE, _SHIFT_CAP_CALLS, drain_neighbour_path_counts)
+    drain_neighbour_path_counts()
+    cell = torch.tensor(_cubic(6.0), dtype=torch.float64).unsqueeze(0).clone()
+    cell[0, 2] = cell[0, 2] * 1e-3                      # squash the third axis
+    rng = lattice_shift_range(cell, 6.0, torch.ones_like(cell[:, :, 0]))
+    assert int(rng.max()) == MAX_SHIFT_RANGE, 'the cap did not bind'
+    assert _SHIFT_CAP_CALLS['capped'] == 1
+    assert _SHIFT_CAP_CALLS['max_requested'] > MAX_SHIFT_RANGE, (
+        'the refused range must be recorded, or a capped call is '
+        'indistinguishable from a call that never needed capping')
+    out = drain_neighbour_path_counts()
+    if out:                                             # only if a list was built
+        assert out['energy/nl_shift_capped_frac'] > 0
+
+
+def test_one_degenerate_cell_does_not_set_the_grid_for_the_whole_batch():
+    """WHY THE CAP EXISTS AT ALL, as an assertion rather than a comment.
+
+    `batched_pbc_neighbour_list` ghost-expands every graph on `.max(dim=0)` of the
+    per-graph ranges, so without a ceiling ONE degenerate crystal drives K -- and
+    therefore the memory -- for every sane crystal beside it. Measured 2026-08-20
+    at 128 acridine graphs: squashing a single cell x0.001 took K from 245 to
+    50,029 and OOM'd a 16 GB card, while the edge count rose only 2.5x."""
+    from mxtaltools.mlip_interfaces.pbc_neighbours import MAX_SHIFT_RANGE
+    good = torch.tensor(_cubic(6.0), dtype=torch.float64)
+    cells = good.unsqueeze(0).repeat(8, 1, 1).clone()
+    cells[0, 2] = cells[0, 2] * 1e-4                    # one bad cell in eight
+    rng = lattice_shift_range(cells, 6.0, torch.ones_like(cells[:, :, 0]))
+    shared = rng.max(dim=0).values                      # what the batch actually uses
+    K = int(torch.prod(2 * shared + 1))
+    assert int(shared.max()) <= MAX_SHIFT_RANGE
+    assert K <= (2 * MAX_SHIFT_RANGE + 1) ** 3, f'K={K} is not bounded by the cap'
+
+
 def test_single_atom_still_has_periodic_self_edges(n=1):
     """A one-atom cell has NO ordinary neighbours but does have self-images across
     the boundary. Dropping i == j unconditionally -- the obvious way to write the

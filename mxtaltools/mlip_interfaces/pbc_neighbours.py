@@ -38,6 +38,8 @@ tf32 noise already present. The tests therefore assert an identical edge SET (ex
 order-insensitive) and energies inside a same-path control, rather than pretending to
 a bitwise array match that no reimplementation could hold.
 """
+import os
+
 import numpy as np
 import torch
 
@@ -60,6 +62,54 @@ RADIUS_CAP_START = 4096
 #: from a disappointing throughput number.
 _PATH_CALLS = {'radius': 0, 'allpairs': 0}
 
+#: Per-axis ceiling on the periodic shift range, and the reason it has to exist.
+#:
+#: `lattice_shift_range` divides the cutoff by the interplanar spacing, and that
+#: spacing goes to ZERO as a cell flattens -- so `need` is unbounded from above.
+#: It is deliberately clamped only from BELOW there (a degenerate cell must not
+#: silently produce no periodic edges), which leaves the top open.
+#:
+#: That would be survivable if each graph paid for its own geometry. It does not:
+#: `batched_pbc_neighbour_list` takes `.max(dim=0)` over the batch and ghost-
+#: expands EVERY graph on the worst cell's grid, so one degenerate crystal sets
+#: the memory for all of them. MEASURED 2026-08-20, 128 acridine graphs / 2944
+#: atoms / 6 A cutoff, squashing ONE cell's third axis:
+#:
+#:     physical        grid [3,3,2]     K=245       peak  254 MiB
+#:     x0.01           grid [3,3,52]    K=5,145     peak 1725 MiB
+#:     x0.003          grid [3,3,171]   K=16,807    peak 3825 MiB
+#:     x0.001          grid [3,3,510]   K=50,029    OOM (16 GB card)
+#:
+#: Edge COUNT rose only 2.5x across that range while memory rose 15x, so it is
+#: not the answer getting bigger -- it is ghost expansion the 127 sane cells did
+#: not need. An untrained policy emits exactly these cells, which is why the
+#: failure is an early-training transient that vanishes once geometry is sane.
+#:
+#: 8 rather than the measured physical maximum of 3: this is a MEMORY BOUND, not
+#: a modelling choice, and it must never be the thing deciding a physical cell's
+#: edge set. 8 bounds K at 17^3 = 4913 while leaving 2.7x headroom over what real
+#: acridine needs at this cutoff. A larger cutoff or a long thin cell legitimately
+#: needs more, which is why binding it is COUNTED and reported rather than
+#: silently applied -- see `_SHIFT_CAP_CALLS`.
+#:
+#: NOT a cap on `max_num_neighbors`: that truncates the neighbour list of a cell
+#: whose geometry is fine, which is the silent-wrong-energy failure this module
+#: exists to avoid and the one F-047 removed from the UMA path. Capping SHIFTS
+#: drops distant images of a cell that is already geometrically meaningless.
+#: Overridable so the cap is a SINGLE-KEY TOGGLE rather than a code revision:
+#: without this, comparing capped against uncapped means comparing two builds,
+#: and a cross-version A/B cannot isolate the cap from anything else that moved.
+#: A very large value (e.g. 100000) restores the old unbounded behaviour for the
+#: control arm. Matches how the other MLIP path switches are expressed
+#: (MXT_BATCHED_MACE_NEIGHBOURS, MXT_UMA_EXTERNAL_GRAPH), so a battery can put it
+#: in an <arm>.env beside the config.
+MAX_SHIFT_RANGE = int(os.environ.get('MXT_MAX_SHIFT_RANGE', '8'))
+
+#: Calls in which the cap actually bound, and the largest range it refused. A cap
+#: that fires without saying so is the same defect as a flag that reports success
+#: without executing.
+_SHIFT_CAP_CALLS = {'calls': 0, 'capped': 0, 'max_requested': 0}
+
 
 def drain_neighbour_path_counts():
     """Pop the per-branch call counts. {} when the list was never built."""
@@ -68,10 +118,18 @@ def drain_neighbour_path_counts():
         return {}
     out = {'energy/nl_radius_calls': _PATH_CALLS['radius'],
            'energy/nl_allpairs_calls': _PATH_CALLS['allpairs'],
+           # >0 means at least one cell in the batch was degenerate enough to ask
+           # for a shift grid past MAX_SHIFT_RANGE. Its periodic images are
+           # incomplete from that point -- acceptable only because such a cell is
+           # geometrically meaningless and the bounding term rejects it anyway.
+           'energy/nl_shift_capped_frac':
+               _SHIFT_CAP_CALLS['capped'] / max(_SHIFT_CAP_CALLS['calls'], 1),
+           'energy/nl_shift_max_requested': _SHIFT_CAP_CALLS['max_requested'],
            # 1.0 = fast path throughout; anything less means the fallback is running
            # and the neighbour list is costing orders of magnitude more than it should
            'energy/nl_fastpath_frac': _PATH_CALLS['radius'] / total}
     _PATH_CALLS['radius'] = _PATH_CALLS['allpairs'] = 0
+    _SHIFT_CAP_CALLS.update(calls=0, capped=0, max_requested=0)
     return out
 
 
@@ -116,7 +174,19 @@ def lattice_shift_range(cells: torch.Tensor, cutoff: float,
     need = cutoff / d_perp.clamp_min(1e-12)
     if frac_spread is not None:
         need = need + frac_spread
-    return torch.ceil(need).long().clamp_min(0)
+    rng = torch.ceil(need).long().clamp_min(0)
+    # CEILING, and it is a memory bound rather than a modelling choice -- see
+    # MAX_SHIFT_RANGE. Counted, never silent: a capped call has an incomplete
+    # periodic image set, and a reader must be able to tell that from a call that
+    # simply had sane geometry.
+    _SHIFT_CAP_CALLS['calls'] += 1
+    biggest = int(rng.max()) if rng.numel() else 0
+    if biggest > MAX_SHIFT_RANGE:
+        _SHIFT_CAP_CALLS['capped'] += 1
+        _SHIFT_CAP_CALLS['max_requested'] = max(
+            _SHIFT_CAP_CALLS['max_requested'], biggest)
+        rng = rng.clamp_max(MAX_SHIFT_RANGE)
+    return rng
 
 
 def fractional_spread(pos: torch.Tensor, batch_ind: torch.Tensor,

@@ -87,12 +87,83 @@ class BatchedTree:
         )
 
 
+def _collate_replicated(spec, n: int, device=None) -> BatchedTree:
+    """``collate([spec] * n)`` without the per-copy Python loop.
+
+    Every field of a replicated batch is molecule 0's field tiled, with index arrays
+    offset by ``atom_offset = m * n_atoms``. Building it that way is O(1) Python calls
+    on arrays of the final size, against O(n) calls on tiny ones.
+
+    Sentinels survive because the offset is applied under the same ``>= 0`` mask the
+    loop uses, and ``perm`` is tiled WITHOUT an offset -- it indexes within a molecule,
+    which is exactly what the loop's bare ``concatenate`` does.
+    """
+    size = int(spec.n_atoms)
+    offsets = np.arange(n + 1, dtype=np.int64) * size
+    off3 = offsets[:n].reshape(-1, 1, 1)          # for [rows, cols] index blocks
+    off2 = offsets[:n].reshape(-1, 1)             # for flat per-atom index arrays
+
+    def shift(attr, cols):
+        a = np.asarray(getattr(spec, attr), dtype=np.int64).reshape(-1, cols)
+        return torch.from_numpy(
+            np.ascontiguousarray(np.where(a >= 0, a + off3, -1).reshape(-1, cols)))
+
+    def seg(attr, cols):
+        rows = np.asarray(getattr(spec, attr), dtype=np.int64).reshape(-1, cols).shape[0]
+        return torch.from_numpy(np.repeat(np.arange(n, dtype=np.int64), rows))
+
+    def ref(name):
+        a = np.asarray(getattr(spec, name))
+        return torch.from_numpy(np.ascontiguousarray(np.where(a >= 0, a + off2, -1).ravel()))
+
+    rounds = []
+    for t in range(spec.n_rounds):
+        f0 = np.flatnonzero(spec.round_id == t)
+        # blocks are ascending and disjoint, so the concatenation is already sorted
+        rounds.append(torch.from_numpy(np.ascontiguousarray((f0 + off2).ravel())))
+
+    tile = lambda a: torch.from_numpy(np.tile(np.asarray(a), n))
+    batched = BatchedTree(
+        n_mols=n, n_atoms=size * n,
+        z=tile(spec.z),
+        batch=torch.from_numpy(np.repeat(np.arange(n, dtype=np.int64), size)),
+        ref_a=ref("ref_a"), ref_b=ref("ref_b"), ref_c=ref("ref_c"),
+        rounds=rounds,
+        bond_index=shift("bond_index", 2),
+        angle_index=shift("angle_index", 3),
+        torsion_index=shift("torsion_index", 4),
+        torsion_is_proper=tile(spec.torsion_is_proper),
+        angle_is_linear=tile(spec.angle_is_linear),
+        torsion_frame_is_linear=tile(spec.torsion_frame_is_linear),
+        bond_batch=seg("bond_index", 2),
+        angle_batch=seg("angle_index", 3),
+        torsion_batch=seg("torsion_index", 4),
+        broken_bond_index=shift("broken_bond_index", 2),
+        broken_bond_batch=seg("broken_bond_index", 2),
+        graph_bond_index=shift("graph_bond_index", 2),
+        graph_bond_batch=seg("graph_bond_index", 2),
+        ptr=torch.from_numpy(offsets),
+        perm=tile(spec.perm),
+    )
+    return batched.to(device) if device is not None else batched
+
+
 def collate(specs: list, device=None) -> BatchedTree:
     """Concatenate per-molecule ``TreeSpec``s into batched index tensors.
 
     Pure integer bookkeeping -- cache the result and reuse it across every sample
     drawn for the same molecule set.
+
+    A batch that is ONE spec replicated takes a tiled fast path, which is the case a
+    single-molecule prior draw always hits (``[spec] * batch_size``). The trigger is
+    OBJECT IDENTITY, not equality: it is the one test that cannot be wrong, and it
+    costs n pointer comparisons. Distinct-but-equal specs fall through to the loop --
+    correct, merely not accelerated -- because proving equality field by field would
+    cost more than the loop it saves.
     """
+    if len(specs) > 1 and all(s is specs[0] for s in specs):
+        return _collate_replicated(specs[0], len(specs), device)
+
     sizes = np.array([s.n_atoms for s in specs], dtype=np.int64)
     offsets = np.concatenate([[0], np.cumsum(sizes)])
     n_atoms = int(offsets[-1])
