@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import torch
 
 from mxtaltools.common.geometry_utils import batch_compute_fractional_transform, get_batch_centroids, \
@@ -7,7 +8,22 @@ from mxtaltools.crystal_building.utils import extract_aunit_orientation
 from mxtaltools.dataset_utils.data_classes import MolData, MolCrystalData
 from mxtaltools.dataset_utils.utils import collate_data_list
 
-device = 'cuda'
+
+@pytest.fixture(scope="module")
+def device():
+    """CUDA when present, CPU otherwise.
+
+    Was a module-level `device = 'cuda'` consumed by a module-scope call to the
+    test functions.  As a fixture the tests are discoverable by pytest AND
+    runnable on a machine without a GPU, which is what a CPU CI tier needs.
+
+    Gate on device_count(), not is_available(): under CUDA_VISIBLE_DEVICES=""
+    this build reports is_available() == True with device_count() == 0, so
+    is_available() would hand back 'cuda' and fail deep in a checkpoint load
+    rather than here.
+    """
+    return 'cuda' if torch.cuda.device_count() > 0 else 'cpu'
+
 
 """
 Molecules
@@ -46,12 +62,31 @@ def test_MolData(device):
     assert torch.all(torch.isclose(mol_batch.radius_calculation(), mol_batch.radius)), "Error in mol volume calculation"
     # check mass calculation
     assert torch.all(torch.isclose(mol_batch.mass_calculation(), mol_batch.mass)), "Error in mol mass calculation"
-    # check recentering
-    mol_batch.recenter_molecules()
-    assert torch.all(torch.isclose(get_batch_centroids(mol_batch.pos, mol_batch.batch, mol_batch.num_graphs),
-                                   torch.zeros((mol_batch.num_graphs, 3), dtype=torch.float32, device=mol_batch.device),
-                                   atol=1e-6)), \
-        "Error in recentering calculation"
+    # check recentering -- ASSERT THE CONVENTION, not just "some centroid is zero".
+    # recenter_molecules(center_on_heavy_atoms=True) is the default and zeroes the
+    # HEAVY-atom centroid; the all-atom centroid is then non-zero because hydrogens
+    # pull it off (measured ~0.69 A on this batch).  Asserting the all-atom centroid
+    # under the default is what this test used to do, and it was simply wrong.
+    # Both directions are checked so that flipping the default fails here.
+    for center_on_heavy_atoms in (True, False):
+        batch = generate_test_mol_batch(device)
+        batch.recenter_molecules(center_on_heavy_atoms=center_on_heavy_atoms)
+
+        heavy = batch.z > 1
+        all_atom_centroid = get_batch_centroids(batch.pos, batch.batch, batch.num_graphs)
+        heavy_centroid = get_batch_centroids(batch.pos[heavy], batch.batch[heavy], batch.num_graphs)
+
+        centered, other = ((heavy_centroid, all_atom_centroid) if center_on_heavy_atoms
+                           else (all_atom_centroid, heavy_centroid))
+        zeros = torch.zeros((batch.num_graphs, 3), dtype=torch.float32, device=batch.device)
+
+        assert torch.all(torch.isclose(centered, zeros, atol=1e-6)), \
+            f"recenter_molecules(center_on_heavy_atoms={center_on_heavy_atoms}) did not zero its own centroid"
+        # the other centroid must NOT be zero, or the two conventions have collapsed
+        # into one and the flag has silently stopped meaning anything
+        assert other.abs().max() > 1e-4, \
+            (f"recenter_molecules(center_on_heavy_atoms={center_on_heavy_atoms}) zeroed BOTH centroids; "
+             "the heavy/all-atom distinction is not being applied")
 
     # test radial calculation
     mol_batch.construct_intra_radial_graph()  # todo add a test/assertion
@@ -137,12 +172,19 @@ def test_MolCrystalData(device):
 
     # pose the asymmetric unit
     crystal_batch.pose_aunit()
-    # confirm aunit centroids are correct
+    # confirm aunit centroids are correct.
+    # CONVENTION: `aunit_centroid` is the HEAVY-ATOM centroid in fractional
+    # coordinates -- pose_aunit() places that one exactly (0.0 residual), while the
+    # all-atom centroid sits up to ~0.14 frac away because hydrogens pull it.
+    # This test previously measured the all-atom centroid and so could never pass.
+    heavy = crystal_batch.z > 1
+    heavy_frac_centroid = fractional_transform(
+        get_batch_centroids(crystal_batch.pos[heavy],
+                            crystal_batch.batch[heavy],
+                            crystal_batch.num_graphs),
+        crystal_batch.T_cf)
     assert torch.all(torch.isclose(
-        fractional_transform(get_batch_centroids(crystal_batch.pos,
-                                                 crystal_batch.batch,
-                                                 crystal_batch.num_graphs),
-                             crystal_batch.T_cf),
+        heavy_frac_centroid,
         crystal_batch.aunit_centroid,
         atol=1e-3)), "Error in aunit placement/analysis"
     # confirm aunit orientations are correct
@@ -153,8 +195,17 @@ def test_MolCrystalData(device):
     )
     assert torch.all(torch.isclose(crystal_batch.aunit_orientation, orientations,
                                    atol=1e-2)), "Error in aunit orientation posing/analysis"
-    assert torch.all(
-        torch.isclose(crystal_batch.aunit_handedness.long(), handedness.long().cpu())), "Error in handedness analysis"
+    # FLATTEN BOTH.  aunit_handedness is (n_graphs, max_z_prime) and the analysed
+    # handedness is (n_graphs,); comparing them directly broadcasts to
+    # (n_graphs, n_graphs) -- every crystal against every other -- which is False
+    # almost everywhere even when all 21 values agree.
+    # The `.cpu()` that used to be here compensated for _pad_tensor allocating on
+    # the default device regardless of the batch's, which is now fixed.
+    requested_handedness = crystal_batch.aunit_handedness.flatten().long()
+    analysed_handedness = handedness.flatten().long().to(crystal_batch.device)
+    assert requested_handedness.shape == analysed_handedness.shape,         (f"handedness shape mismatch {tuple(requested_handedness.shape)} vs "
+         f"{tuple(analysed_handedness.shape)}; a comparison here would broadcast silently")
+    assert torch.all(requested_handedness == analysed_handedness), "Error in handedness analysis"
 
     # build then reanalyze the crystal
     crystal_batch.build_unit_cell()
@@ -166,8 +217,10 @@ def test_MolCrystalData(device):
                                    atol=1e-3)), "Reparameterization of centroids failed"
     assert torch.all(torch.isclose(aunit_orientation[is_well_defined], crystal_batch.aunit_orientation[is_well_defined],
                                    atol=1e-2)), "Reparameterization of rotvecs failed"
-    assert torch.all(torch.isclose(aunit_handedness[is_well_defined].cpu(), crystal_batch.aunit_handedness[is_well_defined],
-                                   atol=1e-8)), "Reparamterization of handedness failed"
+    assert torch.all(
+        aunit_handedness[is_well_defined].flatten().long().to(crystal_batch.device)
+        == crystal_batch.aunit_handedness[is_well_defined].flatten().long()
+    ), "Reparameterization of handedness failed"
 
     """
     cluster generation & analysis
@@ -182,5 +235,6 @@ def test_MolCrystalData(device):
     assert torch.all(torch.isfinite(lj_en)), "NaN LJ potentials"
     assert torch.all(torch.isfinite(es_en)), "NaN electrostatic potentials"
 
-test_MolData(device)
-test_MolCrystalData(device)
+# NOTE: these were called at module scope, so both tests ran at COLLECTION time --
+# a failure surfaced as a collection error and the whole session aborted.
+# pytest discovers them by name; no module-scope invocation is needed.

@@ -564,7 +564,10 @@ class MolCrystalAnalysis:
         logZ = lambda T, d, w: (d/2) * np.log(2*np.pi*T) + d*np.log(w)
 
         """
-        x = self.latent_params() if x is None else x
+        # gauge-FREE, and load-bearing: latent_params() default MUTATES the batch
+        # (canonicalize_free_axes writes aunit_centroid), and this runs on
+        # latent-energy batches whose centroid dims are REAL data (P1 2026-08-24).
+        x = self.latent_params(gauge_fix_free_axes=False) if x is None else x
         d = x.shape[-1]
 
         if c is None:
@@ -605,7 +608,8 @@ class MolCrystalAnalysis:
         Old convention:
             scale = 1 / width
         """
-        d = self.latent_params().shape[-1]
+        # dimension read only -- must not mutate the batch (P1 2026-08-24)
+        d = self.latent_params(gauge_fix_free_axes=False).shape[-1]
 
         if c is None:
             c = torch.zeros((1, d), device=self.device)
@@ -679,7 +683,8 @@ class MolCrystalAnalysis:
 
         g = torch.Generator(device="cpu").manual_seed(seed)
         K = n_core + n_ghost
-        d = self.latent_params().shape[-1]
+        # dimension read only -- must not mutate the batch (P1 2026-08-24)
+        d = self.latent_params(gauge_fix_free_axes=False).shape[-1]
 
         base_log_sigma = torch.empty(K).uniform_(
             math.log(sigma_range[0]), math.log(sigma_range[1]), generator=g)
@@ -775,7 +780,8 @@ class MolCrystalAnalysis:
         import math
 
         self._ensure_latent_field(**kwargs)
-        x = self.latent_params() if x is None else x  # [B,d]
+        # gauge-FREE: latent_params() default mutates the batch (P1 2026-08-24)
+        x = self.latent_params(gauge_fix_free_axes=False) if x is None else x  # [B,d]
         mu, R, log_eigstd, log_w = self._latent_field_params(c)  # c broadcasts over B
         w = torch.as_tensor(width, dtype=x.dtype, device=x.device)
         if w.ndim == 1:

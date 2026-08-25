@@ -55,8 +55,9 @@ scikit-image = "*"
 networkx     = "*"
 
 # Molecular / crystal utilities
-ase   = ">=3.22.1"
-rdkit = ">=2024.03.5"
+ase    = ">=3.22.1"
+rdkit  = ">=2024.03.5"
+spglib = ">=2.0"       # crystal_ops.compute_standard_cell
 
 # ML utilities
 einops  = "*"
@@ -93,3 +94,13 @@ optional = true
 [build-system]
 requires      = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "mxtaltools"]
+norecursedirs = ["old", "old_bad", "test_WIP", "papers", ".claude"]
+markers = [
+    "gpu: requires a CUDA device",
+    "mlip: requires a MACE or UMA checkpoint",
+    "ccdc: requires a CCDC licence and a local CIF corpus",
+    "slow: not part of the fast tier",
+]

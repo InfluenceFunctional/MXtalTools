@@ -152,6 +152,21 @@ class MolCrystalOps:
             batch_compute_fractional_transform(self.cell_lengths,
                                                self.cell_angles))
 
+        # packing_coeff and density are MEANINGLESS without mol_volume/mass, so say
+        # which field is missing rather than raising `TypeError: NoneType * Tensor`
+        # from the arithmetic. Not defaulted: a packing coefficient of 0 (or of
+        # anything) is a plausible-looking number that no caller could distinguish
+        # from a measured one, which is the failure mode this codebase is most
+        # prone to. The fix is one keyword at the call site: MolData(...,
+        # do_mol_analysis=True), or mol_batch.mol_analysis().
+        missing = [name for name in ('mol_volume', 'mass') if getattr(self, name) is None]
+        if missing:
+            raise ValueError(
+                f"box_analysis needs {' and '.join(missing)} to compute packing_coeff "
+                f"and density, but {'they are' if len(missing) > 1 else 'it is'} None. "
+                "Build the molecule with do_mol_analysis=True, or call mol_analysis() "
+                "on it first.")
+
         self.packing_coeff = self.mol_volume * self.sym_mult / self.cell_volume
         self.density = self.mass * self.sym_mult / self.cell_volume * 1.66054  # conversion from D/A^3 to g/cm^3
 
@@ -309,9 +324,18 @@ class MolCrystalOps:
         if not skip_box_analysis:
             self.box_analysis()
 
-    def latent_params(self):
+    def latent_params(self, gauge_fix_free_axes: bool = True):
         """
         Transform cell parameters from physical space to latent.
+
+        `gauge_fix_free_axes=False` is for NON-CRYSTAL (toy) problems, where the
+        batch is only a container and every latent dim is a real coordinate of
+        the energy field: gauge-fixing there rewrites live data (on P1 all THREE
+        centroid axes are 'free', so the multiharmonic toy's u,v,w targets were
+        silently pinned to 0 from 2026-08-11 until this flag existed -- the
+        model was trained toward delta functions the prior does not contain).
+        The caller knows crystal-vs-toy (energy_function.is_crystal); this batch
+        does not, so it is a parameter.
         :return:
         """
         self.canonicalize_zp_aunits()  # latent space is always in the canonical ordering
@@ -320,7 +344,8 @@ class MolCrystalOps:
         # the GFN: canonicalising here without holding them in the SDE would leave every
         # buffer row at the constant while the policy flowed the dim freely -- which is
         # precisely the D33 defect, in the opposite direction.
-        self.canonicalize_free_axes()
+        if gauge_fix_free_axes:
+            self.canonicalize_free_axes()
         return self.latent_transform(cell_params=self.full_cell_parameters()).clip(min=-1, max=1)
 
     def latent_transform(self, cell_params):
@@ -419,7 +444,11 @@ class MolCrystalOps:
         return torch.cat([cell_lengths, cell_angles, cell_centroids, aunit_orientations], dim=1)
 
     def latent_distmat(self):
-        return crystal_parameter_distmat(self.latent_params()).fill_diagonal_(0)
+        # gauge-FREE: distances on gauge-fixed latents collapse the free-axis
+        # separation on toy routes (and mutate the batch). Crystal rows are
+        # already canonical, so identical there. (P1 2026-08-24)
+        return crystal_parameter_distmat(
+            self.latent_params(gauge_fix_free_axes=False)).fill_diagonal_(0)
 
     def sample_reduced_box_vectors(self, target_packing_coeff: Optional[float] = None):
         """
@@ -652,12 +681,17 @@ class MolCrystalOps:
         self.box_analysis()
 
     def noise_latent_parameters(self, noise_level: float):
-        latents = self.latent_params()
+        # gauge-FREE: the default MUTATES the batch (canonicalize_free_axes
+        # writes aunit_centroid) and noising must start from the batch's ACTUAL
+        # latents. Crystal rows are already canonical (SDE-held), so this is
+        # behavior-identical there; on toys those dims are real data (P1 2026-08-24).
+        latents = self.latent_params(gauge_fix_free_axes=False)
         noised_params = latents + torch.randn_like(latents) * noise_level
         self.latent_to_cell_params(noised_params)
 
     def log_noise_latent_parameters(self, log_min: float, log_max: float, eps = 1e-6):
-        latents = self.latent_params()
+        # gauge-FREE -- same reasoning as noise_latent_parameters (P1 2026-08-24)
+        latents = self.latent_params(gauge_fix_free_axes=False)
         rand_dir = torch.randn_like(latents)
         rand_dir = rand_dir / rand_dir.norm(dim=-1, keepdim=True)
         u = torch.rand(len(latents), device=self.device)
@@ -1505,13 +1539,14 @@ class MolCrystalOps:
                                split_by_zp: bool = False,
                                n_kde: int = 200,
                                bw_factor: float = 0.05,
-                               override_energy: Optional[torch.Tensor] = None, ):
+                               override_energy: Optional[torch.Tensor] = None,
+                               gauge_fix_free_axes: bool = True, ):
         if not self.is_batch:
             print("Cell statistics only works for a batch of crystal data objects")
             return None
 
         lattice_features = self._build_feature_labels(space=space)
-        samples = self._get_samples(space)
+        samples = self._get_samples(space, gauge_fix_free_axes=gauge_fix_free_axes)
         num_dists, dist_names, dists = self._collect_sample_dists(samples, ref_dist, quantiles, split_by_sg,
                                                                   split_by_zp, aux_dists, override_energy)
         # delete or NaN unused higher Z' elements
@@ -1686,11 +1721,12 @@ class MolCrystalOps:
             showlegend=True if column_index == 0 else False,
             row=row, col=col)
 
-    def _get_samples(self, space):
+    def _get_samples(self, space, gauge_fix_free_axes: bool = True):
         if space == 'real':
             samples = self.full_cell_parameters().detach().cpu().numpy()
         elif space == 'latent':
-            samples = self.latent_params().detach().cpu().numpy()
+            samples = self.latent_params(
+                gauge_fix_free_axes=gauge_fix_free_axes).detach().cpu().numpy()
         elif space == 'standard':  # todo implement full std method
             samples = self.zp1_std_cell_parameters().detach().cpu().numpy()
         return samples
@@ -1746,7 +1782,22 @@ class MolCrystalOps:
             return opt_samples
 
     def _pad_tensor(self, val, shape, pad_val):
-        out = torch.ones(shape, dtype=val.dtype) * pad_val
+        """Pad a per-Z' parameter out to the max_z_prime width.
+
+        `val` legitimately arrives as a python scalar for Z'=1 -- aunit_handedness
+        is documented as accepting an int, and MolCrystalData.__init__ passes it
+        straight through.  Reading `.dtype` off that int raised AttributeError, so
+        constructing a crystal with an int handedness always failed.
+        `out` is allocated on `val`'s device; the previous default-device
+        allocation would have thrown on any CUDA input.
+        """
+        if not torch.is_tensor(val):
+            val = torch.as_tensor(val, device=self.device)
+        if val.ndim == 0:
+            val = val.reshape(1, 1)
+        elif val.ndim == 1:
+            val = val.reshape(1, -1)
+        out = torch.ones(shape, dtype=val.dtype, device=val.device) * pad_val
         out[:, :val.shape[-1]] = val
         return out
 
@@ -1967,5 +2018,16 @@ class MolCrystalOps:
         else:
             return std_batch
 
-    def write_cif(self, inds, path, mode):
-        ase_write_cif(self,inds, path, mode)
+    def write_cif(self, inds, path, mode='asymmetric unit'):
+        """Write one CIF per index in `inds`, as `{path}_{ind}.cif`.
+
+        mode='asymmetric unit' (default) writes space group number, H-M symbol,
+        the symmetry operator loop and the asymmetric unit -- so the file can be
+        read back into this object.  Every other mode goes to the ASE writer,
+        which expands to P1 and records NO space group; 'unit cell' is what the
+        visualisation and COMPACK callers pass and is unchanged.
+        """
+        if mode == 'asymmetric unit':
+            from mxtaltools.common.cif_io import write_asymmetric_unit_cif
+            return write_asymmetric_unit_cif(self, inds, path)
+        ase_write_cif(self, inds, path, mode)

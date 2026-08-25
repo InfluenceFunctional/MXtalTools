@@ -227,7 +227,14 @@ class MolCrystalBuilding:
                   std_orientation: Optional[bool] = True):
         if self.max_z_prime > 1:
             zp1_batch = self.split_to_zp1_batch()
-            zp1_batch.pose_aunit()
+            # forward the flag: this branch used to call pose_aunit() bare, silently
+            # substituting std_orientation=True while the Z'=1 branch below and both
+            # mol2cluster branches forwarded it.  analyze() routes MLIP computes here
+            # and cluster computes (elj/lj/es) through mol2cluster, so a Z'>1 crystal
+            # whose `pos` is NOT standard-oriented got its two energies from geometries
+            # up to 11 A apart.  Latent wherever `pos` is already standard-oriented --
+            # which is an invariant nothing states or checks.
+            zp1_batch.pose_aunit(std_orientation=std_orientation)
             zp1_batch.build_unit_cell()
 
             self.join_zp1_ucell_batch(zp1_batch)

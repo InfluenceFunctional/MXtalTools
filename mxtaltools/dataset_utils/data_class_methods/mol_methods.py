@@ -85,8 +85,10 @@ class MolDataMethods:
     def radius_calculation(self, heavy_atoms_only: bool = True):
         if self.is_batch:
             if heavy_atoms_only:
-                heavies_per_graph = scatter(self.z > 1, self.batch,
-                                            reduce='sum', dim=0, dim_size = self.num_graphs).long()
+                # cast BEFORE the scatter: a bool sum-scatter saturates at 1,
+                # so `scatter(z > 1, ...).long()` returns ones, not counts
+                heavies_per_graph = scatter((self.z > 1).long(), self.batch,
+                                            reduce='sum', dim=0, dim_size = self.num_graphs)
                 return batch_compute_mol_radius(self.pos[self.z>1],
                                                 self.batch[self.z>1],
                                                 self.num_graphs,

@@ -5,6 +5,8 @@ NOTE: tends to take at least several minutes
 """
 import os
 
+import pytest
+
 from tests.utils import train_model
 from pathlib import Path
 
@@ -21,6 +23,7 @@ configs = [
 ]
 
 
+@pytest.mark.slow
 class TestClass:
     @staticmethod
     def test_all_models():
@@ -28,6 +31,8 @@ class TestClass:
             os.chdir(source_dir)
             train_model(config_path, test_user_path)
 
+# NOTE: this used to end with `tc = TestClass(); tc.test_all_models()` at module
+# scope, so a FULL TRAINING RUN executed at COLLECTION time -- any failure became
+# a collection error that aborted the entire pytest session, and `pytest
+# --collect-only` trained a model.  pytest discovers the class by name.
 
-tc = TestClass()
-tc.test_all_models()

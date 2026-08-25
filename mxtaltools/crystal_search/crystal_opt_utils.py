@@ -774,3 +774,51 @@ def check_convergence(params_record, s_ind, convergence_eps, optimizer, init_lr)
         converged.fill_(True)
 
     return converged
+
+
+def sample_about_crystal(opt_samples: Union[list],
+                         noise_level: float,
+                         num_samples: int,
+                         cutoff: Optional[float] = 10,
+                         do_silu_pot: Optional[bool] = False,
+                         ):
+    """Draw `num_samples` noisy neighbourhoods around each optimized crystal.
+
+    Restored from 8dea6b56^ (deleted 2025-12-10 in the Niggli-sampling removal),
+    where its only caller -- parallel_synthesis.otf_synthesize_crystals -- was
+    missed.  That dangling import made `mxtaltools.modeller` and `main.py`
+    un-importable for ~8.5 months; see docs/design/refactor_plan.md G1.
+
+    Restored WITHOUT the original `enforce_niggli` argument: that commit removed
+    the parameter from `clean_cell_parameters`.  The sole caller never passed it
+    and its default was False, so dropping it preserves the original behaviour.
+
+    Returns a list of `num_samples` lists, each holding one noised copy of every
+    input sample, with `lj`, `scaled_lj` and `es_pot` attached per sample.
+    """
+    samples_record = []
+    for _ in range(num_samples):
+        if isinstance(opt_samples, list):
+            crystal_batch = collate_data_list(opt_samples)
+        else:
+            crystal_batch = opt_samples.clone()
+
+        crystal_batch.noise_cell_parameters(noise_level)
+        crystal_batch.clean_cell_parameters(mode='hard')
+        lj_pot, es_pot, scaled_lj_pot, cluster_batch = crystal_batch.build_and_analyze(
+            cutoff=cutoff, return_cluster=True)
+        samples_list = crystal_batch.detach().cpu().batch_to_list()
+
+        if do_silu_pot:
+            silu_energy = cluster_batch.compute_silu_energy()
+
+        for si, sample in enumerate(samples_list):
+            sample.lj = lj_pot[si]
+            sample.scaled_lj = scaled_lj_pot[si]
+            sample.es_pot = es_pot[si]
+            if do_silu_pot:
+                sample.silu = silu_energy[si]
+
+        samples_record.append(samples_list)
+
+    return samples_record
