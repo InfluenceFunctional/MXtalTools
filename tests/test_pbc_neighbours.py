@@ -18,7 +18,15 @@ CPU-only. No GPU, no checkpoint -- pure geometry.
 """
 import os
 
-os.environ.setdefault('CUDA_VISIBLE_DEVICES', '')
+# CUDA_VISIBLE_DEVICES is NOT forced empty here any more. It used to be, and it
+# was a PROCESS-WIDE mutation applied at IMPORT time -- which pytest does for
+# every module during collection, before a single test runs. Collecting this
+# CPU-only file therefore blinded every GPU gate in the same session: measured
+# 16 passed/1 skipped -> 23 passed/9 skipped, i.e. the total went UP while nine
+# GPU tests silently stopped running. It also permanently dead-ended this
+# suite's own device-residency checks. These tests are CPU-only because they
+# build CPU tensors and never call a predictor, which is a property of the
+# code, not of an env var.
 
 import numpy as np
 import pytest

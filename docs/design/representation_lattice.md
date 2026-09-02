@@ -73,6 +73,53 @@ Per `AGENTS.md`, §6 classifies each material claim by knowledge type and names 
 
 ---
 
+## 2b. THE STANDARD-ORIENTATION CONVENTION — owner-stated, verified, unwritten until now
+
+**INVARIANT (owner decision, 2026-08-31).** When posing a molecule and building a crystal,
+**always assume standard orientation**: the cell and pose parameters are defined relative
+to a standard-oriented asymmetric unit. Anything that poses a crystal must therefore derive
+its parameters under that convention, never pose deposited coordinates directly.
+
+**Verified.** Featurising a CIF and re-posing the derived parameters against the deposited
+unit cell (the latter built by the native reader, itself verified against CCDC to 8.6e-15 Å):
+
+| pose convention | deviation from the deposited cell |
+|---|---|
+| `std_orientation=True` | **0.0000 Å** |
+| `std_orientation=False` | 2.5783 Å |
+
+*Table: NUKCOL, the one Z′=1 fixture with no hydrogens and therefore the only one whose
+atom count survives the featurizer's deprotonation for a like-for-like comparison. The
+other ten Z′=1 fixtures give a shape mismatch, not a disagreement — widening this needs an
+H-strip on the reader side.*
+
+**WORKING ASSUMPTION, owner-stated and explicitly not yet true:** historic datasets do not
+all comply. There is currently no way to tell a compliant stored crystal from a
+non-compliant one, which is what makes the convention dangerous rather than merely
+undocumented.
+
+**Two known limits.**
+
+- **High-symmetry molecules are genuinely ambiguous.** When the two largest principal
+  moments are close, standard orientation is not unique. Measured (gap S3): on one fixture
+  **1e-4 Å of noise flips the handedness and moves the rebuilt cell 2.4 Å**, with
+  `is_well_defined` staying `True` throughout — it covers the centroid-in-box ambiguity and
+  never the frame. The owner's position is to accept this for now.
+- **A correction, recorded so it is not repeated.** An audit asking "is the stored `pos`
+  standard-oriented?" returns 0/95 and is **the wrong question** — `pos` is the deposited
+  crystal-frame position, so it never is. The convention lives in the *parameters*.
+
+**FOR LATER — the owner's own framing: "more automatic, or in the manual."** Two separable
+pieces, neither started:
+
+1. *Automatic.* A compliance check — pose the stored parameters both ways, compare against
+   the deposited cell, record which convention reproduces it. Cheap, and it would let a
+   historic dataset be audited rather than assumed. It could then be asserted at load.
+2. *Manual.* This section is the seed; the convention belongs wherever the data model is
+   described for a reader, not only in a design doc.
+
+---
+
 ## 3. The gaps, ranked by whether failure is silent
 
 **Silent first.** Ordered by exposure × magnitude. Every entry was executed; the three marked **[read-verified]** were additionally confirmed by the integrator reading the lines.

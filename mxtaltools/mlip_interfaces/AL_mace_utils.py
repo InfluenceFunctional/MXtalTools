@@ -128,6 +128,14 @@ _PHASE_SECONDS = {'build': 0.0, 'collate': 0.0, 'xfer': 0.0, 'forward': 0.0,
                   'neighbours': 0.0}
 _PHASE_CALLS = 0
 
+#: Non-OOM MACE failures since the last drain, and the rows they poisoned. The twin
+#: of uma_utils' pair, and for the same reason: this path used to substitute an
+#: all-ZEROS energy silently, and zero is finite and plausible, so it passed every
+#: downstream guard and was recorded as a measurement. See uma_utils._crashed_energy
+#: for the full argument and the NaN contract both routes now share.
+_CRASH_CALLS = 0
+_CRASH_ROWS = 0
+
 #: Calls that actually EXECUTED each optimised path, as opposed to what the module
 #: flags were set to. The a100_stab_aug16 battery ran an arm with MXT_GPU_MACE_BATCH
 #: alone, the branch (which also requires the batched neighbour list) was never taken,
@@ -140,7 +148,7 @@ _EXEC_CALLS = {'gpu_batch': 0, 'batched_nl': 0}
 def drain_mace_phase_timing():
     """Pop the accumulated per-phase seconds. {} when nothing was timed, so a stage
     that never calls mace (bwd/dataset MLE) logs nothing rather than zeros."""
-    global _PHASE_CALLS
+    global _PHASE_CALLS, _CRASH_CALLS, _CRASH_ROWS
     if not _PHASE_CALLS:
         return {}
     # 'neighbours' is nested inside 'build', so it must not be summed into the total
@@ -164,6 +172,11 @@ def drain_mace_phase_timing():
     out['energy/mace_flag_hoisted'] = int(USE_HOISTED_MACE_ATOMICDATA)
     from mxtaltools.mlip_interfaces.pbc_neighbours import drain_neighbour_path_counts
     out.update(drain_neighbour_path_counts())
+    # always reported, 0 included: absent is indistinguishable from never wired up
+    out['energy/mace_crash_calls'] = _CRASH_CALLS
+    out['energy/mace_crash_rows'] = _CRASH_ROWS
+    _CRASH_CALLS = 0
+    _CRASH_ROWS = 0
     for k in _PHASE_SECONDS:
         _PHASE_SECONDS[k] = 0.0
     for k in _EXEC_CALLS:
@@ -228,7 +241,12 @@ def compute_crystal_mace_on_mxt_batch(batch, model,
     _PHASE_CALLS += 1
 
     if crashed:
-        energy = torch.zeros(batch.num_graphs, dtype=torch.float32, device=batch.device)
+        # NaN, not zero -- unusable by construction, so the isfinite filters
+        # downstream reject it. See uma_utils._crashed_energy.
+        global _CRASH_ROWS
+        _CRASH_ROWS += int(batch.num_graphs)
+        energy = torch.full((batch.num_graphs,), float('nan'),
+                            dtype=torch.float32, device=batch.device)
     else:
         energy = output['energy']
     return energy
@@ -263,6 +281,8 @@ def safe_predict_mace(model, input_data):
 
     except RuntimeError as e:
         if not is_cuda_oom(e):
+            global _CRASH_CALLS
+            _CRASH_CALLS += 1
             print("MACE error")
             print(str(e))
             # reset the cuda context fully

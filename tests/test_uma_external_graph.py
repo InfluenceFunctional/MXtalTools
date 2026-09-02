@@ -33,7 +33,9 @@ import torch
 from mxtaltools.dataset_utils.utils import collate_data_list
 
 DATASET = os.path.join(os.path.dirname(__file__), 'datasets', 'mini_new_csd.pt')
-MIN_FREE_MB = 6000
+#: NB there is deliberately no local free-VRAM constant here any more. The GPU floor
+#: lives in conftest (MIN_FREE_MB) and is applied by gpu_preflight, together with the
+#: training-process check that free bytes alone cannot make.
 CUTOFF = 6.0     # CPU convention tests only; the GPU tests read the model's own
 
 
@@ -149,21 +151,22 @@ def test_fairchem_edges_are_a_subset_on_real_positions(crystals, n):
 
 # ------------------------------------------------------------------ GPU energy gate
 
-def _gpu_ok():
-    if not torch.cuda.is_available() or torch.cuda.device_count() == 0:
-        return False, 'no GPU'
-    free, _ = torch.cuda.mem_get_info(0)
-    if free // (1024 * 1024) < MIN_FREE_MB:
-        return False, f'only {free // (1024 * 1024)} MB free'
-    return True, ''
-
-
 @pytest.fixture(scope='module')
-def device():
-    ok, reason = _gpu_ok()
-    if not ok:
-        pytest.skip(reason)
-    return 'cuda'
+def device(gpu):
+    """
+    Delegates to the conftest `gpu` fixture, and that is the whole point.
+
+    This file used to carry its own `_gpu_ok`, which checked FREE VRAM ONLY. Free
+    bytes is not the safety question: a second CUDA consumer BSODs this box even with
+    headroom, which is why `gpu_guard` tracks TRAINING PROCESSES and why
+    conftest.gpu_preflight consults it before looking at memory at all. Every other
+    GPU file here already routes through that; this one silently did not, so a run
+    launched while training was live sailed past the check that exists to stop it.
+
+    Keep it delegated. If a future edit needs a different bar, change gpu_preflight
+    so every file moves together, rather than reintroducing a local copy.
+    """
+    return gpu
 
 
 @pytest.fixture(scope='module')

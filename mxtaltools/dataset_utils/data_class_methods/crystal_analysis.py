@@ -185,6 +185,21 @@ class MolCrystalAnalysis:
         return molwise_lj_pot
 
     def compute_eLJ_energy(self, repulsion: Optional[float] = 1.0, **kwargs):
+        """Per-molecule eLJ lattice energy, SCALED by the batch's own `lj_coeff`.
+
+        The coefficient rides on the data as a per-graph attribute rather than
+        being passed at each call site or applied by each consumer. A bare eLJ
+        sum is meaningless in scale -- it has to be multiplied by the calibration
+        factor before it means anything -- and the two alternatives both fail in
+        practice: passing it per call is forgettable at any one of many sites,
+        and applying it per use leaves the same attribute holding different
+        quantities depending on who last touched it.
+
+        DEFAULTS TO 1.0 when the attribute is absent, so a batch built by any
+        other consumer of this library behaves exactly as before. Callers that
+        require the calibrated value are expected to assert the attribute's
+        PRESENCE themselves -- permissive library, strict application.
+        """
         self._pre_compute_checks()
         stiffness = repulsion * 2.5  # baseline value is 2.5
         if self.is_batch:
@@ -197,7 +212,31 @@ class MolCrystalAnalysis:
         else:
             raise NotImplementedError("LJ energies not implemented for single crystals")
 
-        return molwise_lj_pot
+        return molwise_lj_pot * self._lj_coeff_for(molwise_lj_pot)
+
+    def _lj_coeff_for(self, like: torch.Tensor):
+        """The per-graph `lj_coeff` broadcast against a molwise quantity, or 1.0.
+
+        Kept separate so every energy that should carry the calibration reads it
+        one way. Shape is checked rather than assumed: a scalar is fine, and so
+        is one value per graph, but anything else is a silently wrong broadcast
+        (a per-ATOM tensor would multiply the wrong axis and still produce
+        finite, plausible numbers), so it raises instead.
+        """
+        coeff = getattr(self, 'lj_coeff', None)
+        if coeff is None:
+            return 1.0
+        if not torch.is_tensor(coeff):
+            return float(coeff)
+        coeff = coeff.to(device=like.device, dtype=like.dtype).flatten()
+        if coeff.numel() == 1:
+            return coeff.squeeze()
+        if coeff.numel() != like.numel():
+            raise ValueError(
+                f'lj_coeff has {coeff.numel()} entries against {like.numel()} '
+                f'graphs -- it must be a scalar or one value per graph, or the '
+                f'multiply silently broadcasts along the wrong axis.')
+        return coeff
 
     def compute_vdW_overlap(self, **kwargs):
         self._pre_compute_checks()

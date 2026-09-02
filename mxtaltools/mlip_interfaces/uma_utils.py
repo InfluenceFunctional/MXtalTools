@@ -91,6 +91,27 @@ _PHASE_CALLS = 0
 _GRAPH_CALLS = 0
 _EXT_GRAPH_CALLS = 0
 
+#: Non-OOM UMA failures since the last drain, and the rows they poisoned.
+#:
+#: WHY THESE EXIST. This path used to substitute an all-ZEROS energy and tell nobody.
+#: Zero is finite and of plausible magnitude, so every `isfinite` guard in the
+#: pipeline passed it, and the flag was consumed locally -- the only trace was a
+#: stdout line. A crashed GAS leg that way yields a lattice energy ~20,000 kJ/mol
+#: BELOW anything physical, which reads as a spectacular discovery and is then
+#: recorded permanently by ConditionLogZTracker's running minimum. Counted here and
+#: reported by drain_uma_phase_timing so the question "has this ever fired?" is
+#: answerable from metrics instead of archaeology.
+_CRASH_CALLS = 0
+_CRASH_ROWS = 0
+
+#: Consecutive failed calls. Reset by any success, so this counts a STREAK rather
+#: than a total: isolated blips are absorbed, a persistently broken MLIP is not.
+#: Above the bound safe_predict_uma raises instead of substituting, because NaN
+#: forever is a stalled run that still looks alive -- and this codebase has already
+#: lost 13 hours to exactly that shape of failure.
+_CONSECUTIVE_CRASHES = 0
+MAX_CONSECUTIVE_CRASHES = 3
+
 
 _install_done = False
 
@@ -171,7 +192,7 @@ if os.environ.get('MXT_UMA_GRAPH_TIMER', '0') != '0':
 def drain_uma_phase_timing():
     """Pop the accumulated per-phase seconds. {} when nothing was timed, so a stage
     that never calls uma logs nothing rather than zeros."""
-    global _PHASE_CALLS, _GRAPH_CALLS, _EXT_GRAPH_CALLS
+    global _PHASE_CALLS, _GRAPH_CALLS, _EXT_GRAPH_CALLS, _CRASH_CALLS, _CRASH_ROWS
     if not _PHASE_CALLS:
         return {}
     # 'graph' is nested inside 'forward', so it is excluded from the total;
@@ -200,31 +221,105 @@ def drain_uma_phase_timing():
         if _PHASE_SECONDS['forward'] > 0:
             out['energy/uma_graph_frac_of_forward'] = (_PHASE_SECONDS['graph']
                                                        / _PHASE_SECONDS['forward'])
+    # ALWAYS reported, including as 0, unlike the conditional blocks above. A crash
+    # counter that is absent when nothing crashed is indistinguishable in wandb from
+    # one that was never wired up, and "is this instrumented?" is precisely the
+    # question it exists to answer.
+    out['energy/uma_crash_calls'] = _CRASH_CALLS
+    out['energy/uma_crash_rows'] = _CRASH_ROWS
+
     for k in _PHASE_SECONDS:
         _PHASE_SECONDS[k] = 0.0
     _PHASE_CALLS = 0
     _GRAPH_CALLS = 0
     _EXT_GRAPH_CALLS = 0
+    _CRASH_CALLS = 0
+    _CRASH_ROWS = 0
     return out
 
 
-def safe_predict_uma(predictor, uma_batch):
-    try:
-        torch.cuda.synchronize()  # flush prior kernels
-        out = predictor.predict(uma_batch)  # this launches UMA kernels
-        torch.cuda.synchronize()  # force errors to surface *here*
-        return out, False  # False = no failure
+def safe_predict_uma(predictor, uma_batch, retries: int = 1):
+    """
+    (out, crashed). OOM is re-raised so the caller's batch-size controller sees it;
+    any OTHER RuntimeError is retried and then reported as a crash.
 
-    except RuntimeError as e:
-        if not is_cuda_oom(e):
-            print("UMA error")
+    WHAT THE RETRY IS AND IS NOT FOR, because it is easy to overrate. It helps
+    exactly one class: a transient, NON-STICKY failure that `empty_cache` clears --
+    most plausibly an allocation-adjacent error that `is_cuda_oom` did not classify
+    as OOM. It does NOT help the two commoner classes. A deterministic input fault (a
+    malformed batch, a shape mismatch) fails identically on the same input. A STICKY
+    CUDA fault (device-side assert, illegal access) poisons the context so every
+    later CUDA call fails too -- including the `synchronize`/`empty_cache` recovery
+    below, which is why those are guarded: a secondary failure there would otherwise
+    escape and bury the original error, which is the one worth reading.
+
+    So the retry is cheap insurance on a narrow case, NOT a general robustness claim.
+    The tripwire below is what handles the case where it does not work.
+
+    THE TRIPWIRE. Returning NaN forever would be a silent stall: every batch dropped,
+    the loop running, nothing progressing. Since NaN fails every threshold comparison
+    in both directions, gates would never fire either -- the exact 13-hour
+    zero-progress mode this codebase has already been bitten by. So after
+    MAX_CONSECUTIVE_CRASHES the substitution stops and the error is raised to the
+    caller's handler. Tolerate a blip; refuse to limp.
+
+    The caller substitutes NaN, not zero, for a crashed batch -- see _crashed_energy.
+    """
+    global _CRASH_CALLS, _CONSECUTIVE_CRASHES
+    last_error = None
+    for attempt in range(retries + 1):
+        try:
+            torch.cuda.synchronize()  # flush prior kernels
+            out = predictor.predict(uma_batch)  # this launches UMA kernels
+            torch.cuda.synchronize()  # force errors to surface *here*
+            _CONSECUTIVE_CRASHES = 0            # a success clears the streak
+            return out, False  # False = no failure
+
+        except RuntimeError as e:
+            if is_cuda_oom(e):
+                raise
+            last_error = e
+            print(f"UMA error (attempt {attempt + 1} of {retries + 1})")
             print(str(e))
-            # reset the cuda context fully
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-            return None, True  # signal failure
-        else:
-            raise e
+            try:
+                # reset the cuda context fully. Guarded: on a sticky fault these
+                # raise too, and that secondary error would mask the real one.
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+            except RuntimeError as recovery_error:
+                print(f"UMA error: recovery also failed ({recovery_error}) -- "
+                      f"the CUDA context is likely unusable")
+                break
+
+    _CRASH_CALLS += 1
+    _CONSECUTIVE_CRASHES += 1
+    if _CONSECUTIVE_CRASHES >= MAX_CONSECUTIVE_CRASHES:
+        raise RuntimeError(
+            f'UMA failed {_CONSECUTIVE_CRASHES} times in a row; refusing to keep '
+            f'substituting NaN, which would stall the run rather than end it. The '
+            f'last error follows.') from last_error
+    return None, True  # signal failure
+
+
+def _crashed_energy(batch):
+    """
+    NaN, deliberately, and never zero.
+
+    The substituted value must be UNUSABLE BY CONSTRUCTION rather than merely wrong.
+    Zero is finite and sits in the plausible range for these quantities, so it flows
+    through the reward into the TB target, the log-Z EMA, the replay buffer and the
+    per-condition minimum with nothing able to tell it apart from a real measurement.
+    NaN is rejected by the `isfinite` filters those consumers already run, so a crash
+    costs the affected rows instead of the run's energy scale.
+
+    NaN is only safe because the PERSISTENT sinks screen it: ConditionLogZTracker's
+    scatter-min propagates NaN into a tensor that can never recover, so
+    `update_best_energy` drops non-finite rows at the door. Do not weaken that guard.
+    """
+    global _CRASH_ROWS
+    _CRASH_ROWS += int(batch.num_graphs)
+    return torch.full((batch.num_graphs,), float('nan'),
+                      dtype=torch.float32, device=batch.device)
 
 
 def batch_to_ase_ucell_list(
@@ -380,7 +475,7 @@ def compute_crystal_uma_on_mxt_batch(batch,
     _PHASE_SECONDS['forward'] += time.perf_counter() - _t
     _PHASE_CALLS += 1
     if crashed:
-        energy = torch.zeros(batch.num_graphs, dtype=torch.float32, device=batch.device)
+        energy = _crashed_energy(batch)
     else:
         energy = out['energy']
 
@@ -682,7 +777,7 @@ def compute_molecule_uma_on_mxt_batch(batch,
 
     out, crashed = safe_predict_uma(predictor, uma_batch)
     if crashed:
-        energy = torch.zeros(batch.num_graphs, dtype=torch.float32, device=batch.device)
+        energy = _crashed_energy(batch)
     else:
         energy = out['energy']
 
