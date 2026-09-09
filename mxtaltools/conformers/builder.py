@@ -28,8 +28,9 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
-from .geometry import (bond_angle, bond_length, dihedral, place_nerf,
-                       place_seed_second, place_seed_third)
+from .geometry import (bond_angle, bond_length, dihedral, log_sinc, measure_transverse,
+                       place_nerf, place_nerf_transverse, place_seed_second,
+                       place_seed_third)
 from .topology import TreeSpec
 
 
@@ -231,18 +232,60 @@ def _scatter_to_atoms(values: torch.Tensor, target_atoms: torch.Tensor,
     return full.index_copy(0, target_atoms, values)
 
 
+#: What a TRANSVERSE row means, stated once because three functions rely on it.
+#:
+#: ``transverse`` is a per-ANGLE-ROW boolean aligned with ``angle_index`` (the same layout as
+#: ``angle_is_linear``, which is what normally decides it). On a flagged row the ``theta`` and
+#: ``phi`` slots BELONGING TO THE SAME ATOM stop carrying ``(theta, phi)`` and carry ``(u, v)``
+#: instead -- the transverse bend components of ``geometry.place_nerf_transverse``.
+#:
+#: Reusing the two existing slots rather than adding a pair keeps the coordinate count at 2,
+#: so every shape downstream -- the energy selection matrix, the per-atom chart blocks on the
+#: graph, the policy state width -- is untouched by the change. The cost is that the meaning
+#: of a slot is now mask-dependent, which is why the mask travels with the tensors through
+#: ``build``, ``measure`` and ``log_jacobian``, and why passing it to one and not the others
+#: is a silent geometry error rather than a shape error.
+#:
+#: ``theta`` and ``phi`` index DIFFERENT arrays, so the pairing runs through the atom each row
+#: places (``angle_index[:, 2]`` and ``torsion_index[:, 3]``), never by row number.
+def _transverse_atom_mask(tree: BatchedTree, transverse) -> torch.Tensor:
+    """Per-angle-row flags -> per-ATOM flags, refusing rows with no torsion partner."""
+    m = torch.as_tensor(transverse, dtype=torch.bool, device=tree.angle_index.device)
+    m = m.reshape(-1)
+    if m.numel() != tree.angle_index.shape[0]:
+        raise ValueError(
+            f'transverse has {m.numel()} entries against {tree.angle_index.shape[0]} angle '
+            f'rows; it is aligned with angle_index, like angle_is_linear')
+    out = torch.zeros(tree.n_atoms, dtype=torch.bool, device=m.device)
+    out[tree.angle_index[m, 2]] = True
+    # a frame seed has an angle but NO torsion, so there is no second component to bend into;
+    # a transverse pair there would silently read some other atom's phi.
+    has_phi = torch.zeros(tree.n_atoms, dtype=torch.bool, device=m.device)
+    has_phi[tree.torsion_index[:, 3]] = True
+    orphan = out & ~has_phi
+    if bool(orphan.any()):
+        raise ValueError(
+            f'atoms {orphan.nonzero().flatten().tolist()} are flagged transverse but have no '
+            f'torsion row (they are frame seeds); a transverse pair needs both slots')
+    return out
+
+
 def build(tree: BatchedTree, r: torch.Tensor, theta: torch.Tensor,
-          phi: torch.Tensor) -> torch.Tensor:
+          phi: torch.Tensor, transverse=None) -> torch.Tensor:
     """Internal coordinates -> Cartesian positions ``[A, 3]``.
 
     Output sits in the canonical frame implied by the seed convention (root at the
     origin, second atom on +x, third in the xy half-plane), so it is already
     SE(3)-reduced -- no alignment step is needed anywhere downstream.
+
+    ``transverse`` marks angle rows whose ``(theta, phi)`` pair is really ``(u, v)``; see the
+    note above :func:`_transverse_atom_mask`. Left at ``None`` this function is unchanged.
     """
     n = tree.n_atoms
     r_full = _scatter_to_atoms(r, tree.bond_index[:, 1], n)
     theta_full = _scatter_to_atoms(theta, tree.angle_index[:, 2], n)
     phi_full = _scatter_to_atoms(phi, tree.torsion_index[:, 3], n)
+    tv = None if transverse is None else _transverse_atom_mask(tree, transverse)
 
     pos = torch.zeros(n, 3, dtype=r.dtype, device=r.device)
 
@@ -256,27 +299,65 @@ def build(tree: BatchedTree, r: torch.Tensor, theta: torch.Tensor,
             new = place_seed_third(pos[tree.ref_b[slots]], pc,
                                    r_full[slots], theta_full[slots])
         else:
-            new = place_nerf(pos[tree.ref_a[slots]], pos[tree.ref_b[slots]], pc,
+            pa, pb = pos[tree.ref_a[slots]], pos[tree.ref_b[slots]]
+            new = place_nerf(pa, pb, pc,
                              r_full[slots], theta_full[slots], phi_full[slots])
+            if tv is not None:
+                # SPLIT, not a `where` over both kernels: the two placements read the same two
+                # numbers as different quantities, so evaluating both everywhere would be
+                # arithmetic on values that are meaningless in half the rows.
+                rows = tv[slots].nonzero().flatten()
+                if rows.numel():
+                    new = new.index_copy(
+                        0, rows,
+                        place_nerf_transverse(pa[rows], pb[rows], pc[rows],
+                                              r_full[slots][rows], theta_full[slots][rows],
+                                              phi_full[slots][rows]))
         pos = pos.index_copy(0, slots, new)
 
     return pos
 
 
-def measure(tree: BatchedTree, pos: torch.Tensor):
+def measure(tree: BatchedTree, pos: torch.Tensor, transverse=None):
     """Cartesian positions -> ``(r, theta, phi)``. Exact inverse of ``build``.
 
     Fully parallel -- no rounds, since every reference atom is already positioned.
+
+    With ``transverse`` supplied, flagged rows return ``(u, v)`` in the theta and phi slots,
+    so ``measure`` inverts ``build`` UNDER THE SAME MASK. Measured directly off the placement
+    frame rather than by converting a measured ``(theta, phi)``: the dihedral is exactly what
+    goes numerically dead at a linear centre, so converting would be sampling noise. See
+    :func:`geometry.measure_transverse`.
     """
     b = tree.bond_index
     a = tree.angle_index
     d = tree.torsion_index
-    return (bond_length(pos[b[:, 0]], pos[b[:, 1]]),
-            bond_angle(pos[a[:, 0]], pos[a[:, 1]], pos[a[:, 2]]),
-            dihedral(pos[d[:, 0]], pos[d[:, 1]], pos[d[:, 2]], pos[d[:, 3]]))
+    r = bond_length(pos[b[:, 0]], pos[b[:, 1]])
+    th = bond_angle(pos[a[:, 0]], pos[a[:, 1]], pos[a[:, 2]])
+    ph = dihedral(pos[d[:, 0]], pos[d[:, 1]], pos[d[:, 2]], pos[d[:, 3]])
+    if transverse is None:
+        return r, th, ph
+
+    tv = _transverse_atom_mask(tree, transverse)
+    tor_rows = tv[d[:, 3]].nonzero().flatten()
+    if tor_rows.numel():
+        u, v = measure_transverse(pos[d[tor_rows, 0]], pos[d[tor_rows, 1]],
+                                  pos[d[tor_rows, 2]], pos[d[tor_rows, 3]])
+        # ROUTED THROUGH THE PLACED ATOM, not by row position. The angle and torsion row
+        # orderings do currently agree element-for-element on the flagged subset -- both are
+        # ascending in atom index -- but that is a property of how `collate` happens to lay
+        # the blocks out, not of anything either array promises. Scattering u onto its atom
+        # and gathering it back in angle-row order costs one pass and cannot go silently
+        # wrong if that layout ever changes.
+        ang_rows = tv[a[:, 2]].nonzero().flatten()
+        u_at = _scatter_to_atoms(u, d[tor_rows, 3], tree.n_atoms)
+        th = th.index_copy(0, ang_rows, u_at[a[ang_rows, 2]])
+        ph = ph.index_copy(0, tor_rows, v)
+    return r, th, ph
 
 
-def log_jacobian(tree: BatchedTree, r: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
+def log_jacobian(tree: BatchedTree, r: torch.Tensor, theta: torch.Tensor,
+                 phi: torch.Tensor = None, transverse=None) -> torch.Tensor:
     """``log|d(cartesian)/d(internal)|`` per molecule, ``[n_mols]``.
 
     The bond/angle/torsion volume element is ``prod_i r_i^2 sin(theta_i)``, so a
@@ -285,11 +366,34 @@ def log_jacobian(tree: BatchedTree, r: torch.Tensor, theta: torch.Tensor) -> tor
     parameterisation has unit Jacobian -- but note that with r and theta frozen
     this becomes a *condition-dependent constant*, which shifts log Z(c) and must
     be added back if partition functions are compared across molecules.
+
+    A TRANSVERSE ROW CONTRIBUTES ``log sinc(rho)`` INSTEAD OF ``log sin(theta)``, from
+    ``sin(theta) d theta d phi = sinc(rho) du dv``. That term reads BOTH components, which is
+    why ``phi`` becomes required as soon as ``transverse`` is passed: the pair is one 2-D
+    coordinate, not two independent ones. Passing the mask to ``build`` and not to this
+    function yields a correct geometry under a wrong density -- silently, since both still
+    return finite numbers of the right shape.
     """
     out = torch.zeros(tree.n_mols, dtype=r.dtype, device=r.device)
     out = out.index_add(0, tree.bond_batch, 2.0 * torch.log(r))
-    out = out.index_add(0, tree.angle_batch, torch.log(torch.sin(theta)))
-    return out
+    if transverse is None:
+        return out.index_add(0, tree.angle_batch, torch.log(torch.sin(theta)))
+    if phi is None:
+        raise ValueError('log_jacobian needs phi when transverse rows are present: their '
+                         'measure term reads both components of the (u, v) pair')
+
+    tv = _transverse_atom_mask(tree, transverse)
+    hit = tv[tree.angle_index[:, 2]]
+    # v lives in the phi array under the TORSION row ordering; route it through the atom it
+    # places to line it up with the angle rows -- the same pairing `build` uses.
+    v_at_angle = _scatter_to_atoms(phi, tree.torsion_index[:, 3],
+                                   tree.n_atoms)[tree.angle_index[:, 2]]
+    # both branches are evaluated and differentiated, so each is clamped to stay finite on
+    # the rows the other one owns; `hit` decides which one is real.
+    tiny = torch.finfo(theta.dtype).tiny
+    term = torch.where(hit, log_sinc(theta, v_at_angle),
+                       torch.log(torch.sin(theta).clamp_min(tiny)))
+    return out.index_add(0, tree.angle_batch, term)
 
 
 def closure_length(tree: BatchedTree, pos: torch.Tensor) -> torch.Tensor:
