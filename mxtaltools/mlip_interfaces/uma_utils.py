@@ -91,6 +91,16 @@ _PHASE_CALLS = 0
 _GRAPH_CALLS = 0
 _EXT_GRAPH_CALLS = 0
 
+#: Edges per external graph build, since the last drain. THE ONLY TRULY DYNAMIC
+#: DIMENSION in this workload -- atoms per batch are fixed on an unconditional arm,
+#: edges move with the cell geometry every step -- so it is what `edge_chunk_size`
+#: has to be sized against, and init_uma_crystal_predictor's docstring says to log it
+#: before setting one. Too small silently forces recompiles; too large pads. Free to
+#: collect: a shape read, no synchronise, and only on the external-graph path.
+_EDGES_MAX = 0
+_EDGES_SUM = 0
+_EDGES_CALLS = 0
+
 #: Non-OOM UMA failures since the last drain, and the rows they poisoned.
 #:
 #: WHY THESE EXIST. This path used to substitute an all-ZEROS energy and tell nobody.
@@ -193,6 +203,7 @@ def drain_uma_phase_timing():
     """Pop the accumulated per-phase seconds. {} when nothing was timed, so a stage
     that never calls uma logs nothing rather than zeros."""
     global _PHASE_CALLS, _GRAPH_CALLS, _EXT_GRAPH_CALLS, _CRASH_CALLS, _CRASH_ROWS
+    global _EDGES_MAX, _EDGES_SUM, _EDGES_CALLS
     if not _PHASE_CALLS:
         return {}
     # 'graph' is nested inside 'forward', so it is excluded from the total;
@@ -211,6 +222,11 @@ def drain_uma_phase_timing():
     # off ignores the module flag entirely, and a flag that reports a branch that
     # never ran is how the a100_stab_aug16 battery lost an arm
     out['energy/uma_flag_external_graph'] = _EXT_GRAPH_CALLS / _PHASE_CALLS
+    # what edge_chunk_size has to clear. Reported as MAX, not mean: the chunk has to
+    # cover the worst batch or that batch recompiles.
+    if _EDGES_CALLS:
+        out['energy/uma_edges_max'] = _EDGES_MAX
+        out['energy/uma_edges_mean'] = _EDGES_SUM / _EDGES_CALLS
     # only report the graph split when the timer was installed AND fired; a zero here
     # would otherwise be indistinguishable from "graph construction costs nothing"
     if _GRAPH_CALLS:
@@ -235,6 +251,11 @@ def drain_uma_phase_timing():
     _EXT_GRAPH_CALLS = 0
     _CRASH_CALLS = 0
     _CRASH_ROWS = 0
+    # per-window, like every counter above: a run-lifetime max would stop moving
+    # after the first big batch and read as a constant
+    _EDGES_MAX = 0
+    _EDGES_SUM = 0
+    _EDGES_CALLS = 0
     return out
 
 
@@ -469,6 +490,13 @@ def compute_crystal_uma_on_mxt_batch(batch,
             torch.cuda.synchronize()   # or the build's cost lands on the forward
         _PHASE_SECONDS['ext_graph'] += time.perf_counter() - _t
         _EXT_GRAPH_CALLS += 1
+        _ei = getattr(uma_batch, 'edge_index', None)
+        if _ei is not None:
+            global _EDGES_MAX, _EDGES_SUM, _EDGES_CALLS
+            _n = int(_ei.shape[1])
+            _EDGES_MAX = max(_EDGES_MAX, _n)
+            _EDGES_SUM += _n
+            _EDGES_CALLS += 1
 
     _t = time.perf_counter()
     out, crashed = safe_predict_uma(predictor, uma_batch)
