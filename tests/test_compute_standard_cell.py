@@ -169,6 +169,24 @@ def test_space_group_mismatch_raises(molecules):
     b.clone().compute_standard_cell()
 
 
+@pytest.mark.filterwarnings('ignore::DeprecationWarning')
+def test_oblique_cell_scores_like_its_standard_cell(molecules):
+    """The same crystal in a very oblique basis and in its standard cell must build the same cluster.
+    get_cart_translations bounds how far a translated cell reaches by the cell's farthest corner; the old
+    |a+b+c| collapses when a and c nearly cancel and dropped interacting neighbours (elj off by up to ~2000)."""
+    sg, n = 14, 16
+    b = _crystals(molecules, sg, n, seed=114, scramble=3)
+    std = b.clone().compute_standard_cell()
+
+    V = b.T_fc.permute(0, 2, 1).double()
+    corners = torch.stack([V[:, 0], V[:, 1], V[:, 2], V[:, 0] + V[:, 1], V[:, 0] + V[:, 2], V[:, 1] + V[:, 2],
+                           V.sum(1)], 1).norm(dim=-1)
+    assert int((corners.amax(1) - V.sum(1).norm(dim=-1) > 10).sum()) >= 3  # cells |a+b+c| under-reaches by > 10 A
+
+    d_elj = (b.analyze(['elj'])['elj'] - std.analyze(['elj'])['elj']).abs()
+    assert d_elj.max() < 1.0, d_elj
+
+
 def test_hall_number_reproduces_sym_ops_for_every_space_group():
     for sg in range(1, 231):
         assert spglib.get_spacegroup_type(spglib_hall_number(sg)).number == sg

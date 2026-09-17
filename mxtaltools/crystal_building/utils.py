@@ -390,8 +390,11 @@ def get_cart_translations(cc_centroids,
     # precompute some stuff
     # get the set of all possible cartesian translations
     cell_vectors = T_fc.permute(0, 2, 1)
-    # cell diagonals
-    cell_diag = cell_vectors.sum(1).norm(dim=-1)
+    # cell diagonals: the farthest point of a cell from its origin corner is one of its other 7 corners
+    # (|a+b+c| alone collapses for oblique cells, where a and c nearly cancel)
+    corners = torch.tensor([[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0], [1, 0, 1], [0, 1, 1], [1, 1, 1]],
+                           dtype=T_fc.dtype, device=T_fc.device)
+    cell_diag = torch.einsum('ki,nij->nkj', corners, cell_vectors).norm(dim=-1).amax(1)
     # bounding box cutoff
     cutoff_distance = mol_radii * 2 + cutoff + 0.1 + cell_diag  # convolutional radius plus cell diagonal plus z'>1 buffer
 
