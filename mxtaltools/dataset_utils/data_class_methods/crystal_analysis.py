@@ -1052,7 +1052,8 @@ class MolCrystalAnalysis:
             standardize_cell(to_primitive=False, no_idealize=True) (checked empirically, not proven for spglib);
             see sym_utils.mono_reduction_penalty.
         triclinic: one zero-penalty cell per lattice, in a beta/gamma-obtuse convention that differs from spglib's Niggli
-            cell for all-acute lattices; see sym_utils.tri_niggli_reduction_penalty.
+            cell for all-acute lattices; see sym_utils.tri_niggli_reduction_penalty (MXT_LEGACY_TRICLINIC_WALLS=1 restores
+            the pre-Niggli walls).
         every other system: enforces only the crystal-system metric; does not select a unique cell."""
         # todo check behaviors / correctness for higher crystal systems
         # cell_parameters = self.full_cell_parameters()

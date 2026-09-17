@@ -1,6 +1,7 @@
 """
 Triclinic Niggli walls: mxtaltools/common/sym_utils.py::tri_niggli_reduction_penalty, which cell_reduction_penalty uses for
-every sg 1/2 row (always on; the MXT_NIGGLI_TRICLINIC switch is retired and fails loudly if set).
+every sg 1/2 row by default. MXT_NIGGLI_TRICLINIC is retired and fails loudly if set; MXT_LEGACY_TRICLINIC_WALLS=1 is the
+rarely-used way back to legacy_tri_reduction_penalty.
 
 Contract. The penalty is 0 on exactly one cell per lattice among all unimodular basis changes (checked for |entries| <= 1). Its sign convention is beta, gamma obtuse with alpha free, not Niggli's all-acute / all-obtuse: spglib's
 all-obtuse Niggli cells score 0 as they are, all-acute ones only after (a, b, c) -> (a, -b, -c).
@@ -18,7 +19,7 @@ import torch
 from torch.nn import functional as F
 
 from mxtaltools.common import sym_utils
-from mxtaltools.common.sym_utils import cell_reduction_penalty, tri_niggli_reduction_penalty
+from mxtaltools.common.sym_utils import cell_reduction_penalty, legacy_tri_reduction_penalty, tri_niggli_reduction_penalty
 
 
 def random_cells(n, seed, dtype=torch.float32):
@@ -67,6 +68,46 @@ def hard_niggli(L, A):
 def unimodular(k):
     rows = np.array(list(itertools.product(range(-k, k + 1), repeat=9)), dtype=np.float64).reshape(-1, 3, 3)
     return rows[np.abs(np.rint(np.linalg.det(rows))) == 1]
+
+
+def test_legacy_walls_are_off_unless_the_env_asks():
+    assert sym_utils.LEGACY_TRICLINIC_WALLS is (os.environ.get('MXT_LEGACY_TRICLINIC_WALLS', '0') == '1')
+    code = 'from mxtaltools.common import sym_utils; print(sym_utils.LEGACY_TRICLINIC_WALLS)'
+    env = {k: v for k, v in os.environ.items() if k != 'MXT_LEGACY_TRICLINIC_WALLS'}
+    out = subprocess.run([sys.executable, '-c', code], env=env, capture_output=True, text=True, check=True)
+    assert out.stdout.strip().splitlines()[-1] == 'False'
+    out = subprocess.run([sys.executable, '-c', code], env={**env, 'MXT_LEGACY_TRICLINIC_WALLS': '1'}, capture_output=True,
+                         text=True, check=True)
+    assert out.stdout.strip().splitlines()[-1] == 'True' and 'legacy_tri_reduction_penalty' in out.stderr
+    for bad in ('true', 'yes', '2'):
+        out = subprocess.run([sys.executable, '-c', code], env={**env, 'MXT_LEGACY_TRICLINIC_WALLS': bad},
+                             capture_output=True, text=True)
+        assert out.returncode != 0 and 'MXT_LEGACY_TRICLINIC_WALLS' in out.stderr
+
+
+@pytest.mark.parametrize('margin', [0.0, 0.1])
+def test_legacy_walls_reproduce_the_old_penalty(monkeypatch, margin):
+    """With the escape hatch on, sg 1/2 rows equal the old dispatch bit for bit (walls on the subset, the overlap term on the
+    full batch, added after); every other row is untouched."""
+    L, A, sg = random_cells(20000, 7)
+    E_default = cell_reduction_penalty(A, L, sg, margin)
+    monkeypatch.setattr(sym_utils, 'LEGACY_TRICLINIC_WALLS', True)
+    E = cell_reduction_penalty(A, L, sg, margin)
+    tri = (sg == 1) | (sg == 2)
+    l, g = L[tri], A[tri]
+    a, b, c = l.unbind(1)
+    al, be, ga = g.unbind(1)
+    bnd = lambda x: (torch.relu(x - (1 - margin)) ** 2) + (torch.relu((-1 + margin) - x) ** 2)
+    old = (F.relu(l[:, 1] / l[:, 2] - (1 - margin)) ** 2 + F.relu(l[:, 0] / l[:, 1] - (1 - margin)) ** 2
+           + bnd(al.cos() / (b / 2 / c).clamp(min=1e-6)) + bnd(be.cos() / (a / 2 / c).clamp(min=1e-6))
+           + bnd(ga.cos() / (a / 2 / b).clamp(min=1e-6)))
+    A_, B_, C_ = L.split(1, dim=1)
+    overlap = (A_ * B_ * torch.cos(A[:, 2:3]) + A_ * C_ * torch.cos(A[:, 1:2]) + B_ * C_ * torch.cos(A[:, 0:1])).flatten()
+    old = old + F.relu(overlap[tri] - margin) ** 2
+    assert torch.equal(E[tri], old)
+    assert torch.equal(E[tri], legacy_tri_reduction_penalty(l, g, margin))
+    assert torch.equal(E[~tri], E_default[~tri])
+    assert (E[tri] != E_default[tri]).float().mean() > 0.5
 
 
 def test_retired_switch_fails_loudly():

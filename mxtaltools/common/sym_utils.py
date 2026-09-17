@@ -1,4 +1,6 @@
 import os
+import sys
+import warnings
 
 import torch
 from torch.nn import functional as F
@@ -80,10 +82,42 @@ def bounding_penalty(x, lower, upper, margin: float = 0.0):
     return (torch.relu(x - (upper - margin)) ** 2) + (torch.relu((lower + margin) - x) ** 2)
 
 
-# the triclinic Niggli walls are always on; the switch that selected the old walls is retired and must not be set
+# the triclinic Niggli walls are the default; the switch that used to select them is retired and must not be set
 if 'MXT_NIGGLI_TRICLINIC' in os.environ:
-    raise RuntimeError("MXT_NIGGLI_TRICLINIC is retired: triclinic cells always use tri_niggli_reduction_penalty. "
-                       "Unset it; there is no old-walls mode.")
+    raise RuntimeError("MXT_NIGGLI_TRICLINIC is retired: triclinic cells use tri_niggli_reduction_penalty by default. "
+                       "Unset it (MXT_LEGACY_TRICLINIC_WALLS=1 is the rarely-needed way back to the old walls).")
+
+# escape hatch, rarely if ever set: MXT_LEGACY_TRICLINIC_WALLS=1 puts sg 1/2 back on legacy_tri_reduction_penalty
+_legacy_walls = os.environ.get('MXT_LEGACY_TRICLINIC_WALLS', '0')
+if _legacy_walls not in ('0', '1'):
+    raise ValueError(f"MXT_LEGACY_TRICLINIC_WALLS must be '0' or '1', got {_legacy_walls!r}")
+LEGACY_TRICLINIC_WALLS = _legacy_walls == '1'
+if LEGACY_TRICLINIC_WALLS:
+    print("WARNING: MXT_LEGACY_TRICLINIC_WALLS=1 -- triclinic cells use legacy_tri_reduction_penalty, not "
+          "tri_niggli_reduction_penalty", file=sys.stderr, flush=True)
+    warnings.warn("MXT_LEGACY_TRICLINIC_WALLS=1: legacy triclinic reduction walls are active", stacklevel=2)
+
+
+def legacy_tri_reduction_penalty(cell_lengths, cell_angles, margin):
+    """The pre-Niggli triclinic walls (default until mxtaltools 9e179673), used only with MXT_LEGACY_TRICLINIC_WALLS=1:
+    a <= b <= c, the three pairwise |cos| bounds, and relu(ab cos gamma + ac cos beta + bc cos alpha - margin)^2. They leave
+    1-6 zero-penalty cells per lattice and penalise every all-acute Niggli cell."""
+    eps = 1e-6
+    bc_error = F.relu(cell_lengths[:, 1] / cell_lengths[:, 2] - (1 - margin)) ** 2  # c>b
+    ab_error = F.relu(cell_lengths[:, 0] / cell_lengths[:, 1] - (1 - margin)) ** 2  # # b>a
+
+    a, b, c = cell_lengths.unbind(dim=1)
+    al, be, ga = cell_angles.unbind(dim=1)
+    al_max_cos = b / 2 / c
+    be_max_cos = a / 2 / c
+    ga_max_cos = a / 2 / b
+
+    alpha_error = bounding_penalty(al.cos() / al_max_cos.clamp(min=eps), -1, 1, margin=margin)
+    beta_error = bounding_penalty(be.cos() / be_max_cos.clamp(min=eps), -1, 1, margin=margin)
+    gamma_error = bounding_penalty(ga.cos() / ga_max_cos.clamp(min=eps), -1, 1, margin=margin)
+
+    walls = bc_error + ab_error + alpha_error + beta_error + gamma_error
+    return walls + F.relu(niggli_reduction_penalty(cell_lengths, cell_angles) - margin) ** 2  # penalize positive overlaps
 
 
 def tri_niggli_reduction_penalty(cell_lengths, cell_angles, margin):
@@ -290,7 +324,7 @@ def cell_reduction_penalty(cell_angles, cell_lengths, sg, margin: float = 0.1):
              'cubic': (sg >= 195) & (sg <= 230),
              }
     reduction_penalties = {  # monoclinic is dispatched below: its walls also need sg
-        'triclinic': tri_niggli_reduction_penalty,
+        'triclinic': legacy_tri_reduction_penalty if LEGACY_TRICLINIC_WALLS else tri_niggli_reduction_penalty,
         'orthorhombic': ortho_reduction_penalty,
         'tetragonal': tetra_reduction_penalty,
         'trigonal': trig_reduction_penalty,
