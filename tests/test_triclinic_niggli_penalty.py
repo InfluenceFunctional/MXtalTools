@@ -1,10 +1,8 @@
 """
-Triclinic Niggli walls: mxtaltools/common/sym_utils.py::tri_niggli_reduction_penalty, gated by sym_utils.NIGGLI_TRICLINIC.
+Triclinic Niggli walls: mxtaltools/common/sym_utils.py::tri_niggli_reduction_penalty, which cell_reduction_penalty uses for
+every sg 1/2 row (always on; the MXT_NIGGLI_TRICLINIC switch is retired and fails loudly if set).
 
-Contract. With the flag False (default) cell_reduction_penalty keeps the current triclinic penalty (tri_reduction_penalty
-plus the positive-overlap term) bit for bit. With it True, sg 1/2 rows get the Niggli main conditions instead, and every
-other row is unchanged. The penalty is 0 on exactly one cell per lattice among all unimodular basis changes (checked for
-|entries| <= 1). Its sign convention is beta, gamma obtuse with alpha free, not Niggli's all-acute / all-obtuse: spglib's
+Contract. The penalty is 0 on exactly one cell per lattice among all unimodular basis changes (checked for |entries| <= 1). Its sign convention is beta, gamma obtuse with alpha free, not Niggli's all-acute / all-obtuse: spglib's
 all-obtuse Niggli cells score 0 as they are, all-acute ones only after (a, b, c) -> (a, -b, -c).
 
 CPU only.
@@ -20,7 +18,7 @@ import torch
 from torch.nn import functional as F
 
 from mxtaltools.common import sym_utils
-from mxtaltools.common.sym_utils import cell_reduction_penalty, tri_niggli_reduction_penalty, tri_reduction_penalty
+from mxtaltools.common.sym_utils import cell_reduction_penalty, tri_niggli_reduction_penalty
 
 
 def random_cells(n, seed, dtype=torch.float32):
@@ -53,12 +51,6 @@ def params_from_rows(L):
     return torch.stack([a, b, c], -1), torch.stack([al, be, ga], -1)
 
 
-def old_triclinic(L, A, margin):
-    overlap = (L[:, 0] * L[:, 1] * A[:, 2].cos() + L[:, 0] * L[:, 2] * A[:, 1].cos()
-               + L[:, 1] * L[:, 2] * A[:, 0].cos())
-    return tri_reduction_penalty(L, A, margin) + F.relu(overlap - margin) ** 2
-
-
 def hard_niggli(L, A):
     """Main conditions (beta, gamma obtuse convention) from the metric, and the smallest distance to any wall (relative)."""
     a, b, c = L.unbind(-1)
@@ -77,39 +69,23 @@ def unimodular(k):
     return rows[np.abs(np.rint(np.linalg.det(rows))) == 1]
 
 
-def test_flag_is_off_by_default():
-    assert sym_utils.NIGGLI_TRICLINIC is (os.environ.get('MXT_NIGGLI_TRICLINIC', '0') != '0')
-    if 'MXT_NIGGLI_TRICLINIC' not in os.environ:
-        assert sym_utils.NIGGLI_TRICLINIC is False
-
-
-def test_env_var_sets_the_flag_at_import():
-    code = 'from mxtaltools.common import sym_utils; print(sym_utils.NIGGLI_TRICLINIC)'
-    for value, expected in (('1', 'True'), ('0', 'False')):
+def test_retired_switch_fails_loudly():
+    code = 'from mxtaltools.common import sym_utils'
+    for value in ('0', '1'):
         env = {**os.environ, 'MXT_NIGGLI_TRICLINIC': value}
-        out = subprocess.run([sys.executable, '-c', code], env=env, capture_output=True, text=True, check=True)
-        assert out.stdout.strip().splitlines()[-1] == expected
+        out = subprocess.run([sys.executable, '-c', code], env=env, capture_output=True, text=True)
+        assert out.returncode != 0 and 'MXT_NIGGLI_TRICLINIC is retired' in out.stderr
 
 
 @pytest.mark.parametrize('margin', [0.0, 0.1])
-def test_flag_off_keeps_the_current_triclinic_penalty(margin):
+def test_triclinic_rows_use_the_niggli_walls(margin):
     L, A, sg = random_cells(20000, 0)
     E = cell_reduction_penalty(A, L, sg, margin)
     tri = (sg == 1) | (sg == 2)
-    assert torch.equal(E[tri], old_triclinic(L[tri], A[tri], margin))
-    # the check can tell the two penalties apart on these rows
-    assert (E[tri] != tri_niggli_reduction_penalty(L[tri], A[tri], margin)).float().mean() > 0.5
-
-
-@pytest.mark.parametrize('margin', [0.0, 0.1])
-def test_flag_on_swaps_only_triclinic_rows(monkeypatch, margin):
-    L, A, sg = random_cells(20000, 1)
-    E_off = cell_reduction_penalty(A, L, sg, margin)
-    monkeypatch.setattr(sym_utils, 'NIGGLI_TRICLINIC', True)
-    E_on = cell_reduction_penalty(A, L, sg, margin)
-    tri = (sg == 1) | (sg == 2)
-    assert torch.equal(E_on[tri], tri_niggli_reduction_penalty(L[tri], A[tri], margin))
-    assert torch.equal(E_on[~tri], E_off[~tri])
+    assert torch.equal(E[tri], tri_niggli_reduction_penalty(L[tri], A[tri], margin))
+    # the positive-overlap term of the retired walls is gone: it would fire on these all-acute-ish cells
+    overlap = L[:, 0] * L[:, 1] * A[:, 2].cos() + L[:, 0] * L[:, 2] * A[:, 1].cos() + L[:, 1] * L[:, 2] * A[:, 0].cos()
+    assert ((overlap[tri] > 0) & (E[tri] == 0)).any()
 
 
 def test_zero_set_is_the_niggli_main_conditions():
@@ -131,7 +107,7 @@ def test_margin_zero_set_is_inside_the_margin_free_zero_set():
     assert not (Zm & ~Z0).any()
 
 
-def test_spglib_niggli_cells_score_zero_after_flipping_all_acute(monkeypatch):
+def test_spglib_niggli_cells_score_zero_after_flipping_all_acute():
     spglib = pytest.importorskip('spglib')
     raw = random_lattices(300, 4)
     nig = torch.tensor(np.array([spglib.niggli_reduce(M, eps=1e-8) for M in raw]))
@@ -147,7 +123,6 @@ def test_spglib_niggli_cells_score_zero_after_flipping_all_acute(monkeypatch):
     L_raw, A_raw = params_from_rows(torch.tensor(raw))
     assert (tri_niggli_reduction_penalty(L_raw, A_raw, 0.0) > 0).float().mean() > 0.9
     # production dispatch, float32
-    monkeypatch.setattr(sym_utils, 'NIGGLI_TRICLINIC', True)
     E = cell_reduction_penalty(A.float(), L.float(), torch.full((300,), 2), 0.0)
     assert E.max() < 1e-6
 

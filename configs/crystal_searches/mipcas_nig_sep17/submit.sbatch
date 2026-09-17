@@ -12,7 +12,6 @@
 #SBATCH --output=/scratch/mk8347/logs/mipcas_nig_sep17/slurm-%A_%a.out
 
 # mipcas_nig_sep17: array 0-9 ELJ, 10-19 UMA (MANIFEST.md), each arm 5000 starts, triclinic Niggli penalty.
-# The penalty is switched by MXT_NIGGLI_TRICLINIC=1 below; the job asserts the flag is live before searching.
 # A timed-out arm resumes on resubmission (force_restart_run false); a complete arm is skipped.
 module purge
 
@@ -46,7 +45,6 @@ srun singularity exec --nv \
     /bin/bash -c "
         source /ext3/env.sh
         export PYTHONPATH=${MXT_ROOT}:\$PYTHONPATH
-        export MXT_NIGGLI_TRICLINIC=1
 
         # skip a complete arm (a resumed complete arm would slice an empty batch, which run_search does not catch)
         python - <<'PY' || exit 0
@@ -64,7 +62,6 @@ else:
 sys.exit(0)
 PY
 
-        python -c 'from mxtaltools.common import sym_utils; assert sym_utils.NIGGLI_TRICLINIC is True, \"Niggli flag not live\"; print(\"NIGGLI_TRICLINIC\", sym_utils.NIGGLI_TRICLINIC)' || exit 1
         nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
         python -u ${MXT_ROOT}/mxtaltools/crystal_search/run_search.py --config ${CONFIG}
     "

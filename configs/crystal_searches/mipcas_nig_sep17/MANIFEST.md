@@ -1,6 +1,6 @@
 # mipcas_nig_sep17
 
-20 arms: 10 x 5000 starts per energy (ELJ, UMA), sg 2, Z'=1, triclinic Niggli penalty (MXT_NIGGLI_TRICLINIC=1 in submit.sbatch).
+20 arms: 10 x 5000 starts per energy (ELJ, UMA), sg 2, Z'=1, triclinic Niggli penalty (always on).
 
 | array index | energy | arm | run_name | opt_seed | batch | save_trajs |
 |---|---|---|---|---|---|---|

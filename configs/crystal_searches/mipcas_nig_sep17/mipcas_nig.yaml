@@ -2,7 +2,7 @@
 #
 # House recipe (../mipcas/mipcas_*.yaml, ../qm9_anchors/qm9_sg2_anchors_elj.yaml): random starts sampled in the reduced cell,
 # two rprop stages (450 steps compress 1.0 at lr 0.05, then 50 steps relax at lr 0.01), cutoff 10.
-# The Niggli penalty is chosen by the ENVIRONMENT (MXT_NIGGLI_TRICLINIC=1, exported by submit.sbatch), not by this file.
+# The triclinic Niggli penalty is always on in mxtaltools (sym_utils.tri_niggli_reduction_penalty).
 
 device: cuda
 mol_path: /scratch/mk8347/data/crystal_datasets/mipcas/MIPCAS_standardized.pt

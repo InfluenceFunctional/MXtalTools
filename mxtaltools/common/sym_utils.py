@@ -80,28 +80,10 @@ def bounding_penalty(x, lower, upper, margin: float = 0.0):
     return (torch.relu(x - (upper - margin)) ** 2) + (torch.relu((lower + margin) - x) ** 2)
 
 
-def tri_reduction_penalty(cell_lengths, cell_angles, margin):
-    """triclinic cells reduction ruels"""
-    eps = 1e-6
-    bc_error = F.relu(cell_lengths[:, 1] / cell_lengths[:, 2] - (1 - margin)) ** 2  # c>b
-    ab_error = F.relu(cell_lengths[:, 0] / cell_lengths[:, 1] - (1 - margin)) ** 2  # # b>a
-
-    a, b, c = cell_lengths.unbind(dim=1)
-    al, be, ga = cell_angles.unbind(dim=1)
-    al_max_cos = b / 2 / c
-    be_max_cos = a / 2 / c
-    ga_max_cos = a / 2 / b
-
-    alpha_error = bounding_penalty(al.cos() / al_max_cos.clamp(min=eps), -1, 1, margin=margin)
-    beta_error = bounding_penalty(be.cos() / be_max_cos.clamp(min=eps), -1, 1, margin=margin)
-    gamma_error = bounding_penalty(ga.cos() / ga_max_cos.clamp(min=eps), -1, 1, margin=margin)
-
-    return bc_error + ab_error + alpha_error + beta_error + gamma_error
-
-
-# triclinic walls in cell_reduction_penalty: False -> tri_reduction_penalty + the positive-overlap term (current);
-# True -> tri_niggli_reduction_penalty, which replaces both. Env MXT_NIGGLI_TRICLINIC=1 sets it at import.
-NIGGLI_TRICLINIC = os.environ.get('MXT_NIGGLI_TRICLINIC', '0') != '0'
+# the triclinic Niggli walls are always on; the switch that selected the old walls is retired and must not be set
+if 'MXT_NIGGLI_TRICLINIC' in os.environ:
+    raise RuntimeError("MXT_NIGGLI_TRICLINIC is retired: triclinic cells always use tri_niggli_reduction_penalty. "
+                       "Unset it; there is no old-walls mode.")
 
 
 def tri_niggli_reduction_penalty(cell_lengths, cell_angles, margin):
@@ -308,7 +290,7 @@ def cell_reduction_penalty(cell_angles, cell_lengths, sg, margin: float = 0.1):
              'cubic': (sg >= 195) & (sg <= 230),
              }
     reduction_penalties = {  # monoclinic is dispatched below: its walls also need sg
-        'triclinic': tri_reduction_penalty,
+        'triclinic': tri_niggli_reduction_penalty,
         'orthorhombic': ortho_reduction_penalty,
         'tetragonal': tetra_reduction_penalty,
         'trigonal': trig_reduction_penalty,
@@ -320,11 +302,6 @@ def cell_reduction_penalty(cell_angles, cell_lengths, sg, margin: float = 0.1):
         if mask.sum() > 0:
             if cs == 'monoclinic':  # walls depend on the setting class of each sg
                 E[mask] = mono_reduction_penalty(cell_lengths[mask], cell_angles[mask], sg[mask], margin)
-            elif cs == 'triclinic' and NIGGLI_TRICLINIC:
-                E[mask] = tri_niggli_reduction_penalty(cell_lengths[mask], cell_angles[mask], margin)
             else:
                 E[mask] = reduction_penalties[cs](cell_lengths[mask], cell_angles[mask], margin)
-                if cs == 'triclinic':  # this is actually used/required! Two separate reduction terms
-                    E[mask] = E[mask] + F.relu(niggli_reduction_penalty(cell_lengths, cell_angles)[
-                                                   mask] - margin) ** 2  # penalize positive overlaps
     return E

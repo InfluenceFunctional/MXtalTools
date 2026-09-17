@@ -1958,9 +1958,9 @@ class MolCrystalOps:
         symprec is spglib's distance tolerance in Angstrom; at spglib's default (1e-5) float32 crystals are often
         assigned a subgroup. Raises ValueError if spglib's space group for any crystal is not its sg_ind, or if
         the standard cell is not a unimodular change of basis.
-        Triclinic (sg 1, 2): the output is spglib's Niggli cell, all angles acute or all obtuse. With MXT_NIGGLI_TRICLINIC=1
-        the reduction penalty uses a beta/gamma-obtuse convention instead (sym_utils.tri_niggli_reduction_penalty), so
-        all-acute outputs score > 0 and fail the confirm_transform penalty check until (a, b, c) -> (a, -b, -c) is applied.
+        Triclinic (sg 1, 2): the output is spglib's Niggli cell, all angles acute or all obtuse. The reduction penalty uses
+        a beta/gamma-obtuse convention instead (sym_utils.tri_niggli_reduction_penalty), so all-acute outputs score > 0 and
+        fail the confirm_transform penalty check until (a, b, c) -> (a, -b, -c) is applied.
         """
         assert self.is_batch, "Cell standardization currently only implemented for batch objects"
         import spglib

@@ -221,18 +221,17 @@ def test_non_monoclinic_rows_bit_identical(margin):
     assert E.dtype == torch.float32 and E.shape == (n,)
 
     ref = torch.full((n,), float('nan'))
-    # triclinic: ordering + beta/alpha/gamma walls on the subset, then the Niggli overlap computed on the full batch
+    # triclinic: Niggli main conditions, beta/gamma-obtuse convention (tri_niggli_reduction_penalty written out)
     m = (sg == 1) | (sg == 2)
-    l, g = L[m], A[m]
-    a, b, c = l.unbind(1)
-    al, be, ga = g.unbind(1)
-    e = (F.relu(l[:, 1] / l[:, 2] - (1 - margin)) ** 2 + F.relu(l[:, 0] / l[:, 1] - (1 - margin)) ** 2
-         + bounding(al.cos() / (b / 2 / c).clamp(min=1e-6), -1, 1, margin)
-         + bounding(be.cos() / (a / 2 / c).clamp(min=1e-6), -1, 1, margin)
-         + bounding(ga.cos() / (a / 2 / b).clamp(min=1e-6), -1, 1, margin))
-    A_, B_, C_ = L.split(1, dim=1)
-    niggli = (A_ * B_ * torch.cos(A[:, 2:3]) + A_ * C_ * torch.cos(A[:, 1:2]) + B_ * C_ * torch.cos(A[:, 0:1])).flatten()
-    ref[m] = e + F.relu(niggli[m] - margin) ** 2
+    a, b, c = L[m].clamp(min=1e-6).unbind(1)
+    al, be, ga = A[m].unbind(1)
+    Asq, Bsq = a.square(), b.square()
+    xi, eta, zeta = 2 * b * c * al.cos(), 2 * a * c * be.cos(), 2 * a * b * ga.cos()
+    q = torch.stack((xi / Bsq, eta / Asq, zeta / Asq), dim=-1)
+    ref[m] = (F.relu(a / b - (1 - margin)).square() + F.relu(b / c - (1 - margin)).square()
+              + F.relu(q.abs() - (1 - margin)).square().sum(dim=-1)
+              + (F.relu(eta / Asq).square() + F.relu(zeta / Asq).square())
+              + F.relu(margin - (Asq + Bsq + xi + eta + zeta) / (Asq + Bsq)).square())
     right = lambda x: (x - HALF_PI) ** 2
     # orthorhombic
     m = (sg >= 16) & (sg <= 74)

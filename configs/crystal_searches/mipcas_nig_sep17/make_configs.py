@@ -1,6 +1,6 @@
 """
-MIPCAS sg 2 Z'=1: 50k more ELJ and 50k more UMA searches under the triclinic Niggli penalty (MXT_NIGGLI_TRICLINIC=1, set by
-submit.sbatch). 10 arms x 5000 per energy, array indices 0-9 ELJ and 10-19 UMA.
+MIPCAS sg 2 Z'=1: 50k more ELJ and 50k more UMA searches under the triclinic Niggli penalty (always on in mxtaltools).
+10 arms x 5000 per energy, array indices 0-9 ELJ and 10-19 UMA.
 
 RUN NAMES. load_search_chunks globs <run_name>_*.pt and keeps all-digit tails, so each energy gets its own stem
 (mipcas_nig_elj_<arm>, mipcas_nig_uma_<arm>), distinct from the March chunks (mipcas_elj_*, mipcas_uma_*): the old and new
@@ -67,7 +67,7 @@ def main():
             ind += 1
     lines = ['# mipcas_nig_sep17', '',
              f'{ind} arms: {ARMS_PER_ENERGY} x {ARM_SAMPLES} starts per energy (ELJ, UMA), sg 2, Z\'=1, triclinic Niggli penalty '
-             '(MXT_NIGGLI_TRICLINIC=1 in submit.sbatch).', '',
+             '(always on).', '',
              '| array index | energy | arm | run_name | opt_seed | batch | save_trajs |', '|---|---|---|---|---|---|---|']
     lines += [f'| {i} | {e} | {a} | `{n}` | {s} | {BATCH_SIZE[e]} | {t} |' for i, e, a, n, s, t in rows]
     (HERE / 'MANIFEST.md').write_text('\n'.join(lines) + '\n')
