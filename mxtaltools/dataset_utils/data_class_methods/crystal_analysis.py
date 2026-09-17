@@ -1047,7 +1047,12 @@ class MolCrystalAnalysis:
 
     def compute_cell_reduction_penalty(self, margin: float = 0.0, **kwargs):
         """Compute a penalty term for the given crystal system that pushes it towards
-        our canonical / standardized / reduced cell geometry, following spglib"""
+        our canonical / standardized / reduced cell geometry.
+        monoclinic: one zero-penalty cell per lattice within the SYM_OPS setting, the same cell as spglib 2.7.0's
+            standardize_cell(to_primitive=False, no_idealize=True) (checked empirically, not proven for spglib);
+            see sym_utils.mono_reduction_penalty.
+        every other system: enforces only the crystal-system metric (plus the triclinic walls); does not select a
+            unique cell."""
         # todo check behaviors / correctness for higher crystal systems
         # cell_parameters = self.full_cell_parameters()
         cell_lengths, cell_angles, aunit_positions, aunit_orientations = self.split_cell_params()
