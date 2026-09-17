@@ -1,0 +1,54 @@
+batch_size: 500
+dataset_path: null
+device: cuda
+force_restart_run: false
+grow_batch_size: false
+init_reduced: true
+init_sample_method: random
+init_target_cp: wide
+mace_predictor_path: null
+mol_path: /scratch/mk8347/data/crystal_datasets/mipcas/MIPCAS_standardized.pt
+mol_seed: 0
+mols_to_sample: 1
+num_samples: 5000
+opt:
+- anneal_lr: false
+  compression_factor: 1.0
+  convergence_eps: 1.0e-05
+  cutoff: 10
+  enforce_reduced: true
+  grad_norm_clip: 0.1
+  init_lr: 0.05
+  max_num_steps: 450
+  optim_target: uma
+  optimizer_func: rprop
+  show_tqdm: true
+  target_packing_coeff: null
+  umbrella: false
+- anneal_lr: false
+  compression_factor: 0.0
+  convergence_eps: 1.0e-05
+  cutoff: 10
+  enforce_reduced: true
+  grad_norm_clip: 0.1
+  init_lr: 0.01
+  max_num_steps: 50
+  optim_target: uma
+  optimizer_func: rprop
+  show_tqdm: true
+  target_packing_coeff: null
+  umbrella: false
+opt_seed: 6007
+out_dir: /scratch/mk8347/data/crystal_datasets/mipcas/nig_sep17
+run_name: mipcas_nig_uma_7
+sampling_mode: all
+save_trajs: false
+score_model_checkpoint: null
+sgs_to_search:
+- 2
+target_identifier: null
+target_path: null
+uma_predictor_path: /scratch/mk8347/models/uma/esen_s.pt
+umbrella_path: null
+zp_to_search:
+- 1
