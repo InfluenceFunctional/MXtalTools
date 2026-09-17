@@ -158,6 +158,9 @@ def ase_mol_from_crystaldata(crystal_batch,
 
 
 def get_niggli_cell(crystal_batch, index, radians: bool=False):
+    """ASE's Niggli cell parameters: all angles acute or all obtuse. For all-acute cells this is NOT the triclinic
+    convention of sym_utils.tri_niggli_reduction_penalty (beta, gamma obtuse), which needs (a, b, c) -> (a, -b, -c):
+    beta -> 180 - beta, gamma -> 180 - gamma. Lengths are the same in both."""
 
     mol = ase_mol_from_crystaldata(crystal_batch, index=index)
     #mol.info['spacegroup'] = Spacegroup(int(original_cluster_batch.sg_ind[ind]), setting=1)

@@ -1051,8 +1051,10 @@ class MolCrystalAnalysis:
         monoclinic: one zero-penalty cell per lattice within the SYM_OPS setting, the same cell as spglib 2.7.0's
             standardize_cell(to_primitive=False, no_idealize=True) (checked empirically, not proven for spglib);
             see sym_utils.mono_reduction_penalty.
-        every other system: enforces only the crystal-system metric (plus the triclinic walls); does not select a
-            unique cell."""
+        triclinic: by default tri_reduction_penalty + the positive-overlap term, which does not select a unique cell;
+            with MXT_NIGGLI_TRICLINIC=1, one cell per lattice in a beta/gamma-obtuse convention that differs from spglib's
+            Niggli cell for all-acute lattices; see sym_utils.tri_niggli_reduction_penalty.
+        every other system: enforces only the crystal-system metric; does not select a unique cell."""
         # todo check behaviors / correctness for higher crystal systems
         # cell_parameters = self.full_cell_parameters()
         cell_lengths, cell_angles, aunit_positions, aunit_orientations = self.split_cell_params()

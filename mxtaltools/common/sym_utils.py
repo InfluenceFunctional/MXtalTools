@@ -1,3 +1,5 @@
+import os
+
 import torch
 from torch.nn import functional as F
 
@@ -95,6 +97,46 @@ def tri_reduction_penalty(cell_lengths, cell_angles, margin):
     gamma_error = bounding_penalty(ga.cos() / ga_max_cos.clamp(min=eps), -1, 1, margin=margin)
 
     return bc_error + ab_error + alpha_error + beta_error + gamma_error
+
+
+# triclinic walls in cell_reduction_penalty: False -> tri_reduction_penalty + the positive-overlap term (current);
+# True -> tri_niggli_reduction_penalty, which replaces both. Env MXT_NIGGLI_TRICLINIC=1 sets it at import.
+NIGGLI_TRICLINIC = os.environ.get('MXT_NIGGLI_TRICLINIC', '0') != '0'
+
+
+def tri_niggli_reduction_penalty(cell_lengths, cell_angles, margin):
+    """Triclinic Niggli main conditions (boundary tie-breaks omitted) in a beta/gamma-obtuse sign convention, with
+    A = a^2, B = b^2, xi = 2 b.c, eta = 2 a.c, zeta = 2 a.b:
+      a <= b <= c;  |xi| <= B, |eta| <= A, |zeta| <= A;  eta <= 0 and zeta <= 0 (xi either sign);  |a + b + c| >= c.
+    Zero on exactly one cell per lattice up to measure-zero ties; there alpha is in [60, 120] deg, beta and gamma in [90, 120].
+    SIGN CONVENTION -- NOT Niggli's / spglib's / ASE's. Niggli takes xi, eta, zeta all > 0 (all-acute) or all <= 0. The two
+    agree on all-obtuse cells; an all-acute Niggli cell (a, b, c) maps to this one by the basis change (a, -b, -c), which keeps
+    the P1/P-1 operators and handedness: alpha unchanged, beta -> 180 - beta, gamma -> 180 - gamma, fractional (x, y, z) ->
+    (x, -y, -z). Chosen for generated cells: the zero set is one connected region and alpha crosses 90 deg without a jump
+    (beta or gamma crossing 90 still flips the cell). Cells from compute_standard_cell, ase_interface.get_niggli_cell or any
+    other Niggli reduction need that flip before they score 0.
+    margin shrinks the order, pairwise and three-vector walls; the sign walls take no margin."""
+    eps = 1e-6
+    a, b, c = cell_lengths.clamp(min=eps).unbind(dim=-1)
+    alpha, beta, gamma = cell_angles.unbind(dim=-1)
+
+    A, B = a.square(), b.square()
+    xi = 2 * b * c * alpha.cos()
+    eta = 2 * a * c * beta.cos()
+    zeta = 2 * a * b * gamma.cos()
+
+    order_error = F.relu(a / b - (1 - margin)).square() + F.relu(b / c - (1 - margin)).square()
+
+    q = torch.stack((xi / B, eta / A, zeta / A), dim=-1)
+    pairwise_error = F.relu(q.abs() - (1 - margin)).square().sum(dim=-1)
+
+    # beta and gamma obtuse, alpha free (see SIGN CONVENTION)
+    sign_error = F.relu(eta / A).square() + F.relu(zeta / A).square()
+
+    # |a + b + c|^2 >= c^2, binding only when xi < 0 too
+    three_vector_error = F.relu(margin - (A + B + xi + eta + zeta) / (A + B)).square()
+
+    return order_error + pairwise_error + sign_error + three_vector_error
 
 
 # monoclinic setting class per sg (SYM_OPS setting: b-unique, cell choice 1): the group of ac-plane basis changes
@@ -278,9 +320,11 @@ def cell_reduction_penalty(cell_angles, cell_lengths, sg, margin: float = 0.1):
         if mask.sum() > 0:
             if cs == 'monoclinic':  # walls depend on the setting class of each sg
                 E[mask] = mono_reduction_penalty(cell_lengths[mask], cell_angles[mask], sg[mask], margin)
+            elif cs == 'triclinic' and NIGGLI_TRICLINIC:
+                E[mask] = tri_niggli_reduction_penalty(cell_lengths[mask], cell_angles[mask], margin)
             else:
                 E[mask] = reduction_penalties[cs](cell_lengths[mask], cell_angles[mask], margin)
-            if cs == 'triclinic':  # this is actually used/required! Two separate reduction terms
-                E[mask] = E[mask] + F.relu(niggli_reduction_penalty(cell_lengths, cell_angles)[
-                                               mask] - margin) ** 2  # penalize positive overlaps
+                if cs == 'triclinic':  # this is actually used/required! Two separate reduction terms
+                    E[mask] = E[mask] + F.relu(niggli_reduction_penalty(cell_lengths, cell_angles)[
+                                                   mask] - margin) ** 2  # penalize positive overlaps
     return E
