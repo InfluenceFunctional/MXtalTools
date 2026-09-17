@@ -1,3 +1,4 @@
+import functools
 from typing import Optional, Union, Iterable
 
 import numpy as np
@@ -24,6 +25,37 @@ from mxtaltools.crystal_search.crystal_opt_utils import gradient_descent_optimiz
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.utils import get_mol_embedding_for_proxy, enforce_1d_bound
 from mxtaltools.reporting.utils import lightweight_one_sided_violin
+
+
+def _op_set(rotations, translations):
+    return {(tuple(np.rint(r).astype(int).ravel()), tuple(np.round(np.mod(t, 1), 4) % 1))
+            for r, t in zip(rotations, translations)}
+
+
+@functools.lru_cache(maxsize=None)
+def spglib_hall_number(sg_ind: int) -> int:
+    """
+    The spglib Hall number whose operators are exactly SYM_OPS[sg_ind].
+    spglib standardizes to the first Hall number of each space group unless told otherwise; for the groups
+    with two ITA origin choices that is a different origin from SYM_OPS.
+    """
+    import spglib
+    ops = np.asarray(SYM_OPS[sg_ind], dtype=np.float64)
+    target = _op_set(ops[:, :3, :3], ops[:, :3, 3])
+    for hall_number in _spglib_hall_numbers()[sg_ind]:
+        db = spglib.get_symmetry_from_database(hall_number)
+        if _op_set(db['rotations'], db['translations']) == target:
+            return hall_number
+    raise ValueError(f"no spglib Hall setting has the operators of SYM_OPS[{sg_ind}]")
+
+
+@functools.lru_cache(maxsize=None)
+def _spglib_hall_numbers():
+    import spglib
+    halls = {}
+    for hall_number in range(1, 531):
+        halls.setdefault(spglib.get_spacegroup_type(hall_number).number, []).append(hall_number)
+    return halls
 
 
 # noinspection PyAttributeOutsideInit
@@ -1919,7 +1951,14 @@ class MolCrystalOps:
         self.aunit_orientation = fixed_rotvecs
 
     def compute_standard_cell(self, confirm_transform: bool = False,
-                              enforce_right_handedness: bool = False):
+                              enforce_right_handedness: bool = False,
+                              symprec: float = 1e-3):
+        """
+        Re-express each crystal in spglib's standard cell, in the setting and origin of SYM_OPS[sg_ind].
+        symprec is spglib's distance tolerance in Angstrom; at spglib's default (1e-5) float32 crystals are often
+        assigned a subgroup. Raises ValueError if spglib's space group for any crystal is not its sg_ind, or if
+        the standard cell is not a unimodular change of basis.
+        """
         assert self.is_batch, "Cell standardization currently only implemented for batch objects"
         import spglib
 
@@ -1930,6 +1969,7 @@ class MolCrystalOps:
         std_params = []
         transforms = []
         new_positions = []
+        mismatches = []
 
         """get standard cell from spglib"""
         for ind, p in enumerate(target_params):
@@ -1944,20 +1984,35 @@ class MolCrystalOps:
 
             numbers = self.z[self.batch == ind].repeat(self.sym_mult[ind]).cpu().detach().numpy()
 
-            "spglib standardize"
+            "spglib symmetry, standardized in the SYM_OPS setting"
             cell = (lattice, positions, numbers)
-            lattice_std, positions_std, numbers_std = spglib.standardize_cell(
-                cell, to_primitive=False, no_idealize=True)
+            sg_ind = int(self.sg_ind[ind])
+            hall_number = spglib_hall_number(sg_ind)
+            dataset = spglib.get_symmetry_dataset(cell, symprec=symprec)
+            if dataset is not None and dataset.number == sg_ind and dataset.hall_number != hall_number:
+                dataset = spglib.get_symmetry_dataset(cell, symprec=symprec, hall_number=hall_number)
+            det = None if dataset is None else float(np.linalg.det(dataset.transformation_matrix))
+            if dataset is None or dataset.number != sg_ind or abs(det - 1) > 1e-6:
+                mismatches.append((ind, sg_ind, None if dataset is None else dataset.number, det))
+                continue
 
-            "get new lattice"
+            "(a_s b_s c_s) = (a b c) P^-1 and x_s = P x + p, with column vectors"
+            P = dataset.transformation_matrix
+            lattice_std = np.linalg.inv(P).T @ lattice
             cellpar_std = cell_to_cellpar(lattice_std)
 
             "manually apply transform to atom positions (avoid breaking mols)"
-            T = lattice @ np.linalg.inv(lattice_std)
-            positions_new = positions @ T
+            T = P.T
+            positions_new = positions @ T + dataset.origin_shift
             transforms.append(T)
             new_positions.append(positions_new)
             std_params.append(cellpar_std)
+
+        if mismatches:
+            raise ValueError(
+                f"compute_standard_cell: spglib (symprec={symprec}) disagrees with the crystal for "
+                f"{len(mismatches)} of {self.num_graphs} samples, as (index, sg_ind, spglib number, det P): "
+                f"{mismatches[:20]}")
 
         std_params = np.stack(std_params)
 
