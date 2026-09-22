@@ -1,0 +1,32 @@
+{
+ "D1_cell_angles": {
+  "atol": 1e-06,
+  "call": "MolCrystalData.inv_latent_transform(LATENT)[0, 3:6]",
+  "device": "cpu",
+  "dtype": "float32",
+  "fixture": "literal 4-atom MolData, sg 14, radius=5.0",
+  "note": "radians. ang_range = [0.2pi, 0.8pi], duplicated at crystal_ops.py:387 and :431",
+  "rtol": 1e-06,
+  "value": [1.7592920064926147, 1.0053095817565918, 2.0891590118408203]
+ },
+ "D1_cell_lengths": {
+  "atol": 1e-06,
+  "call": "MolCrystalData.inv_latent_transform(LATENT)[0, :3]",
+  "device": "cpu",
+  "dtype": "float32",
+  "fixture": "literal 4-atom MolData, sg 14, radius=5.0",
+  "note": "au_range = [[0.075,0.075,0.1],[3,3,4]], duplicated at crystal_ops.py:384 and :428. Widening 0.075->0.05 in BOTH gives 4.753/6.831/23.001 while the roundtrip residual stays bit-identical at 1.788e-07",
+  "rtol": 1e-06,
+  "value": [5.704193592071533, 9.072757720947266, 23.001228332519531]
+ },
+ "D2_abc_product": {
+  "atol": 0.0,
+  "call": "product of inv_latent_transform(LATENT)[0, :3]",
+  "device": "cpu",
+  "dtype": "float32",
+  "fixture": "literal 4-atom MolData, sg 14, radius=5.0",
+  "note": "one memorable scalar. The reference au_range widening takes it 1190.4 -> 746.8, a 37% volume change no roundtrip can see",
+  "rtol": 1e-06,
+  "value": 1190.3771973
+ }
+}

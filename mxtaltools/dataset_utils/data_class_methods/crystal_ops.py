@@ -138,6 +138,10 @@ class MolCrystalOps:
             nodes_per_graph = molecule.num_atoms
             slice_dict = torch.arange(0, n_graphs + 1, 1, device=molecule.device)
             inc_dict = torch.zeros(n_graphs, dtype=torch.long, device=molecule.device)
+            # node-wise slices are the same for every node-wise key, so build them once
+            # here for the same reason slice_dict/inc_dict above are hoisted out of the
+            # loop. inc_dict is zeros[n_graphs] either way, so the node path reuses it.
+            node_slice_dict = self.node_slice_dict(nodes_per_graph, molecule.device)
             for key, value in mol_dict.items():
                 if isinstance(value, dict) or isinstance(value, torch.nn.Module):
                     continue
@@ -169,7 +173,8 @@ class MolCrystalOps:
                     self.add_graph_attr(value, key, slice_dict=slice_dict, inc_dict=inc_dict)
                 elif len(value) == n_nodes:
                     if key != 'batch':
-                        self.add_node_attr(value, key, num_nodes_per_graph=nodes_per_graph)
+                        self.add_node_attr(value, key, num_nodes_per_graph=nodes_per_graph,
+                                           slice_dict=node_slice_dict, inc_dict=inc_dict)
                     else:
                         setattr(self, key, value)
                 else:
@@ -341,6 +346,17 @@ class MolCrystalOps:
         # index 5+6*Zp is exactly width-1: silent by construction.
         for ind in range(self.max_z_prime):
             min_vals[6 + 3 * self.max_z_prime + 3 * ind + 2] = -0.99
+            # AND the same guard on the POLAR component (+ 0), for the same reason one row
+            # over. lat2sph_rotvec maps theta = (pi/4)x + pi/4, so x = -1 puts theta at
+            # EXACTLY 0: the axis pole, where phi is undefined and the crystal -> latent
+            # inverse (acos/atan2 on the rotation matrix) has an infinite local derivative.
+            # The value survives -- compute_jacobian's log(sin(theta)) clamp caps it -- but
+            # d(anything)/d(latent) comes back NON-FINITE for such a row, and one row is
+            # enough to poison a whole batch's reward gradient. MEASURED 2026-09-21 on a
+            # phase-1 qm9c policy: 3 rows in 2048 non-finite at the -1 floor, 0 at -0.99,
+            # with the in-box median |dJ/dx| unchanged (25.30 vs 25.32). Same -0.99 as the
+            # magnitude row, which caps log(sin(theta)) near 33 nats against that row's ~37.
+            min_vals[6 + 3 * self.max_z_prime + 3 * ind + 0] = -0.99
 
         max_vals = torch.ones(latents.shape[-1], dtype=torch.float32, device=self.device)
         max_vals[

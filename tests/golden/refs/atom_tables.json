@@ -1,0 +1,34 @@
+{
+ "A2_atom_weight_anchors": {
+  "atol": 0.0,
+  "call": "[ATOM_WEIGHTS[z] for z in (0,1,6,8,82)]",
+  "device": "cpu",
+  "dtype": "float64",
+  "fixture": "literal",
+  "note": "contiguity alone passes under a wholesale table swap; these anchors do not",
+  "value": [
+   1.0,
+   1.008,
+   12.011,
+   15.999,
+   207.2
+  ]
+ },
+ "A2_vdw_radii_anchors": {
+  "atol": 0.0,
+  "call": "[VDW_RADII[z] for z in (0,1,6,7,8,17,53)]",
+  "device": "cpu",
+  "dtype": "float64",
+  "fixture": "literal",
+  "note": "z=0 is a sentinel; dropping it shifts every subsequent element by one",
+  "value": [
+   0.0,
+   1.2,
+   1.7,
+   1.6,
+   1.55,
+   1.8,
+   2.1
+  ]
+ }
+}

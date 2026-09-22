@@ -1,0 +1,54 @@
+batch_size: 500
+dataset_path: null
+device: cuda
+force_restart_run: false
+grow_batch_size: false
+init_reduced: true
+init_sample_method: random
+init_target_cp: wide
+mace_predictor_path: null
+mol_path: D:\crystal_datasets\mipcas\MIPCAS_standardized.pt
+mol_seed: 0
+mols_to_sample: 1
+num_samples: 1000
+opt:
+- anneal_lr: false
+  compression_factor: 1.0
+  convergence_eps: 1.0e-05
+  cutoff: 10
+  enforce_reduced: true
+  grad_norm_clip: 0.1
+  init_lr: 0.05
+  max_num_steps: 450
+  optim_target: elj
+  optimizer_func: rprop
+  show_tqdm: true
+  target_packing_coeff: null
+  umbrella: false
+- anneal_lr: false
+  compression_factor: 0.0
+  convergence_eps: 1.0e-05
+  cutoff: 10
+  enforce_reduced: true
+  grad_norm_clip: 0.1
+  init_lr: 0.01
+  max_num_steps: 50
+  optim_target: elj
+  optimizer_func: rprop
+  show_tqdm: true
+  target_packing_coeff: null
+  umbrella: false
+opt_seed: 4
+out_dir: D:\crystal_datasets\mipcas\niggli_sep16
+run_name: mipcas_niggli_elj_4
+sampling_mode: all
+save_trajs: false
+score_model_checkpoint: null
+sgs_to_search:
+- 2
+target_identifier: null
+target_path: null
+uma_predictor_path: null
+umbrella_path: null
+zp_to_search:
+- 1

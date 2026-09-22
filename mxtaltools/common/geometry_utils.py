@@ -1953,7 +1953,7 @@ def lat2sph_rotvec(lat_orientations, z_prime):
     Map latent orientation parameters (normalized to [-1, 1]) to spherical rotation vectors.
 
     Inverse of sph_rotvec2lat. The three latent dimensions map as:
-      theta ∈ [-1,1] → [π/4, 3π/4]  (upper half-sphere polar angle)
+      theta ∈ [-1,1] → [0, π/2]      (upper half-sphere polar angle)
       phi   ∈ [-1,1] → [-π, π]       (azimuthal angle)
       r     ∈ [-1,1] → [0, 2π]       (rotation magnitude)
 
