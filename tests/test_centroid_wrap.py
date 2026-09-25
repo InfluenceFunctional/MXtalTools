@@ -202,6 +202,29 @@ def _run(batch, **kw):
                                          max_num_steps=12, optim_target='elj', cutoff=10, show_tqdm=False, **kw)
 
 
+@pytest.mark.parametrize('boundary', ['clamp', 'wrap'])
+def test_gradient_in_the_cell_edge_sliver(boundary):
+    """A centre in (CELL_EDGE, 1) sits in the builders' clip. The clamp path gives it zero gradient (the value
+    is past the clip); wrap_centroid's straight-through clamp hands the builders exactly CELL_EDGE, where
+    torch's clamp still passes the gradient, so the coordinate stays live all the way to the energy."""
+    batch = _face_start(0)
+    p = batch.full_cell_parameters().detach().clone()
+    p[0, 6 + 3] = 1 - 5e-5  # molecule 1, x: inside the sliver
+    p.requires_grad_(True)
+    b = batch.clone().detach()
+    b.set_cell_parameters(p, skip_box_analysis=True)
+    b.clean_cell_parameters(mode='hard', canonicalize_orientations=True)
+    if boundary == 'wrap':
+        b.aunit_centroid = wrap_centroid(p[:, 6:6 + 3 * b.max_z_prime])
+    e = b.analyze(['elj'], cutoff=10, supercell_size=10, std_orientation=True)['elj']
+    e.sum().backward()
+    g = float(p.grad[0, 6 + 3])
+    if boundary == 'clamp':
+        assert g == 0.0, 'control: the clamp path should be dead in the sliver'
+    else:
+        assert g != 0.0, 'wrap must keep the sliver coordinate live through the builders clip'
+
+
 def test_default_boundary_is_the_clamp():
     assert inspect.signature(gradient_descent_optimization).parameters['centroid_boundary'].default == 'clamp'
     with pytest.raises(ValueError):
