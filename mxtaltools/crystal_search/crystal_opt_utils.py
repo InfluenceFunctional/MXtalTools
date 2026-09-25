@@ -43,6 +43,72 @@ def dict2namespace(data_dict: dict):
     return data_namespace
 
 
+CENTROID_BOUNDARIES = ('clamp', 'wrap')
+CELL_EDGE = 1 - 1e-4  # MolCrystalOps.assign_aunit_centroid's upper bound: the builders clip centres there
+
+
+def wrap_centroid(raw_centroid: torch.Tensor) -> torch.Tensor:
+    """Lattice-translate fractional molecule centres into the unit cell -- any position in the cell
+    describes a valid crystal -- then clamp to [0, CELL_EDGE] STRAIGHT-THROUGH: the value honours the
+    builders' clip while the gradient reaches the raw parameter unchanged. So, unlike the hardtanh
+    bound in clean_cell_parameters (zero gradient at and beyond a face, which rprop never leaves),
+    no centre can freeze at an asymmetric-unit face or a cell face."""
+    wrapped = raw_centroid - torch.floor(raw_centroid).detach()
+    wrapped = torch.where(wrapped >= 1, wrapped - 1, wrapped)  # float rounding can land exactly on 1, which is 0
+    return wrapped + (wrapped.clamp(0, CELL_EDGE) - wrapped).detach()
+
+
+def canonicalize_aunit(crystal_batch):
+    """In place: re-express every asymmetric-unit molecule by the symmetry image whose centre lies in
+    its space group's asymmetric-unit box (ASYM_UNITS). The crystal is unchanged: each candidate image
+    comes from MolCrystalOps._transform_aunit_params (centre R f + t wrapped into the cell; rotation
+    conjugated by R_cart = T_fc R T_cf; handedness h -> det(R) h), applied molecule by molecule.
+    Needed after a wrap-mode relaxation, whose centres may sit anywhere in the cell, before anything
+    that reads asymmetric-unit coordinates (cleaning, latent transforms, datasets).
+    Requires current T_fc / T_cf (box_analysis). Raises if some molecule has no image in its box,
+    i.e. the tabulated box is not a fundamental domain for that crystal's operator list."""
+    if not hasattr(crystal_batch, 'asym_unit_dict'):
+        crystal_batch.asym_unit_dict = crystal_batch.build_asym_unit_dict()
+    centroid = crystal_batch.aunit_centroid.clone()
+    orientation = crystal_batch.aunit_orientation.clone()
+    handedness = crystal_batch.aunit_handedness.clone()
+    dtype, device = centroid.dtype, centroid.device
+    box = torch.stack([crystal_batch.asym_unit_dict[str(int(sg))] for sg in crystal_batch.sg_ind]).to(device, dtype)
+
+    op_lists = [torch.as_tensor(o, dtype=dtype, device=device) for o in crystal_batch.symmetry_operators]
+    n_ops = max(len(o) for o in op_lists)
+    eye = torch.eye(4, dtype=dtype, device=device)
+    ops = torch.stack([torch.cat([o, eye.expand(n_ops - len(o), 4, 4)]) for o in op_lists])  # [n, n_ops, 4, 4]
+    has_op = torch.stack([torch.arange(n_ops, device=device) < len(o) for o in op_lists])  # [n, n_ops]
+
+    for k in range(crystal_batch.max_z_prime):
+        sl = slice(3 * k, 3 * k + 3)
+        present = crystal_batch.z_prime.to(device) > k  # padding of lower-Z' crystals is left alone
+        best = None
+        for j in range(n_ops):
+            c, o, h = crystal_batch._transform_aunit_params(centroid[:, sl], orientation[:, sl], handedness[:, k],
+                                                            ops[:, j, :3, :3], ops[:, j, :3, 3], wrap=True)
+            margin = (1 - c / box).amin(dim=1)  # > 0 strictly inside the box, 0 on a face
+            margin = torch.where(has_op[:, j], margin, torch.full_like(margin, -torch.inf))
+            if best is None:
+                best = [margin, c, o, h]
+            else:  # strict: ties (face points) keep the earlier operator, the identity first
+                take = margin > best[0]
+                best = [torch.where(take, margin, best[0]), torch.where(take[:, None], c, best[1]),
+                        torch.where(take[:, None], o, best[2]), torch.where(take, h, best[3])]
+        if (best[0][present] < -1e-5).any():
+            raise ValueError(f"canonicalize_aunit: {int((best[0][present] < -1e-5).sum())} molecule(s) have no "
+                             f"symmetry image inside the asymmetric-unit box (space groups "
+                             f"{sorted(set(crystal_batch.sg_ind[present][best[0][present] < -1e-5].tolist()))})")
+        centroid[present, sl] = best[1][present]
+        orientation[present, sl] = best[2][present]
+        handedness[present, k] = torch.sign(best[3][present]).to(handedness.dtype)  # det is +-1 up to rounding
+
+    crystal_batch.aunit_centroid = centroid
+    crystal_batch.aunit_orientation = orientation
+    crystal_batch.aunit_handedness = handedness
+
+
 def get_annealing_factor(start_value, stop_value, total_time, step_iters):
     assert stop_value > 0, "Setting final value as zero breaks this module"
     return (stop_value / start_value) ** (1 / (total_time / step_iters))
@@ -115,10 +181,21 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         atomwise: bool = False,
         repulsion: float = 1.0,
         rdf_warmup: Optional[torch.tensor] = 500,
+        centroid_boundary: str = 'clamp',
 ):
     """
     do a local optimization via gradient descent on some score function
+
+    centroid_boundary: how molecule centres are bounded while optimising.
+      'clamp' (default): clean_cell_parameters' hardtanh bound to the asymmetric-unit box -- a centre that
+        reaches a face gets zero gradient there and never moves again.
+      'wrap': centres are wrapped into the unit cell (wrap_centroid) and may cross any asymmetric-unit face;
+        the returned samples are re-expressed inside the box by canonicalize_aunit. records['params'] then
+        holds the UNWRAPPED centres (a continuous trajectory for the convergence check).
     """  # todo implement wrapping over periodic latent DoF
+    if centroid_boundary not in CENTROID_BOUNDARIES:
+        raise ValueError(f"centroid_boundary must be one of {CENTROID_BOUNDARIES}, got {centroid_boundary!r}")
+    wrap = centroid_boundary == 'wrap'
 
     if cutoff is None:
         # lennard jones need 10 angstroms to nicely converge
@@ -228,6 +305,9 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                         mode='hard',
                         canonicalize_orientations=True,
                     )  # box analysis included in here
+                    if wrap:  # the centres bypass clean's asymmetric-unit clamp: raw parameter, wrapped into the cell
+                        raw_centroid = param_module.stacked()[:, 6:6 + 3 * crystal_batch.max_z_prime]
+                        crystal_batch.aunit_centroid = wrap_centroid(raw_centroid)
 
                     outputs, cluster_batch = crystal_batch.analyze(
                         computes=energy_computes,
@@ -248,6 +328,8 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
 
                     """ record some stats"""
                     records = update_record(crystal_batch, outputs, params_record, records, s_ind)
+                    if wrap:  # unwrapped centre: continuous across cell edges, so check_convergence sees no jumps
+                        params_record[s_ind, :, 6:6 + raw_centroid.shape[1]] = raw_centroid.detach().cpu()
 
                     """loss and backprop"""
                     if monte_carlo:
@@ -297,6 +379,9 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
     crystal_batch = init_crystal_batch.clone().detach()  # this is necessary to not retain lots of intermediate tensors
     crystal_batch.set_cell_parameters(best_samples.to(crystal_batch.device),
                                       skip_box_analysis=False)
+    if wrap:  # recorded centres are unwrapped: wrap into the cell, then re-express inside the asymmetric unit
+        crystal_batch.aunit_centroid = wrap_centroid(crystal_batch.aunit_centroid)
+        canonicalize_aunit(crystal_batch)
     _ = crystal_batch.analyze(
         computes=energy_computes,
         cutoff=cutoff,

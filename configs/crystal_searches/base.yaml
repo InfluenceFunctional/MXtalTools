@@ -64,6 +64,7 @@ opt:
     max_num_steps: 500
     rdf_warmup: null
     target_packing_coeff: null
+    centroid_boundary: clamp  # or wrap: centres wrap through the unit cell (no face trap); outputs re-expressed in the asymmetric unit
 #
 #  - optim_target: 'silu' # lj qlj elj silu ellipsoid classification_score rdf_score rdf_dist latent_dist
 #    enforce_reduced: true
