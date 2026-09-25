@@ -12,12 +12,24 @@ from tqdm import tqdm
 from mxtaltools.common.config_processing import load_yaml, dict2namespace
 from mxtaltools.common.utils import is_cuda_oom
 from mxtaltools.crystal_search.utils import get_initial_state, init_samples_to_optim, parse_args, parse_opt_config, \
-    recover_opt_state, process_target, save_umbrella_record
+    recover_opt_state, process_target
 from mxtaltools.dataset_utils.utils import collate_data_list
 
+
+def reject_retired_keys(config):
+    """The latent-space umbrella repulsion is removed; a config still carrying its keys
+    would otherwise run without it and read as if it had been applied."""
+    found = ['umbrella_path'] if hasattr(config, 'umbrella_path') else []
+    for i, opt in enumerate(config.opt):
+        opt = opt if isinstance(opt, dict) else vars(opt)
+        found += [f'opt[{i}].{k}' for k in opt if k.startswith('umbrella')]
+    if found:
+        raise ValueError(f"retired crystal-search keys (umbrella repulsion was removed): {found}")
+
+
 def crystal_search(config):
+    reject_retired_keys(config)
     device = config.device
-    umbrella_path = config.umbrella_path
 
     if device == 'cuda':
         # prevents from dipping into windows virtual vram which is super slow
@@ -62,11 +74,6 @@ def crystal_search(config):
             for opt_ind, opt_config in enumerate(config.opt):
                 # do optimization in N stages
                 opt_config = parse_opt_config(opt_config, config, device, target)
-                if opt_config['umbrella']:
-                    if os.path.exists(umbrella_path):
-                        opt_config['umbrella_record'] = torch.load(umbrella_path, weights_only=False)
-                    else:
-                        opt_config['umbrella_record'] = torch.zeros(0, crystal_batch.latent_params().shape[-1])
 
                 'do opt'
                 opt_out, opt_record = crystal_batch.optimize_crystal_parameters(return_record=True, **opt_config)
@@ -87,14 +94,6 @@ def crystal_search(config):
             opt_outs.extend(crystal_batch.cpu().detach().batch_to_list())
 
             torch.save(opt_outs, out_path)
-
-            if any(getattr(opt, 'umbrella', False) for opt in config.opt):
-                new_latents = crystal_batch.latent_params().cpu()
-                if not os.path.exists(umbrella_path):
-                    torch.save(new_latents, umbrella_path)
-                else:
-                    umbrella_record = torch.load(umbrella_path, weights_only=False)
-                    save_umbrella_record(umbrella_record, new_latents, umbrella_path, opt_config['umbrella_sigma'], opt_config['umbrella_epsilon'])
 
             cursor += config.batch_size
             prev_best_samples = None

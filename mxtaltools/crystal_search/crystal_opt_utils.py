@@ -114,10 +114,6 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         elementwise: bool = True,
         atomwise: bool = False,
         repulsion: float = 1.0,
-        umbrella: Optional[bool] = False,  # do umbrella sampling in latent space
-        umbrella_sigma: Optional[float] = None,  # bandwidth term for umbrella sampling
-        umbrella_epsilon: Optional[float] = None,  # repulsion term for umbrella sampling
-        umbrella_record: Optional[list] = None,
         rdf_warmup: Optional[torch.tensor] = 500,
 ):
     """
@@ -177,10 +173,6 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         'do_box_restriction': do_box_restriction,
         'target_packing_coeff': target_packing_coeff,
         'enforce_reduced': enforce_reduced,
-        'umbrella': umbrella,
-        'umbrella_sigma': umbrella_sigma,
-        'umbrella_epsilon': umbrella_epsilon,
-        'umbrella_record': [] if umbrella_record is None else umbrella_record,
     })
 
     optimizer = init_opt(init_lr, optimizer_func, param_module)
@@ -634,16 +626,6 @@ def compute_auxiliary_loss(cluster_batch, loss, outputs, config):
     if config.enforce_reduced:
         penalty = F.relu(outputs['reduction_en'])
         loss = loss + 10000 * penalty  # severely punish reduction violations
-
-    if config.umbrella:
-        if len(config.umbrella_record) == 0:
-            pass
-        else:
-            latents = cluster_batch.latent_params()
-            record = config.umbrella_record.to(cluster_batch.device)
-            dists = torch.cdist(latents, record)
-            penalty = torch.exp(-dists ** 2 / (2 * config.umbrella_sigma ** 2)).sum(dim=1).clip(max=10)
-            loss = loss + config.umbrella_epsilon * penalty
 
     return loss
 

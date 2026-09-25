@@ -33,7 +33,6 @@ def opt_stage(target, compression, lr, steps):
         'show_tqdm': False,          # per-chunk logs; a progress bar per job is noise
         'max_num_steps': steps,
         'target_packing_coeff': None,
-        'umbrella': False,
     }
 
 
@@ -47,7 +46,6 @@ def build(args, k):
         'dataset_path': None,
         'target_path': None,
         'target_identifier': None,
-        'umbrella_path': None,
         'out_dir': Path(args.out_dir).as_posix(),
         'run_name': f"{args.tag}_chunk{k}",
         'save_trajs': False,

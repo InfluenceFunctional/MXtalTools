@@ -13,17 +13,6 @@ from mxtaltools.mlip_interfaces.AL_mace_utils import load_mace_model
 from mxtaltools.mlip_interfaces.uma_utils import init_uma_crystal_predictor
 
 
-def save_umbrella_record(record, new_latents, path, sigma=0.2, epsilon=10):
-    if len(record) > 0 and len(new_latents) > 0:
-        dists = torch.cdist(new_latents, record)
-        repulsion = epsilon * torch.exp(-dists ** 2 / (2 * sigma ** 2)).sum(dim=1).clip(max=10)
-        new_latents = new_latents[repulsion < epsilon]  # only keep if total repulsion < one basin block
-    if len(new_latents) > 0:
-        record = torch.cat([record, new_latents], dim=0)
-    torch.save(record, path)
-    return record
-
-
 def rdf_clustering(packing_coeff, rdf, rdf_cutoff, rr, samples, vdw, num_cpus=None):
     """cluster samples according to rdf distances"""
     # rdf_dists = compute_rdf_distmat(rdf, rr)
