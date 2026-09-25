@@ -156,7 +156,9 @@ class MolCrystalAnalysis:
         )
         return scatter(x, molwise_batch, dim=0, dim_size=self.num_graphs, reduce='sum')
 
-    def compute_LJ_energy(self, **kwargs):
+    def compute_LJ_energy(self, lj_envelope: Optional[float] = None, **kwargs):
+        """lj_envelope: width (Angstrom) of a smooth C2 switch taking each pair energy to zero at the
+        pair-list cutoff (see vdw_analysis.lj_cutoff_envelope); None (default) leaves the energy unswitched."""
         self._pre_compute_checks()
 
         if self.is_batch:
@@ -164,13 +166,15 @@ class MolCrystalAnalysis:
                 = lj_analysis(self.vdw_radii_tensor,
                               self.edges_dict,
                               self.num_graphs,
+                              envelope=lj_envelope,
                               )
         else:
             raise NotImplementedError("LJ energies not implemented for single crystals")
 
         return molwise_lj_pot
 
-    def compute_qLJ_energy(self, **kwargs):
+    def compute_qLJ_energy(self, lj_envelope: Optional[float] = None, **kwargs):
+        """lj_envelope: as in compute_LJ_energy; None (default) = off."""
         self._pre_compute_checks()
 
         if self.is_batch:
@@ -178,13 +182,14 @@ class MolCrystalAnalysis:
                 = qlj_analysis(self.vdw_radii_tensor,
                                self.edges_dict,
                                self.num_graphs,
+                               envelope=lj_envelope,
                                )
         else:
             raise NotImplementedError("LJ energies not implemented for single crystals")
 
         return molwise_lj_pot
 
-    def compute_eLJ_energy(self, repulsion: Optional[float] = 1.0, **kwargs):
+    def compute_eLJ_energy(self, repulsion: Optional[float] = 1.0, lj_envelope: Optional[float] = None, **kwargs):
         """Per-molecule eLJ lattice energy, SCALED by the batch's own `lj_coeff`.
 
         The coefficient rides on the data as a per-graph attribute rather than
@@ -199,6 +204,9 @@ class MolCrystalAnalysis:
         other consumer of this library behaves exactly as before. Callers that
         require the calibrated value are expected to assert the attribute's
         PRESENCE themselves -- permissive library, strict application.
+
+        lj_envelope: width (Angstrom) of a smooth C2 switch taking each pair energy to zero at the
+        pair-list cutoff (see vdw_analysis.lj_cutoff_envelope); None (default) leaves it unswitched.
         """
         self._pre_compute_checks()
         stiffness = repulsion * 2.5  # baseline value is 2.5
@@ -208,6 +216,7 @@ class MolCrystalAnalysis:
                                self.edges_dict,
                                self.num_graphs,
                                stiffness=stiffness,
+                               envelope=lj_envelope,
                                )
         else:
             raise NotImplementedError("LJ energies not implemented for single crystals")

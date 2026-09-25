@@ -201,6 +201,7 @@ def get_intermolecular_dists_dict(cluster_batch,
         mol_ind=cluster_batch.mol_ind,
     )
     dist_dict.update(edges_dict)
+    dist_dict['cutoff'] = float(conv_cutoff)  # the radius the pair list was built to; read by lj_cutoff_envelope
     dist_dict['num_graphs'] = cluster_batch.num_graphs
     dist_dict['graph_size'] = cluster_batch.num_atoms
     dist_dict['outside_batch'] = cluster_batch.batch
@@ -299,15 +300,49 @@ def exponential_edgewise_lj_energy(vdw_radii: torch.Tensor,
     return torch.where(dists < radii_sums, rep, lj)
 
 
+def lj_cutoff_envelope(dists: torch.Tensor, r_off: float, width: float) -> torch.Tensor:
+    """Smooth switch that takes a pair energy to zero at the pair-list cutoff.
+
+    S(r) = 1 for r <= r_off - width, 0 for r >= r_off, and the quintic smoothstep
+    1 - x^3 (10 - 15 x + 6 x^2), x = (r - (r_off - width)) / width, in between. S is C2: its
+    first and second derivatives vanish at both ends, so an enveloped energy and its forces
+    are continuous as pairs enter and leave the list. Without it, the LJ family's energy steps
+    by the pair energy at r_off each time a pair crosses the cutoff (about -0.006 epsilon per
+    pair at 10 A for sigma ~ 3.4 A).
+    """
+    x = ((dists - (r_off - width)) / width).clamp(0.0, 1.0)
+    # factored form of 1 - x^3 (10 - 15 x + 6 x^2): vanishes as (1 - x)^3 without cancellation in float32
+    return (1.0 - x) ** 3 * (6.0 * x ** 2 + 3.0 * x + 1.0)
+
+
+def _apply_lj_envelope(edgewise: torch.Tensor, dist_dict: dict, envelope: Optional[float]) -> torch.Tensor:
+    """Multiply edgewise pair energies by lj_cutoff_envelope ending at the pair list's own
+    cutoff, or return them untouched when envelope is None (the default)."""
+    if envelope is None:
+        return edgewise
+    if isinstance(envelope, bool) or not isinstance(envelope, (int, float)):
+        raise TypeError(f'lj envelope must be a width in Angstrom (int or float) or None, got {envelope!r}')
+    width = float(envelope)
+    if 'cutoff' not in dist_dict:
+        raise ValueError('lj envelope requested but the distance dict carries no `cutoff`; build it with '
+                         'get_intermolecular_dists_dict (construct_radial_graph), which records the radius')
+    r_off = float(dist_dict['cutoff'])
+    if not 0.0 < width <= r_off:
+        raise ValueError(f'lj envelope width must be in (0, cutoff = {r_off}] Angstrom, got {width}')
+    return edgewise * lj_cutoff_envelope(dist_dict['intermolecular_dist'], r_off, width)
+
+
 def qlj_analysis(vdw_radii: torch.Tensor,
                  dist_dict: dict,
                  num_graphs: int,
+                 envelope: Optional[float] = None,
                  ):
     """
-    new version of the vdw_overlap function for analysis of intermolecular contacts
+    new version of the vdw_overlap function for analysis of intermolecular contacts.
+    envelope: width (Angstrom) of the smooth switch to zero at the pair-list cutoff; None = off.
     """
     batch = dist_dict['intermolecular_dist_batch']
-    edgewise_lj_pot = quadratic_edgewise_lj_energy(vdw_radii, dist_dict)
+    edgewise_lj_pot = _apply_lj_envelope(quadratic_edgewise_lj_energy(vdw_radii, dist_dict), dist_dict, envelope)
     molwise_lj_pot = scatter(edgewise_lj_pot, batch, reduce='sum', dim_size=num_graphs)
 
     return molwise_lj_pot
@@ -315,9 +350,12 @@ def qlj_analysis(vdw_radii: torch.Tensor,
 def elj_analysis(vdw_radii: torch.Tensor,
                  dist_dict: dict,
                  num_graphs: int,
-                 stiffness: float = 2.5):
+                 stiffness: float = 2.5,
+                 envelope: Optional[float] = None):
+    """envelope: width (Angstrom) of the smooth switch to zero at the pair-list cutoff; None = off."""
     batch = dist_dict['intermolecular_dist_batch']
-    edgewise_lj_pot = exponential_edgewise_lj_energy(vdw_radii, dist_dict, stiffness)
+    edgewise_lj_pot = _apply_lj_envelope(exponential_edgewise_lj_energy(vdw_radii, dist_dict, stiffness),
+                                         dist_dict, envelope)
     molwise_lj_pot = scatter(edgewise_lj_pot, batch, reduce='sum', dim_size=num_graphs)
 
     return molwise_lj_pot
@@ -326,12 +364,14 @@ def elj_analysis(vdw_radii: torch.Tensor,
 def lj_analysis(vdw_radii: torch.Tensor,
                 dist_dict: dict,
                 num_graphs: int,
+                envelope: Optional[float] = None,
                 ):
     """
-    new version of the vdw_overlap function for analysis of intermolecular contacts
+    new version of the vdw_overlap function for analysis of intermolecular contacts.
+    envelope: width (Angstrom) of the smooth switch to zero at the pair-list cutoff; None = off.
     """
     batch = dist_dict['intermolecular_dist_batch']
-    edgewise_lj_pot = compute_lj_edgewise(dist_dict, vdw_radii)
+    edgewise_lj_pot = _apply_lj_envelope(compute_lj_edgewise(dist_dict, vdw_radii), dist_dict, envelope)
     molwise_lj_pot = scatter(edgewise_lj_pot, batch, reduce='sum', dim_size=num_graphs)
 
     return molwise_lj_pot
