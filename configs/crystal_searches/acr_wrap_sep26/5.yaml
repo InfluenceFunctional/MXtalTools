@@ -1,0 +1,52 @@
+device: cuda
+mol_path: /scratch/mk8347/data/crystal_datasets/acridine/opt_acridine_conformer.pt
+dataset_path: null
+target_path: null
+out_dir: /scratch/mk8347/data/crystal_datasets/acridine/opt_outs
+run_name: sep26rwrapl2_acridine_sg14_zp2_0
+target_identifier: null
+save_trajs: false
+uma_predictor_path: /scratch/mk8347/models/uma/esen_s.pt
+mace_predictor_path: /scratch/mk8347/data/acr_112025_mh1_stagetwo.model
+init_sample_method: random
+init_reduced: true
+force_restart_run: false
+mol_seed: 0
+opt_seed: 260926
+sampling_mode: all
+mols_to_sample: 1
+num_samples: 4000
+sgs_to_search:
+- 14
+zp_to_search:
+- 2
+batch_size: 48
+grow_batch_size: true
+init_target_cp: std
+opt:
+- optim_target: mace
+  enforce_reduced: true
+  compression_factor: 1.0
+  cutoff: 10
+  init_lr: 0.05
+  convergence_eps: 0.001
+  optimizer_func: rprop
+  anneal_lr: false
+  grad_norm_clip: 0.1
+  show_tqdm: true
+  max_num_steps: 350
+  target_packing_coeff: null
+  centroid_boundary: wrap
+- optim_target: mace
+  enforce_reduced: true
+  compression_factor: 0.0
+  cutoff: 10
+  init_lr: 0.01
+  convergence_eps: 1.0e-05
+  optimizer_func: rprop
+  anneal_lr: true
+  grad_norm_clip: 0.1
+  show_tqdm: true
+  max_num_steps: 400
+  target_packing_coeff: null
+  centroid_boundary: wrap
