@@ -169,6 +169,8 @@ def test_redescription_and_canonicalisation_are_exact(pucker):
                 canon = cb.batch_to_list()[0]
                 u_all = canon.aunit_centroid.reshape(-1)[:3 * int(c.z_prime)].reshape(-1, 3) / box
                 assert (u_all >= -1e-6).all() and (u_all <= 1 + 1e-6).all(), 'canonical centre left the box'
+                rv = canon.aunit_orientation.reshape(-1)[:3 * int(c.z_prime)].reshape(-1, 3)
+                assert (rv[:, 2] >= -1e-6).all(), 'canonical rotvecs must sit on the +z hemisphere'
                 assert _max_atom_deviation(c, canon) < ATOM_TOL, 'canonicalisation changed the crystal'
 
                 det = float(np.linalg.det(np.asarray(op, dtype=np.float64)[:3, :3]))

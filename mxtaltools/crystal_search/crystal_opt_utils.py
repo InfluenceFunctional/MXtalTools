@@ -12,7 +12,7 @@ from torch_scatter import scatter
 from tqdm import tqdm
 
 from mxtaltools.analysis.crystal_rdf import compute_rdf_distance
-from mxtaltools.common.geometry_utils import enforce_crystal_system
+from mxtaltools.common.geometry_utils import enforce_crystal_system, rotvec2rotmat
 from mxtaltools.common.utils import is_cuda_oom
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.utils import enforce_1d_bound, softmax_and_score
@@ -60,49 +60,63 @@ def wrap_centroid(raw_centroid: torch.Tensor) -> torch.Tensor:
 
 def canonicalize_aunit(crystal_batch):
     """In place: re-express every asymmetric-unit molecule by the symmetry image whose centre lies in
-    its space group's asymmetric-unit box (ASYM_UNITS). The crystal is unchanged: each candidate image
-    comes from MolCrystalOps._transform_aunit_params (centre R f + t wrapped into the cell; rotation
-    conjugated by R_cart = T_fc R T_cf; handedness h -> det(R) h), applied molecule by molecule.
-    Needed after a wrap-mode relaxation, whose centres may sit anywhere in the cell, before anything
-    that reads asymmetric-unit coordinates (cleaning, latent transforms, datasets).
+    its space group's asymmetric-unit box (ASYM_UNITS). The crystal is unchanged: the image of molecule k under
+    (R, t) has centre R f + t (wrapped into the cell) and pose R_cart R(rotvec) diag(h, 1, 1), R_cart = T_fc R T_cf
+    (as MolCrystalOps._transform_aunit_params); the pose is split back into a canonical rotvec and handedness by
+    zp_doubling.proper_rotvecs, which projects it onto the nearest rotation first (float32 cell angles leave R_cart
+    ~1e-7 off orthogonal, which rotmat2rotvec amplifies near a rotation by pi) and puts rotvecs on the +z hemisphere
+    the latent transforms expect. Needed after a wrap-mode relaxation, whose centres may sit anywhere in the cell,
+    before anything that reads asymmetric-unit coordinates (cleaning, latent transforms, datasets).
     Requires current T_fc / T_cf (box_analysis). Raises if some molecule has no image in its box,
     i.e. the tabulated box is not a fundamental domain for that crystal's operator list."""
+    from mxtaltools.crystal_building.zp_doubling import proper_rotvecs
     if not hasattr(crystal_batch, 'asym_unit_dict'):
         crystal_batch.asym_unit_dict = crystal_batch.build_asym_unit_dict()
     centroid = crystal_batch.aunit_centroid.clone()
     orientation = crystal_batch.aunit_orientation.clone()
     handedness = crystal_batch.aunit_handedness.clone()
-    dtype, device = centroid.dtype, centroid.device
-    box = torch.stack([crystal_batch.asym_unit_dict[str(int(sg))] for sg in crystal_batch.sg_ind]).to(device, dtype)
+    device = centroid.device
+    f64 = torch.float64
+    box = torch.stack([crystal_batch.asym_unit_dict[str(int(sg))] for sg in crystal_batch.sg_ind]).to(device, f64)
+    t_fc, t_cf = crystal_batch.T_fc.to(f64), crystal_batch.T_cf.to(f64)
 
-    op_lists = [torch.as_tensor(o, dtype=dtype, device=device) for o in crystal_batch.symmetry_operators]
+    op_lists = [torch.as_tensor(o, dtype=f64, device=device) for o in crystal_batch.symmetry_operators]
     n_ops = max(len(o) for o in op_lists)
-    eye = torch.eye(4, dtype=dtype, device=device)
+    eye = torch.eye(4, dtype=f64, device=device)
     ops = torch.stack([torch.cat([o, eye.expand(n_ops - len(o), 4, 4)]) for o in op_lists])  # [n, n_ops, 4, 4]
     has_op = torch.stack([torch.arange(n_ops, device=device) < len(o) for o in op_lists])  # [n, n_ops]
+    rows = torch.arange(len(ops), device=device)
 
     for k in range(crystal_batch.max_z_prime):
         sl = slice(3 * k, 3 * k + 3)
-        present = crystal_batch.z_prime.to(device) > k  # padding of lower-Z' crystals is left alone
-        best = None
+        present = crystal_batch.z_prime.to(device).reshape(-1) > k  # padding of lower-Z' crystals is left alone
+        f = centroid[:, sl].to(f64)
+        best_margin, best_c, best_j = None, None, None
         for j in range(n_ops):
-            c, o, h = crystal_batch._transform_aunit_params(centroid[:, sl], orientation[:, sl], handedness[:, k],
-                                                            ops[:, j, :3, :3], ops[:, j, :3, 3], wrap=True)
+            c = torch.einsum('nij,nj->ni', ops[:, j, :3, :3], f) + ops[:, j, :3, 3]
+            c = c - torch.floor(c)
             margin = (1 - c / box).amin(dim=1)  # > 0 strictly inside the box, 0 on a face
             margin = torch.where(has_op[:, j], margin, torch.full_like(margin, -torch.inf))
-            if best is None:
-                best = [margin, c, o, h]
+            if best_margin is None:
+                best_margin, best_c, best_j = margin, c, torch.zeros_like(rows)
             else:  # strict: ties (face points) keep the earlier operator, the identity first
-                take = margin > best[0]
-                best = [torch.where(take, margin, best[0]), torch.where(take[:, None], c, best[1]),
-                        torch.where(take[:, None], o, best[2]), torch.where(take, h, best[3])]
-        if (best[0][present] < -1e-5).any():
-            raise ValueError(f"canonicalize_aunit: {int((best[0][present] < -1e-5).sum())} molecule(s) have no "
-                             f"symmetry image inside the asymmetric-unit box (space groups "
-                             f"{sorted(set(crystal_batch.sg_ind[present][best[0][present] < -1e-5].tolist()))})")
-        centroid[present, sl] = best[1][present]
-        orientation[present, sl] = best[2][present]
-        handedness[present, k] = torch.sign(best[3][present]).to(handedness.dtype)  # det is +-1 up to rounding
+                take = margin > best_margin
+                best_margin = torch.where(take, margin, best_margin)
+                best_c = torch.where(take[:, None], c, best_c)
+                best_j = torch.where(take, torch.full_like(best_j, j), best_j)
+        bad = present & (best_margin < -1e-5)
+        if bad.any():
+            raise ValueError(f"canonicalize_aunit: {int(bad.sum())} molecule(s) have no symmetry image inside the "
+                             f"asymmetric-unit box (space groups {sorted(set(crystal_batch.sg_ind[bad].tolist()))})")
+        r_frac = ops[rows, best_j, :3, :3]
+        r_cart = t_fc @ r_frac @ t_cf
+        h_old = handedness[:, k].to(f64)
+        pose = rotvec2rotmat(orientation[:, sl].to(f64))
+        pose = pose * torch.stack([h_old, torch.ones_like(h_old), torch.ones_like(h_old)], 1)[:, None, :]
+        rv, h = proper_rotvecs(r_cart @ pose)
+        centroid[present, sl] = best_c[present].to(centroid.dtype)
+        orientation[present, sl] = rv[present].to(orientation.dtype)
+        handedness[present, k] = h[present].to(handedness.dtype)
 
     crystal_batch.aunit_centroid = centroid
     crystal_batch.aunit_orientation = orientation
