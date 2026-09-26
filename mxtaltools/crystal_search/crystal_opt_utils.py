@@ -382,20 +382,24 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
     if wrap:  # recorded centres are unwrapped: wrap into the cell, then re-express inside the asymmetric unit
         crystal_batch.aunit_centroid = wrap_centroid(crystal_batch.aunit_centroid)
         canonicalize_aunit(crystal_batch)
-    _ = crystal_batch.analyze(
-        computes=energy_computes,
-        cutoff=cutoff,
-        rdf_cutoff=cutoff,
-        supercell_size=supercell_size,
-        return_cluster=False,
-        repulsion=repulsion,
-        surface_padding=0,
-        predictor=predictor,
-        assign_outputs=True,
-        elementwise=False,
-        atomwise=True,
-        bins=100
-    )
+    # no_grad: these are reported energies. With grad on, an MLIP energy assigned to each returned sample kept its
+    # whole autograd graph alive (~1.5 GB of GPU memory per MACE Z'=2 acridine crystal) for as long as the sample
+    # lived -- e.g. through the whole next opt stage in run_search, which collates this stage's outputs.
+    with torch.no_grad():
+        _ = crystal_batch.analyze(
+            computes=energy_computes,
+            cutoff=cutoff,
+            rdf_cutoff=cutoff,
+            supercell_size=supercell_size,
+            return_cluster=False,
+            repulsion=repulsion,
+            surface_padding=0,
+            predictor=predictor,
+            assign_outputs=True,
+            elementwise=False,
+            atomwise=True,
+            bins=100
+        )
     samples_list = crystal_batch.batch_to_list()
     if enforce_reduced:
         penalty = crystal_batch.compute_cell_reduction_penalty()
