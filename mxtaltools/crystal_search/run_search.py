@@ -2,6 +2,7 @@
 A script for loading a batch of molecules and optimizing them against a given property via torch autograd
 """
 import gc
+import json
 import os
 from pathlib import Path
 from time import sleep
@@ -27,6 +28,23 @@ def reject_retired_keys(config):
         raise ValueError(f"retired crystal-search keys (umbrella repulsion was removed): {found}")
 
 
+def run_files(out_path):
+    """Per-run side files next to the output. Named after the run so two searches sharing a working directory can
+    never read (or delete) each other's -- the May acridine chunks carry copies across arms, consistent with one
+    shared opt_intermediates.pt."""
+    stem = str(out_path)[:-3] if str(out_path).endswith('.pt') else str(out_path)
+    return stem + '_opt_intermediates.pt', stem + '_progress.json'
+
+
+def discard_intermediates(path):
+    """The intermediates file belongs to ONE batch position (cursor): a retry of that same cursor may resume from it,
+    nothing else may. It is removed at the start of a run and after every completed batch. Before, a later batch
+    whose retry followed a step-0 OOM (which writes no file) reloaded a stale file and relaxed an EARLIER batch's
+    walkers -- 46-55% of the relaxations in the acr_wrap_sep26 random-start jobs repeated earlier starts."""
+    if os.path.exists(path):
+        os.remove(path)
+
+
 def crystal_search(config):
     reject_retired_keys(config)
     device = config.device
@@ -41,15 +59,32 @@ def crystal_search(config):
         target = None
 
     samples_to_optim = init_samples_to_optim(config, target=target)
+    data_mode = config.init_sample_method == 'data'
+    if data_mode:
+        # outputs carry the index of the seed they came from: the enforce_reduced filter drops rows, so position in
+        # the output list is not the seed's position
+        for i, sample in enumerate(samples_to_optim):
+            sample.dataset_index = torch.tensor([i], dtype=torch.long)
 
     out_path = Path(config.out_dir + f"/{config.run_name}.pt")  # where to save outputs
+    intermediates, progress = run_files(out_path)
     num_samples = len(samples_to_optim)
     print(f"Starting optimization of {num_samples} crystal samples")
 
     if os.path.exists(out_path) and not config.force_restart_run:
         opt_outs = torch.load(out_path, weights_only=False)
-        cursor = len(opt_outs)
-        batch_idx = (cursor // config.batch_size) - 1  # so batch_idx+=1 lands on the right value
+        if os.path.exists(progress):
+            # the cursor, not len(opt_outs): enforce_reduced drops rows, and a cursor recomputed from the output
+            # length re-relaxed completed samples; batch_idx continues so random starts are never redrawn
+            with open(progress) as fh:
+                state = json.load(fh)
+            cursor, batch_idx = int(state['cursor']), int(state['batch_idx'])
+        else:  # output written before progress files existed
+            cursor = len(opt_outs)
+            batch_idx = (cursor // config.batch_size) - 1  # so batch_idx+=1 lands on the right value
+        if cursor >= num_samples:
+            print(f"{config.run_name}: all {num_samples} samples already done")
+            return opt_outs
     else:
         opt_outs = []
         cursor = 0
@@ -59,8 +94,10 @@ def crystal_search(config):
     finished = False
     pbar = tqdm(total=num_samples, unit="samples")
     prev_best_samples = None
+    discard_intermediates(intermediates)  # a file left by an earlier (crashed) attempt of this run is not current
 
     while not finished:
+        crystal_batch, opt_config = None, {}
         try:
             batch_idx += 1
             crystal_batch = collate_data_list(samples_to_optim[cursor:cursor + config.batch_size]).to(device)
@@ -74,6 +111,7 @@ def crystal_search(config):
             for opt_ind, opt_config in enumerate(config.opt):
                 # do optimization in N stages
                 opt_config = parse_opt_config(opt_config, config, device, target)
+                opt_config['intermediates_path'] = intermediates
 
                 'do opt'
                 opt_out, opt_record = crystal_batch.optimize_crystal_parameters(return_record=True, **opt_config)
@@ -82,21 +120,28 @@ def crystal_search(config):
                     opt_record.update({'base_crystal': samples_to_optim[0]})
                     torch.save(opt_record, Path(str(out_path).replace('.pt', f'_traj{batch_idx}_{opt_ind}.pt')))
 
-                crystal_batch = collate_data_list(opt_out).to(device)
-
                 if 'predictor' in opt_config.keys():
                     del opt_config['predictor']
                 if 'score_model' in opt_config.keys():
                     del opt_config['score_model']
 
-            crystal_batch.box_analysis()
-            #print(crystal_batch.elj.mean())
-            opt_outs.extend(crystal_batch.cpu().detach().batch_to_list())
+                if len(opt_out) == 0:  # the enforce_reduced filter dropped every row of this batch
+                    crystal_batch = None
+                    break
+                crystal_batch = collate_data_list(opt_out).to(device)
+
+            if crystal_batch is not None:
+                crystal_batch.box_analysis()
+                opt_outs.extend(crystal_batch.cpu().detach().batch_to_list())
 
             torch.save(opt_outs, out_path)
 
             cursor += config.batch_size
+            with open(progress, 'w') as fh:
+                json.dump({'cursor': cursor, 'batch_idx': batch_idx, 'num_samples': num_samples,
+                           'n_out': len(opt_outs)}, fh)
             prev_best_samples = None
+            discard_intermediates(intermediates)  # this cursor is done; its saved states must not seed the next one
             pbar.update(min(config.batch_size, num_samples - cursor))  # safe final update
             if cursor >= len(samples_to_optim):
                 finished = True
@@ -113,18 +158,22 @@ def crystal_search(config):
                 if config.batch_size == 1:
                     assert False, "Cascading bsz error"
                 config.batch_size = max(int(config.batch_size * 0.9), 1)
-                del crystal_batch
+                del crystal_batch  # may be None: the OOM can hit while the batch is still being built
                 if 'predictor' in opt_config.keys():
                     del opt_config['predictor']
                 if 'score_model' in opt_config.keys():
                     del opt_config['score_model']
                 print(f"OOM error: dropping batch size to {config.batch_size}")
                 gc.collect()
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
                 sleep(0.1)
-                if os.path.exists('opt_intermediates.pt'):
-                    prev_best_samples = torch.load('opt_intermediates.pt', weights_only=False)
+                # only a file written by an attempt at THIS cursor can exist here (discard_intermediates). Seeded
+                # (data-mode) runs never resume from it: after a stage drops rows, its row order no longer matches
+                # the cursor's seeds, so a seed slot would resume another seed's state -- redo the seeds instead.
+                if os.path.exists(intermediates) and not data_mode:
+                    prev_best_samples = torch.load(intermediates, weights_only=False)
             else:
                 raise e
 

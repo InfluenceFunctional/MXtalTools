@@ -196,6 +196,7 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         repulsion: float = 1.0,
         rdf_warmup: Optional[torch.tensor] = 500,
         centroid_boundary: str = 'clamp',
+        intermediates_path: str = 'opt_intermediates.pt',
 ):
     """
     do a local optimization via gradient descent on some score function
@@ -206,6 +207,8 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
       'wrap': centres are wrapped into the unit cell (wrap_centroid) and may cross any asymmetric-unit face;
         the returned samples are re-expressed inside the box by canonicalize_aunit. records['params'] then
         holds the UNWRAPPED centres (a continuous trajectory for the convergence check).
+    intermediates_path: where the best states so far are saved when the batch runs out of memory after step 0
+      (run_search passes a per-run file and resumes from it only at the same batch position).
     """  # todo implement wrapping over periodic latent DoF
     if centroid_boundary not in CENTROID_BOUNDARIES:
         raise ValueError(f"centroid_boundary must be one of {CENTROID_BOUNDARIES}, got {centroid_boundary!r}")
@@ -378,7 +381,7 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                 best_sample_ind = torch.argmin(records['loss'],
                                                dim=0).flatten()  # pick the best sample from each trajectory
                 best_samples = torch.stack([params_record[best_sample_ind[ind], ind] for ind in range(num_samples)])
-                torch.save(best_samples, 'opt_intermediates.pt')
+                torch.save(best_samples, intermediates_path)
             raise e  # we want to raise this to fire the oom catcher above
         else:
             raise e
