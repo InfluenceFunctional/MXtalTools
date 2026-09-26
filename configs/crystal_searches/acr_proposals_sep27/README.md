@@ -20,7 +20,7 @@ Acridine, sg14 Z'=2, MACE. 9 jobs, each one GPU for under 20 h (6,000 relaxation
 
 **Seeds.**
 - The random-start seeds are 1e8 apart. Starts are drawn with seed `opt_seed + batch_idx * 10000`, and `batch_idx` counts attempts, so the two streams cannot overlap.
-- The proposal seeds live in `seeds/` as compact parameter files, made by `make_seeds.py`, a local provenance script with fixed torch seeds. Parents whose cell the latent cannot represent get no kicked copies: 29 hop families and 19 doubled families. For those, the latent clips a long a or c axis, so a "kick" would compress it by 20–30%. `submit.sbatch` expands each one with `build_seeds.py` into `DATA/sep27_seeds/`, rebuilding it if the committed file changed. The builder uses the search's own conformer and construction, and its round trip reproduces eLJ to 7e-7 relative.
+- The proposal seeds live in `seeds/` as compact parameter files (`.pth`: `*.pt` is Git LFS-tracked here and might not reach the cluster), made by `make_seeds.py`, a local provenance script with fixed torch seeds. Parents whose cell the latent cannot represent get no kicked copies: 29 hop families and 19 doubled families. For those, the latent clips a long a or c axis, so a "kick" would compress it by 20–30%. `submit.sbatch` expands each one with `build_seeds.py` into `DATA/sep27_seeds/`, rebuilding it if the committed file changed. The builder uses the search's own conformer and construction, and its round trip reproduces eLJ to 7e-7 relative.
 - How the seeds were made:
   - hops and the doubled kicks: `MolCrystalData.log_noise_latent_parameters`, the operator the aug21 seeded ladder used;
   - families: the pooled acr_wrap_sep26 analysis clustering;

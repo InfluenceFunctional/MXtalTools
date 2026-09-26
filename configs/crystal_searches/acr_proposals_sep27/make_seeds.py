@@ -1,12 +1,12 @@
 """
 Compact seed files for the acr_proposals_sep27 proposal arms (acridine sg14 Z'=2). LOCAL provenance script: it reads
-local files (D:/crystal_datasets/acridine/...) and writes seeds/*.pt here; the cluster only runs build_seeds.py.
+local files (D:/crystal_datasets/acridine/...) and writes seeds/*.pth here (.pth, not .pt: *.pt is Git LFS-tracked in this repo); the cluster only runs build_seeds.py.
 
-hops.pt            one parent per low-energy family of the pooled acr_wrap_sep26 family clustering (sep26 in-band end
+hops.pth           one parent per low-energy family of the pooled acr_wrap_sep26 family clustering (sep26 in-band end
                    states, aug21 unseeded in-band set, the relaxed forms; families made only of doubled Z'=1 structures
                    are left to dblkick), lowest-energy non-doubled member; latent log-noise kicks at -1.0 and -0.5.
-doubled_kicked.pt  the 121 doubled Z'=1 families: one unkicked copy each, plus latent log-noise kicks at -2.0/-1.5/-1.0.
-elj_starts.pt      the lowest-eLJ half of the distinct physical end states of the local eLJ pre-search.
+doubled_kicked.pth the 121 doubled Z'=1 families: one unkicked copy each, plus latent log-noise kicks at -2.0/-1.5/-1.0.
+elj_starts.pth     the lowest-eLJ half of the distinct physical end states of the local eLJ pre-search.
 
 Kicks use MolCrystalData.log_noise_latent_parameters (the aug21 seeded-ladder operator) on canonical rotvecs. A parent
 whose cell the latent cannot represent (e.g. a or c beyond the latent's range: the latent clips, and a "kick" would
@@ -100,7 +100,7 @@ def make_hops():
     parents = [p for p, k in zip(parents, ok) if k]
     meta = [m for m, k in zip(meta, ok) if k]
     copies = int(np.ceil(4000 / (2 * len(parents))))
-    save('hops.pt', *kicked(parents, meta, [(-1.0, copies), (-0.5, copies)], 'hops'))
+    save('hops.pth', *kicked(parents, meta, [(-1.0, copies), (-0.5, copies)], 'hops'))
 
 
 def make_dblkick():
@@ -113,7 +113,7 @@ def make_dblkick():
     kp = [c for c, k in zip(dbl, ok) if k]
     km = [m for m, k in zip(meta, ok) if k]
     p1, h1, i1 = kicked(kp, km, [(-2.0, 11), (-1.5, 11), (-1.0, 11)], 'dblkick')
-    save('doubled_kicked.pt', torch.cat([p0, p1]), torch.cat([h0, h1]), i0 + i1)
+    save('doubled_kicked.pth', torch.cat([p0, p1]), torch.cat([h0, h1]), i0 + i1)
 
 
 def make_elj():
@@ -134,7 +134,7 @@ def make_elj():
     b = collate_data_list([strip(phys[int(i)]) for i in sel])
     b.canonicalize_orientation()
     info = [dict(source=os.path.basename(ELJ_PRE), index=int(i), elj=float(e[i]), rank=r) for r, i in enumerate(sel)]
-    save('elj_starts.pt', b.full_cell_parameters().detach().float(), b.aunit_handedness.detach().float().reshape(-1, 2),
+    save('elj_starts.pth', b.full_cell_parameters().detach().float(), b.aunit_handedness.detach().float().reshape(-1, 2),
          info)
 
 

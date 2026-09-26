@@ -63,7 +63,7 @@ for CONFIG in ${CONFIGS}; do
 import sys, os, json, yaml, torch
 cfg = yaml.safe_load(open('${CONFIG}'))
 dp = cfg.get('dataset_path')
-compact = os.path.join('${CONFDIR}', 'seeds', os.path.basename(dp)) if dp else None
+compact = os.path.join('${CONFDIR}', 'seeds', os.path.splitext(os.path.basename(dp))[0] + '.pth') if dp else None
 if compact and os.path.exists(compact):
     n_compact = len(torch.load(compact, weights_only=False)['params'])
     if not os.path.exists(dp) or len(torch.load(dp, weights_only=False, map_location='cpu')) != n_compact:

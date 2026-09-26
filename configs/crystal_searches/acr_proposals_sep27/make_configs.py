@@ -15,9 +15,9 @@ Job (array index) -> configs, run in order by submit.sbatch:
   3     rwrap         random starts, wrap,  seed S2              6000
   4a/4b seedwrap      seeded return test, wrap:  seed shards 0 (ACRDIN07) and 1 (ACRDIN06)
   5a/5b seedclamp     the same shards under the clamp
-  6     hops          wrap; seeds/hops.pt (kicked copies of 297 low-energy families, log-noise -1.0 and -0.5)
-  7     dblkick       wrap; seeds/doubled_kicked.pt (121 doubled Z'=1 families: unkicked + log-noise -2.0/-1.5/-1.0)
-  8     eljstart      wrap; seeds/elj_starts.pt (lowest-eLJ half of a local eLJ pre-search)
+  6     hops          wrap; seeds/hops.pth (kicked copies of 297 low-energy families, log-noise -1.0 and -0.5)
+  7     dblkick       wrap; seeds/doubled_kicked.pth (121 doubled Z'=1 families: unkicked + log-noise -2.0/-1.5/-1.0)
+  8     eljstart      wrap; seeds/elj_starts.pth (lowest-eLJ half of a local eLJ pre-search)
 Starts are drawn per batch with seed opt_seed + batch_idx * 10000 (batch_idx counts attempts, OOM retries included,
 a few hundred per job), so S1 and S2 are 1e8 apart and far from any seed used before. The proposal seeds are compact
 parameter files; submit.sbatch expands them on the cluster with build_seeds.py into DATA/sep27_seeds/.
@@ -34,7 +34,8 @@ BASE = HERE.parent / 'acr_rerun_aug21' / 'acridine.yaml'
 DATA = '/scratch/mk8347/data/crystal_datasets/acridine'
 S1, S2 = 100_000_000, 200_000_000
 SG, ZP = 14, 2
-PROPOSALS = {'6': ('hops', 'hops.pt'), '7': ('dblkick', 'doubled_kicked.pt'), '8': ('eljstart', 'elj_starts.pt')}
+#: compact seed files are .pth (not LFS-tracked); submit.sbatch expands seeds/<name>.pth to DATA/sep27_seeds/<name>.pt
+PROPOSALS = {'6': ('hops', 'hops'), '7': ('dblkick', 'doubled_kicked'), '8': ('eljstart', 'elj_starts')}
 
 
 def base_cfg():
@@ -59,8 +60,8 @@ def arm(stem, chunk, boundary, opt_seed, n, trajs=False, dataset=None):
     return cfg
 
 
-def seed_count(fname):
-    return len(torch.load(HERE / 'seeds' / fname, weights_only=False)['params'])
+def seed_count(name):
+    return len(torch.load(HERE / 'seeds' / f'{name}.pth', weights_only=False)['params'])
 
 
 JOBS = {
@@ -74,7 +75,7 @@ JOBS = {
     '5b': arm('seedclamp', 1, 'clamp', 0, 2000, trajs=True, dataset=f'{DATA}/seeds_sg{SG}_zp{ZP}_1.pt'),
 }
 for key, (stem, fname) in PROPOSALS.items():
-    JOBS[key] = arm(stem, 0, 'wrap', 0, seed_count(fname), dataset=f'{DATA}/sep27_seeds/{fname}')
+    JOBS[key] = arm(stem, 0, 'wrap', 0, seed_count(fname), dataset=f'{DATA}/sep27_seeds/{fname}.pt')
 
 
 def check(jobs):
@@ -96,7 +97,7 @@ def check(jobs):
     for key, (stem, fname) in PROPOSALS.items():
         c = jobs[key]
         assert c['opt'][0]['centroid_boundary'] == 'wrap' and c['init_sample_method'] == 'data'
-        assert c['dataset_path'].endswith(f'/sep27_seeds/{fname}') and (HERE / 'seeds' / fname).exists()
+        assert c['dataset_path'].endswith(f'/sep27_seeds/{fname}.pt') and (HERE / 'seeds' / f'{fname}.pth').exists()
         assert c['num_samples'] == seed_count(fname)
     print(f'checks passed on {len(jobs)} configs')
 
