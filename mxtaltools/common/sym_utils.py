@@ -331,7 +331,9 @@ def cell_reduction_penalty(cell_angles, cell_lengths, sg, margin: float = 0.1):
         'hexagonal': hex_reduction_penalty,
         'cubic': cube_reduction_penalty,
     }
-    E = torch.zeros(len(cell_lengths), dtype=torch.float32, device=cell_lengths.device)
+    # the input's float dtype (float32 inputs unchanged); a fixed float32 buffer refused float64 batches of > 1 row
+    dtype = cell_lengths.dtype if cell_lengths.is_floating_point() else torch.float32
+    E = torch.zeros(len(cell_lengths), dtype=dtype, device=cell_lengths.device)
     for cs, mask in masks.items():
         if mask.sum() > 0:
             if cs == 'monoclinic':  # walls depend on the setting class of each sg

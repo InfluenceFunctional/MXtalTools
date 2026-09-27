@@ -24,7 +24,8 @@ from typing import Optional, Union
 
 import torch
 
-from mxtaltools.common.geometry_utils import batch_compute_fractional_transform, rotvec2rotmat, rotmat2rotvec
+from mxtaltools.common.geometry_utils import batch_compute_fractional_transform, rotvec2rotmat, rotmat2rotvec, \
+    rotmat2rotvec_stable
 from mxtaltools.common.sym_utils import cell_reduction_penalty
 from mxtaltools.crystal_building.utils import canonicalize_rotvec
 
@@ -40,14 +41,16 @@ def proper_rotvecs(poses: torch.Tensor):
     with pose = R(rotvec) diag(handedness, 1, 1). The proper part is first projected onto the nearest rotation (polar
     decomposition): rotmat2rotvec reads the axis from the antisymmetric part, which amplifies a non-orthogonality of
     ~1e-7 (e.g. from float32 cell angles) by 1/sin(angle) near a rotation by pi. Rotvecs are then put on
-    canonicalize_rotvec's +z hemisphere, the form the latent transforms expect."""
+    canonicalize_rotvec's +z hemisphere, the form the latent transforms expect. The conversion is rotmat2rotvec_stable:
+    rotmat2rotvec replaces rotations within ~1e-8 (float64) / ~3e-4 rad (float32) of pi or of the identity with pi
+    about (1, 1, 1)."""
     h = torch.sign(torch.linalg.det(poses))
     flip = torch.ones(len(poses), 3, dtype=poses.dtype, device=poses.device)
     flip[:, 0] = h
     rot = poses * flip[:, None, :]  # pose @ diag(h, 1, 1)
     u, _, vh = torch.linalg.svd(rot)
     rot = u @ vh
-    return canonicalize_rotvec(rotmat2rotvec(rot)), h
+    return canonicalize_rotvec(rotmat2rotvec_stable(rot)), h
 
 
 def _t_fc(lengths, angles):

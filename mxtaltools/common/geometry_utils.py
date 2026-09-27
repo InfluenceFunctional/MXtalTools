@@ -1719,6 +1719,49 @@ def apply_rotation_to_batch(elems, rotations, batch):
     return torch.einsum('nij, nj -> ni', rotations[batch], elems)
 
 
+def rotmat2rotvec_stable(rotation_matrices: torch.Tensor) -> torch.Tensor:
+    """Rotation matrices [n, 3, 3] (proper, orthogonal up to rounding) -> rotation vectors [n, 3], angle in [0, pi],
+    in the input dtype. Accurate for EVERY rotation, including those at or near the identity and near a rotation by pi,
+    where rotmat2rotvec's float32 trace test (|(tr - 1)/2| >= 1) replaces the rotation with pi about (1, 1, 1): a
+    different orientation. Here the matrix goes to a unit quaternion by Shepperd's method in float64 (the largest of
+    w^2, x^2, y^2, z^2 is taken from the diagonal, so no division by a small number), then
+    angle = 2 atan2(|v|, w) with w >= 0."""
+    R = rotation_matrices.double()
+    m00, m11, m22 = R[:, 0, 0], R[:, 1, 1], R[:, 2, 2]
+    tr = m00 + m11 + m22
+    cand = torch.stack([tr, m00, m11, m22], dim=1)
+    k = cand.argmax(dim=1)
+    q = torch.empty(len(R), 4, dtype=torch.float64, device=R.device)  # (w, x, y, z)
+    for i in range(4):
+        sel = k == i
+        if not sel.any():
+            continue
+        r = R[sel]
+        if i == 0:
+            s = torch.sqrt((1 + r[:, 0, 0] + r[:, 1, 1] + r[:, 2, 2]).clamp(min=0)) * 2  # s = 4w
+            q[sel] = torch.stack([s / 4, (r[:, 2, 1] - r[:, 1, 2]) / s, (r[:, 0, 2] - r[:, 2, 0]) / s,
+                                  (r[:, 1, 0] - r[:, 0, 1]) / s], 1)
+        elif i == 1:
+            s = torch.sqrt((1 + r[:, 0, 0] - r[:, 1, 1] - r[:, 2, 2]).clamp(min=0)) * 2  # s = 4x
+            q[sel] = torch.stack([(r[:, 2, 1] - r[:, 1, 2]) / s, s / 4, (r[:, 0, 1] + r[:, 1, 0]) / s,
+                                  (r[:, 0, 2] + r[:, 2, 0]) / s], 1)
+        elif i == 2:
+            s = torch.sqrt((1 - r[:, 0, 0] + r[:, 1, 1] - r[:, 2, 2]).clamp(min=0)) * 2  # s = 4y
+            q[sel] = torch.stack([(r[:, 0, 2] - r[:, 2, 0]) / s, (r[:, 0, 1] + r[:, 1, 0]) / s, s / 4,
+                                  (r[:, 1, 2] + r[:, 2, 1]) / s], 1)
+        else:
+            s = torch.sqrt((1 - r[:, 0, 0] - r[:, 1, 1] + r[:, 2, 2]).clamp(min=0)) * 2  # s = 4z
+            q[sel] = torch.stack([(r[:, 1, 0] - r[:, 0, 1]) / s, (r[:, 0, 2] + r[:, 2, 0]) / s,
+                                  (r[:, 1, 2] + r[:, 2, 1]) / s, s / 4], 1)
+    q = q / q.norm(dim=1, keepdim=True)
+    q = torch.where(q[:, :1] < 0, -q, q)  # w >= 0: angle in [0, pi]
+    v = q[:, 1:]
+    vn = v.norm(dim=1)
+    angle = 2 * torch.atan2(vn, q[:, 0])
+    scale = torch.where(vn > 1e-12, angle / vn.clamp(min=1e-300), torch.full_like(vn, 2.0))  # small angle: 2 v
+    return (v * scale[:, None]).to(rotation_matrices.dtype)
+
+
 def rotmat2rotvec(rotation_matrix_list, warn_on_bad_determinant=True):
     """
     Convert a batch of rotation matrices to rotation vectors (axis-angle).

@@ -95,6 +95,7 @@ def canonicalize_aunit(crystal_batch):
         for j in range(n_ops):
             c = torch.einsum('nij,nj->ni', ops[:, j, :3, :3], f) + ops[:, j, :3, 3]
             c = c - torch.floor(c)
+            c = torch.where(c >= 1, c - 1, c)  # c = -1e-17 rounds to 1; the builders clip 1 to CELL_EDGE, 1e-4 off
             margin = (1 - c / box).amin(dim=1)  # > 0 strictly inside the box, 0 on a face
             margin = torch.where(has_op[:, j], margin, torch.full_like(margin, -torch.inf))
             if best_margin is None:
@@ -108,15 +109,17 @@ def canonicalize_aunit(crystal_batch):
         if bad.any():
             raise ValueError(f"canonicalize_aunit: {int(bad.sum())} molecule(s) have no symmetry image inside the "
                              f"asymmetric-unit box (space groups {sorted(set(crystal_batch.sg_ind[bad].tolist()))})")
-        r_frac = ops[rows, best_j, :3, :3]
-        r_cart = t_fc @ r_frac @ t_cf
-        h_old = handedness[:, k].to(f64)
-        pose = rotvec2rotmat(orientation[:, sl].to(f64))
+        if not present.any():
+            continue
+        r_frac = ops[rows[present], best_j[present], :3, :3]
+        r_cart = t_fc[present] @ r_frac @ t_cf[present]
+        h_old = handedness[present, k].to(f64)
+        pose = rotvec2rotmat(orientation[present, sl].to(f64))  # present rows only: padding may be NaN
         pose = pose * torch.stack([h_old, torch.ones_like(h_old), torch.ones_like(h_old)], 1)[:, None, :]
         rv, h = proper_rotvecs(r_cart @ pose)
         centroid[present, sl] = best_c[present].to(centroid.dtype)
-        orientation[present, sl] = rv[present].to(orientation.dtype)
-        handedness[present, k] = h[present].to(handedness.dtype)
+        orientation[present, sl] = rv.to(orientation.dtype)
+        handedness[present, k] = h.to(handedness.dtype)
 
     crystal_batch.aunit_centroid = centroid
     crystal_batch.aunit_orientation = orientation
@@ -197,6 +200,9 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         rdf_warmup: Optional[torch.tensor] = 500,
         centroid_boundary: str = 'clamp',
         intermediates_path: str = 'opt_intermediates.pt',
+        early_stop: Optional[list] = None,
+        early_stop_ref: Optional[float] = None,
+        early_stop_kT: float = 1.0,
 ):
     """
     do a local optimization via gradient descent on some score function
@@ -209,6 +215,11 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         holds the UNWRAPPED centres (a continuous trajectory for the convergence check).
     intermediates_path: where the best states so far are saved when the batch runs out of memory after step 0
       (run_search passes a per-run file and resumes from it only at the same batch position).
+    early_stop: [[step, margin_kT], ...] energy cascade. At each listed step a row whose loss exceeds
+      early_stop_ref + margin_kT * early_stop_kT is retired: it leaves the batch (later steps evaluate only the rest,
+      which is what saves compute), keeps its best state so far, and is returned with early_stopped = True. Inactive
+      without early_stop_ref (run_search passes its running minimum final energy, so the first batch never retires).
+      Retired rows count as converged; the 95% convergence quorum is taken over active rows only.
     """  # todo implement wrapping over periodic latent DoF
     if centroid_boundary not in CENTROID_BOUNDARIES:
         raise ValueError(f"centroid_boundary must be one of {CENTROID_BOUNDARIES}, got {centroid_boundary!r}")
@@ -299,6 +310,11 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
 
     records = None
     converged = torch.zeros(init_crystal_batch.num_graphs, dtype=torch.bool)
+    cascade = {int(st): float(m) for st, m in (early_stop or [])} if early_stop_ref is not None else {}
+    active = torch.ones(num_samples, dtype=torch.bool)
+    active_idx = None  # None: every row active, the batch as given (the default path)
+    init_active = init_crystal_batch
+    init_list = None
     # torch.autograd.set_detect_anomaly(True)  # for debugging
     try:
         with torch.set_grad_enabled(not monte_carlo):
@@ -306,7 +322,8 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                 s_ind = 0
                 while (s_ind < (max_num_steps - 1)) and not converged.all():
                     optimizer.zero_grad(set_to_none=True)
-                    crystal_batch = init_crystal_batch.clone().detach()
+                    crystal_batch = init_active.clone().detach()
+                    stacked = param_module.stacked() if active_idx is None else param_module.stacked()[active_idx]
 
                     if monte_carlo:
                         crystal_batch.set_cell_parameters(param_module.stacked(), skip_box_analysis=False)
@@ -315,7 +332,7 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                                                             skip_box_analysis=True,
                                                             skip_enforce_crystal_system=True)
                     else:
-                        crystal_batch.set_cell_parameters(param_module.stacked(),
+                        crystal_batch.set_cell_parameters(stacked,
                                                           skip_box_analysis=True)
 
                     crystal_batch.clean_cell_parameters(
@@ -323,7 +340,7 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                         canonicalize_orientations=True,
                     )  # box analysis included in here
                     if wrap:  # the centres bypass clean's asymmetric-unit clamp: raw parameter, wrapped into the cell
-                        raw_centroid = param_module.stacked()[:, 6:6 + 3 * crystal_batch.max_z_prime]
+                        raw_centroid = stacked[:, 6:6 + 3 * crystal_batch.max_z_prime]
                         crystal_batch.aunit_centroid = wrap_centroid(raw_centroid)
 
                     outputs, cluster_batch = crystal_batch.analyze(
@@ -344,9 +361,10 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                     )
 
                     """ record some stats"""
-                    records = update_record(crystal_batch, outputs, params_record, records, s_ind)
+                    records = update_record(crystal_batch, outputs, params_record, records, s_ind, active_idx)
                     if wrap:  # unwrapped centre: continuous across cell edges, so check_convergence sees no jumps
-                        params_record[s_ind, :, 6:6 + raw_centroid.shape[1]] = raw_centroid.detach().cpu()
+                        rows = slice(None) if active_idx is None else active_idx.cpu()
+                        params_record[s_ind, rows, 6:6 + raw_centroid.shape[1]] = raw_centroid.detach().cpu()
 
                     """loss and backprop"""
                     if monte_carlo:
@@ -359,7 +377,17 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                     else:
                         loss_and_backprop(cluster_batch, crystal_batch, grad_norm_clip,
                                           optimizer, outputs, param_module, records,
-                                          loss_config, aux_config, s_ind)
+                                          loss_config, aux_config, s_ind, active_idx, num_samples)
+                    if s_ind in cascade:  # retire rows still far above the reference: they leave the batch
+                        retire = active & (records['loss'][-1] > early_stop_ref + cascade[s_ind] * early_stop_kT)
+                        if retire.any():
+                            active = active & ~retire
+                            if init_list is None:
+                                init_list = init_crystal_batch.batch_to_list()
+                            active_idx = torch.nonzero(active).flatten()
+                            if len(active_idx):
+                                init_active = collate_data_list([init_list[i] for i in active_idx.tolist()]).to(
+                                    init_crystal_batch.device)
 
                     if s_ind % 10 == 0:
                         gc.collect()
@@ -369,9 +397,11 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                     s_ind += 1
                     if s_ind % 10 == 0:
                         pbar.update(10)
-                    if s_ind >= min(max_num_steps, max(50, min_num_steps)):
+                    if not active.any():
+                        converged = torch.ones_like(converged)
+                    elif s_ind >= min(max_num_steps, max(50, min_num_steps)):
                         converged = check_convergence(params_record, s_ind, convergence_eps,
-                                                      optimizer, init_lr)
+                                                      optimizer, init_lr, active=active)
 
 
     except (RuntimeError, ValueError) as e:
@@ -418,6 +448,9 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
             bins=100
         )
     samples_list = crystal_batch.batch_to_list()
+    if cascade:
+        for i, elem in enumerate(samples_list):
+            elem.early_stopped = torch.tensor([not bool(active[i])])
     if enforce_reduced:
         penalty = crystal_batch.compute_cell_reduction_penalty()
         samples_list = [elem for i, elem in enumerate(samples_list) if penalty[i] < 1e-3]
@@ -488,25 +521,43 @@ tbatch.visualize(mode='unit cell')
 """
 
 
-def update_record(crystal_batch, outputs, params_record, records, s_ind):
-    params_record[s_ind] = crystal_batch.full_cell_parameters().detach().cpu()  # must put this before the .backward()
+def _full_rows(value, active_idx, n, fill=float('nan')):
+    """A per-row record of the active rows, padded to all n rows (retired rows get `fill`)."""
+    value = value.detach().cpu()
+    if active_idx is None:
+        return value
+    dtype = value.dtype if value.is_floating_point() else torch.float32
+    out = torch.full((n,) + tuple(value.shape[1:]), fill, dtype=dtype)
+    out[active_idx.cpu()] = value.to(dtype)
+    return out
+
+
+def update_record(crystal_batch, outputs, params_record, records, s_ind, active_idx=None):
+    n = params_record.shape[1]
+    p = crystal_batch.full_cell_parameters().detach().cpu()  # must put this before the .backward()
+    if active_idx is None:
+        params_record[s_ind] = p
+    else:  # retired rows stay where they were (a flat trajectory: they count as converged)
+        if s_ind > 0:
+            params_record[s_ind] = params_record[s_ind - 1]
+        params_record[s_ind, active_idx.cpu()] = p
     if records is None:
         records = {key: [] for key in outputs if key != 'rdf'}
         records['cp'] = []
         records['loss'] = []
     for key, value in outputs.items():
-        if torch.is_tensor(value):
-            records[key].append(value.detach().cpu())
-    records['cp'].append(crystal_batch.packing_coeff.detach().cpu())
+        if torch.is_tensor(value) and key in records:
+            records[key].append(_full_rows(value, active_idx, n))
+    records['cp'].append(_full_rows(crystal_batch.packing_coeff, active_idx, n))
     return records
 
 
 def loss_and_backprop(cluster_batch, crystal_batch, grad_norm_clip, optimizer, outputs, param_module, records,
-                      loss_config, aux_config, opt_step):
+                      loss_config, aux_config, opt_step, active_idx=None, n_total=None):
     loss = compute_loss(cluster_batch, crystal_batch, outputs, loss_config, opt_step)
     loss = compute_auxiliary_loss(cluster_batch, loss, outputs, aux_config)
 
-    records['loss'].append(loss.detach().cpu())
+    records['loss'].append(_full_rows(loss, active_idx, n_total, fill=float('inf')))  # retired: never the best step
     loss_to_backprop = loss.mean()  # save some effort in backprop
     loss_to_backprop.backward()
     torch.nn.utils.clip_grad_norm_(param_module.parameters(), grad_norm_clip)  # gradient clipping
@@ -854,11 +905,16 @@ def _init_for_local_opt(lr, max_num_steps, optimizer_func, sample, num_atoms):
 #     return sample
 #
 
-def check_convergence(params_record, s_ind, convergence_eps, optimizer, init_lr):
+def check_convergence(params_record, s_ind, convergence_eps, optimizer, init_lr, active=None):
     smoothed = ema_trajectory(params_record[:s_ind])
     diffs = smoothed[s_ind - 50:s_ind, :, :].diff(dim=0).abs().mean((0, 2))
     converged = diffs < convergence_eps
-    if (converged.float().mean() > 0.95):
+    if active is None:
+        share = converged.float().mean()
+    else:  # retired rows count as converged but do not vote in the quorum
+        converged = converged | ~active
+        share = converged[active].float().mean() if active.any() else torch.tensor(1.0)
+    if share > 0.95:
         converged.fill_(True)
 
     return converged

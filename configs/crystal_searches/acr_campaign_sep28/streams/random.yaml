@@ -1,0 +1,64 @@
+device: cuda
+mol_path: /scratch/mk8347/data/crystal_datasets/acridine/opt_acridine_conformer.pt
+dataset_path: null
+target_path: null
+out_dir: /scratch/mk8347/data/crystal_datasets/acridine/campaigns/acr_campaign_sep28/runs
+run_name: random_TASK
+target_identifier: null
+save_trajs: false
+uma_predictor_path: /scratch/mk8347/models/uma/esen_s.pt
+mace_predictor_path: /scratch/mk8347/data/acr_112025_mh1_stagetwo.model
+init_sample_method: random
+init_reduced: true
+force_restart_run: false
+mol_seed: 0
+opt_seed: 1000000000
+sampling_mode: all
+mols_to_sample: 1
+num_samples: 30000
+sgs_to_search:
+- 14
+zp_to_search:
+- 2
+batch_size: 48
+grow_batch_size: true
+init_target_cp: std
+opt:
+- optim_target: mace
+  enforce_reduced: false
+  compression_factor: 1.0
+  cutoff: 10
+  init_lr: 0.05
+  convergence_eps: 0.001
+  optimizer_func: rprop
+  anneal_lr: false
+  grad_norm_clip: 0.1
+  show_tqdm: false
+  max_num_steps: 350
+  target_packing_coeff: null
+  centroid_boundary: wrap
+- optim_target: mace
+  enforce_reduced: false
+  compression_factor: 0.0
+  cutoff: 10
+  init_lr: 0.01
+  convergence_eps: 1.0e-05
+  optimizer_func: rprop
+  anneal_lr: true
+  grad_norm_clip: 0.1
+  show_tqdm: false
+  max_num_steps: 150
+  target_packing_coeff: null
+  centroid_boundary: wrap
+  early_stop:
+  - - 25
+    - 10.0
+  - - 50
+    - 8.0
+  - - 100
+    - 5.0
+  early_stop_kT: 2.494
+oom_ceiling: true
+coord_dir: /scratch/mk8347/data/crystal_datasets/acridine/campaigns/acr_campaign_sep28
+coord_curate_every_s: 900
+coord_stream: random

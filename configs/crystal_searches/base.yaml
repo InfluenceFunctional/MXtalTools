@@ -27,6 +27,17 @@ zp_to_search: [ 1 ]
 
 batch_size: 11
 grow_batch_size: false
+oom_ceiling: false  # after an OOM at batch size B, stop growth at 0.95 B (probe 5% higher after 10 clean batches)
+
+# run state (crystal_search/run_state.py): one writer per run name, clean stops between batches
+lease_stale_after_s: 1800  # another process may take over the run's lease once it has not been renewed this long
+lease_settle_s: 2.0  # re-read the lease this long after writing it, so two simultaneous takeovers leave one owner
+stop_files: []  # the loop stops between batches once any of these exists (SIGUSR1 does the same)
+
+# campaign coordination (crystal_search/coordinator.py): off unless coord_dir is set
+coord_dir: null  # shared campaign directory: one shard per completed batch; STOP / STOP.<coord_stream> stop the job
+coord_stream: default  # this job's proposal stream in the campaign's stopping rule
+coord_curate_every_s: null  # run the campaign's curate pass between batches when the last is older than this
 
 init_target_cp: data #0.6828  # a float, null (use target value), 'wide' (0.0-0.7) or 'std' target packing coefficient for initial structure sampling
 
@@ -65,6 +76,9 @@ opt:
     rdf_warmup: null
     target_packing_coeff: null
     centroid_boundary: clamp  # or wrap: centres wrap through the unit cell (no face trap); outputs re-expressed in the asymmetric unit
+    early_stop: null  # [[step, margin], ...]: retire rows whose loss exceeds the run's best final energy + margin * early_stop_kT
+    early_stop_kT: 1.0
+    keep_lowest_fraction: null  # after this stage keep only this fraction of rows, lowest energy first
 #
 #  - optim_target: 'silu' # lj qlj elj silu ellipsoid classification_score rdf_score rdf_dist latent_dist
 #    enforce_reduced: true

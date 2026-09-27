@@ -1,0 +1,47 @@
+sg: 14
+z_prime: 2
+energy_key: mace
+kT: 2.494
+bands_kT:
+  2kT: 2.0
+  1kT: 1.0
+identity_cut: 0.05
+identity_calibrated: true
+identity_note: 'COMPACK rule (20/20 molecules; isotonic P(match) >= 0.95), campaign_compack
+  calibrate on 240 pairs of 3000 sep27 end states, 2026-09-27: 0.050 [0.040, 0.060]'
+energy_ref: -62.812
+window_kT: 3.0
+hard_cap: 30000000.0
+passes_to_confirm: 2
+rdf_batch: 32
+streams:
+  random:
+    Z:
+      2kT: 100000.0
+      1kT: 1000000.0
+    min_relaxations: 2000
+    min_hits: 20
+  eljstart:
+    Z:
+      2kT: 100000.0
+      1kT: 1000000.0
+    min_relaxations: 2000
+    min_hits: 20
+  hops:
+    Z:
+      2kT: 100000.0
+      1kT: 1000000.0
+    min_relaxations: 2000
+    min_hits: 20
+hops:
+  stream: hops
+  window_kT: 2.0
+  max_per_basin: 32
+  max_generation: 3
+  log_noise:
+  - -0.5
+  - -0.5
+mol_path: /scratch/mk8347/data/crystal_datasets/acridine/opt_acridine_conformer.pt
+energy_model_id: mace:acr_112025_mh1_stagetwo.model:57094417:235bff84c48626ef
+priors:
+- /scratch/mk8347/projects/gfn_cond/MXtalTools/configs/crystal_searches/acr_campaign_sep28/priors/known_map.pth
