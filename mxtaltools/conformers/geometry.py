@@ -78,6 +78,58 @@ def wilson_angle(pi: torch.Tensor, pj: torch.Tensor, pk: torch.Tensor,
     return torch.asin(s.clamp(-1.0, 1.0))
 
 
+def nerf_frame(pa: torch.Tensor, pb: torch.Tensor, pc: torch.Tensor):
+    """The placement frame of reference atoms ``(a, b, c)``: ``(bc, n, m2)``, orthonormal.
+
+    ``bc`` is the unit b -> c axis, ``n`` the unit normal of the (a, b, c) plane and ``m2 =
+    n x bc`` the in-plane unit normal, pointing from the axis toward a's side. ONE definition
+    for every kernel that reads a frame -- the two placements, the transverse measurement and
+    the dummy reference -- so the frame a dummy is built in is provably the frame the atoms
+    are placed in, not a copy that agrees today.
+
+    ``n`` is a PSEUDOVECTOR (a reflection negates it relative to the reflected frame) and
+    ``bc``, ``m2`` are true vectors. That is why negating every phi is the exact mirror image:
+    phi only ever multiplies ``n`` through ``sin(phi)``.
+
+    Undefined when a, b, c are collinear -- the cross product vanishes and ``_unit`` returns
+    a near-zero vector rather than raising. Keeping reference frames away from that set is
+    the tree's job (``topology.spec_from_graph``) and, along a linear axis, the dummy's
+    (:func:`dummy_reference`).
+    """
+    bc = _unit(pc - pb)
+    n = _unit(torch.linalg.cross(pb - pa, bc, dim=-1))
+    m2 = torch.linalg.cross(n, bc, dim=-1)
+    return bc, n, m2
+
+
+def dummy_reference(pp: torch.Tensor, pq: torch.Tensor, pb: torch.Tensor) -> torch.Tensor:
+    """The Z-matrix DUMMY ATOM for a dihedral whose frame runs along a linear axis.
+
+    A dihedral a-b-c-d is undefined when a-b-c is collinear, which is every dihedral whose
+    frame passes THROUGH an sp centre b: the plane (a, b, c) does not exist. Z-matrix practice
+    (Gaussian, Tinker) places a dummy atom X on b, perpendicular to the axis, and measures the
+    dihedral X-b-c-d instead. In Z-matrix notation this is the line
+
+        X   b  1.0   q  90.0   p  0.0
+
+    -- X at unit distance from b, at 90 degrees to the q -> b axis, at dihedral 0 against a
+    reference ``p``. Evaluated directly as ``b + m2(p, q, b)`` rather than through
+    ``place_nerf(p, q, b, 1, pi/2, 0)``, whose ``cos(pi/2)`` is 6e-17 and not 0.
+
+    REGULARITY IS THE CALLER'S CONTRACT and it is two angles: ``angle(p, q, b)`` must stay
+    away from 0 and pi (``builder.dummy_frame_refs`` picks ``p`` so it is a TREE ANGLE or the
+    previous dummy of a linear chain, never a derived one), and the dihedral this X anchors
+    has frame angle ``angle(X, b, c) = pi/2 +- rho_c``, rho_c being c's bend off the q -> b
+    axis -- so it is regular for rho_c < pi/2.
+
+    A TRUE VECTOR (``m2``, not ``n``): reflecting the molecule reflects X, so negating every
+    phi and transverse v is still the exact mirror image. A dummy along ``n`` would flip with
+    the reflection and break that identity.
+    """
+    _, _, m2 = nerf_frame(pp, pq, pb)
+    return pb + m2
+
+
 def place_nerf(pa: torch.Tensor, pb: torch.Tensor, pc: torch.Tensor,
                r: torch.Tensor, theta: torch.Tensor, phi: torch.Tensor) -> torch.Tensor:
     """Natural Extension Reference Frame placement.
@@ -86,9 +138,7 @@ def place_nerf(pa: torch.Tensor, pb: torch.Tensor, pc: torch.Tensor,
     ``(r, theta, phi)`` as defined in the module docstring. Fully batched over the
     leading dimension; this is the only kernel used for atoms at tree depth >= 3.
     """
-    bc = _unit(pc - pb)
-    n = _unit(torch.linalg.cross(pb - pa, bc, dim=-1))
-    m2 = torch.linalg.cross(n, bc, dim=-1)
+    bc, n, m2 = nerf_frame(pa, pb, pc)
 
     sin_t = torch.sin(theta)
     d = ((-r * torch.cos(theta)).unsqueeze(-1) * bc
@@ -156,9 +206,7 @@ def place_nerf_transverse(pa: torch.Tensor, pb: torch.Tensor, pc: torch.Tensor,
     so the divergent ``log sin(theta)`` becomes ``log sinc(rho)``, which is smooth and
     vanishes at the pole. See :func:`log_jacobian`.
     """
-    bc = _unit(pc - pb)
-    n = _unit(torch.linalg.cross(pb - pa, bc, dim=-1))
-    m2 = torch.linalg.cross(n, bc, dim=-1)
+    bc, n, m2 = nerf_frame(pa, pb, pc)
 
     rho2 = u * u + v * v
     # clamped so the unselected branch of each `where` is finite in VALUE AND IN GRADIENT;
@@ -225,9 +273,7 @@ def measure_transverse(pa: torch.Tensor, pb: torch.Tensor, pc: torch.Tensor,
     where the azimuthal ``atan2(v, u)`` is the singular one. The division by ``sinc`` is the
     safe series near zero and tends to ``(u, v) = (p, q)``, as it must.
     """
-    bc = _unit(pc - pb)
-    nh = _unit(torch.linalg.cross(pb - pa, bc, dim=-1))
-    m2 = torch.linalg.cross(nh, bc, dim=-1)
+    bc, nh, m2 = nerf_frame(pa, pb, pc)
     w = _unit(pn - pc)
 
     p = (w * m2).sum(-1)

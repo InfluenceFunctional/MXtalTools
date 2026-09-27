@@ -55,7 +55,8 @@ class MolConformerMethods:
     def build_conformer_tree(self,
                              force: Optional[bool] = False,
                              bond_tolerance: float = 1.2,
-                             use_geometry: bool = False):
+                             use_geometry: bool = False,
+                             avoid_sp_root: bool = False):
         """Attach the canonical internal-coordinate tree. Single molecules only.
 
         ``use_geometry=False`` (the default) makes the tree a pure function of the
@@ -63,6 +64,10 @@ class MolConformerMethods:
         alone. Setting it True lets reference-atom choice dodge near-linear frames,
         at the cost of the tree depending on the specific conformer -- fine for a
         one-off analysis, wrong for anything persisted.
+
+        ``avoid_sp_root`` is ``topology.spec_from_graph``'s: pass the value the tree being
+        compared against was built with, or the two differ on every molecule whose default
+        root is an sp carbon.
         """
         if self.has_conformer_tree and not force:
             return
@@ -78,7 +83,8 @@ class MolConformerMethods:
         bonds = (self.mol_bond_index.detach().cpu().numpy()
                  if 'mol_bond_index' in self._store
                  else infer_bond_index(z, pos, tolerance=bond_tolerance))
-        spec = spec_from_graph(z, bonds, pos, use_geometry=use_geometry)
+        spec = spec_from_graph(z, bonds, pos, use_geometry=use_geometry,
+                               avoid_sp_root=avoid_sp_root)
 
         dev = self.z.device
         as_t = lambda a, dtype=torch.long: torch.as_tensor(np.ascontiguousarray(a),

@@ -24,8 +24,8 @@ reference and at perturbations, because a chart can have the right rank and the 
 and neither is implied by the number of coordinates. ``3N - 6`` is treated as the expected
 PHYSICAL rank to be measured, not as something the column count proves.
 
-Two other degeneracies are NOT covered by this change, and ``test_uncovered_degeneracies``
-pins that rather than leaving it implied:
+Two other degeneracies are NOT covered by the transverse pair on its own, and
+``test_uncovered_degeneracies`` pins that rather than leaving it implied:
 
   * a linear angle at the THIRD SEED ATOM, whose out-of-plane component is the sixth external
     DoF -- when atoms 0-1-2 are collinear the "third atom in the xy half-plane" convention
@@ -33,6 +33,11 @@ pins that rather than leaving it implied:
   * ``torsion_frame_is_linear``, where the a-b-c reference triple is collinear so the normal
     defining ``phi`` is arbitrary. That needs a smooth frame construction, not a convention
     evaluated at exactly zero bend.
+
+Both are addressed by two OPT-IN pieces tested in test_dummy_frame.py -- the sp-root rule
+(``spec_from_graph(avoid_sp_root=True)``) and the Z-matrix dummy frame (``build``/``measure``
+with ``dummy_frame``). Everything in this file runs with both off, so it still describes the
+transverse pair alone.
 """
 
 import sys
@@ -433,10 +438,11 @@ def test_uncovered_degeneracies_are_counted_not_assumed():
     """What the transverse pair does NOT fix, pinned so the claim cannot drift.
 
     Every alkyne here has a linear angle AT THE THIRD SEED ATOM and one or more collinear
-    torsion frames. Neither is addressed by this change: the first is the sixth external DoF
-    under a frame convention that stops fixing a frame when atoms 0-1-2 are collinear, the
-    second needs a smooth frame construction. A molecule in this list must not be reported as
-    a fully free `full` chart on the strength of the transverse pair alone.
+    torsion frames. Neither is addressed by the transverse pair: the first is the sixth
+    external DoF under a frame convention that stops fixing a frame when atoms 0-1-2 are
+    collinear, the second needs a smooth frame construction. A molecule in this list must not
+    be reported as a fully free `full` chart on the strength of the transverse pair alone --
+    the sp-root rule and the dummy frame (test_dummy_frame.py) are what complete it.
     """
     for smiles in UNCOVERED:
         spec, tree, pos = _load(smiles)

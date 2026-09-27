@@ -57,6 +57,10 @@ class TreeSpec:
     torsion_frame_is_linear: np.ndarray  # [N-3] angle(a,b,c) ~ pi, so phi is ill-conditioned
     broken_bond_index: np.ndarray # [R, 2] graph bonds absent from the tree
     graph_bond_index: np.ndarray  # [E, 2] every bond, for nonbonded exclusion masks
+    # input index of the root the DEFAULT rule picks, when ``avoid_sp_root`` moved the root
+    # off it; -1 when the root is the default one. Recorded so a caller that knows more than
+    # the graph (a force-field linearity typing) can check the move was needed.
+    root_moved_from: int = -1
 
     @property
     def n_dof(self) -> int:
@@ -96,14 +100,47 @@ def _neighbours(mol: Chem.Mol) -> list:
     return [[nb.GetIdx() for nb in atom.GetNeighbors()] for atom in mol.GetAtoms()]
 
 
-def choose_root(g: nx.Graph, z: np.ndarray, rank: np.ndarray) -> int:
+def _is_sp_carbon(g: nx.Graph, z: np.ndarray, i: int) -> bool:
+    """A carbon with exactly two neighbours: in a closed-shell molecule, an sp centre.
+
+    Valence 4 on two neighbours is a triple + single or two doubles, both linear. A GRAPH
+    rule on purpose -- no bond orders, no force-field typing -- because both tree builders
+    (a caller with an RDKit mol and ``MolData.build_conformer_tree``, which has only z, pos
+    and bonds) must reach the same root. A caller that does type linearity can check the move
+    against it through ``TreeSpec.root_moved_from``.
+    """
+    return int(z[i]) == 6 and g.degree(i) == 2
+
+
+def choose_root(g: nx.Graph, z: np.ndarray, rank: np.ndarray,
+                avoid_sp_carbon: bool = False) -> int:
     """Graph centre, tie-broken toward branching heavy atoms, then canonically.
 
     Rounds track BFS depth, so rooting at the centre minimises the number of
     sequential kernel launches for the whole batch.
+
+    ``avoid_sp_carbon`` NEVER ROOTS ON AN sp CARBON. Rooted there, slots 1 and 2 are the
+    root's two neighbours and the seed angle between them is linear: the frame convention
+    (``geometry.place_seed_third``) then fixes no plane, and no reference choice downstream can
+    recover the sixth external DoF, so the chart is incomplete however the rest of the tree
+    is built. Only when the default pick is such an atom does the root move, to the most
+    central atom of degree >= 2 that is not one, under the same tie-break key -- so every
+    molecule whose default root is not an sp carbon gets the IDENTICAL tree. A molecule with
+    no such atom is wholly linear (3N-5 internal DoF); its root stays where it was and the
+    caller must refuse it. Precedent: chemcoord's ``correct_absolute_refs``, which requires a
+    non-collinear first triple.
     """
     centre = nx.center(g)
-    return max(centre, key=lambda i: (z[i] > 1, g.degree(i), -rank[i], -i))
+    root = max(centre, key=lambda i: (z[i] > 1, g.degree(i), -rank[i], -i))
+    if not avoid_sp_carbon or not _is_sp_carbon(g, z, root):
+        return root
+    cand = [i for i in g.nodes if g.degree(i) >= 2 and not _is_sp_carbon(g, z, i)]
+    if not cand:
+        return root
+    ecc = nx.eccentricity(g)
+    e = min(ecc[i] for i in cand)
+    return max((i for i in cand if ecc[i] == e),
+               key=lambda i: (z[i] > 1, g.degree(i), -rank[i], -i))
 
 
 def _canonical_bfs(neighbours: list, root: int, rank: np.ndarray):
@@ -159,7 +196,8 @@ def _pick(cands, placed, deg, rank, key_geom=None) -> int:
 
 
 def spec_from_graph(z: np.ndarray, edge_index, pos: Optional[np.ndarray] = None,
-                    use_geometry: bool = True, linear_tol_deg: float = 175.0) -> TreeSpec:
+                    use_geometry: bool = True, linear_tol_deg: float = 175.0,
+                    avoid_sp_root: bool = False) -> TreeSpec:
     """Build a ``TreeSpec`` from a bare molecular graph. Hydrogens must be explicit.
 
     This is the entry point for graph-native data objects (PyG ``Data`` carries ``z``
@@ -175,6 +213,13 @@ def spec_from_graph(z: np.ndarray, edge_index, pos: Optional[np.ndarray] = None,
     frames, which is what keeps alkynes and nitriles from producing undefined dihedrals.
     It makes the tree depend on ``pos``, so **anything persisted must be built with
     ``use_geometry=False``** or the spec will not be reproducible at load time.
+
+    ``avoid_sp_root`` moves the root off an sp carbon (see :func:`choose_root`). OFF BY
+    DEFAULT, because it changes the tree -- and every chart built on it -- of exactly the
+    molecules whose default root is an sp carbon; a caller turns it on where it also carries
+    the linear centres through (transverse bends and dummy frames), and must pass the same
+    value to every builder of the same tree (``MolData.build_conformer_tree``) or the two
+    disagree on those molecules.
     """
     z = np.asarray(z, dtype=np.int64).reshape(-1)
     n = len(z)
@@ -202,7 +247,8 @@ def spec_from_graph(z: np.ndarray, edge_index, pos: Optional[np.ndarray] = None,
     rank = canonical_rank(z, nbrs)
     z_orig = z
 
-    root = choose_root(g, z_orig, rank)
+    root = choose_root(g, z_orig, rank, avoid_sp_carbon=avoid_sp_root)
+    default_root = choose_root(g, z_orig, rank) if avoid_sp_root else root
     order, parent = _canonical_bfs(nbrs, root, rank)
 
     slot = np.full(n, -1, dtype=np.int64)
@@ -306,6 +352,7 @@ def spec_from_graph(z: np.ndarray, edge_index, pos: Optional[np.ndarray] = None,
         torsion_frame_is_linear=torsion_frame_is_linear,
         broken_bond_index=np.asarray(broken, dtype=np.int64).reshape(-1, 2),
         graph_bond_index=np.asarray(graph_edges, dtype=np.int64).reshape(-1, 2),
+        root_moved_from=int(default_root) if default_root != root else -1,
     )
 
 

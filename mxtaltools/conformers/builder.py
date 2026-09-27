@@ -24,13 +24,14 @@ values for it and only letting the model emit the rest.
 """
 
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import numpy as np
 import torch
 
-from .geometry import (bond_angle, bond_length, dihedral, log_sinc, measure_transverse,
-                       place_nerf, place_nerf_transverse, place_seed_second,
-                       place_seed_third)
+from .geometry import (bond_angle, bond_length, dihedral, dummy_reference, log_sinc,
+                       measure_transverse, place_nerf, place_nerf_transverse,
+                       place_seed_second, place_seed_third)
 from .topology import TreeSpec
 
 
@@ -270,8 +271,128 @@ def _transverse_atom_mask(tree: BatchedTree, transverse) -> torch.Tensor:
     return out
 
 
+#: What a DUMMY-FRAME row means, stated once because `build`, `measure` and the callers that
+#: label coordinates all rely on it.
+#:
+#: ``dummy_frame`` is a per-TORSION-ROW boolean aligned with ``torsion_index`` (the layout of
+#: ``torsion_frame_is_linear``, which is what normally decides it). A flagged row d, with tree
+#: references (a, b, c), has a COLLINEAR frame: b is an sp centre and a, b, c lie on its axis,
+#: so the plane (a, b, c) does not exist and neither does the dihedral a-b-c-d. On a flagged
+#: row the phi slot (and v, when the row is also transverse) is measured against the Z-matrix
+#: dummy atom X_d instead of the real atom a (``geometry.dummy_reference``):
+#:
+#:     X_d = b + m2(P_d, q, b),   q = c's angle reference = b's parent, so q-b-c is c's bend
+#:
+#: i.e. X_d sits on b at 90 degrees to the q -> b axis. Its own azimuth reference P_d is
+#: chosen so its frame angle angle(P_d, q, b) is BOUNDED, never a derived angle:
+#:
+#:   * CHAINED -- c's row is itself flagged (q is an sp centre too, a polyyne): P_d = X_c,
+#:     and angle(X_c, q, b) = pi/2 +- rho_b, b's bend off the axis at q;
+#:   * otherwise P_d is the atom that makes angle(P_d, q, b) a TREE ANGLE -- b's own angle
+#:     reference (b's angle row is (P_d, q, b)), or, when b is the root's first child and has
+#:     no angle row, the root's second child (whose angle row is (b, q, P_d)).
+#:
+#: Either way X_d depends only on atoms placed before d, so d(Cartesian)/d(internal) stays
+#: block-triangular with the same per-atom spherical (or transverse) block: ``log_jacobian`` is
+#: UNCHANGED. The frame d is placed in has angle(X_d, b, c) = pi/2 +- rho_c, c's bend off the
+#: axis, so it is regular wherever rho_c < pi/2 -- the caller's box must keep it there.
+#:
+#: WHY NOT c's OWN PLACEMENT FRAME, which is where X was first taken from: when q is the root
+#: (or has no parent) that frame's first atom is a SIBLING pick, whose angle at q is set by two
+#: free dihedrals and reaches collinear inside the box (0.42 deg measured on
+#: CC(=O)C(C#C)C#C). A tree angle cannot: its box is theta0 +- delta.
+class DummyFrame(NamedTuple):
+    """Per-ATOM resolution of a ``dummy_frame`` mask. See the note above."""
+
+    atom: torch.Tensor     # [A] bool: this atom's torsion row is measured against its X
+    chained: torch.Tensor  # [A] bool: X's azimuth reference is the parent's X
+    anchor: torch.Tensor   # [A] long: X's azimuth reference atom when NOT chained, else -1
+    axis: torch.Tensor     # [A] long: q -- X is set at 90 degrees to the q -> b axis
+
+
+def dummy_frame_refs(tree: BatchedTree, dummy_frame, strict: bool = True):
+    """Per-torsion-row flags -> :class:`DummyFrame`, refusing rows X cannot be built for.
+
+    A flagged row d (parent c, reference b) needs: b is c's PARENT, c's angle reference q is
+    b's parent (so the axis q -> b -> c is c's own bend and b is not the root), and, unless
+    chained, a tree-angle anchor at q. A row failing any of these would build X from a frame
+    that is not the one the note above describes -- silently, since the shapes would agree.
+
+    ``strict=False`` returns ``(refs, ok)`` instead of raising, ``ok`` per torsion row, so a
+    caller can drop the rows that cannot carry a dummy and re-resolve.
+    """
+    m = torch.as_tensor(dummy_frame, dtype=torch.bool, device=tree.torsion_index.device)
+    m = m.reshape(-1)
+    if m.numel() != tree.torsion_index.shape[0]:
+        raise ValueError(
+            f'dummy_frame has {m.numel()} entries against {tree.torsion_index.shape[0]} '
+            f'torsion rows; it is aligned with torsion_index, like torsion_frame_is_linear')
+    n = tree.n_atoms
+    dev = m.device
+    idx = torch.arange(n, dtype=torch.long, device=dev)
+    atom = torch.zeros(n, dtype=torch.bool, device=dev)
+    atom[tree.torsion_index[m, 3]] = True
+
+    ref_b, ref_c = tree.ref_b, tree.ref_c
+    c = ref_c.clamp_min(0)
+    b = ref_b.clamp_min(0)
+    q = torch.where(ref_c >= 0, ref_b[c], torch.full_like(ref_b, -1))
+    # the root's SECOND child s has angle row (b, q, s) with b its FIRST child: the one tree
+    # angle at q that has b as an arm when b owns no angle row itself
+    seeds2 = (tree.ref_a < 0) & (ref_b >= 0)
+    second = torch.full((n,), -1, dtype=torch.long, device=dev)
+    second[ref_b[seeds2]] = idx[seeds2]
+    own = ref_b[b]
+    alt = second[b]
+    anchor = torch.where(own >= 0, own, alt)
+    alt_ok = (alt >= 0) & (ref_c[alt.clamp_min(0)] == q)
+    anchor_ok = (own >= 0) | alt_ok
+    chained = atom[c]
+    ok_atom = ((ref_c[c] == ref_b) & (q >= 0) & (q == ref_c[b])
+               & (chained | anchor_ok))
+    ok = ok_atom[tree.torsion_index[:, 3]]
+    refs = DummyFrame(atom=atom, chained=chained & atom,
+                      anchor=torch.where(atom & ~chained, anchor, torch.full_like(anchor, -1)),
+                      axis=torch.where(atom, q, torch.full_like(q, -1)))
+    if not strict:
+        return refs, ok
+    bad = m & ~ok
+    if bool(bad.any()):
+        raise ValueError(
+            f'dummy-frame rows placing atoms {tree.torsion_index[bad, 3].tolist()} have no '
+            f'well-defined dummy: the frame reference b must be the parent c\'s own parent, '
+            f'c\'s angle must run along b\'s bond (b not the root), and an unchained row needs '
+            f'a tree angle at b\'s parent to set the dummy\'s azimuth')
+    return refs
+
+
+def dummy_frame_anchor_atoms(tree: BatchedTree, dummy_frame) -> torch.Tensor:
+    """``[A]`` long: the REAL atom whose side a flagged atom's X points to; -1 unflagged.
+
+    For a chained row X_d points to X_c's side, and so on down the chain, so the atom that
+    fixes the azimuth is the anchor at the chain's start. That is the atom a caller naming a
+    row's four-atom frame should put in the first slot -- ``torsion_index[:, 0]`` still names
+    the collinear real atom, which fixes nothing.
+    """
+    refs = dummy_frame_refs(tree, dummy_frame)
+    out = refs.anchor.clone()
+    for slots in tree.rounds[3:]:                 # placement order: X_c resolves before X_d
+        s = slots[refs.chained[slots]]
+        if s.numel():
+            out[s] = out[tree.ref_c[s]]
+    return out
+
+
+def _dummy_points(tree: BatchedTree, refs: DummyFrame, pos: torch.Tensor,
+                  xs: torch.Tensor, s: torch.Tensor) -> torch.Tensor:
+    """X for flagged atoms ``s``, reading placed positions and earlier atoms' X (``xs``)."""
+    c = tree.ref_c[s]
+    p = torch.where(refs.chained[s].unsqueeze(-1), xs[c], pos[refs.anchor[s].clamp_min(0)])
+    return dummy_reference(p, pos[refs.axis[s]], pos[tree.ref_b[s]])
+
+
 def build(tree: BatchedTree, r: torch.Tensor, theta: torch.Tensor,
-          phi: torch.Tensor, transverse=None) -> torch.Tensor:
+          phi: torch.Tensor, transverse=None, dummy_frame=None) -> torch.Tensor:
     """Internal coordinates -> Cartesian positions ``[A, 3]``.
 
     Output sits in the canonical frame implied by the seed convention (root at the
@@ -279,15 +400,20 @@ def build(tree: BatchedTree, r: torch.Tensor, theta: torch.Tensor,
     SE(3)-reduced -- no alignment step is needed anywhere downstream.
 
     ``transverse`` marks angle rows whose ``(theta, phi)`` pair is really ``(u, v)``; see the
-    note above :func:`_transverse_atom_mask`. Left at ``None`` this function is unchanged.
+    note above :func:`_transverse_atom_mask`. ``dummy_frame`` marks torsion rows whose frame
+    reference is the Z-matrix dummy X instead of the collinear real atom; see the note above
+    :class:`DummyFrame`. Left at ``None`` each is unchanged.
     """
     n = tree.n_atoms
     r_full = _scatter_to_atoms(r, tree.bond_index[:, 1], n)
     theta_full = _scatter_to_atoms(theta, tree.angle_index[:, 2], n)
     phi_full = _scatter_to_atoms(phi, tree.torsion_index[:, 3], n)
     tv = None if transverse is None else _transverse_atom_mask(tree, transverse)
+    df = None if dummy_frame is None else dummy_frame_refs(tree, dummy_frame)
 
     pos = torch.zeros(n, 3, dtype=r.dtype, device=r.device)
+    # each flagged atom's X, kept because a chained row's X is built from its parent's
+    xs = None if df is None else torch.zeros(n, 3, dtype=r.dtype, device=r.device)
 
     for t, slots in enumerate(tree.rounds):
         if t == 0 or slots.numel() == 0:  # roots stay at the origin
@@ -300,6 +426,12 @@ def build(tree: BatchedTree, r: torch.Tensor, theta: torch.Tensor,
                                    r_full[slots], theta_full[slots])
         else:
             pa, pb = pos[tree.ref_a[slots]], pos[tree.ref_b[slots]]
+            if df is not None:
+                rows = df.atom[slots].nonzero().flatten()
+                if rows.numel():
+                    x_new = _dummy_points(tree, df, pos, xs, slots[rows])
+                    xs = xs.index_copy(0, slots[rows], x_new)
+                    pa = pa.index_copy(0, rows, x_new)
             new = place_nerf(pa, pb, pc,
                              r_full[slots], theta_full[slots], phi_full[slots])
             if tv is not None:
@@ -318,30 +450,47 @@ def build(tree: BatchedTree, r: torch.Tensor, theta: torch.Tensor,
     return pos
 
 
-def measure(tree: BatchedTree, pos: torch.Tensor, transverse=None):
+def measure(tree: BatchedTree, pos: torch.Tensor, transverse=None, dummy_frame=None):
     """Cartesian positions -> ``(r, theta, phi)``. Exact inverse of ``build``.
 
-    Fully parallel -- no rounds, since every reference atom is already positioned.
+    Fully parallel -- no rounds, since every reference atom is already positioned -- except
+    for the dummy atoms of a ``dummy_frame`` mask, which are rebuilt in placement order
+    because a chained row's X is built from its parent's X. Only rounds holding a flagged atom
+    do any work.
 
     With ``transverse`` supplied, flagged rows return ``(u, v)`` in the theta and phi slots,
     so ``measure`` inverts ``build`` UNDER THE SAME MASK. Measured directly off the placement
     frame rather than by converting a measured ``(theta, phi)``: the dihedral is exactly what
     goes numerically dead at a linear centre, so converting would be sampling noise. See
-    :func:`geometry.measure_transverse`.
+    :func:`geometry.measure_transverse`. With ``dummy_frame`` supplied, a flagged torsion
+    row's phi (or v) is read against the same X ``build`` placed it from.
     """
     b = tree.bond_index
     a = tree.angle_index
     d = tree.torsion_index
     r = bond_length(pos[b[:, 0]], pos[b[:, 1]])
     th = bond_angle(pos[a[:, 0]], pos[a[:, 1]], pos[a[:, 2]])
-    ph = dihedral(pos[d[:, 0]], pos[d[:, 1]], pos[d[:, 2]], pos[d[:, 3]])
+    pa = pos[d[:, 0]]
+    ph = dihedral(pa, pos[d[:, 1]], pos[d[:, 2]], pos[d[:, 3]])
+    if dummy_frame is not None:
+        df = dummy_frame_refs(tree, dummy_frame)
+        xs = torch.zeros_like(pos)
+        for slots in tree.rounds[3:]:
+            s = slots[df.atom[slots]]
+            if s.numel():
+                xs = xs.index_copy(0, s, _dummy_points(tree, df, pos, xs, s))
+        dm_rows = df.atom[d[:, 3]].nonzero().flatten()
+        if dm_rows.numel():
+            pa = pa.index_copy(0, dm_rows, xs[d[dm_rows, 3]])
+            ph = ph.index_copy(0, dm_rows, dihedral(pa[dm_rows], pos[d[dm_rows, 1]],
+                                                    pos[d[dm_rows, 2]], pos[d[dm_rows, 3]]))
     if transverse is None:
         return r, th, ph
 
     tv = _transverse_atom_mask(tree, transverse)
     tor_rows = tv[d[:, 3]].nonzero().flatten()
     if tor_rows.numel():
-        u, v = measure_transverse(pos[d[tor_rows, 0]], pos[d[tor_rows, 1]],
+        u, v = measure_transverse(pa[tor_rows], pos[d[tor_rows, 1]],
                                   pos[d[tor_rows, 2]], pos[d[tor_rows, 3]])
         # ROUTED THROUGH THE PLACED ATOM, not by row position. The angle and torsion row
         # orderings do currently agree element-for-element on the flagged subset -- both are
@@ -373,6 +522,10 @@ def log_jacobian(tree: BatchedTree, r: torch.Tensor, theta: torch.Tensor,
     coordinate, not two independent ones. Passing the mask to ``build`` and not to this
     function yields a correct geometry under a wrong density -- silently, since both still
     return finite numbers of the right shape.
+
+    A ``dummy_frame`` mask needs NO argument here: X depends only on atoms placed before the
+    row it anchors, so the Jacobian stays block-triangular with the same per-atom block (see
+    the note above :class:`DummyFrame`). Only the frame the azimuth is measured in moves.
     """
     out = torch.zeros(tree.n_mols, dtype=r.dtype, device=r.device)
     out = out.index_add(0, tree.bond_batch, 2.0 * torch.log(r))
