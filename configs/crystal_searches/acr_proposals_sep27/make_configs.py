@@ -13,7 +13,7 @@ Job (array index) -> configs, run in order by submit.sbatch:
   1     rwrap         random starts, wrap,  seed S1              6000
   2     rclamp        random starts, clamp, seed S2              6000
   3     rwrap         random starts, wrap,  seed S2              6000
-  4a/4b seedwrap      seeded return test, wrap:  seed shards 0 (ACRDIN07) and 1 (ACRDIN06)
+  4a/4b seedwrap      seeded return test, wrap:  seed shards 0 (241 ACRDIN07 + 41 ACRDIN06) and 1 (200 ACRDIN06 + 82 nik00009)
   5a/5b seedclamp     the same shards under the clamp
   6     hops          wrap; seeds/hops.pth (kicked copies of 297 low-energy families, log-noise -1.0 and -0.5)
   7     dblkick       wrap; seeds/doubled_kicked.pth (121 doubled Z'=1 families: unkicked + log-noise -2.0/-1.5/-1.0)

@@ -161,14 +161,17 @@ class RunLease:
 
     def _start_heartbeat(self):
         """Keep the lease fresh between saves: touch it every heartbeat_s while it still names this owner; stop as
-        soon as it does not (the next check() then raises before any write)."""
+        soon as a read names another owner (the next check() then raises before any write). A read that fails (e.g.
+        while renew() replaces the file) does not stop it."""
         if self._thread is not None:
             return
 
         def beat():
             while not self._stop.wait(self.heartbeat_s):
                 held = read_json(self.path)
-                if held is None or held.get('owner') != self.owner:
+                if held is None:  # unreadable right now (e.g. mid-replace): keep beating; check() judges ownership
+                    continue
+                if held.get('owner') != self.owner:
                     return
                 try:
                     os.utime(self.path)

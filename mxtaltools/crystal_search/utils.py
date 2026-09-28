@@ -327,7 +327,7 @@ def recover_opt_state(crystal_batch, config, device, batch_idx, prev_best_sample
         crystal_batch.set_cell_parameters(
             prev_best_samples[:crystal_batch.num_graphs].to(crystal_batch.device)
         )
-    except:  # fails often for some reason
+    except Exception:  # fails often for some reason; a SIGTERM stop (SystemExit) must unwind, not reinitialise
         crystal_batch = get_initial_state(config, crystal_batch, device, batch_idx)
     return crystal_batch
 

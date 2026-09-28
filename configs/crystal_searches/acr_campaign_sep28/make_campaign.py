@@ -7,8 +7,9 @@ Three proposal streams, each an array of GPU jobs writing shards to one campaign
              stage 2 energy cascade (drop walkers still > 10 / 8 / 5 kT above the job's best at steps 25 / 50 / 100)
   eljstart   the same, preceded in each batch by the eLJ schedule on 4x the starts, keeping the lowest-eLJ quarter
   hops       latent log-noise kicks (-0.5) of registry basins within 2 kT, <= 32 per basin, <= 3 generations deep
-All jobs: OOM batch-size ceiling, run lease, SIGUSR1 900 s before the walltime, and any job may run the campaign's curate
-pass between batches every 15 min (coordinator.maybe_curate); no separate coordinator job is needed.
+All jobs: OOM batch-size ceiling, run lease, SIGUSR1 900 s before the walltime. The curate pass runs every 15 min in a
+CPU job (submit_curator.sbatch, coordinator run_loop); a GPU job runs it between batches (coordinator.maybe_curate) only
+when the last pass is more than an hour old, i.e. when that CPU job is gone.
 
 Stopping (coordinator): per stream, stop when effort / 90%-upper-bound(basins seen once from it) exceeds Z, for both
 bands (2 kT: Z = 1e5 MACE row-evaluations, ~230 random relaxations per new basin; 1 kT: Z = 1e6), after >= 2000
@@ -49,7 +50,7 @@ COORD = dict(sg=14, z_prime=2, energy_key='mace', kT=KT, bands_kT={'2kT': 2.0, '
 def base_cfg():
     cfg = yaml.safe_load(BASE.read_text())
     cfg.update(out_dir=f'{CAMP}/runs', save_trajs=False, grow_batch_size=True, oom_ceiling=True, batch_size=48,
-               num_samples=30000, force_restart_run=False, coord_dir=CAMP, coord_curate_every_s=900,
+               num_samples=30000, force_restart_run=False, coord_dir=CAMP, coord_curate_every_s=3600, coord_hop_wait_s=1800,
                init_sample_method='random', dataset_path=None)
     for st in cfg['opt']:
         assert st['centroid_boundary'] == 'wrap' and st['enforce_reduced'] is False

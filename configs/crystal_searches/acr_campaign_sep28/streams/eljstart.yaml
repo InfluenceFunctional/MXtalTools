@@ -87,5 +87,6 @@ opt:
   early_stop_kT: 2.494
 oom_ceiling: true
 coord_dir: /scratch/mk8347/data/crystal_datasets/acridine/campaigns/acr_campaign_sep28
-coord_curate_every_s: 900
+coord_curate_every_s: 3600
+coord_hop_wait_s: 1800
 coord_stream: eljstart

@@ -375,3 +375,48 @@ def test_a_final_partial_batch_ends_the_cursor_at_num_samples(tmp_path, monkeypa
     assert json.loads((tmp_path / 'statetest_progress.json').read_text())['cursor'] == 5
     outs = rs.crystal_search(_config(tmp_path, 7))
     assert len(outs) == 7
+
+
+
+def test_the_heartbeat_survives_a_failed_read(tmp_path, monkeypatch):
+    import time
+    stem = str(tmp_path / 'run')
+    monkeypatch.setenv('SLURM_JOB_ID', '21')
+    lease = st.RunLease(stem, stale_after_s=1.0, settle_s=0, heartbeat_s=0.1)
+    lease.acquire()
+    real = st.read_json
+    calls = {'n': 0}
+
+    def flaky(path):  # the heartbeat thread's first two reads fail, as while renew() replaces the file
+        calls['n'] += 1
+        return None if calls['n'] <= 2 else real(path)
+    monkeypatch.setattr(st, 'read_json', flaky)
+    time.sleep(2.5)
+    assert calls['n'] > 3, 'setup: the heartbeat kept reading'
+    assert lease._thread.is_alive(), 'one unreadable read must not end the heartbeat'
+    monkeypatch.setenv('SLURM_JOB_ID', '22')
+    with pytest.raises(st.RunLeaseLost):  # still fresh after a batch far longer than the staleness window
+        st.RunLease(stem, stale_after_s=1.0, settle_s=0).acquire()
+    lease.release()
+
+
+def test_recover_opt_state_lets_a_stop_unwind():
+    import mxtaltools.crystal_search.utils as cu
+
+    class Batch:
+        num_graphs, device = 1, 'cpu'
+
+        def __init__(self, exc):
+            self.exc = exc
+
+        def set_cell_parameters(self, params):
+            raise self.exc
+    with pytest.raises(SystemExit):  # a SIGTERM stop raised mid-restore must not become a reinitialisation
+        cu.recover_opt_state(Batch(SystemExit(143)), None, 'cpu', 0, torch.zeros(1, 18))
+    sentinel = object()
+    orig = cu.get_initial_state
+    cu.get_initial_state = lambda *a: sentinel
+    try:  # an ordinary failure still falls back to fresh starts
+        assert cu.recover_opt_state(Batch(RuntimeError('shape')), None, 'cpu', 0, torch.zeros(1, 18)) is sentinel
+    finally:
+        cu.get_initial_state = orig

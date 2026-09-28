@@ -1,15 +1,17 @@
 """
-The campaign's prior map, priors/known_map.pth: every basin already known for acridine sg14 Z'=2 under the old MACE
-checkpoint (acr_112025_mh1_stagetwo.model), one representative each, as a compact file the coordinator ingests as stream
-'prior'. LOCAL provenance script (reads local files); the cluster only reads the .pth (.pth, not .pt: *.pt is Git
+The campaign's prior map, priors/known_map.pth: every state already known for acridine sg14 Z'=2 under the old MACE
+checkpoint (acr_112025_mh1_stagetwo.model) within the campaign's window, as a compact file the coordinator ingests as
+stream 'prior'. LOCAL provenance script (reads local files); the cluster only reads the .pth (.pth, not .pt: *.pt is Git
 LFS-tracked here).
 
 Candidates: the aug21 unseeded band (1781 states within 2 kT of -62.812), the two relaxed forms (ACRDIN07, ACRDIN06), the
 121 doubled Z'=1 structures, and every physical sep27 end state within 3 kT (acr_proposals_sep27 and acr_finish_sep27
-outputs), energies as the searches stored them (kJ/mol per molecule). They are collapsed into basins by the coordinator
-itself -- a temporary campaign with this campaign's identity cut and window -- and each basin's lowest state, in its
-reduced cell, is kept. So the shipped map has the campaign's own basin definition, and the first curate pass on the
-cluster computes RDFs for ~2e3 representatives rather than ~1.5e4 candidates.
+outputs), energies as the searches stored them (kJ/mol per molecule). Every physical candidate within the window is
+shipped, in the order the coordinator ingests them, so the campaign's first curate pass rebuilds exactly the basins of
+a temporary campaign run here with the same cut and window (leader clustering depends on which state arrives first: one
+representative per basin, re-clustered, merged some basins and left some known states outside every prior basin). The
+build's basin counts are stored in the file and printed. The first pass on the cluster computes all their RDFs (about
+10 min on CPU, inside one job).
 
     python make_priors.py [CUT OUT]   # ~20 min on CPU (RDFs of the candidates); default: make_campaign's cut and
                                       # priors/known_map.pth
@@ -71,22 +73,26 @@ def main():
     shutil.rmtree(work, ignore_errors=True)
     os.makedirs(work)
     cand = os.path.join(work, 'candidates.pth')
+    keep = co.physical(params, torch.zeros(len(energy))) & (energy <= COORD['energy_ref'] + COORD['window_kT'] * KT)
+    idx = torch.nonzero(keep).flatten()  # the rows the coordinator would admit, in their order
+    params, hand, energy = params[idx], hand[idx], energy[idx]
+    source = [source[i] for i in idx.tolist()]
     torch.save(dict(params=params, handedness=hand, energy=energy, lj=torch.zeros(len(energy)), source=source,
                     energy_model_id=mid), cand)
     cfg = dict(COORD, identity_cut=cut, mol_path=MOL, energy_model_id=mid, priors=[cand], streams={}, hops=None)
     yaml.safe_dump(cfg, open(os.path.join(work, 'coord.yaml'), 'w'))
     co.curate(work)
     reg = torch.load(os.path.join(work, 'registry.pt'), weights_only=False)
-    counts = np.bincount(np.asarray(reg['hits']['basin'], dtype=np.int64), minlength=len(reg['basin_E']))
+    E = np.asarray(reg['basin_E'], dtype=float)
+    basins = {'all': len(E), '2kT': int((E <= COORD['energy_ref'] + 2 * KT).sum()),
+              '1kT': int((E <= COORD['energy_ref'] + KT).sum())}
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
-    torch.save(dict(params=torch.stack(reg['basin_params']).float(), handedness=torch.stack(reg['basin_hand']).float(),
-                    energy=torch.tensor(reg['basin_E'], dtype=torch.float32), lj=torch.zeros(len(reg['basin_E'])),
-                    candidate_states=torch.as_tensor(counts), energy_model_id=mid,
-                    provenance=f'{len(energy)} candidates ({ {s: source.count(s) for s in dict.fromkeys(source)} }) '
-                               f'collapsed at identity cut {cut}, window {COORD["window_kT"]} kT'),
+    torch.save(dict(params=params, handedness=hand, energy=energy, lj=torch.zeros(len(energy)), source=source,
+                    energy_model_id=mid, identity_cut=cut, build_basins=basins,
+                    provenance=f'{len(energy)} states ({ {s: source.count(s) for s in dict.fromkeys(source)} }) within '
+                               f'{COORD["window_kT"]} kT; {basins} basins at identity cut {cut}'),
                out)
-    print(f'{out}: {len(reg["basin_E"])} basins from {len(energy)} candidates; model {mid}; '
-          f'{os.path.getsize(out) / 1e6:.2f} MB')
+    print(f'{out}: {len(energy)} states, {basins} basins at cut {cut}; model {mid}; {os.path.getsize(out) / 1e6:.2f} MB')
 
 
 if __name__ == '__main__':

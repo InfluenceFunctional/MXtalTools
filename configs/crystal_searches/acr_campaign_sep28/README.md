@@ -1,22 +1,46 @@
 # acr_campaign_sep28: find every low-energy acridine P2₁/c Z′=2 packing, and stop when finding one more gets too expensive (2026-09-28)
 
-Acridine, sg14, Z′=2, MACE old checkpoint `acr_112025_mh1_stagetwo.model`. Many GPU jobs in three proposal streams write their results to one campaign directory. Any of those jobs can run the **curate** pass (`coordinator.maybe_curate`, every 15 min, under a curator lease) between batches. The curate pass:
+Acridine, sg14, Z′=2, MACE old checkpoint `acr_112025_mh1_stagetwo.model`. Many GPU jobs in three proposal streams write their results to one campaign directory. A small CPU job, the curator (`submit_curator.sbatch`, the coordinator's `run_loop`), runs the **curate** pass every 15 min under a curator lease. The curate pass:
 - re-expresses each state in its reduced cell (`standardize.standardize_cells`);
 - clusters states into basins by RDF distance;
 - decides per stream whether to continue.
 
-No separate coordinator job is needed.
+A GPU job runs the pass itself (`coordinator.maybe_curate`, between batches) only when the last one is more than an hour old, i.e. when the curator is gone, so the GPUs do not idle on CPU work.
+
+First launch:
 
 ```bash
 cd /scratch/mk8347/projects/gfn_cond/MXtalTools && git pull && bash configs/crystal_searches/acr_campaign_sep28/launch.sh
 ```
 
-`launch.sh [n_tasks_per_stream]` (default 4, so 12 GPU jobs):
+`launch.sh [n_tasks_per_stream] [stream ...]` (default 4 tasks each of `random`, `eljstart` and `hops`, so 12 GPU jobs):
 - checks that the cluster's MACE file is the one the priors were scored with (by size and SHA1);
-- creates `DATA/campaigns/acr_campaign_sep28/`;
-- submits `random` and `eljstart` now, and `hops` 60 min later (after the first curate pass has written hop parents).
+- creates `DATA/campaigns/acr_campaign_sep28/` and freezes `coord.yaml` and `streams/*.yaml` into it (the jobs read the frozen copies), and records the MXtalTools commit in `launch_commit`;
+- submits the curator unless one is already queued or running (`CURATOR=0` skips it; its log is `acr_campaign_sep28-curator-<job>.out`; if sbatch refuses it, `launch.sh` says so and carries on, and the GPU jobs curate themselves on the 1 h fallback);
+- submits each stream as its own array, named `acr_camp_<stream>`; `hops` waits for the `random` array to start.
 
-Re-running it resumes every task: same run names, same campaign, and a matching `coord.yaml` is required. Use it after a walltime. A job stops between batches 15 min before its walltime (SIGUSR1).
+A hop job needs `hop_parents.pt`, which the first curate pass writes (with 15322 prior states that pass takes about 10–15 min on the curator). A hop job that finds no readable file waits for it for up to 30 min (`coord_hop_wait_s: 1800`), then fails with a message. The bound is short on purpose: the cluster cancels GPU jobs whose trailing two-hour utilisation falls below about 54% (gfn_diffusion wiki `cluster-operations`), and a waiting job's GPU is idle.
+
+**Relaunch** (after a walltime, or to add tasks) with `bash configs/crystal_searches/acr_campaign_sep28/launch.sh`, **without** `git pull`. Every task resumes its run. `launch.sh` refuses when:
+- `coord.yaml` or a stream config differs from the frozen copy: start a new campaign directory instead;
+- the checkout is at another commit than the first launch: check out the recorded one, or set `ALLOW_CODE_CHANGE=1` (each shard records the commit of the job that wrote it);
+- tasks of a stream it would submit, or any task of a launch made before streams had their own job names (`acr_camp`), are still queued or running, or `squeue` cannot say: `scancel` them, or set `FORCE=1`.
+
+One stream alone: `bash .../launch.sh 4 hops` (it also resubmits the curator if none is live).
+
+**The 2026-09-28 relaunch.** The campaign was first launched from MXtalTools `5786d649`, before the pre-launch fixes. To move it onto the fixed code, cancel the old tasks, wait until none is left (cancelled tasks linger as COMPLETING for a while, and `launch.sh` refuses while any is listed; do not use `FORCE=1` for this), then pull and launch:
+
+```bash
+scancel -u $USER -n acr_camp; for i in $(seq 60); do squeue -h -u $USER -n acr_camp | grep -q . || break; sleep 10; done; cd /scratch/mk8347/projects/gfn_cond/MXtalTools && git pull && bash configs/crystal_searches/acr_campaign_sep28/launch.sh
+```
+
+Every run resumes where it stopped. This first run of the new `launch.sh` on the campaign freezes the configs, records the new commit, and moves any `STOP` file the old stop rule wrote into `superseded_stop_files/`. The curator's first pass then:
+- rebuilds the lineage record the old code did not keep: each old hop hit's parent is read back from its shard (`coordinator.backfill_lineage`), so the basin numbering, and the parents the hop shards name, stay valid;
+- drops the stop-confirmation streaks counted under the old rule, so a stop needs passes with new work under the new one;
+- ingests `priors/known_map.pth` again (the prior key format changed, and so did the content): its 15322 states join the registry's existing prior basins, which came from the old file's 3100 representatives, and the few that lie farther than the cut from every leader open prior basins of their own;
+- recomputes every statistic and verdict under the fixed rules.
+
+A job stops between batches 15 min before its walltime: python is `exec`'d as the container's process, so the `--signal=USR1@900` reaches it, and the walltime SIGTERM releases its lease.
 
 *Streams (details in `MANIFEST.md`; configs generated by `make_campaign.py`). All: wrap centroid boundary, no reduction wall, stage-2 energy cascade, OOM batch-size ceiling, run lease.*
 
@@ -30,16 +54,20 @@ Re-running it resumes every task: same run names, same campaign, and a matching 
 
 **Stopping.** The unit of effort is MACE row-evaluations; the eLJ pre-screen is recorded apart and not counted. For each stream and each band, the stopping quantity is the effort divided by the 90% upper bound on the number of basins seen exactly once, where that one state came from the stream. This is the Good–Turing estimate of the effort needed to find the next new basin.
 
-A stream stops when this quantity exceeds Z in both bands, on two consecutive curate passes:
+A hop state that relaxes back into the basin it was kicked from, or into one of that basin's ancestors, is left out of every count: it exists only because its parent was found, so it is not an independent draw (counted, it turned the parent's finder's singleton into a double; in the sep27 hops, 15.6% of kicks at log-noise −0.5 returned within 2 kT).
+
+A stream stops when this quantity exceeds Z in both bands, on two consecutive curate passes, each after new work from the stream (a second look at the same data confirms nothing):
 - 2 kT band: Z = 1e5 row-evaluations, about 230 random relaxations per new basin;
 - 1 kT band: Z = 1e6 row-evaluations;
 - and only after at least 2000 relaxations and at least 20 of its states in the band.
 
-The campaign stops, by writing `STOP`, when every stream has stopped, or at 3e7 row-evaluations (about 7e4 relaxations) in total. In the sep27 replay, random needed about 8e4 row-evaluations per new basin within 2 kT, and hops and eljstart about 2e4. That replay used the old 0.085 cut; at the finer 0.050 cut the effort per new basin is lower, so every stream runs longer before it stops.
+A stream whose `STOP.<stream>` exists stays stopped. The campaign stops, by writing `STOP`, when every stream has stopped (the hop stream counts as stopped when no basin is left to kick), or at 3e7 row-evaluations (about 7e4 relaxations) in total.
 
-**Basins.** A state joins the first registered basin whose leader is within RDF distance 0.050. The RDF is envwise with a 10 Å cutoff. Only states within 3 kT of −62.812 kJ/mol per molecule enter the registry.
+The sep27 data replayed through the coordinator at the 0.050 cut (2026-09-27; 9.3e6 row-evaluations over five streams, before the lineage rule above) left every stream running: the effort per new 2 kT basin was 0.41–0.62 of its value at the old 0.085 cut, and extrapolated, only the random stream reached Z before the 3e7 cap. At this cut the cap, not the rule, is likely to end most streams.
 
-The registry is seeded with `priors/known_map.pth`, which `make_priors.py` builds at the campaign's cut. It holds 3100 basins, one representative each, from 15322 known states: the aug21 band, ACRDIN07 and ACRDIN06, the 121 doubled Z′=1 maps, and the sep27 end states. 1187 of those basins lie within 2 kT and 150 within 1 kT. A search state that lands in a prior basin is therefore not new.
+**Basins.** A state joins the basin of the nearest leader within RDF distance 0.050, or opens a basin. The RDF is envwise with a 10 Å cutoff. Only states within 3 kT of −62.812 kJ/mol per molecule enter the registry.
+
+The registry is seeded with `priors/known_map.pth`, which `make_priors.py` builds: every known state within the window (15322 states: the aug21 band, ACRDIN07 and ACRDIN06, the 121 doubled Z′=1 maps, and the sep27 end states), in the order the coordinator ingests them, so in a fresh campaign the first curate pass rebuilds exactly the basins of the build (for this relaunched campaign, see above): 3100 basins, 1187 within 2 kT and 150 within 1 kT. A search state that lands in a prior basin is therefore not new.
 
 **The 0.050 cut** comes from one fixed rule, applied to every problem by gfn_diffusion `eval/campaign_compack.py calibrate`:
 - two states are one packing when COMPACK matches 20 of 20 molecules;
@@ -68,18 +96,18 @@ Matched pairs differ by up to 1.9 kJ/mol per molecule, with a median of 0.12: en
 - Progress: `DATA/campaigns/acr_campaign_sep28/stats.md` is rewritten on each curate pass.
 - Stop one stream: `touch …/STOP.<stream>`.
 - Stop everything: `touch …/STOP`.
-- A curate pass can also be run by hand: `python -m mxtaltools.crystal_search.coordinator DIR`.
+- A curate pass can also be run by hand: `python -m mxtaltools.crystal_search.coordinator DIR` (it takes the curator lease like the jobs, and is skipped while a job is curating).
 
-**The product.** Export one crystal per basin within a band, in its reduced cell, with energy, state count and the stream that found it first:
+**The product.** Export one crystal per basin within a band, in its reduced cell, with energy, state count and the stream that found it first. The export first runs a curate pass, which ingests the shards the jobs wrote after their last pass, and refuses if any shard on disk is still missing from the registry:
 
 ```bash
 python -m mxtaltools.crystal_search.coordinator DATA/campaigns/acr_campaign_sep28 --export 2 acr_zp2_2kT.pt
 ```
 
-Then, locally, where the CSD API is available, merge basins that COMPACK says are one packing (20/20). Candidate pairs are basins closer than the rule's d_hi (0.115 here) and within twice the largest energy gap of a matched calibration pair (3.8 kJ/mol per molecule). Run from `gfn_diffusion/energy_sampling`, with that directory's parent and MXtalTools on `PYTHONPATH`:
+Then, locally, where the CSD API is available, copy the campaign directory (after the export) and merge basins that COMPACK says are one packing (20/20). Candidate pairs are basins closer than the rule's d_hi (0.115 here) and within twice the largest energy gap of a matched calibration pair (3.8 kJ/mol per molecule); every candidate pair is compared unless `--budget` caps it (the prior basins alone give about 2600 pairs within 2 kT, about 40 min on 6 processes), and the .csv lists, per merged group, the candidate pairs a cap left uncompared. Run with `gfn_diffusion` and MXtalTools on `PYTHONPATH`; `--mol_path` points at a local copy of the conformer, since the copied `coord.yaml` names the cluster path:
 
 ```bash
-python -m energy_sampling.eval.campaign_compack dedup CAMPAIGN_DIR --band_kT 2 --calibration D:/crystal_datasets/acridine/campaigns/acr_compack_cal_sep28/compack/calibration.pt --out acr_zp2_2kT_dedup.pt
+python -m energy_sampling.eval.campaign_compack dedup CAMPAIGN_DIR --band_kT 2 --mol_path D:/crystal_datasets/acridine/opt_acridine_conformer.pt --calibration D:/crystal_datasets/acridine/campaigns/acr_compack_cal_sep28/compack/calibration.pt --out acr_zp2_2kT_dedup.pt
 ```
 
 **A new molecule or model.** Copy this directory and edit `make_campaign.py`. Build the priors with the new model: priors scored by another model are refused and logged, not used. Measure the identity cut on a short pilot campaign (random stream only) with `campaign_compack calibrate` before launching. Changing the cut under a running campaign would reassign every basin it has built.

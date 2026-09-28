@@ -1,6 +1,6 @@
 # acr_finish_sep27: how far does the reduction wall hold walkers? (2026-09-26)
 
-Acridine, sg14 Z'=2, MACE (the same model as acr_proposals_sep27). 4 jobs, each one GPU for under 20 h. No library change: the search's own Rprop schedule, with the reduction penalty (`enforce_reduced`, $10^4 \times$ relu of the monoclinic wall violations) switched off where stated.
+Acridine, sg14 Z'=2, MACE (the same model as acr_proposals_sep27). 4 jobs, each one GPU for under 20 h. No library change: the search's own Rprop schedule, with the reduction penalty (`enforce_reduced`: $10^4 \times$ the sum of the squared monoclinic wall violations, `sym_utils.py::mono_reduction_penalty`) switched off where stated.
 
 **Why.** In a local check (8 sep26 wrap end states, 100 more steps of stage 2 on an RTX 5080), continuing with the penalty moved 7 of 8 states by at most 0.13 kJ/mol. Without it, 3 of the 8 dropped by 0.9, 0.9 and 2.5 kJ/mol. The fourth outlier was an unrelaxed clash state. In acr_wrap_sep26, about 28% of end states sat on the β = 90.57° wall under both boundaries, and the no-reduction arm doubled the fraction within 2 kT. Those data were contaminated, so this battery repeats both measurements cleanly.
 

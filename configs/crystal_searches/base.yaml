@@ -38,6 +38,8 @@ stop_files: []  # the loop stops between batches once any of these exists (SIGUS
 coord_dir: null  # shared campaign directory: one shard per completed batch; STOP / STOP.<coord_stream> stop the job
 coord_stream: default  # this job's proposal stream in the campaign's stopping rule
 coord_curate_every_s: null  # run the campaign's curate pass between batches when the last is older than this
+coord_hop_wait_s: null  # hop jobs: longest wait for a usable hop_parents.pt (null: max(3 x curate interval, 3600) + 1800 s)
+coord_hop_poll_s: null  # hop jobs: seconds between looks while waiting (null: 60)
 
 init_target_cp: data #0.6828  # a float, null (use target value), 'wide' (0.0-0.7) or 'std' target packing coefficient for initial structure sampling
 

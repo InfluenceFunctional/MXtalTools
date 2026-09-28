@@ -4,6 +4,7 @@ A script for loading a batch of molecules and optimizing them against a given pr
 import gc
 import json
 import os
+import pickle
 import time
 from pathlib import Path
 from time import sleep
@@ -15,7 +16,7 @@ from tqdm import tqdm
 from mxtaltools.common.config_processing import load_yaml, dict2namespace
 from mxtaltools.common.utils import is_cuda_oom
 from mxtaltools.crystal_search.run_state import RunLease, StopRequest, atomic_json_dump, atomic_torch_save, \
-    committed_outputs
+    committed_outputs, read_json
 from mxtaltools.crystal_search.utils import get_initial_state, init_samples_to_optim, parse_args, parse_opt_config, \
     recover_opt_state, process_target
 from mxtaltools.dataset_utils.utils import collate_data_list
@@ -103,17 +104,28 @@ def _coordination(config):
                 maybe_curate=coordinator.maybe_curate)
 
 
-def _hop_batch(config, samples_to_optim, cursor, num_samples, coord, device, batch_idx):
+HOP_WAIT = 'hop parents not available yet'
+
+
+class HopParentsUnavailable(Exception):
+    """hop_parents.pt stayed missing or unreadable for longer than the job's hop wait."""
+
+
+def _hop_batch(config, samples_to_optim, cursor, num_samples, coord, device, batch_idx, after_pass=0):
     """init_sample_method 'hops': starts are latent log-noise kicks of registry basins (the campaign's hop_parents.pt,
     rewritten by every curate pass), parents drawn with weight 1 / (1 + hop starts so far), seeded by
-    opt_seed + batch_idx * 10000. Each start's dataset_index is its parent basin. None when no parent is eligible."""
+    opt_seed + batch_idx * 10000. Each start's dataset_index is its parent basin.
+    Returns HOP_WAIT while the file is missing or unreadable (no pass has written it yet, or a read failed), and also
+    when it lists no parent but was written by a pass older than after_pass (a pass that may not yet have seen this
+    job's own last shard, whose children could become parents). None only when a pass numbered >= after_pass lists no
+    eligible parent: the stream is exhausted."""
     path = os.path.join(coord['dir'], 'hop_parents.pt')
     try:
         hp = torch.load(path, weights_only=False)
-    except Exception:  # noqa: BLE001 -- no file yet (the coordinator has not run) or mid-replace: no parents now
-        return None
+    except (OSError, EOFError, RuntimeError, pickle.UnpicklingError):
+        return HOP_WAIT
     if len(hp['basin']) == 0:
-        return None
+        return None if int(hp.get('passes', 0)) >= after_pass else HOP_WAIT
     if hp.get('energy_model_id') != coord['model_id']:
         raise ValueError(f"{path} lists parents scored by {hp.get('energy_model_id')!r}, this job uses "
                          f"{coord['model_id']!r}")
@@ -176,6 +188,13 @@ def _search_loop(config, samples_to_optim, target, device, data_mode, out_path, 
     running_min = min((float(getattr(r, final_key)) for r in opt_outs if final_key in r.keys()), default=None)
     if hops_mode and coord is None:
         raise ValueError("init_sample_method 'hops' draws its starts from a campaign: set cfg:coord_dir")
+    # hop mode: how long a job waits for hop_parents.pt (the first curate pass may be running in another job, or a
+    # killed curator's lease must go stale first: max(3 x curate interval, 3600 s)), and the pass that must list no
+    # parent before the stream counts as exhausted (a pass that started after this job's last shard)
+    curate_every = (coord or {}).get('curate_every_s') or 900.0
+    hop_wait = dict(since=None, limit=float(getattr(config, 'coord_hop_wait_s', None)
+                                            or max(3 * curate_every, 3600.0) + 1800.0),
+                    poll=float(getattr(config, 'coord_hop_poll_s', None) or 60.0), after_pass=0, told=False)
     # cfg:oom_ceiling: after an OOM at batch size B, growth stops at 0.95 B (probing 5% higher after 10 clean batches)
     ceiling = dict(value=None, clean=0)
 
@@ -186,6 +205,28 @@ def _search_loop(config, samples_to_optim, target, device, data_mode, out_path, 
         if reason is not None:  # between batches: every completed batch is saved, a later resume continues
             print(f"{config.run_name}: stopping at cursor {cursor} ({reason})")
             break
+        hop_starts = None
+        if hops_mode:  # drawn before the batch bookkeeping, so waiting consumes no batch index or attempt
+            hop_starts = _hop_batch(config, samples_to_optim, cursor, num_samples, coord, device, batch_idx + 1,
+                                    after_pass=hop_wait['after_pass'])
+            if hop_starts is HOP_WAIT:  # bounded: the loop top re-runs maybe_curate and re-checks the stop files
+                hop_wait['since'] = hop_wait['since'] or time.time()
+                waited = time.time() - hop_wait['since']
+                if waited > hop_wait['limit']:
+                    raise HopParentsUnavailable(
+                        f"{config.run_name}: no usable hop_parents.pt in {coord['dir']} after {waited:.0f} s (limit "
+                        f"{hop_wait['limit']:.0f} s): is any job running the curate pass? Resubmit once it exists.")
+                if not hop_wait['told']:
+                    print(f"{config.run_name}: {HOP_WAIT} (missing, unreadable, or not yet from a pass after this "
+                          f"job's last shard); waiting up to {hop_wait['limit']:.0f} s")
+                    hop_wait['told'] = True
+                sleep(hop_wait['poll'])
+                continue
+            hop_wait.update(since=None, told=False)
+            if hop_starts is None:
+                print(f"{config.run_name}: no eligible hop parent in the campaign (the stream is exhausted); "
+                      f"stopping at cursor {cursor}")
+                break
         crystal_batch, opt_config = None, {}
         if attempt['cursor'] != cursor:
             attempt.update(cursor=cursor, n=0, t0=time.time())
@@ -195,10 +236,7 @@ def _search_loop(config, samples_to_optim, target, device, data_mode, out_path, 
         try:
             batch_idx += 1
             if hops_mode:
-                crystal_batch = _hop_batch(config, samples_to_optim, cursor, num_samples, coord, device, batch_idx)
-                if crystal_batch is None:
-                    print(f"{config.run_name}: no eligible hop parent in the campaign; stopping at cursor {cursor}")
-                    break
+                crystal_batch = hop_starts
             else:
                 crystal_batch = collate_data_list(samples_to_optim[cursor:cursor + config.batch_size]).to(device)
                 if (prev_best_samples is None) or (
@@ -267,7 +305,11 @@ def _search_loop(config, samples_to_optim, target, device, data_mode, out_path, 
                                dict(n_relaxations=n_relax or 0, n_starts=n_starts, row_evals=mlip_evals,
                                     row_evals_other=other_evals, n_attempts=attempt['n'],
                                     wall_s=time.time() - attempt['t0'], gpu=coord['gpu'],
-                                    opt_seed=getattr(config, 'opt_seed', None), energy_model_id=coord['model_id']))
+                                    opt_seed=getattr(config, 'opt_seed', None), energy_model_id=coord['model_id'],
+                                    code_version=getattr(config, 'mxt_commit', None)))
+                if hops_mode:  # an empty parent list counts as exhaustion only from a pass started after this shard
+                    hb = read_json(os.path.join(coord['dir'], 'heartbeat.json')) or {}
+                    hop_wait['after_pass'] = int(hb.get('passes', 0)) + 2
 
             cursor = min(cursor + config.batch_size, num_samples)  # a final partial batch ends at num_samples
             atomic_json_dump({'cursor': cursor, 'batch_idx': batch_idx, 'num_samples': num_samples,
