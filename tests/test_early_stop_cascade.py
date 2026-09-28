@@ -88,3 +88,23 @@ def test_quorum_counts_active_rows_only():
     rec2[:, 0] = torch.cumsum(torch.full((T, 18), 1e-2), 0)  # 20 of 21 active rows converged: above 95%
     assert cou.check_convergence(rec2, T, 1e-5, None, None, active=torch.ones(21, dtype=torch.bool)).all()
     assert cou.check_convergence(rec2, T, 1e-5, None, None).all(), 'the default path closes the same batch'
+
+
+def test_ema_trajectory_is_the_plain_normalised_ema_and_check_convergence_compares_it():
+    """A constant trajectory smooths to itself (it used to come out x alpha), and a row converges when the mean absolute
+    step of its smoothed trajectory over the last 50 steps is below convergence_eps, in the parameters' own units."""
+    torch.manual_seed(0)
+    c = torch.full((80, 3, 18), 2.5)
+    assert torch.allclose(cou.ema_trajectory(c), c)
+    x = torch.randn(80, 3, 18).cumsum(0)
+    alpha, want = 0.1, torch.empty_like(x)
+    for t in range(80):  # the definition, term by term
+        w = (1 - alpha) ** torch.arange(t, -1, -1, dtype=x.dtype)
+        want[t] = (w.view(-1, 1, 1) * x[:t + 1]).sum(0) / w.sum()
+    assert torch.allclose(cou.ema_trajectory(x, alpha), want, atol=1e-5)
+    rec = torch.zeros(80, 4, 18)
+    rec[:, 0] = torch.linspace(0, 0.5, 80)[:, None]  # moves 0.5 / 79 per step: smoothed step ~6.3e-3
+    rec[:, 1] = torch.linspace(0, 0.005, 80)[:, None]  # ~6.3e-5 per step
+    step = (cou.ema_trajectory(rec)[30:80].diff(dim=0).abs().mean((0, 2)))
+    conv = cou.check_convergence(rec, 80, 1e-3, None, None)
+    assert conv.tolist() == (step < 1e-3).tolist() == [False, True, True, True]

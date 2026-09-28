@@ -677,15 +677,17 @@ def traj_fig(x, y, names=[None, None], yrange=None, xrange=None):
 
 def ema_trajectory(traj: torch.Tensor, alpha: float = 0.1) -> torch.Tensor:
     """
-    Vectorized EMA along time (dim=0).
-    traj: [T, N, D]
+    Vectorized normalised EMA along time (dim=0): entry t is sum_{s<=t} (1 - alpha)^(t - s) traj[s] divided by
+    sum_{s<=t} (1 - alpha)^(t - s), so a constant trajectory gives that constant. traj: [T, N, D]. (Until 2026-09-28
+    the result was also multiplied by alpha, so check_convergence's convergence_eps acted as a bound 1 / alpha = 10x
+    looser than written; configs written before then carry thresholds tuned against that.)
     """
     T = traj.size(0)
     w = (1 - alpha) ** torch.arange(T, device=traj.device, dtype=traj.dtype)  # [T]
     w = w.flip(0).view(T, 1, 1)  # decay weights
 
     # weighted cumulative sum
-    numer = torch.cumsum(alpha * traj * w, dim=0)
+    numer = torch.cumsum(traj * w, dim=0)
     denom = torch.cumsum(w, dim=0)
 
     return numer / denom

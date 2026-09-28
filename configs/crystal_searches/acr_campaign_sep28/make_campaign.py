@@ -55,6 +55,9 @@ def base_cfg():
     for st in cfg['opt']:
         assert st['centroid_boundary'] == 'wrap' and st['enforce_reduced'] is False
         st['show_tqdm'] = False
+        # ema_trajectory returned 0.1 x the smoothed trajectory until 2026-09-28, so the sep27 thresholds acted 10x
+        # looser than written; x10 keeps this campaign's relaxations stopping exactly where they did
+        st['convergence_eps'] = 10 * float(st['convergence_eps'])
     cfg['opt'][-1].update(CASCADE)
     return cfg
 

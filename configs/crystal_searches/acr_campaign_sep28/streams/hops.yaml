@@ -29,7 +29,7 @@ opt:
   compression_factor: 1.0
   cutoff: 10
   init_lr: 0.05
-  convergence_eps: 0.001
+  convergence_eps: 0.01
   optimizer_func: rprop
   anneal_lr: false
   grad_norm_clip: 0.1
@@ -42,7 +42,7 @@ opt:
   compression_factor: 0.0
   cutoff: 10
   init_lr: 0.01
-  convergence_eps: 1.0e-05
+  convergence_eps: 0.0001
   optimizer_func: rprop
   anneal_lr: true
   grad_norm_clip: 0.1

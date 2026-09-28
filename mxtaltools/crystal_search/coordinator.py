@@ -105,8 +105,10 @@ class CampaignConfig:
     rdf_batch: int = 32
     # hop stream (optional): stream name, basins within window_kT of the reference are parents, at most max_per_basin
     # hop starts each and max_generation generations deep (a basin first found by a hop is one generation below its
-    # parent); log_noise is the (low, high) latent log-noise range of the kicks. Termination: the quota and the depth
-    # cap bound the number of hop starts; a hop job with no eligible parent stops.
+    # parent); log_noise is the (low, high) latent log-noise range of the kicks; exhaust_settle_s (default 3600) is how
+    # long the hop stream must bring no new work, with no eligible parent, before it counts as stopped for the campaign
+    # STOP. Termination: the quota and the depth cap bound the number of hop starts; a hop job with no eligible parent
+    # stops.
     hops: Optional[dict] = None
 
     @staticmethod
@@ -340,7 +342,6 @@ def ingest_priors(reg, cfg):
     MolCrystalData carrying energy_key and an 'energy_model_id' attribute (or the file sits beside <file>.model_id), or
     a compact dict (params, handedness, energy, energy_model_id). A file is keyed by its path and the SHA1 of its
     content, so a file whose content has changed is ingested again (its states are added; earlier hits stay)."""
-    from mxtaltools.dataset_utils.utils import collate_data_list
     for path in cfg.priors:
         try:
             key = f'prior:{os.path.abspath(path)}@{_file_sha1(path)[:16]}'  # new content at a path is new knowledge
@@ -349,34 +350,45 @@ def ingest_priors(reg, cfg):
             continue
         if key in reg['ingested']:
             continue
-        lst = torch.load(path, weights_only=False)
-        if isinstance(lst, dict) and 'params' in lst:  # compact prior: params [N, 18], handedness, energy, model id
-            mid = lst.get('energy_model_id')
-            if mid != cfg.energy_model_id:
-                reg['refused'].append(dict(run=key, cursor=-1, reason=f'prior scored by {mid!r}, campaign model '
-                                                                      f'is {cfg.energy_model_id!r}'))
-            else:
-                n = len(lst['params'])
-                _ingest_rows(reg, cfg, torch.as_tensor(lst['params']).float(),
-                             torch.as_tensor(lst['handedness']).float().reshape(n, -1),
-                             torch.as_tensor(lst['energy']).float(),
-                             torch.as_tensor(lst.get('lj', torch.zeros(n))).float(), 'prior', key, 0)
+        try:
+            _ingest_prior_file(reg, cfg, path, key)
+        except Exception as e:  # noqa: BLE001 -- one broken file must not stop every pass; fixing it changes its key
+            reg['refused'].append(dict(run=key, cursor=-1, reason=f'prior not ingested ({type(e).__name__}: '
+                                                                  f'{str(e)[:120]})'))
             reg['ingested'].append(key)
-            continue
-        side = path + '.model_id'
-        mid = open(side).read().strip() if os.path.exists(side) else getattr(lst[0], 'energy_model_id', None)
+
+
+def _ingest_prior_file(reg, cfg, path, key):
+    """One prior file of ingest_priors, under its key: ingested, or refused for another energy model."""
+    from mxtaltools.dataset_utils.utils import collate_data_list
+    lst = torch.load(path, weights_only=False)
+    if isinstance(lst, dict) and 'params' in lst:  # compact prior: params [N, 18], handedness, energy, model id
+        mid = lst.get('energy_model_id')
         if mid != cfg.energy_model_id:
-            reg['refused'].append(dict(run=key, cursor=-1, reason=f'prior scored by {mid!r}, campaign model is '
-                                                                  f'{cfg.energy_model_id!r}'))
-            reg['ingested'].append(key)
-            continue
-        b = collate_data_list([c.clone() for c in lst], exclude_keys=['rdf', 'fingerprint', 'rdf_bins'])
-        params = b.full_cell_parameters().detach().float()
-        hand = b.aunit_handedness.detach().float().reshape(len(lst), -1)
-        E = torch.tensor([float(getattr(c, cfg.energy_key)) for c in lst])
-        lj = torch.tensor([float(getattr(c, 'lj', 0.0)) for c in lst])
-        _ingest_rows(reg, cfg, params, hand, E, lj, 'prior', key, 0)
+            reg['refused'].append(dict(run=key, cursor=-1, reason=f'prior scored by {mid!r}, campaign model '
+                                                                  f'is {cfg.energy_model_id!r}'))
+        else:
+            n = len(lst['params'])
+            _ingest_rows(reg, cfg, torch.as_tensor(lst['params']).float(),
+                         torch.as_tensor(lst['handedness']).float().reshape(n, -1),
+                         torch.as_tensor(lst['energy']).float(),
+                         torch.as_tensor(lst.get('lj', torch.zeros(n))).float(), 'prior', key, 0)
         reg['ingested'].append(key)
+        return
+    side = path + '.model_id'
+    mid = open(side).read().strip() if os.path.exists(side) else getattr(lst[0], 'energy_model_id', None)
+    if mid != cfg.energy_model_id:
+        reg['refused'].append(dict(run=key, cursor=-1, reason=f'prior scored by {mid!r}, campaign model is '
+                                                              f'{cfg.energy_model_id!r}'))
+        reg['ingested'].append(key)
+        return
+    b = collate_data_list([c.clone() for c in lst], exclude_keys=['rdf', 'fingerprint', 'rdf_bins'])
+    params = b.full_cell_parameters().detach().float()
+    hand = b.aunit_handedness.detach().float().reshape(len(lst), -1)
+    E = torch.tensor([float(getattr(c, cfg.energy_key)) for c in lst])
+    lj = torch.tensor([float(getattr(c, 'lj', 0.0)) for c in lst])
+    _ingest_rows(reg, cfg, params, hand, E, lj, 'prior', key, 0)
+    reg['ingested'].append(key)
 
 
 def ingest_shards(reg, cfg, coord_dir):
@@ -443,9 +455,10 @@ def lineage_returns(reg):
 def backfill_lineage(reg, cfg, coord_dir):
     """Rebuild the lineage record (hits['parent'], basin_parent) from the shards, for a registry written before hits
     carried their hop parent or extended since by such code. Hits are appended one per admitted row of each ingested
-    shard, in row order, so each run of consecutive hits with one (stream, run, cursor) is matched to the rows of
-    that shard that the admission filter (physical, within window_kT of the reference) passes, which must carry exactly
-    the hits' energies in order; a hop-stream hit then takes its row's dataset_index (the basin its start was kicked
+    shard, in row order, and the admitted rows are the shard's physical rows at or below the admission window's edge
+    at that time; so each run of consecutive hits with one (stream, run, cursor) is matched to the lowest-energy
+    physical rows of that shard, as many as the hits, which must carry exactly the hits' energies in row order (no
+    dependence on the current reference); a hop-stream hit then takes its row's dataset_index (the basin its start was kicked
     from) as its parent. A basin's parent is that of its first hit, the one that opened it. A group that does not match
     as a whole (a missing, rewritten or ambiguous shard) keeps -1 and is counted: MACE energies are quantised, so
     energy ties make a partial match unsafe. Appends a record to
@@ -454,7 +467,6 @@ def backfill_lineage(reg, cfg, coord_dir):
     n = len(h['basin'])
     parent = [-1] * n
     hop_stream = (cfg.hops or {}).get('stream', 'hops') if cfg.hops else None
-    ref = _energy_ref(cfg, reg)  # a fixed energy_ref replays the admission window exactly; a moving one may not match
     n_hop = n_miss = 0
     i = 0
     while i < n:
@@ -469,12 +481,13 @@ def backfill_lineage(reg, cfg, coord_dir):
             if len(files) == 1:
                 try:
                     s = torch.load(files[0], weights_only=False)
-                    keep = physical(s['params'], s['lj'])  # the admission filter _ingest_rows applied
-                    if np.isfinite(ref):
-                        keep &= s['energy'] <= ref + cfg.window_kT * cfg.kT
-                    idx = torch.nonzero(keep).flatten()
-                    if [float(e) for e in s['energy'][idx].tolist()] == [float(e) for e in h['energy'][i:j]]:
-                        parents = [int(d) for d in s['dataset_index'][idx].tolist()]
+                    phys = torch.nonzero(physical(s['params'], s['lj'])).flatten()
+                    if j - i <= len(phys):  # admitted = physical rows at or below the window's edge at ingestion
+                        e = s['energy'][phys]
+                        edge = torch.sort(e).values[j - i - 1]
+                        idx = phys[e <= edge]
+                        if [float(x) for x in s['energy'][idx].tolist()] == [float(x) for x in h['energy'][i:j]]:
+                            parents = [int(d) for d in s['dataset_index'][idx].tolist()]
                 except Exception:  # noqa: BLE001 -- an unreadable shard leaves its hits unmatched, counted below
                     parents = None
             if parents is None:  # missing, rewritten or ambiguous shard: energy ties make a partial match unsafe
@@ -690,8 +703,12 @@ def curate(coord_dir):
         stats['hop_parents'] = write_hop_parents(coord_dir, cfg, reg)
         hs = cfg.hops.get('stream', 'hops')
         w_hop = float(reg['effort'].get(hs, {}).get('row_evals', 0.0))
-        idle = w_hop == reg.get('hop_effort_seen', -1.0)  # no hop batch finished since the previous pass
-        reg['hop_effort_seen'] = w_hop
+        now = time.time()
+        if w_hop != reg.get('hop_effort_seen', -1.0):  # a hop batch finished since the previous pass
+            reg['hop_effort_seen'], reg['hop_effort_since'] = w_hop, now
+        # settled: no new hop work for exhaust_settle_s, longer than a hop batch takes, so none can still be in flight;
+        # if every hop job has ended, the effort stays put and this holds after that span (it cannot wait forever)
+        idle = now - reg.get('hop_effort_since', now) >= float(cfg.hops.get('exhaust_settle_s', 3600.0))
         if hs in done and stats['hop_parents'] == 0 and idle:  # nothing to kick and nothing in flight: only another
             done[hs] = True                                     # stream's new basin could revive it
     campaign_stop = campaign_stop or (bool(done) and all(done.values()))
@@ -771,7 +788,8 @@ def run_loop(coord_dir, interval_s=900.0, max_hours=None):
             stopped_passes = stopped_passes + 1 if campaign_stop else 0
         except RunLeaseLost as e:  # a search job is curating: this interval's pass is its own
             print(f'coordinator: pass skipped, curator lease held ({e})')
-        except Exception as e:  # noqa: BLE001 -- one failed pass must not end the curator; max_hours bounds the loop
+        except Exception as e:  # noqa: BLE001 -- one failed pass must not end the curator (the campaign stop or,
+            # when given, max_hours ends the loop; without max_hours, the job's walltime does)
             print(f'coordinator: pass failed ({type(e).__name__}: {e}); retrying next interval')
         if stopped_passes >= 2:
             print('coordinator: campaign stopped; exiting')

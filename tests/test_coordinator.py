@@ -19,6 +19,7 @@ crystal_search/coordinator.py: shards, the basin registry, the stopping rule, an
 CPU only.
 """
 import json
+import math
 import os
 from pathlib import Path
 
@@ -374,7 +375,8 @@ def test_the_stop_streak_advances_only_on_new_work(acridine, tmp_path):
 
 def test_a_stopped_stream_stays_stopped_and_an_exhausted_hop_stream_lets_the_campaign_stop(acridine, tmp_path,
                                                                                           monkeypatch):
-    coord_dir, cfg = _campaign(tmp_path, acridine[0], hops=dict(stream='hops', window_kT=100.0, max_per_basin=1),
+    coord_dir, cfg = _campaign(tmp_path, acridine[0], hops=dict(stream='hops', window_kT=100.0, max_per_basin=1,
+                                                              exhaust_settle_s=0.5),
                                streams={'random': dict(Z={'b2': 1e12}, min_relaxations=0, min_hits=1),
                                         'hops': dict(Z={'b2': 1e12}, min_relaxations=0, min_hits=1)})
     seeds = _seeds(cfg, acridine[1], 6)
@@ -392,6 +394,10 @@ def test_a_stopped_stream_stays_stopped_and_an_exhausted_hop_stream_lets_the_cam
     torch.save(reg, coord_dir / 'registry.pt')
     _, d, stop = co.curate(str(coord_dir))
     assert not stop, 'the pass that finds the list empty after new hop work may still have hop batches in flight'
+    _, d, stop = co.curate(str(coord_dir))
+    assert not stop, 'a second pass at once is not enough: no new hop work must hold for exhaust_settle_s'
+    import time
+    time.sleep(0.6)
     _, d, stop = co.curate(str(coord_dir))
     assert not d['hops']['stop'] and stop and (coord_dir / 'STOP').exists(), \
         'no parent left, no new hop work since the last pass, every other stream stopped: the campaign stops'
@@ -595,3 +601,41 @@ def test_run_loop_survives_a_failed_pass(acridine, tmp_path, monkeypatch, capsys
     monkeypatch.setattr(co, 'curate_locked', broken)
     co.run_loop(str(coord_dir), interval_s=0.0, max_hours=1e-9)  # returns through max_hours, not the exception
     assert 'pass failed (OSError' in capsys.readouterr().out
+
+
+
+def test_a_prior_that_fails_to_load_is_refused_and_a_corrected_one_is_ingested(acridine, tmp_path):
+    prior = tmp_path / 'known.pth'
+    prior.write_bytes(b'not a torch file')
+    coord_dir, cfg = _campaign(tmp_path, acridine[0], priors=[str(prior)])
+    co.curate(str(coord_dir))  # used to raise out of every pass
+    reg = torch.load(coord_dir / 'registry.pt', weights_only=False)
+    assert any('prior not ingested' in r['reason'] for r in reg['refused']) and len(reg['hits']['basin']) == 0
+    b = collate_data_list(_seeds(cfg, acridine[1], 2)[:1])
+    torch.save(dict(params=b.full_cell_parameters().detach().float(), handedness=b.aunit_handedness.reshape(1, -1).float(),
+                    energy=torch.full((1,), -1000.0), energy_model_id='elj'), prior)
+    co.curate(str(coord_dir))
+    assert len(torch.load(coord_dir / 'registry.pt', weights_only=False)['hits']['basin']) == 1
+
+
+def test_backfill_matches_the_admitted_rows_whatever_the_reference_was(acridine, tmp_path):
+    """Rows admitted at ingestion are a shard's physical rows at or below the window's edge at that time; the match
+    takes the lowest physical rows, as many as the hits, so a reference that has fallen since does not break it."""
+    coord_dir, cfg = _campaign(tmp_path, acridine[0], hops=dict(stream='hops'))
+    d = coord_dir / 'shards' / 'hops_0'
+    d.mkdir(parents=True)
+    params = torch.zeros(4, 18)
+    params[:, :3], params[:, 3:6] = 10.0, math.pi / 2  # physical cells
+    torch.save(dict(run='hops_0', stream='hops', cursor=0, batch_idx=0, params=params, handedness=torch.ones(4, 2),
+                    energy=torch.tensor([-5.0, -3.0, -9.0, -1.0]), lj=torch.zeros(4),
+                    dataset_index=torch.tensor([7, 8, 9, 6]), energy_model_id='elj'), d / '00000000_000000.pt')
+    reg = co.new_registry(cfg)
+    reg['hits'].pop('parent')
+    reg.pop('basin_parent')
+    for e in (-5.0, -3.0, -9.0):  # admitted then: every physical row at or below -3, in row order
+        for k, v in zip(('basin', 'stream', 'energy', 'run', 'cursor'), (0, 'hops', e, 'hops_0', 0)):
+            reg['hits'][k].append(v)
+    reg['basin_E'] = [-12.0]  # the reference has fallen since: a replayed window would now drop -3 and -5
+    reg['basin_parent'] = [-1]
+    hop_hits, unmatched = co.backfill_lineage(reg, cfg, str(coord_dir))
+    assert (hop_hits, unmatched) == (3, 0) and reg['hits']['parent'] == [7, 8, 9]
