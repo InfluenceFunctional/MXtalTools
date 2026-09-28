@@ -6,9 +6,10 @@ Every quantity crossing the GFN boundary is a DIFFERENCE or a ROUNDTRIP: lattice
 energy is `crystal_pot - gas_pot`, latent transforms are `f-inverse(f(x))`,
 standardization is `destd(std(x))`, and the MLIP suites assert `path A == path B`.
 Each of those passes for an entire FAMILY of wrong absolute values. That is not a
-gap in the tests; it is a property of their shape. A real instance: MACE lattice
-energy carries a +11836.127 kJ/mol per-molecule offset that cancels in every
-difference and was noticed downstream rather than by any test.
+gap in the tests; it is a property of their shape. A real instance: on CPU, MACE
+lattice energy carried a +11836.127 kJ/mol per-molecule offset that cancelled in
+every difference and was noticed downstream rather than by any test (a gas-leg
+cell-aliasing bug, fixed 2026-09-28; tests/test_mace_gas_leg_cpu.py).
 
 These tests pin ABSOLUTE values, so that family is no longer invisible.
 

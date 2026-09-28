@@ -43,7 +43,7 @@ Live instances:
 
 | Site | Defect | Why it passes today |
 |---|---|---|
-| `dataset_utils/data_class_methods/crystal_analysis.py` (MACE leg) | MACE lattice energy carries a per-molecule E₀ offset of **+11836.127 kJ/mol** | Cancels in every difference. Recorded only downstream, in GFN's `nikos_comparison/README.md` — a violation of `AGENTS.md:57` (downstream is not the home of MXtalTools rationale) |
+| `dataset_utils/data_class_methods/crystal_analysis.py` (MACE leg) | MACE lattice energy carries a per-molecule E₀ offset of **+11836.127 kJ/mol**. **Corrected 2026-09-28:** not an E₀ offset -- a CPU-only aliasing bug in the MACE gas leg (`get_neighborhood` rewrote a numpy view of `T_fc` in place), fixed in `4484d4cb`; pinned by `tests/test_mace_gas_leg_cpu.py`. | Cancels in every difference. Recorded only downstream, in GFN's `nikos_comparison/README.md` — a violation of `AGENTS.md:57` (downstream is not the home of MXtalTools rationale) |
 | `dataset_utils/data_class_methods/crystal_ops.py:1136-1137, :1153-1154` | `standardize_cell_lengths` / `destandardize_cell_lengths` re-declare the same three literals inline, then collapse them with `.mean()*ones_like` — discarding the per-axis anisotropy the docstring advertises | Symmetric, so the roundtrip is exact **for any pair of values**. A test cannot tell the intended flattening from a typo |
 | `common/sym_utils.py:209, :224` | `niggli_reduction_penalty(cell_lengths, cell_angles)` vs `cell_reduction_penalty(cell_angles, cell_lengths)` — **opposite positional order**, both `.split(1, dim=1)` into three | A swapped bind returns finite, plausible numbers |
 | `mlip_interfaces/AL_mace_utils.py:230-231`, `uma_utils.py:382-383, :684-685` | A crashed MLIP forward returns **zeros**, not NaN and not an exception | `(0/(sym_mult·z_prime) − gas_pot)·96.485` is a number |
@@ -203,7 +203,7 @@ The original scoping proposed four GitHub Actions tiers. **That is architecture 
 
 **Tranche 3 — MLIP, nightly.** `mace_pot`, `mace_gas_pot`, `uma_pot`, `uma_gas_pot` pinned **separately, not only as their difference**. This is the one structure that would have caught the 11836.127 offset. Plus an invariance test: score the same physical cell at two `z_prime`/`sym_mult` factorisations and assert the per-molecule lattice energy is unchanged — an E₀ residue moves with the divisor, a correct cancellation does not. Run it on the **eLJ** leg too, since GFN divides eLJ by `z_prime` itself while MXtalTools divides the MLIP legs by `sym_mult · z_prime`.
 
-**Restate the 11836.127 kJ/mol observation locally in MXtalTools**, with its measurement conditions, per `AGENTS.md:57`.
+**Restate the 11836.127 kJ/mol observation locally in MXtalTools**, with its measurement conditions, per `AGENTS.md:57`. *Done 2026-09-28: the fix commit `4484d4cb` and `tests/test_mace_gas_leg_cpu.py` state it; see the §1 table.*
 
 **OUT:** anything requiring `D:/crystal_datasets` or CCDC. **No Z′>1 MLIP reference until the `mol2ucell` kwarg drop is decided** (see R11) — restrict to Z′=1 and record the restriction in `refs.json`.
 
@@ -536,7 +536,7 @@ Named so that no one mistakes this document for measurement.
 
 **Verified by execution in this session:** the collection failure and its exit code; the 22.6 s suite; `import mxtaltools.modeller` and `import main` both failing; the removal date of `sample_about_crystal`; the 75-pair / 215-statement / 32-module / 73-file boundary and its one private symbol; `AGENTS.md` being untracked; the config counts and the 876 dangling bases; `configs/crystal_searches/` receiving 368 of 368 recent config additions; GFN's two imports of `examples/`; the eleven directories missing `__init__.py`; the existence and contents of `mol_building.py` and `normalizer_reduction/`; `conftest.py` importing GFN's `gpu_guard`; the 250/38/0 logging census; the 86 hardcoded absolute paths; and each of the six named code defects (bool scatter, unbound `niggli_overlap`, the reversed `sym_utils` argument orders, the duplicated `correct_Ip_directions`, the `randn_like` grad jitter, the ring-bank key mismatch).
 
-**Reported by survey, not re-executed here — treat as leads:** the 1.03°/29.98° grad-jitter distribution; the ~50 % handedness randomness; the 30–50 % eLJ gap between orientation settings; the mixed-batch RDF channel counts (28 / 15 / 28); the 26.5× LUT speedup; the 226 ms cold / 5.9 ms warm `space_group_info` import; the 11836.127 kJ/mol E₀ offset; the conformer prior's kcal/mol figures.
+**Reported by survey, not re-executed here — treat as leads:** the 1.03°/29.98° grad-jitter distribution; the ~50 % handedness randomness; the 30–50 % eLJ gap between orientation settings; the mixed-batch RDF channel counts (28 / 15 / 28); the 26.5× LUT speedup; the 226 ms cold / 5.9 ms warm `space_group_info` import; the 11836.127 kJ/mol E₀ offset (resolved 2026-09-28: a CPU aliasing bug, not E₀); the conformer prior's kcal/mol figures.
 
 **Explicitly unknown, and what each blocks:**
 
