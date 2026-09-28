@@ -11,7 +11,7 @@ identity_note: 'COMPACK rule (20/20 molecules; isotonic P(match) >= 0.95), campa
   calibrate on 240 pairs of 3000 sep27 end states, 2026-09-27: 0.050 [0.040, 0.060]'
 energy_ref: -62.812
 window_kT: 3.0
-hard_cap: 30000000.0
+hard_cap: 100000000.0
 passes_to_confirm: 2
 rdf_batch: 32
 streams:

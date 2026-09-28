@@ -63,7 +63,7 @@ A stream stops when this quantity exceeds Z in both bands, on two consecutive cu
 - 1 kT band: Z = 1e6 row-evaluations;
 - and only after at least 2000 relaxations and at least 20 of its states in the band.
 
-A stream whose `STOP.<stream>` exists stays stopped. The campaign stops, by writing `STOP`, when every stream has stopped (the hop stream counts as stopped when no basin is left to kick), or at 3e7 row-evaluations (about 7e4 relaxations) in total.
+A stream whose `STOP.<stream>` exists stays stopped. The campaign stops, by writing `STOP`, when every stream has stopped (the hop stream counts as stopped when no basin is left to kick), or at 1e8 row-evaluations (about 4e5 relaxations) in total. The cap was 3e7 at launch; on 2026-09-28 (pass 60, 1.96e7 used) it was raised to 1e8 by editing the frozen `coord.yaml` in the campaign directory, which the curator re-reads every pass.
 
 The sep27 data replayed through the coordinator at the 0.050 cut (2026-09-27; 9.3e6 row-evaluations over five streams, before the lineage rule above) left every stream running: the effort per new 2 kT basin was 0.41–0.62 of its value at the old 0.085 cut, and extrapolated, only the random stream reached Z before the 3e7 cap. At this cut the cap, not the rule, is likely to end most streams.
 

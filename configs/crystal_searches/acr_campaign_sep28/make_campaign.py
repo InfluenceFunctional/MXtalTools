@@ -14,7 +14,7 @@ when the last pass is more than an hour old, i.e. when that CPU job is gone.
 Stopping (coordinator): per stream, stop when effort / 90%-upper-bound(basins seen once from it) exceeds Z, for both
 bands (2 kT: Z = 1e5 MACE row-evaluations, ~230 random relaxations per new basin; 1 kT: Z = 1e6), after >= 2000
 relaxations and >= 20 states in the band, on two consecutive passes; campaign STOP when every stream stops or at the
-hard cap 3e7 row-evaluations (~7e4 relaxations). Basins: RDF leader clustering at 0.050 (acridine envwise; the COMPACK
+hard cap 1e8 row-evaluations (~4e5 relaxations; 3e7 until 2026-09-28, raised in the frozen copy while running). Basins: RDF leader clustering at 0.050 (acridine envwise; the COMPACK
 rule of gfn_diffusion eval/campaign_compack.py -- one packing = 20/20 molecules, cut = largest distance with isotonic
 P(match) >= 0.95 -- on 240 pairs of 3000 sep27 end states, 2026-09-27), within 3 kT of -62.812, seeded with
 priors/known_map.pth (make_priors.py).
@@ -42,7 +42,7 @@ COORD = dict(sg=14, z_prime=2, energy_key='mace', kT=KT, bands_kT={'2kT': 2.0, '
              identity_note='COMPACK rule (20/20 molecules; isotonic P(match) >= 0.95), campaign_compack calibrate on 240 '
                            'pairs of 3000 sep27 end states, 2026-09-27: 0.050 [0.040, 0.060]',
              energy_ref=-62.812,
-             window_kT=3.0, hard_cap=3e7, passes_to_confirm=2, rdf_batch=32,
+             window_kT=3.0, hard_cap=1e8, passes_to_confirm=2, rdf_batch=32,
              streams={s: dict(Z={'2kT': 1e5, '1kT': 1e6}, min_relaxations=2000, min_hits=20) for s in SEEDS},
              hops=dict(stream='hops', window_kT=2.0, max_per_basin=32, max_generation=3, log_noise=[-0.5, -0.5]))
 
