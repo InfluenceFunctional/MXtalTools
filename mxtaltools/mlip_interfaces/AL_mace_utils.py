@@ -68,9 +68,12 @@ def mxt_crystal_to_mace_atomicdata(batch,
     cell = T_fc[ind].T
     sample_z = mol_z[mask].repeat(sym_mult[ind])
 
+    # the cell is COPIED: on a CPU tensor this numpy array is otherwise a view of
+    # T_fc, and get_neighborhood's non-periodic branch writes into it in place -- see
+    # the matching copy in batch_to_mace_atomicdata_hoisted
     edge_index, shifts, unit_shifts, cell = get_neighborhood(
         positions=pos.cpu().detach().numpy(), cutoff=cutoff,
-        pbc=[pbc, pbc, pbc], cell=cell.cpu().detach().numpy()
+        pbc=[pbc, pbc, pbc], cell=cell.cpu().detach().numpy().copy()
     )
     indices = atomic_numbers_to_indices(sample_z.cpu().numpy(), z_table=z_table)
     one_hot = to_one_hot(torch.tensor(indices, dtype=torch.long).unsqueeze(-1), num_classes=len(z_table))
@@ -630,7 +633,13 @@ def batch_to_mace_atomicdata_hoisted(batch, force_rebuild, model, std_orientatio
 
     # --- the three host transfers, once each for the whole batch ---
     pos_np_all = pos_all.detach().cpu().numpy()
-    cell_np_all = batch.T_fc.transpose(-2, -1).detach().cpu().numpy()
+    # COPIED, not a view. On a CPU tensor `.cpu()` does not copy, so without it this
+    # array shares storage with batch.T_fc, and get_neighborhood's non-periodic branch
+    # writes its vacuum box into the cell IN PLACE. The pbc=False gas leg then
+    # overwrote T_fc, and compute_crystal_mace_on_mxt_batch rebuilt the positions
+    # through the overwritten T_fc -- a molecule stretched ~20x, one wrong energy
+    # for every input, on CPU only (on GPU `.cpu()` already copies).
+    cell_np_all = batch.T_fc.transpose(-2, -1).detach().cpu().numpy().copy()
     z_np_all = sample_z_all.detach().cpu().numpy()
 
     # --- one one-hot for the batch ---
