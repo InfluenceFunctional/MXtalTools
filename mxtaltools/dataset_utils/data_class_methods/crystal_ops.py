@@ -318,8 +318,12 @@ class MolCrystalOps:
     def latent_to_cell_params(self,
                               latents: torch.tensor,
                               skip_box_analysis: bool = False,
-                              skip_enforce_crystal_system: bool = False
+                              skip_enforce_crystal_system: bool = False,
+                              widen_to: Optional[torch.Tensor] = None,
                               ):
+        # widen_to ([num_graphs, 6 + 6 * max_z_prime], optional): per row and entry, the clamp bounds are widened
+        # just enough to include these values (None: unchanged). A hop kick passes the unclipped latents of the
+        # crystals it kicks, so a parent lying outside the box stays representable.
         """
         Transform from latent space to physical crystal parameters
         :param override_mode:
@@ -361,6 +365,9 @@ class MolCrystalOps:
         max_vals = torch.ones(latents.shape[-1], dtype=torch.float32, device=self.device)
         max_vals[
             0:2] = 1 - 1e-4  # don't let it explicitly touch 1 or it can make an effective orthorhombic cell, and really pisses off ASE
+        if widen_to is not None:  # a real crystal outside the box keeps its own value (its kicks stay local)
+            w = widen_to.to(device=self.device, dtype=min_vals.dtype)
+            min_vals, max_vals = torch.minimum(min_vals, w), torch.maximum(max_vals, w)
         self.set_cell_parameters(self.inv_latent_transform(latents.clamp(min=min_vals, max=max_vals)))
 
         if not skip_enforce_crystal_system:
@@ -737,15 +744,29 @@ class MolCrystalOps:
         noised_params = latents + torch.randn_like(latents) * noise_level
         self.latent_to_cell_params(noised_params)
 
-    def log_noise_latent_parameters(self, log_min: float, log_max: float, eps = 1e-6):
+    def log_noise_latent_parameters(self, log_min: float, log_max: float, eps = 1e-6,
+                                    keep_start_representable: bool = False):
+        # keep_start_representable (default False = unchanged): the step is added to the UNCLIPPED latents and every
+        # clip and clamp bound is widened per entry to include the starting value, so a crystal outside the latent box
+        # (e.g. a long reduced-cell axis) is kicked from itself, not from its clipped projection (a different crystal).
+        # A row whose starting latents lie inside every clip and decode bound gets the same result either way.
         # gauge-FREE -- same reasoning as noise_latent_parameters (P1 2026-08-24)
-        latents = self.latent_params(gauge_fix_free_axes=False)
+        if keep_start_representable:
+            self.canonicalize_zp_aunits()  # as latent_params does, without its clip
+            start = self.latent_transform(cell_params=self.full_cell_parameters())
+            latents = start
+        else:
+            latents = self.latent_params(gauge_fix_free_axes=False)
         rand_dir = torch.randn_like(latents)
         rand_dir = rand_dir / rand_dir.norm(dim=-1, keepdim=True)
         u = torch.rand(len(latents), device=self.device)
         rand_magnitude = 10 ** (log_min + (log_max - log_min) * u)
-        noised_latents = (latents + rand_dir * rand_magnitude[:, None]).clip(min=-1 + eps, max=1 - eps)
-        self.latent_to_cell_params(noised_latents)
+        noised_latents = latents + rand_dir * rand_magnitude[:, None]
+        if keep_start_representable:
+            noised_latents = noised_latents.clamp(min=torch.clamp(start, max=-1 + eps), max=torch.clamp(start, min=1 - eps))
+            self.latent_to_cell_params(noised_latents, widen_to=start)
+        else:
+            self.latent_to_cell_params(noised_latents.clip(min=-1 + eps, max=1 - eps))
         self.clean_cell_parameters(mode='hard')
 
     def zp1_std_cell_parameters(self):

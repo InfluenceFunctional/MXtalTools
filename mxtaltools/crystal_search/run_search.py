@@ -146,7 +146,9 @@ def _hop_batch(config, samples_to_optim, cursor, num_samples, coord, device, bat
     b.canonicalize_orientation()
     lo, hi = hp['log_noise']
     torch.manual_seed(seed)  # log_noise_latent_parameters draws from the global generator
-    b.log_noise_latent_parameters(float(lo), float(hi))
+    # kicked from the parent itself: a parent outside the latent box (a long reduced-cell axis; 1.7% of acridine
+    # states within 2 kT, 2026-09-28) was otherwise clipped into a different crystal before the kick
+    b.log_noise_latent_parameters(float(lo), float(hi), keep_start_representable=True)
     return b
 
 
