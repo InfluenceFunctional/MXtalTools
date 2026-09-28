@@ -704,7 +704,9 @@ def curate(coord_dir):
         hs = cfg.hops.get('stream', 'hops')
         w_hop = float(reg['effort'].get(hs, {}).get('row_evals', 0.0))
         now = time.time()
-        if w_hop != reg.get('hop_effort_seen', -1.0):  # a hop batch finished since the previous pass
+        # a hop batch finished since the previous pass, or the settle clock starts (a registry written before
+        # hop_effort_since existed carries hop_effort_seen alone)
+        if w_hop != reg.get('hop_effort_seen', -1.0) or 'hop_effort_since' not in reg:
             reg['hop_effort_seen'], reg['hop_effort_since'] = w_hop, now
         # settled: no new hop work for exhaust_settle_s, longer than a hop batch takes, so none can still be in flight;
         # if every hop job has ended, the effort stays put and this holds after that span (it cannot wait forever)

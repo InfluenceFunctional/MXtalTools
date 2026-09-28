@@ -639,3 +639,29 @@ def test_backfill_matches_the_admitted_rows_whatever_the_reference_was(acridine,
     reg['basin_parent'] = [-1]
     hop_hits, unmatched = co.backfill_lineage(reg, cfg, str(coord_dir))
     assert (hop_hits, unmatched) == (3, 0) and reg['hits']['parent'] == [7, 8, 9]
+
+
+def test_hop_exhaustion_clock_starts_for_a_registry_without_it(acridine, tmp_path, monkeypatch):
+    """A registry written before hop_effort_since existed carries hop_effort_seen alone. If hop work never changes
+    again, the settle clock must still start, so an exhausted hop stream can count as stopped."""
+    coord_dir, cfg = _campaign(tmp_path, acridine[0], hops=dict(stream='hops', window_kT=100.0, max_per_basin=1,
+                                                              exhaust_settle_s=0.5),
+                               streams={'random': dict(Z={'b2': 1e12}, min_relaxations=0, min_hits=1),
+                                        'hops': dict(Z={'b2': 1e12}, min_relaxations=0, min_hits=1)})
+    seeds = _seeds(cfg, acridine[1], 6)
+    monkeypatch.setattr(rs, 'init_samples_to_optim',
+                        lambda config, target=None: [s.clone() for s in seeds[:config.num_samples]])
+    monkeypatch.setattr(MolCrystalData, 'optimize_crystal_parameters', _fake_optimiser(_energy))
+    rs.crystal_search(_search_config(tmp_path, 6, coord_dir))
+    (coord_dir / 'STOP.random').write_text('by hand\n')
+    co.curate(str(coord_dir))
+    reg = torch.load(coord_dir / 'registry.pt', weights_only=False)
+    reg['hop_starts'] = {j: 5 for j in range(len(reg['basin_E']))}  # no eligible parent left
+    reg['hop_effort_seen'] = float(reg['effort'].get('hops', {}).get('row_evals', 0.0))  # as the older code wrote it
+    reg.pop('hop_effort_since', None)
+    torch.save(reg, coord_dir / 'registry.pt')
+    import time
+    _, _, stop = co.curate(str(coord_dir))  # the clock starts here
+    time.sleep(0.6)
+    _, _, stop = co.curate(str(coord_dir))
+    assert stop and (coord_dir / 'STOP').exists(), 'no new hop work for the settle span: the campaign can stop'
