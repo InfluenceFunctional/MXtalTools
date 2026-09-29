@@ -320,6 +320,62 @@ def apply_basis_change(batch, Ns, rows=None):
     return out
 
 
+def normalizer_images(batch, table=None):
+    """Every description of each crystal under its space group's Euclidean normaliser: (images, source, coset).
+
+    For a row of space group G with coset representatives (I, w_j) of N_E(G) / G in `table` (default NORMALIZER_OPS),
+    the images are the identity followed by one per representative, K = 1 + len(table[G]) consecutive rows: the same
+    crystal with every asymmetric-unit centre (all Z' molecules together; a global origin shift) moved by w_j, wrapped
+    into [0, 1), then each molecule re-expressed in its asymmetric-unit box by canonicalize_aunit (float64 poses,
+    canonical rotvecs). The cell is unchanged. Every image is a row, including coincident ones (a coset that fixes the
+    crystal), so each crystal contributes exactly K rows. The identity image is the input row as given, not refolded.
+
+    Only pure-translation cosets are implemented (every W the identity; true of 80 space groups including 2 and 14);
+    a row whose space group has a coset with another point part raises NotImplementedError, as does a space group with
+    no entry. Molecular point symmetry is not applied. Returns (images: a new batch, source: [M] long index of each
+    image's input row, coset: [M] long, 0 for the identity). The input batch is not modified."""
+    from mxtaltools.constants.space_group_info import NORMALIZER_OPS
+    from mxtaltools.crystal_search.crystal_opt_utils import canonicalize_aunit
+    from mxtaltools.dataset_utils.utils import collate_data_list
+    table = NORMALIZER_OPS if table is None else table
+    sgs = [int(s) for s in batch.sg_ind.reshape(-1).tolist()]
+    shifts = {}
+    for sg in sorted(set(sgs)):
+        reps = table.get(str(sg), [])
+        if not reps:
+            raise NotImplementedError(f'no normaliser coset representatives on file for space group {sg}')
+        if not all(np.allclose(np.asarray(W, dtype=float), np.eye(3)) for W, _ in reps):
+            raise NotImplementedError(f'space group {sg} has a normaliser coset with a non-identity point part; only '
+                                      f'pure origin shifts are implemented')
+        shifts[sg] = [np.zeros(3)] + [np.asarray(w, dtype=float) for _, w in reps]
+    rows = batch.batch_to_list()
+    order = [(i, j) for i, sg in enumerate(sgs) for j in range(len(shifts[sg]))]
+    out = collate_data_list([rows[i].clone() for i, _ in order])
+    source = torch.tensor([i for i, _ in order], dtype=torch.long)
+    coset = torch.tensor([j for _, j in order], dtype=torch.long)
+    dev = out.aunit_centroid.device
+    moved = (coset != 0).to(dev)
+    if not moved.any():
+        return out, source, coset
+    w = torch.as_tensor(np.stack([shifts[sgs[i]][j] for i, j in order]), dtype=torch.float64, device=dev)
+    centroid = out.aunit_centroid.clone()
+    zp = out.z_prime.reshape(-1).to(dev)
+    for k in range(out.max_z_prime):
+        sl = slice(3 * k, 3 * k + 3)
+        present = moved & (zp > k)  # padding slots of lower-Z' crystals may hold anything: never touch them
+        f = centroid[present, sl].to(torch.float64) + w[present]
+        centroid[present, sl] = (f - torch.floor(f)).to(centroid.dtype)
+    kept = (out.aunit_centroid[~moved].clone(), out.aunit_orientation[~moved].clone(),
+            out.aunit_handedness[~moved].clone())
+    out.aunit_centroid = centroid
+    if not hasattr(out, 'T_fc') or out.T_fc is None:
+        out.box_analysis()
+    canonicalize_aunit(out)
+    _snap_edge_sliver(out, moved)
+    out.aunit_centroid[~moved], out.aunit_orientation[~moved], out.aunit_handedness[~moved] = kept
+    return out, source, coset
+
+
 def standardize_cells(batch, on_failure='raise'):
     """Return (standardised clone of the batch, info). info: N [n,3,3] int (identity where unchanged), origin [n,3]
     (the shift o of x_new = N^-1 (x - o); zero where unchanged), changed [n] bool, ok [n] bool, nonstandard [n] bool
