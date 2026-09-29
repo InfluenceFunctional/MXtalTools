@@ -5,8 +5,8 @@ the standardized QM9 molecule set the current conditional prior was built from (
 
 | tasks | chunk | seeds | starts per molecule | molecules |
 |---|---|---|---|---|
-| 0-15 | 0-3 | 0-3 | 200 | 780 |
-| 16-31 | 0 | 4-19 | +800 (1000 in total on chunk 0) | 195 |
+| 0-3 | 0-3 | 0 | 50 | 780 |
+| 4-6 | 0 | 1-3 | +150 (200 in total on chunk 0) | 195 |
 
 Each task: `run_search.py`, `sampling_mode: all`, 50 random starts for every molecule of its chunk file, 9,750
 relaxations. The same molecules have 10 random starts each in the current prior (`qm9_anchors`, tag `qm9c100k`).
@@ -26,7 +26,7 @@ relaxations. The same molecules have 10 random starts each in the current prior 
 
 - `make_battery.py`: writes `tasks/<task>.yaml` and `INDEX.tsv`. It asserts distinct run names and seeds, and that no
   path is local.
-- `submit_qm9_dense.sbatch`: array 0-31, 4 h walltime, `USR1` 10 min before the end. Resubmitting resumes.
+- `submit_qm9_dense.sbatch`: array 0-6, 4 h walltime, `USR1` 10 min before the end. Resubmitting resumes.
 
 ## Launch (cluster)
 

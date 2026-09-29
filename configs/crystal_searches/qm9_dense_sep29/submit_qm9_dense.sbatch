@@ -10,7 +10,7 @@
 #SBATCH --account=torch_pr_226_chemistry
 #SBATCH --job-name=qm9dense
 #SBATCH --output=/scratch/mk8347/logs/%x-%A_%a.out
-#SBATCH --array=0-31
+#SBATCH --array=0-6
 
 # qm9_dense_sep29: one array task = one row of INDEX.tsv = tasks/<task>.yaml (make_battery.py writes both). A task runs
 # 50 random starts for every molecule of one QM9 chunk file and writes <out_dir>/<run_name>.pt. The run config is

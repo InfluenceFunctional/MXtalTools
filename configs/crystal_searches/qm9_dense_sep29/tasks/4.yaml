@@ -1,9 +1,9 @@
 device: cuda
-mol_path: /scratch/mk8347/data/crystal_datasets/conditional/priors/qm9_cluster_mols_chunk1.pt
+mol_path: /scratch/mk8347/data/crystal_datasets/conditional/priors/qm9_cluster_mols_chunk0.pt
 dataset_path: null
 target_path: null
 out_dir: /scratch/mk8347/data/crystal_datasets/conditional/anchors/qm9_dense_sep29
-run_name: qm9dense_c1_0
+run_name: qm9dense_c0_1
 target_identifier: null
 save_trajs: false
 uma_predictor_path: null
@@ -11,7 +11,7 @@ init_sample_method: random
 init_reduced: true
 force_restart_run: false
 mol_seed: 0
-opt_seed: 2100000000
+opt_seed: 2001000000
 sampling_mode: all
 mols_to_sample: 0
 num_samples: 50

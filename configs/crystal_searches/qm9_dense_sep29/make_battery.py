@@ -4,8 +4,8 @@ first four chunks of the standardized QM9 molecule set the current conditional p
 (qm9_cluster_mols_chunk{0..3}.pt, 195 molecules each), with the current search schedule.
 
 What each array task runs (run_search.py, sampling_mode 'all'): 50 random starts for EVERY molecule of one chunk file.
-  chunks 0-3, seeds 0-3    -> 200 starts per molecule on 780 molecules
-  chunk 0,    seeds 4-19   -> 1000 starts per molecule on chunk 0's 195 molecules
+  chunks 0-3, seed 0       -> 50 starts per molecule on 780 molecules
+  chunk 0,    seeds 1-3    -> 200 starts per molecule on chunk 0's 195 molecules
 Seeds are independent draws (distinct opt_seed), so a molecule's starts are the union over its seeds. The same
 molecules carry 10 starts each in the current prior (qm9_anchors / qm9c100k), which is the comparison the pilot is for:
 the per-molecule minimum as a function of the number of starts.
@@ -31,7 +31,7 @@ MOL_PATH = DATA + '/priors/qm9_cluster_mols_chunk{k}.pt'
 OUT_DIR = DATA + '/anchors/qm9_dense_sep29'
 STARTS_PER_TASK = 50            # random starts per molecule per task
 SEED_BASE = 2_000_000_000       # a task's batches use opt_seed + 1e4 * batch_idx; tasks are 1e6 apart
-TASKS = [(k, s) for k in range(4) for s in range(4)] + [(0, s) for s in range(4, 20)]
+TASKS = [(k, 0) for k in range(4)] + [(0, s) for s in range(1, 4)]
 
 
 def task_cfg(k, s):
