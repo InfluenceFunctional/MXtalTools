@@ -103,6 +103,9 @@ class CampaignConfig:
     priors: List[str] = field(default_factory=list)  # files of known structures, scored by the same model
     passes_to_confirm: int = 2
     rdf_batch: int = 32
+    # RDF channels of the identity metric: 'envwise' (atoms pooled by environment class, so a molecule's own symmetry
+    # relabelling costs nothing) or 'atomwise' (every atom its own channel); recorded in the registry and checked
+    rdf_mode: str = 'envwise'
     # hop stream (optional): stream name, basins within window_kT of the reference are parents, at most max_per_basin
     # hop starts each and max_generation generations deep (a basin first found by a hop is one generation below its
     # parent); log_noise is the (low, high) latent log-noise range of the kicks; exhaust_settle_s (default 3600) is how
@@ -115,7 +118,10 @@ class CampaignConfig:
     def load(path):
         raw = yaml.safe_load(open(path))
         raw['streams'] = {k: StreamRule(**v) for k, v in (raw.get('streams') or {}).items()}
-        return CampaignConfig(**raw)
+        cfg = CampaignConfig(**raw)
+        if cfg.rdf_mode not in ('envwise', 'atomwise'):
+            raise ValueError(f"rdf_mode must be 'envwise' or 'atomwise', not {cfg.rdf_mode!r}")
+        return cfg
 
 
 def energy_model_id(opt_stage, config):
@@ -195,13 +201,13 @@ def rebuild_crystals(cfg, params, hand):
     return out
 
 
-def compute_rdfs(crystals, batch_size=32):
+def compute_rdfs(crystals, batch_size=32, rdf_mode='envwise'):
     from mxtaltools.dataset_utils.utils import collate_data_list
     out = []
     for lo in range(0, len(crystals), batch_size):
         b = collate_data_list([c.clone() for c in crystals[lo:lo + batch_size]], exclude_keys=RDF_DROP)
         with torch.no_grad():
-            o = b.analyze(['rdf'], assign_outputs=False, **RDF_KW)
+            o = b.analyze(['rdf'], assign_outputs=False, **dict(RDF_KW, rdf_mode=rdf_mode))
         r = o['rdf'][0] if isinstance(o['rdf'], (tuple, list)) else o['rdf']
         out.append(r.detach().cpu().float())
     return torch.cat(out) if out else torch.zeros(0)
@@ -239,7 +245,8 @@ def physical(params, lj):
 # ---------------------------------------------------------------------------
 
 def new_registry(cfg):
-    return dict(version=1, energy_model_id=cfg.energy_model_id, identity_cut=cfg.identity_cut, ingested=[],
+    return dict(version=1, energy_model_id=cfg.energy_model_id, identity_cut=cfg.identity_cut, rdf_mode=cfg.rdf_mode,
+                ingested=[],
                 leaders=torch.zeros(0), basin_E=[], basin_params=[], basin_hand=[], basin_first=[], basin_gen=[],
                 basin_parent=[], hits=dict(basin=[], stream=[], energy=[], run=[], cursor=[], parent=[]),
                 effort={}, refused=[], passes=0, confirm={}, hop_starts={}, hop_blocked=[])
@@ -323,7 +330,7 @@ def _ingest_rows(reg, cfg, params, hand, E, lj, stream, run, cursor, parents=Non
                                                                          f'reduced cell; kept as stored'))
     sparams = std.full_cell_parameters().detach().float()
     shand = std.aunit_handedness.detach().float().reshape(len(idx), -1)
-    rdfs = compute_rdfs(std.batch_to_list(), cfg.rdf_batch)
+    rdfs = compute_rdfs(std.batch_to_list(), cfg.rdf_batch, cfg.rdf_mode)
     _assign(reg, cfg, rdfs, E[idx], sparams, shand, stream, run, cursor,
             parents=None if parents is None else parents[idx])
     return len(idx)
@@ -595,7 +602,7 @@ def write_outputs(coord_dir, cfg, reg, stats, decisions, campaign_stop, total):
     atomic_json_dump(json.loads(json.dumps(blob, default=float)), os.path.join(coord_dir, 'stats.json'))
     lines = [f"# campaign {os.path.basename(os.path.abspath(coord_dir))}: pass {reg['passes']}", '',
              f"energy model `{cfg.energy_model_id}`; reference {stats['energy_ref']:.4f}; kT {cfg.kT}; identity cut "
-             f"{cfg.identity_cut} ({'calibrated' if cfg.identity_calibrated else 'NOT CALIBRATED'}"
+             f"{cfg.identity_cut} ({cfg.rdf_mode}; {'calibrated' if cfg.identity_calibrated else 'NOT CALIBRATED'}"
              f"{'; ' + cfg.identity_note if cfg.identity_note else ''}); {stats['n_basins']} basins in the registry; "
              f"total effort {total:.4g} row-evaluations" + (f" (hard cap {cfg.hard_cap:.3g})" if np.isfinite(cfg.hard_cap) else ''),
              '']
@@ -668,7 +675,8 @@ def write_hop_parents(coord_dir, cfg, reg):
                 hand=torch.stack([reg['basin_hand'][j] for j in order]) if len(order) else torch.zeros(0, cfg.z_prime),
                 E=torch.as_tensor(E[order]), hop_starts=torch.as_tensor(starts[order]),
                 generation=torch.as_tensor(gen[order]), log_noise=tuple(h.get('log_noise', (-0.5, -0.5))),
-                sg=cfg.sg, z_prime=cfg.z_prime, energy_model_id=cfg.energy_model_id, passes=reg['passes'])
+                sg=cfg.sg, z_prime=cfg.z_prime, energy_model_id=cfg.energy_model_id, passes=reg['passes'],
+                n_basins=len(E))  # 0: nothing found yet, so an empty list is not exhaustion (run_search._hop_batch)
     atomic_torch_save(blob, os.path.join(coord_dir, 'hop_parents.pt'))
     return len(order)
 
@@ -687,8 +695,9 @@ def curate(coord_dir):
     if 'confirm_effort' not in reg:  # streaks counted under the older rule (a pass needed no new work) do not carry over
         reg['confirm'] = {}
         reg['confirm_effort'] = {}
-    if reg['energy_model_id'] != cfg.energy_model_id or reg['identity_cut'] != cfg.identity_cut:
-        raise ValueError('coord.yaml energy_model_id or identity_cut differs from the existing registry; start a new '
+    if reg['energy_model_id'] != cfg.energy_model_id or reg['identity_cut'] != cfg.identity_cut or \
+            reg.get('rdf_mode', 'envwise') != cfg.rdf_mode:  # a registry without the key was built envwise
+        raise ValueError('coord.yaml energy_model_id, identity_cut or rdf_mode differs from the existing registry; start a new '
                          'campaign directory rather than mixing definitions')
     ingest_priors(reg, cfg)
     n_new = ingest_shards(reg, cfg, coord_dir)

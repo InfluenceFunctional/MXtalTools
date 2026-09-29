@@ -665,3 +665,60 @@ def test_hop_exhaustion_clock_starts_for_a_registry_without_it(acridine, tmp_pat
     time.sleep(0.6)
     _, _, stop = co.curate(str(coord_dir))
     assert stop and (coord_dir / 'STOP').exists(), 'no new hop work for the settle span: the campaign can stop'
+
+
+def test_an_atomwise_campaign_records_its_mode_and_refuses_a_change(acridine, tmp_path, monkeypatch):
+    """rdf_mode 'atomwise' clusters on per-atom channels (acridine has more of them than environment classes), is written
+    into the registry, and a coord.yaml that later changes it is refused, as a changed identity cut is."""
+    coord_dir, cfg = _campaign(tmp_path, acridine[0], rdf_mode='atomwise')
+    seeds = _seeds(cfg, acridine[1], 6)
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: [s.clone() for s in seeds])
+    monkeypatch.setattr(MolCrystalData, 'optimize_crystal_parameters', _fake_optimiser(_energy))
+    rs.crystal_search(_search_config(tmp_path, 6, coord_dir))
+    co.curate(str(coord_dir))
+    reg = torch.load(coord_dir / 'registry.pt', weights_only=False)
+    assert reg['rdf_mode'] == 'atomwise' and len(reg['basin_E']) == 2
+    env = co.compute_rdfs(seeds[:1])
+    assert reg['leaders'].shape[1] > env.shape[1], 'atomwise has a channel per atom pair type, envwise fewer'
+    assert 'atomwise' in (coord_dir / 'stats.md').read_text()
+    raw = yaml.safe_load((coord_dir / 'coord.yaml').read_text())
+    (coord_dir / 'coord.yaml').write_text(yaml.safe_dump(dict(raw, rdf_mode='envwise')))
+    with pytest.raises(ValueError, match='rdf_mode'):
+        co.curate(str(coord_dir))
+    (coord_dir / 'coord.yaml').write_text(yaml.safe_dump(dict(raw, rdf_mode='elementwise')))
+    with pytest.raises(ValueError, match="rdf_mode must be"):
+        co.CampaignConfig.load(coord_dir / 'coord.yaml')
+
+
+def test_a_registry_without_a_recorded_mode_counts_as_envwise(acridine, tmp_path):
+    coord_dir, cfg = _campaign(tmp_path, acridine[0])
+    reg = co.new_registry(cfg)
+    reg.pop('rdf_mode')  # as written before the setting existed
+    torch.save(reg, coord_dir / 'registry.pt')
+    co.curate(str(coord_dir))  # envwise campaign: accepted
+    raw = yaml.safe_load((coord_dir / 'coord.yaml').read_text())
+    (coord_dir / 'coord.yaml').write_text(yaml.safe_dump(dict(raw, rdf_mode='atomwise')))
+    reg = torch.load(coord_dir / 'registry.pt', weights_only=False)
+    reg.pop('rdf_mode', None)
+    torch.save(reg, coord_dir / 'registry.pt')
+    with pytest.raises(ValueError, match='rdf_mode'):
+        co.curate(str(coord_dir))
+
+
+def test_a_campaign_without_priors_makes_hop_jobs_wait_for_its_first_basin(acridine, tmp_path, monkeypatch):
+    """A curate pass before any shard (no priors) writes an empty parent list from an empty registry: hop jobs wait on
+    it rather than stopping as exhausted; once a random shard is in, the next pass lists parents."""
+    coord_dir, cfg = _campaign(tmp_path, acridine[0], hops=dict(stream='hops', window_kT=100.0, max_per_basin=8))
+    co.curate(str(coord_dir))  # the curator's first pass, before any job has written a shard
+    hp = torch.load(coord_dir / 'hop_parents.pt', weights_only=False)
+    assert len(hp['basin']) == 0 and hp['n_basins'] == 0
+    coord = dict(dir=str(coord_dir), model_id='elj')
+    scfg = _search_config(tmp_path, 3, coord_dir, stream='hops', init_sample_method='hops')
+    assert rs._hop_batch(scfg, [], 0, 3, coord, 'cpu', 0, after_pass=0) is rs.HOP_WAIT, 'nothing found yet: wait'
+    seeds = _seeds(cfg, acridine[1], 3)
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: [s.clone() for s in seeds])
+    monkeypatch.setattr(MolCrystalData, 'optimize_crystal_parameters', _fake_optimiser(_energy))
+    rs.crystal_search(_search_config(tmp_path, 3, coord_dir))
+    co.curate(str(coord_dir))
+    hp = torch.load(coord_dir / 'hop_parents.pt', weights_only=False)
+    assert len(hp['basin']) > 0 and hp['n_basins'] > 0

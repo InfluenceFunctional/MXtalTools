@@ -1,0 +1,40 @@
+mol_path: /scratch/mk8347/data/crystal_datasets/mipcas/MIPCAS_standardized.pt
+sg: 2
+z_prime: 1
+energy_key: elj
+energy_model_id: elj
+kT: 6.859493755713105
+bands_kT:
+  2kT: 2.0
+  1kT: 1.0
+identity_cut: 0.071
+rdf_mode: atomwise
+identity_calibrated: false
+identity_note: 'provisional atomwise cut for MIPCAS: min(UMA 1 kT thermal width, COMPACK
+  d(P=0.95)) of the paper calibration; recalibrate with campaign_compack on this campaign'
+energy_ref: null
+window_kT: 3.0
+hard_cap: 300000000.0
+passes_to_confirm: 2
+rdf_batch: 64
+streams:
+  random:
+    Z:
+      2kT: 100000.0
+      1kT: 1000000.0
+    min_relaxations: 2000
+    min_hits: 20
+  hops:
+    Z:
+      2kT: 100000.0
+      1kT: 1000000.0
+    min_relaxations: 2000
+    min_hits: 20
+hops:
+  stream: hops
+  window_kT: 2.0
+  max_per_basin: 32
+  max_generation: 3
+  log_noise:
+  - -0.5
+  - -0.5

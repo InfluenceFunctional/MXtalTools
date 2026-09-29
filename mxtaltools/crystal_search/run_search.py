@@ -117,7 +117,8 @@ def _hop_batch(config, samples_to_optim, cursor, num_samples, coord, device, bat
     opt_seed + batch_idx * 10000. Each start's dataset_index is its parent basin.
     Returns HOP_WAIT while the file is missing or unreadable (no pass has written it yet, or a read failed), and also
     when it lists no parent but was written by a pass older than after_pass (a pass that may not yet have seen this
-    job's own last shard, whose children could become parents). None only when a pass numbered >= after_pass lists no
+    job's own last shard, whose children could become parents), or by a pass whose registry held no basin at all (a
+    campaign without priors before its first shard is ingested: nothing is found yet, which is not exhaustion). None only when a pass numbered >= after_pass lists no
     eligible parent: the stream is exhausted."""
     path = os.path.join(coord['dir'], 'hop_parents.pt')
     try:
@@ -125,6 +126,8 @@ def _hop_batch(config, samples_to_optim, cursor, num_samples, coord, device, bat
     except (OSError, EOFError, RuntimeError, pickle.UnpicklingError):
         return HOP_WAIT
     if len(hp['basin']) == 0:
+        if int(hp.get('n_basins', 1)) == 0:  # a campaign without priors before its first basin: wait (bounded)
+            return HOP_WAIT
         return None if int(hp.get('passes', 0)) >= after_pass else HOP_WAIT
     if hp.get('energy_model_id') != coord['model_id']:
         raise ValueError(f"{path} lists parents scored by {hp.get('energy_model_id')!r}, this job uses "
