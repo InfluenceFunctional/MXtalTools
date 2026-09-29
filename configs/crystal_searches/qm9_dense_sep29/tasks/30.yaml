@@ -1,0 +1,52 @@
+device: cuda
+mol_path: /scratch/mk8347/data/crystal_datasets/conditional/priors/qm9_cluster_mols_chunk0.pt
+dataset_path: null
+target_path: null
+out_dir: /scratch/mk8347/data/crystal_datasets/conditional/anchors/qm9_dense_sep29
+run_name: qm9dense_c0_18
+target_identifier: null
+save_trajs: false
+uma_predictor_path: null
+init_sample_method: random
+init_reduced: true
+force_restart_run: false
+mol_seed: 0
+opt_seed: 2018000000
+sampling_mode: all
+mols_to_sample: 0
+num_samples: 50
+sgs_to_search:
+- 2
+zp_to_search:
+- 1
+batch_size: 2000
+grow_batch_size: true
+init_target_cp: std
+opt:
+- optim_target: elj
+  enforce_reduced: false
+  compression_factor: 1.0
+  cutoff: 10
+  init_lr: 0.05
+  convergence_eps: 0.01
+  optimizer_func: rprop
+  anneal_lr: false
+  grad_norm_clip: 0.1
+  show_tqdm: false
+  max_num_steps: 350
+  target_packing_coeff: null
+  centroid_boundary: wrap
+- optim_target: elj
+  enforce_reduced: false
+  compression_factor: 0.0
+  cutoff: 10
+  init_lr: 0.01
+  convergence_eps: 0.0001
+  optimizer_func: rprop
+  anneal_lr: true
+  grad_norm_clip: 0.1
+  show_tqdm: false
+  max_num_steps: 150
+  target_packing_coeff: null
+  centroid_boundary: wrap
+oom_ceiling: true
