@@ -10,7 +10,7 @@
 #   - tasks of the campaign are still queued or running (FORCE=1 overrides), or squeue cannot say;
 #   - a UMA campaign's model file on the cluster is not the one its coord.yaml was built for.
 # Submits the curator (CPU; CURATOR=0 skips it), the random array and the hops array (hops start after the random array
-# does: a hop job waits, up to a bound, for the first curate pass to write hop_parents.pt). Tasks per stream: 2 + 2 for
+# does: a hop job waits, up to a bound, for the first curate pass to write hop_parents.pt). Tasks per stream: 4 + 4 for
 # eLJ, 3 + 3 for UMA (N_RANDOM / N_HOPS override for every campaign of this call).
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -68,7 +68,7 @@ launch_one() {
         fi
         n_r=${N_RANDOM:-3}; n_h=${N_HOPS:-3}
     else
-        n_r=${N_RANDOM:-2}; n_h=${N_HOPS:-2}
+        n_r=${N_RANDOM:-4}; n_h=${N_HOPS:-4}
     fi
     mkdir -p "${cdir}/runs" "${cdir}/streams" || return 1
     freeze "${HERE}/${name}/coord.yaml" "${cdir}/coord.yaml" || return 1

@@ -14,7 +14,7 @@ mol_seed: 0
 opt_seed: 1000000000
 sampling_mode: all
 mols_to_sample: 1
-num_samples: 1000000
+num_samples: 50000
 sgs_to_search:
 - 2
 zp_to_search:

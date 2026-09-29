@@ -35,12 +35,17 @@ KT = 2.494
 SEEDS = {'random': 1_000_000_000, 'hops': 1_600_000_000}
 TASK_SEED_STEP = 15_000_000  # per array task; a task's own stream uses opt_seed + batch_idx * 1e4 (< 1500 batches)
 MOLECULES = {
-    'mipcas': dict(mol_path=f'{DATA}/mipcas/MIPCAS_standardized.pt', sg=2, cut=0.071, elj_tsf=0.3635836825309169),
-    'nehzor': dict(mol_path=f'{DATA}/nehzor/NEHZOR0_std_conf.pt', sg=14, cut=0.122, elj_tsf=0.15557874739170074),
+    # num_samples (starts per task): a task builds all of its starts up front and keeps every relaxed output in memory;
+    # measured 2026-09-28, ~115 KB per MIPCAS start (its molecule object is heavy) and ~16 KB per NEHZOR start, 0.65 ms
+    # each: 1e6 MIPCAS starts was a host OOM at the 32 GB job limit during initialisation
+    'mipcas': dict(mol_path=f'{DATA}/mipcas/MIPCAS_standardized.pt', sg=2, cut=0.071, elj_tsf=0.3635836825309169,
+                   num_samples=50_000),
+    'nehzor': dict(mol_path=f'{DATA}/nehzor/NEHZOR0_std_conf.pt', sg=14, cut=0.122, elj_tsf=0.15557874739170074,
+                   num_samples=100_000),
 }
-ENERGIES = {  # batch_size: starts per batch (the OOM ceiling and grow_batch_size adapt it); num_samples: per task
-    'elj': dict(batch_size=2000, num_samples=1_000_000, hard_cap=3e8, tasks={'random': 2, 'hops': 2}),
-    'uma': dict(batch_size=500, num_samples=300_000, hard_cap=5e7, tasks={'random': 3, 'hops': 3}),
+ENERGIES = {  # batch_size: starts per batch (the OOM ceiling and grow_batch_size adapt it)
+    'elj': dict(batch_size=2000, hard_cap=3e8, tasks={'random': 4, 'hops': 4}),
+    'uma': dict(batch_size=500, hard_cap=5e7, tasks={'random': 3, 'hops': 3}),
 }
 CAMPAIGNS = {f'{m}_{e}': (m, e) for m in MOLECULES for e in ENERGIES}
 
@@ -61,7 +66,7 @@ def stream_cfg(name, stream):
     cfg.pop('mace_predictor_path', None)
     cfg.update(mol_path=m['mol_path'], sgs_to_search=[m['sg']], zp_to_search=[1], out_dir=f'{camp_dir(name)}/runs',
                save_trajs=False, grow_batch_size=True, oom_ceiling=True, batch_size=e['batch_size'],
-               num_samples=e['num_samples'], force_restart_run=False, coord_dir=camp_dir(name), coord_stream=stream,
+               num_samples=m['num_samples'], force_restart_run=False, coord_dir=camp_dir(name), coord_stream=stream,
                coord_curate_every_s=3600, coord_hop_wait_s=7200, init_sample_method='random', dataset_path=None,
                uma_predictor_path=UMA_CLUSTER, opt_seed=SEEDS[stream], run_name=f'{stream}_TASK')
     for st in cfg['opt']:
