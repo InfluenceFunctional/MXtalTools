@@ -25,6 +25,7 @@ IMAGE=/share/apps/images/cuda12.6.3-cudnn9.5.1-ubuntu22.04.5.sif
 OVERLAY=/scratch/mk8347/venvs/mxt_container/overlay-50G-10M-copy.ext3
 PROJECT_ROOT=/scratch/mk8347/projects/gfn_cond
 MXT_ROOT=${PROJECT_ROOT}/MXtalTools
+PYLIBS=/scratch/mk8347/pylibs  # packages the container lacks (spglib: standardize._niggli_N0, triclinic cells); pip install --target
 CAMP=${CAMP:?set CAMP to the campaign directory (launch.sh does)}
 STREAM=${STREAM:?set STREAM to random or hops}
 TASK=${SLURM_ARRAY_TASK_ID:?array task id}
@@ -61,7 +62,7 @@ srun singularity exec --nv \
     ${IMAGE} \
     /bin/bash -c "
         source /ext3/env.sh
-        export PYTHONPATH=${MXT_ROOT}:\$PYTHONPATH
+        export PYTHONPATH=${MXT_ROOT}:${PYLIBS}:\$PYTHONPATH
         python - <<'PY' || exit 1
 import yaml
 cfg = yaml.safe_load(open('${CAMP}/streams/${STREAM}.yaml'))

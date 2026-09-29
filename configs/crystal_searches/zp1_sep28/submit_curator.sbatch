@@ -19,6 +19,7 @@ IMAGE=/share/apps/images/cuda12.6.3-cudnn9.5.1-ubuntu22.04.5.sif
 OVERLAY=/scratch/mk8347/venvs/mxt_container/overlay-50G-10M-copy.ext3
 PROJECT_ROOT=/scratch/mk8347/projects/gfn_cond
 MXT_ROOT=${PROJECT_ROOT}/MXtalTools
+PYLIBS=/scratch/mk8347/pylibs  # packages the container lacks (spglib: standardize._niggli_N0, triclinic cells); pip install --target
 CAMP=${CAMP:?set CAMP to the campaign directory (launch.sh does)}
 
 if [ ! -f "${CAMP}/coord.yaml" ]; then echo "campaign not set up: run launch.sh" >&2; exit 1; fi
@@ -45,7 +46,7 @@ srun singularity exec \
     ${IMAGE} \
     /bin/bash -c "
         source /ext3/env.sh
-        export PYTHONPATH=${MXT_ROOT}:\$PYTHONPATH CUDA_VISIBLE_DEVICES=-1 OMP_NUM_THREADS=8
+        export PYTHONPATH=${MXT_ROOT}:${PYLIBS}:\$PYTHONPATH CUDA_VISIBLE_DEVICES=-1 OMP_NUM_THREADS=8
         exec python -u -m mxtaltools.crystal_search.coordinator ${CAMP} --loop --interval 900 --max_hours 23.5"
 RC=$?
 echo "CURATOR ${SLURM_JOB_ID} status=${RC} end=$(date -Is)"
