@@ -1,8 +1,0 @@
-task	chunk	seed	run_name	opt_seed	mol_path
-0	0	0	qm9dense_c0_0	2000000000	/scratch/mk8347/data/crystal_datasets/conditional/priors/qm9_cluster_mols_chunk0.pt
-1	1	0	qm9dense_c1_0	2100000000	/scratch/mk8347/data/crystal_datasets/conditional/priors/qm9_cluster_mols_chunk1.pt
-2	2	0	qm9dense_c2_0	2200000000	/scratch/mk8347/data/crystal_datasets/conditional/priors/qm9_cluster_mols_chunk2.pt
-3	3	0	qm9dense_c3_0	2300000000	/scratch/mk8347/data/crystal_datasets/conditional/priors/qm9_cluster_mols_chunk3.pt
-4	0	1	qm9dense_c0_1	2001000000	/scratch/mk8347/data/crystal_datasets/conditional/priors/qm9_cluster_mols_chunk0.pt
-5	0	2	qm9dense_c0_2	2002000000	/scratch/mk8347/data/crystal_datasets/conditional/priors/qm9_cluster_mols_chunk0.pt
-6	0	3	qm9dense_c0_3	2003000000	/scratch/mk8347/data/crystal_datasets/conditional/priors/qm9_cluster_mols_chunk0.pt
