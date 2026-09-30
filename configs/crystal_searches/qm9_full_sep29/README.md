@@ -72,6 +72,8 @@ python prep_qm9_anchor_mols.py --n-mols 0 --exclude D:\crystal_datasets\conditio
   and that no path is local.
 - `submit_qm9_full.sbatch`: array 0-207, at most 16 at once, 4 h walltime, `USR1` 10 min before the end. Resubmitting
   resumes. A task whose molecule file is missing exits at once.
+- `check_battery.py`: every task's state from the progress files and the newest logs, plus crystal counts, output size
+  and throughput. It uses only the standard library, so run it on the login node with `python3 check_battery.py`.
 - To add starts later, append tasks to `TASKS` (a new seed on the chunks that need it) and submit only the new indices.
   Never reorder: an array index names a task.
 
