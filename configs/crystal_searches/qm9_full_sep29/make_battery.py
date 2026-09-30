@@ -7,7 +7,8 @@ every standardized QM9 molecule, with the current search schedule. One chunk fam
 
 What each array task runs (run_search.py, sampling_mode 'all'): its number of random starts for EVERY molecule of one
 chunk file.
-  every chunk, seed 0   -> STARTS (20) per molecule; the current prior has 10
+  chunks 0-49, seed 0   -> STARTS (20) per molecule; the current prior has 10
+  chunks 50-, seed 0    -> REST_STARTS (10) per molecule
   chunk 0, seeds 1-3    -> +60 each, so 200 per molecule on chunk 0's 195 molecules
 Seeds are independent draws (distinct opt_seed), so a molecule's starts are the union over its seeds. A later top-up is
 more seeds on the same chunks, and chunk 0's 200 starts, subsampled, give how often n starts miss a molecule's lowest
@@ -37,13 +38,14 @@ OUT_DIR = DATA + '/anchors/qm9_full_sep29'
 # chunk sizes as prep_qm9_anchor_mols.py wrote them: 50 of 195, then REST_MOLS in chunks of 780
 REST_MOLS = 120_560
 CHUNK_MOLS = [195] * 50 + [min(780, REST_MOLS - 780 * j) for j in range(-(-REST_MOLS // 780))]
-STARTS = 20                                  # random starts per molecule on every chunk
+STARTS = 20                                  # random starts per molecule, chunks 0-49
+REST_STARTS = 10                             # random starts per molecule, chunks 50 onward
 SATURATION = [(1, 60), (2, 60), (3, 60)]     # chunk 0's extra (seed, starts)
 SEED_BASE = 3_000_000_000       # a task's batches use opt_seed + 1e4 * batch_idx; tasks are 1e6 apart
-CONCURRENT = 32                 # array throttle: tasks running at once
+CONCURRENT = 16                 # array throttle: tasks running at once
 TASKS = ([(0, 0, STARTS)] + [(0, s, n) for s, n in SATURATION]
-         + [(k, 0, STARTS) for k in range(1, len(CHUNK_MOLS))])
-RELAX_PER_S = 3.0               # the qm9_anchors throughput (August, old schedule, batch 1000), for the estimate only
+         + [(k, 0, STARTS if k < 50 else REST_STARTS) for k in range(1, len(CHUNK_MOLS))])
+RELAX_PER_S = 12.0              # measured on tasks 0-52 (job 18835847), job start to end; for the estimate only
 
 
 def task_cfg(k, s, n):
@@ -109,8 +111,8 @@ def main():
     relax = sum(CHUNK_MOLS[k] * n for k, _, n in TASKS)
     print(f"wrote {len(cfgs)} task configs to {tasks_dir}, INDEX.tsv, and --array=0-{len(TASKS) - 1}%{CONCURRENT} "
           f"in {SBATCH.name}")
-    print(f"  {len(CHUNK_MOLS)} chunks, {sum(CHUNK_MOLS):,} molecules; {STARTS} starts per molecule, "
-          f"{STARTS + sum(n for _, n in SATURATION)} on chunk 0")
+    print(f"  {len(CHUNK_MOLS)} chunks, {sum(CHUNK_MOLS):,} molecules; starts per molecule {STARTS} on chunks 0-49, "
+          f"{REST_STARTS} on chunks 50-{len(CHUNK_MOLS) - 1}, {STARTS + sum(n for _, n in SATURATION)} on chunk 0")
     print(f"  {relax:,} relaxations; {relax / RELAX_PER_S / 3600:,.0f} GPU-hours at {RELAX_PER_S:g} per s; longest task "
           f"{max(CHUNK_MOLS[k] * n for k, _, n in TASKS):,} relaxations")
 
