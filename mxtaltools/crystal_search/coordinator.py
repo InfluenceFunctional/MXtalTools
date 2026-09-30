@@ -42,8 +42,9 @@ The Good-Turing ratio W/f1 estimates the effort per new basin without bias on th
 f1 keeps it from stopping early by chance. A stream is exhausted when every band says stop; once STOP.<s> exists the
 stream stays stopped. The campaign stops (STOP) when every stream is stopped -- a hop stream with no eligible parent
 counts as stopped for this -- or total effort passes hard_cap. Termination: a stream with no new basins stops at
-W_s > 2.3 Z (f1_hi(0) = 2.30) once its jobs keep working; a stream that never reaches min_hits in a band, or whose jobs
-have all ended, is bounded only by hard_cap (or a STOP file written by hand); nothing waits on a particular job.
+W_s > 2.3 Z (f1_hi(0) = 2.30) once its jobs keep working, or once it has brought no new work for confirm_settle_s or
+three times its longest shard (whichever is longer) while the test holds; a stream that never reaches min_hits in a band,
+or whose jobs have all ended while its test fails, is bounded only by hard_cap (or a STOP file written by hand); nothing waits on a particular job.
 
 Model-agnostic: energies are whatever the search objective reports (energy_key), kT and the energy reference come from
 the config, and every shard carries the id of the energy model that scored it; the curate pass refuses shards (and priors)
@@ -102,6 +103,9 @@ class CampaignConfig:
     hard_cap: float = float('inf')  # total effort (row-evaluations) after which the campaign stops
     priors: List[str] = field(default_factory=list)  # files of known structures, scored by the same model
     passes_to_confirm: int = 2
+    # a stream whose stop test holds is confirmed at once after max(confirm_settle_s, 3 x its longest shard's wall time)
+    # with no new work from it (verdicts): its statistics are final, so another pass cannot change the verdict
+    confirm_settle_s: float = 3600.0
     rdf_batch: int = 32
     # RDF channels of the identity metric: 'envwise' (atoms pooled by environment class, so a molecule's own symmetry
     # relabelling costs nothing) or 'atomwise' (every atom its own channel); recorded in the registry and checked
@@ -162,11 +166,13 @@ def write_shard(coord_dir, run_name, stream, cursor, batch_idx, rows, energy_key
             E = torch.tensor([float(getattr(r, energy_key)) for r in rows])
             lj = torch.tensor([float(getattr(r, 'lj', float('nan'))) for r in rows])
             didx = torch.tensor([int(r.dataset_index) if 'dataset_index' in r.keys() else -1 for r in rows])
+            kick = torch.tensor([float(r.hop_kick) if 'hop_kick' in r.keys() else float('nan') for r in rows])
         else:
             params, hand = torch.zeros(0, 18), torch.zeros(0, 2)
             E, lj, didx = torch.zeros(0), torch.zeros(0), torch.zeros(0, dtype=torch.long)
+            kick = torch.zeros(0)
         blob = dict(run=run_name, stream=stream, cursor=int(cursor), batch_idx=int(batch_idx), params=params,
-                    handedness=hand, energy=E, lj=lj, dataset_index=didx, **meta)
+                    handedness=hand, energy=E, lj=lj, dataset_index=didx, kick=kick, **meta)
         d = os.path.join(coord_dir, 'shards', run_name)
         os.makedirs(d, exist_ok=True)
         atomic_torch_save(blob, os.path.join(d, f'{int(cursor):08d}_{int(batch_idx):06d}.pt'))
@@ -257,7 +263,7 @@ def _stream_effort(reg, stream):
                                                  gpus={}))
 
 
-def _assign(reg, cfg, rdfs, energies, params, hand, stream, run, cursor, parents=None):
+def _assign(reg, cfg, rdfs, energies, params, hand, stream, run, cursor, parents=None, kicks=None):
     """Leader clustering of new states against the registry (and each other, in arrival order). parents: for hop
     states, the basin each was kicked from (sets the generation of a basin it opens)."""
     leaders = reg['leaders']
@@ -271,6 +277,7 @@ def _assign(reg, cfg, rdfs, energies, params, hand, stream, run, cursor, parents
         best_d, best_j = torch.full((n,), float('inf')), torch.zeros(n, dtype=torch.long)
     for i in range(n):
         par = -1 if parents is None else int(parents[i])
+        kick = None if kicks is None else float(kicks[i])
         if best_d[i] < cfg.identity_cut:
             j = int(best_j[i])
         else:
@@ -279,7 +286,8 @@ def _assign(reg, cfg, rdfs, energies, params, hand, stream, run, cursor, parents
                 k = int(dn.argmin())
                 if dn[k] < cfg.identity_cut:
                     j = len(leaders) + k
-                    _record_hit(reg, j, stream, energies[i], params[i], hand[i], run, cursor, parent=par)
+                    _record_hit(reg, j, stream, energies[i], params[i], hand[i], run, cursor, parent=par,
+                                kick=kick)
                     continue
             j = len(reg['leaders'])
             reg['leaders'] = torch.cat([reg['leaders'].reshape(-1, *rdfs.shape[1:]), rdfs[i:i + 1]])
@@ -289,10 +297,10 @@ def _assign(reg, cfg, rdfs, energies, params, hand, stream, run, cursor, parents
             reg['basin_first'].append(dict(stream=stream, run=run, cursor=int(cursor)))
             reg['basin_gen'].append(reg['basin_gen'][par] + 1 if 0 <= par < len(reg['basin_gen']) else 0)
             reg['basin_parent'].append(par)
-        _record_hit(reg, j, stream, energies[i], params[i], hand[i], run, cursor, parent=par)
+        _record_hit(reg, j, stream, energies[i], params[i], hand[i], run, cursor, parent=par, kick=kick)
 
 
-def _record_hit(reg, j, stream, E, params, hand, run, cursor, parent=-1):
+def _record_hit(reg, j, stream, E, params, hand, run, cursor, parent=-1, kick=None):
     h = reg['hits']
     h['basin'].append(int(j))
     h['stream'].append(stream)
@@ -300,6 +308,8 @@ def _record_hit(reg, j, stream, E, params, hand, run, cursor, parent=-1):
     h['run'].append(run)
     h['cursor'].append(int(cursor))
     h['parent'].append(int(parent))
+    if kick is not None and kick == kick:  # a hop start's latent kick length (NaN or None: not a hop start)
+        reg.setdefault('hit_kick', {})[len(h['basin']) - 1] = float(kick)
     if float(E) < reg['basin_E'][j]:
         reg['basin_E'][j] = float(E)
         reg['basin_params'][j] = params.clone()
@@ -312,7 +322,7 @@ def _energy_ref(cfg, reg):
     return min(reg['basin_E']) if reg['basin_E'] else float('inf')
 
 
-def _ingest_rows(reg, cfg, params, hand, E, lj, stream, run, cursor, parents=None):
+def _ingest_rows(reg, cfg, params, hand, E, lj, stream, run, cursor, parents=None, kicks=None):
     """Physical states within window of the reference: standardise, RDF, assign. Returns the number admitted."""
     from mxtaltools.crystal_search.standardize import standardize_cells
     from mxtaltools.dataset_utils.utils import collate_data_list
@@ -332,7 +342,7 @@ def _ingest_rows(reg, cfg, params, hand, E, lj, stream, run, cursor, parents=Non
     shand = std.aunit_handedness.detach().float().reshape(len(idx), -1)
     rdfs = compute_rdfs(std.batch_to_list(), cfg.rdf_batch, cfg.rdf_mode)
     _assign(reg, cfg, rdfs, E[idx], sparams, shand, stream, run, cursor,
-            parents=None if parents is None else parents[idx])
+            parents=None if parents is None else parents[idx], kicks=None if kicks is None else kicks[idx])
     return len(idx)
 
 
@@ -420,6 +430,7 @@ def ingest_shards(reg, cfg, coord_dir):
         eff['attempts'] += int(s.get('n_attempts', 1))
         eff['wall_s'] += float(s.get('wall_s', 0.0))
         eff['shards'] += 1
+        eff['max_shard_wall_s'] = max(float(eff.get('max_shard_wall_s', 0.0)), float(s.get('wall_s', 0.0)))
         gpu = str(s.get('gpu', 'unknown'))
         eff['gpus'][gpu] = eff['gpus'].get(gpu, 0) + 1
         parents = None
@@ -428,7 +439,7 @@ def ingest_shards(reg, cfg, coord_dir):
             for b in parents.tolist():
                 reg['hop_starts'][int(b)] = reg['hop_starts'].get(int(b), 0) + 1
         _ingest_rows(reg, cfg, s['params'], s['handedness'], s['energy'], s['lj'], s['stream'], s['run'], s['cursor'],
-                     parents=parents)
+                     parents=parents, kicks=s.get('kick'))
         n_new += 1
     return n_new
 
@@ -553,8 +564,11 @@ def compute_stats(reg, cfg):
     return out
 
 
-def verdicts(stats, reg, cfg):
-    """Per-stream stop decisions (confirmed over passes_to_confirm passes) and the campaign STOP."""
+def verdicts(stats, reg, cfg, now=None):
+    """Per-stream stop decisions (confirmed over passes_to_confirm passes after new effort, or at once when the test
+    holds and the stream has brought no new work for max(confirm_settle_s, 3 x its longest shard's wall_s)) and the
+    campaign STOP."""
+    now = time.time() if now is None else float(now)
     decisions = {}
     for s, rule in cfg.streams.items():
         st = stats['streams'].get(s)
@@ -578,17 +592,33 @@ def verdicts(stats, reg, cfg):
                 ok = False
                 why.append(f"{band}: effort per new basin >= {b['effort_per_new_lo']:.3g} (<= Z {Z:.3g})")
         seen = reg.setdefault('confirm_effort', {})
+        since = reg.setdefault('confirm_since', {})
         W = float(st.get('row_evals', 0.0))
+        new_work = W > seen.get(s, -1.0)
+        if new_work or s not in since:  # the settle clock starts on the stream's first verdict, restarts on new work
+            since[s] = now
+        eff = reg['effort'].get(s, {})
+        longest = float(eff.get('max_shard_wall_s', float(eff.get('wall_s', 0.0)) / max(int(eff.get('shards', 0)), 1)))
+        settle = max(float(cfg.confirm_settle_s), 3.0 * longest)
+        idle = now - since[s]
         if not ok:
             streak = 0
-        elif W > seen.get(s, -1.0):  # a pass counts toward confirmation only if the stream did new work since
+        elif new_work:  # a pass counts toward confirmation only if the stream did new work since
             streak = reg['confirm'].get(s, 0) + 1
         else:
             streak = reg['confirm'].get(s, 0)
         reg['confirm'][s] = streak
         seen[s] = W
-        decisions[s] = dict(stop=streak >= cfg.passes_to_confirm, streak=streak,
-                            why='; '.join(why) if why else f'all bands exhausted ({streak} pass(es))')
+        # final: the test holds and no new work has come for settle seconds, longer than a batch takes, so none is in
+        # flight and another pass would see the same statistics; bounded, so a stream whose jobs have all ended stops
+        final = ok and idle >= settle
+        if why:
+            reason = '; '.join(why)
+        elif streak < cfg.passes_to_confirm and final:
+            reason = f'all bands exhausted (final: no new work for {idle:.0f} s >= {settle:.0f} s)'
+        else:
+            reason = f'all bands exhausted ({streak} pass(es))'
+        decisions[s] = dict(stop=streak >= cfg.passes_to_confirm or final, streak=streak, why=reason)
     total = sum(float(e.get('row_evals', 0.0)) for e in reg['effort'].values())
     campaign_stop = (bool(decisions) and all(d['stop'] for d in decisions.values())) or total >= cfg.hard_cap
     return decisions, campaign_stop, total

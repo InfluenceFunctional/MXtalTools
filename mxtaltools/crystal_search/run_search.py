@@ -114,7 +114,8 @@ class HopParentsUnavailable(Exception):
 def _hop_batch(config, samples_to_optim, cursor, num_samples, coord, device, batch_idx, after_pass=0):
     """init_sample_method 'hops': starts are latent log-noise kicks of registry basins (the campaign's hop_parents.pt,
     rewritten by every curate pass), parents drawn with weight 1 / (1 + hop starts so far), seeded by
-    opt_seed + batch_idx * 10000. Each start's dataset_index is its parent basin.
+    opt_seed + batch_idx * 10000. Each start's dataset_index is its parent basin and its hop_kick the latent length of its
+    kick.
     Returns HOP_WAIT while the file is missing or unreadable (no pass has written it yet, or a read failed), and also
     when it lists no parent but was written by a pass older than after_pass (a pass that may not yet have seen this
     job's own last shard, whose children could become parents), or by a pass whose registry held no basin at all (a
@@ -140,6 +141,7 @@ def _hop_batch(config, samples_to_optim, cursor, num_samples, coord, device, bat
     for k, j in enumerate(pick.tolist()):
         c = samples_to_optim[cursor + k].clone()
         c.dataset_index = torch.tensor([int(hp['basin'][j])], dtype=torch.long)
+        c.hop_kick = torch.zeros(1)  # the kick length, filled in below and stored in the shard
         rows.append(c)
     b = collate_data_list(rows).to(device)
     b.set_cell_parameters(hp['params'][pick].to(device))
@@ -151,7 +153,8 @@ def _hop_batch(config, samples_to_optim, cursor, num_samples, coord, device, bat
     torch.manual_seed(seed)  # log_noise_latent_parameters draws from the global generator
     # kicked from the parent itself: a parent outside the latent box (a long reduced-cell axis; 1.7% of acridine
     # states within 2 kT, 2026-09-28) was otherwise clipped into a different crystal before the kick
-    b.log_noise_latent_parameters(float(lo), float(hi), keep_start_representable=True)
+    kick = b.log_noise_latent_parameters(float(lo), float(hi), keep_start_representable=True)
+    b.hop_kick = kick.detach().to(b.hop_kick)
     return b
 
 

@@ -768,6 +768,7 @@ class MolCrystalOps:
         else:
             self.latent_to_cell_params(noised_latents.clip(min=-1 + eps, max=1 - eps))
         self.clean_cell_parameters(mode='hard')
+        return rand_magnitude  # the step length drawn for each row (latent units)
 
     def zp1_std_cell_parameters(self):
         """

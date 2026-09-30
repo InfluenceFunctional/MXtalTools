@@ -722,3 +722,55 @@ def test_a_campaign_without_priors_makes_hop_jobs_wait_for_its_first_basin(acrid
     co.curate(str(coord_dir))
     hp = torch.load(coord_dir / 'hop_parents.pt', weights_only=False)
     assert len(hp['basin']) > 0 and hp['n_basins'] > 0
+
+
+def test_a_stream_whose_test_holds_is_confirmed_once_no_new_work_comes(acridine, tmp_path):
+    _, cfg = _campaign(tmp_path, acridine[0], energy_ref=0.0, confirm_settle_s=100.0,
+                       streams={'random': dict(Z={'b2': 1.0}, min_relaxations=0, min_hits=1)})
+    reg = _registry_with_hits(cfg, [(0, 'random', 0.0, -1), (0, 'random', 0.0, -1)])
+    reg['effort']['random'].update(wall_s=120.0, shards=2)  # no max_shard_wall_s (an older registry): the mean, 60 s
+    st = co.compute_stats(reg, cfg)
+    d, stop, _ = co.verdicts(st, reg, cfg, now=0.0)
+    assert d['random']['streak'] == 1 and not d['random']['stop'], 'one look'
+    d, stop, _ = co.verdicts(st, reg, cfg, now=179.0)
+    assert not d['random']['stop'], 'settle is max(100 s, 3 x 60 s) = 180 s'
+    d, stop, _ = co.verdicts(st, reg, cfg, now=180.0)
+    assert d['random']['stop'] and stop and 'final' in d['random']['why'], 'no new work for the settle time: final'
+
+    reg = _registry_with_hits(cfg, [(0, 'random', 0.0, -1), (0, 'random', 0.0, -1)])
+    reg['effort']['random'].update(max_shard_wall_s=1000.0)
+    co.verdicts(st, reg, cfg, now=0.0)
+    reg['effort']['random']['row_evals'] += 1.0  # the clock restarts on new work (which also advances the streak)
+    reg['confirm']['random'] = -5  # keep the streak short of passes_to_confirm to isolate the clock
+    d, _, _ = co.verdicts(co.compute_stats(reg, cfg), reg, cfg, now=2500.0)
+    d, _, _ = co.verdicts(co.compute_stats(reg, cfg), reg, cfg, now=5499.0)
+    assert not d['random']['stop'], 'settle is 3 x the longest shard (3000 s), counted from the last new work'
+    d, _, _ = co.verdicts(co.compute_stats(reg, cfg), reg, cfg, now=5500.0)
+    assert d['random']['stop']
+
+    reg = _registry_with_hits(cfg, [(0, 'random', 0.0, -1)])
+    cfg.streams['random'].min_hits = 5  # the test fails: no amount of waiting stops the stream
+    d, _, _ = co.verdicts(co.compute_stats(reg, cfg), reg, cfg, now=0.0)
+    d, _, _ = co.verdicts(co.compute_stats(reg, cfg), reg, cfg, now=1e9)
+    assert not d['random']['stop']
+
+
+def test_hop_kick_lengths_reach_the_shard_and_the_registry(acridine, tmp_path, monkeypatch):
+    coord_dir, cfg = _campaign(tmp_path, acridine[0], hops=dict(stream='hops', window_kT=100.0, max_per_basin=8,
+                                                              log_noise=[-2.0, -1.0]))
+    seeds = _seeds(cfg, acridine[1], 4)
+    monkeypatch.setattr(rs, 'init_samples_to_optim',
+                        lambda config, target=None: [s.clone() for s in seeds[:config.num_samples]])
+    rs.crystal_search(_search_config(tmp_path, 2, coord_dir, batch_size=2))  # the real optimiser
+    co.curate(str(coord_dir))
+    rs.crystal_search(_search_config(tmp_path, 2, coord_dir, stream='hops', init_sample_method='hops', batch_size=2))
+    hop = torch.load(next((coord_dir / 'shards' / 'run_hops').glob('*.pt')), weights_only=False)
+    rnd = torch.load(next((coord_dir / 'shards' / 'run_random').glob('*.pt')), weights_only=False)
+    assert torch.isnan(rnd['kick']).all() and len(hop['kick']) == len(hop['energy']) == 2
+    assert ((hop['kick'] >= 0.01 - 1e-6) & (hop['kick'] <= 0.1 + 1e-6)).all(), 'drawn in [10^-2, 10^-1]'
+    co.curate(str(coord_dir))
+    reg = torch.load(coord_dir / 'registry.pt', weights_only=False)
+    hk = reg.get('hit_kick', {})
+    hop_hits = [i for i, s in enumerate(reg['hits']['stream']) if s == 'hops']
+    assert hop_hits and sorted(hk) == hop_hits, 'every admitted hop hit, and only those, has its kick recorded'
+    assert all(any(abs(v - float(k)) < 1e-6 for k in hop['kick']) for v in hk.values())
