@@ -91,7 +91,11 @@ sj=$(sbatch --parsable --job-name=a1_seeded --export=ALL,CAMP="${CDIR}",STREAM=s
 rj=$(sbatch --parsable --job-name=a1_random --export=ALL,CAMP="${CDIR}",STREAM=random --array=0-$((N_R - 1)) ${dep} \
      "${HERE}/submit_stream.sbatch") || { echo "random not submitted" >&2; exit 1; }
 rj=${rj%%;*}
+# hops wait only for the FIRST random task to start, and only while the registry does not exist yet: `after:<array>`
+# holds until every task of the array has started, which kept hops out of the queue for 18 h on 2026-10-01
+hdep="${dep}"
+[ -f "${CDIR}/registry.pt" ] || hdep="--dependency=after:${rj}_0"
 hj=$(sbatch --parsable --job-name=a1_hops --export=ALL,CAMP="${CDIR}",STREAM=hops --array=0-$((N_H - 1)) \
-     --dependency=after:${rj} "${HERE}/submit_stream.sbatch") || { echo "hops not submitted" >&2; exit 1; }
-echo "seeded ${sj%%;*} (0-$((N_S - 1))), random ${rj} (0-$((N_R - 1))), hops ${hj%%;*} (0-$((N_H - 1)), after ${rj})" \
+     ${hdep} "${HERE}/submit_stream.sbatch") || { echo "hops not submitted" >&2; exit 1; }
+echo "seeded ${sj%%;*} (0-$((N_S - 1))), random ${rj} (0-$((N_R - 1))), hops ${hj%%;*} (0-$((N_H - 1)); ${hdep:-no dependency})" \
      "-> ${CDIR} (MXtalTools $(cut -c1-12 "${CDIR}/launch_commit")); progress in ${CDIR}/stats.md"
