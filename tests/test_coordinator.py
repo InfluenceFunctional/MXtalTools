@@ -774,3 +774,49 @@ def test_hop_kick_lengths_reach_the_shard_and_the_registry(acridine, tmp_path, m
     hop_hits = [i for i, s in enumerate(reg['hits']['stream']) if s == 'hops']
     assert hop_hits and sorted(hk) == hop_hits, 'every admitted hop hit, and only those, has its kick recorded'
     assert all(any(abs(v - float(k)) < 1e-6 for k in hop['kick']) for v in hk.values())
+
+
+def test_a_hop_job_holds_itself_to_the_kick_limit_between_passes(acridine, tmp_path, monkeypatch):
+    coord_dir, cfg = _campaign(tmp_path, acridine[0], hops=dict(stream='hops', window_kT=100.0, max_per_basin=4,
+                                                              max_generation=1, log_noise=[-1.0, -1.0]))
+    seeds = _seeds(cfg, acridine[1], 40)
+    monkeypatch.setattr(rs, 'init_samples_to_optim',
+                        lambda config, target=None: [s.clone() for s in seeds[:config.num_samples]])
+    monkeypatch.setattr(MolCrystalData, 'optimize_crystal_parameters', _fake_optimiser(_energy))
+    rs.crystal_search(_search_config(tmp_path, 6, coord_dir))  # random stream: two basins
+    co.curate(str(coord_dir))
+    hp = torch.load(coord_dir / 'hop_parents.pt', weights_only=False)
+    assert hp['max_per_basin'] == 4 and sorted(hp['basin'].tolist()) == [0, 1]
+
+    # the draw: 2 parents x 4 kicks = 8 starts although the batch asks for 20; nothing is left under this listing
+    job = _search_config(tmp_path, 40, coord_dir, stream='hops', init_sample_method='hops', batch_size=20)
+    coord = dict(dir=str(coord_dir), model_id='elj')
+    q = dict(listing=None, this={}, pending=[], draw={})
+    b = rs._hop_batch(job, seeds, 0, 40, coord, 'cpu', 0, quota=q)
+    assert b.num_graphs == 8 and q['draw'] == {0: 4, 1: 4}
+    q['this'], q['pending'], q['draw'] = dict(q['draw']), [(int(hp['passes']) + 2, dict(q['draw']))], {}
+    assert rs._hop_batch(job, seeds, 0, 40, coord, 'cpu', 1, quota=q) is rs.HOP_WAIT, 'the limit holds with no new pass'
+    hp2 = dict(hp, passes=int(hp['passes']) + 1)  # a pass that started before the shard was written: starts unchanged
+    torch.save(hp2, coord_dir / 'hop_parents.pt')
+    assert rs._hop_batch(job, seeds, 0, 40, coord, 'cpu', 1, quota=q) is rs.HOP_WAIT, 'uncounted kicks still count'
+    hp3 = dict(hp, passes=int(hp['passes']) + 2, hop_starts=torch.tensor([4, 2]))  # (not a file curate would write)
+    torch.save(hp3, coord_dir / 'hop_parents.pt')
+    b = rs._hop_batch(job, seeds, 0, 40, coord, 'cpu', 1, quota=q)
+    assert b.num_graphs == 2 and q['draw'] == {int(hp['basin'][1]): 2}, 'only the room the listing shows'
+
+    # a share: a job among four takes ceil(4 / 4) = 1 kick per parent per listing
+    torch.save(hp, coord_dir / 'hop_parents.pt')
+    job4 = _search_config(tmp_path, 40, coord_dir, stream='hops', init_sample_method='hops', batch_size=20,
+                          coord_hop_share=0.25)
+    q4 = dict(listing=None, this={}, pending=[], draw={})
+    assert rs._hop_batch(job4, seeds, 0, 40, coord, 'cpu', 0, quota=q4).num_graphs == 2
+
+    # a job with 40 starts to spend and the curate pass run between its batches: every parent ends at its limit
+    monkeypatch.setattr(rs, 'sleep', lambda seconds: None)
+    outs = rs.crystal_search(_search_config(tmp_path, 40, coord_dir, stream='hops', init_sample_method='hops',
+                                            batch_size=20, coord_curate_every_s=0.0, coord_hop_wait_s=30.0,
+                                            coord_hop_poll_s=0.01))
+    co.curate(str(coord_dir))
+    reg = torch.load(coord_dir / 'registry.pt', weights_only=False)
+    assert max(reg['hop_starts'].values()) <= 4, f"kicks per parent {reg['hop_starts']}"
+    assert len(outs) == sum(reg['hop_starts'].values()) < 40, 'the job stopped at the limit, not at its budget'

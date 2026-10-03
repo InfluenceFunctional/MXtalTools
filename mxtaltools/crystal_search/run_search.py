@@ -111,7 +111,7 @@ class HopParentsUnavailable(Exception):
     """hop_parents.pt stayed missing or unreadable for longer than the job's hop wait."""
 
 
-def _hop_batch(config, samples_to_optim, cursor, num_samples, coord, device, batch_idx, after_pass=0):
+def _hop_batch(config, samples_to_optim, cursor, num_samples, coord, device, batch_idx, after_pass=0, quota=None):
     """init_sample_method 'hops': starts are latent log-noise kicks of registry basins (the campaign's hop_parents.pt,
     rewritten by every curate pass), parents drawn with weight 1 / (1 + hop starts so far), seeded by
     opt_seed + batch_idx * 10000. Each start's dataset_index is its parent basin and its hop_kick the latent length of its
@@ -120,7 +120,15 @@ def _hop_batch(config, samples_to_optim, cursor, num_samples, coord, device, bat
     when it lists no parent but was written by a pass older than after_pass (a pass that may not yet have seen this
     job's own last shard, whose children could become parents), or by a pass whose registry held no basin at all (a
     campaign without priors before its first shard is ingested: nothing is found yet, which is not exhaustion). None only when a pass numbered >= after_pass lists no
-    eligible parent: the stream is exhausted."""
+    eligible parent: the stream is exhausted.
+    quota (the job's state, a dict with listing, this, pending and draw; None: no limit kept by the job): when the file
+    records max_per_basin, a parent is drawn only while it has kicks left for this job -- at most
+    ceil(coord_hop_share x (max_per_basin - listed hop starts)) per listing (a listing = one pass number; this counts
+    the job's kicks under it), and at most max_per_basin - listed hop starts - the job's kicks that no listing has
+    counted yet (pending: [(pass from which they are counted, {basin: kicks})]) -- uniformly over the kicks left, so
+    the batch may be smaller than batch_size. HOP_WAIT when parents are listed but none has a kick left for this job
+    (the next pass renews the listing). quota['draw'] is set to this batch's {basin: kicks}; the caller commits it
+    once the batch is written."""
     path = os.path.join(coord['dir'], 'hop_parents.pt')
     try:
         hp = torch.load(path, weights_only=False)
@@ -136,7 +144,28 @@ def _hop_batch(config, samples_to_optim, cursor, num_samples, coord, device, bat
     n = min(config.batch_size, num_samples - cursor)
     seed = int(config.opt_seed) + int(batch_idx) * 10000
     g = torch.Generator().manual_seed(seed)
-    pick = torch.multinomial(1.0 / (1.0 + hp['hop_starts'].double()), n, replacement=True, generator=g)
+    cap = hp.get('max_per_basin')
+    if quota is None or cap is None:  # no job-side limit (a parent list written before max_per_basin was recorded)
+        pick = torch.multinomial(1.0 / (1.0 + hp['hop_starts'].double()), n, replacement=True, generator=g)
+    else:
+        passes = int(hp.get('passes', 0))
+        if quota['listing'] != passes:  # a new listing: its hop starts include every shard that pass ingested
+            quota.update(listing=passes, this={})
+        quota['pending'] = [e for e in quota['pending'] if e[0] > passes]
+        basins = [int(b) for b in hp['basin']]
+        uncounted = torch.tensor([sum(c.get(b, 0) for _, c in quota['pending']) for b in basins])
+        mine = torch.tensor([quota['this'].get(b, 0) for b in basins])
+        room = (int(cap) - hp['hop_starts'].long()).clamp(min=0)
+        share = float(getattr(config, 'coord_hop_share', None) or 1.0)
+        left = torch.minimum(room - uncounted, torch.ceil(room * share).long() - mine).clamp(min=0)
+        if int(left.sum()) == 0:
+            return HOP_WAIT
+        pool = torch.repeat_interleave(torch.arange(len(left)), left)
+        n = min(n, len(pool))
+        pick = pool[torch.randperm(len(pool), generator=g)[:n]]
+        quota['draw'] = {}
+        for j in pick.tolist():
+            quota['draw'][basins[j]] = quota['draw'].get(basins[j], 0) + 1
     rows = []
     for k, j in enumerate(pick.tolist()):
         c = samples_to_optim[cursor + k].clone()
@@ -202,7 +231,10 @@ def _search_loop(config, samples_to_optim, target, device, data_mode, out_path, 
     curate_every = (coord or {}).get('curate_every_s') or 900.0
     hop_wait = dict(since=None, limit=float(getattr(config, 'coord_hop_wait_s', None)
                                             or max(3 * curate_every, 3600.0) + 1800.0),
-                    poll=float(getattr(config, 'coord_hop_poll_s', None) or 60.0), after_pass=0, told=False)
+                    poll=float(getattr(config, 'coord_hop_poll_s', None) or 60.0), after_pass=0, told=False,
+                    # the job's side of the per-parent kick limit (_hop_batch): kicks under the current listing, and
+                    # kicks no listing has counted yet
+                    quota=dict(listing=None, this={}, pending=[], draw={}))
     # cfg:oom_ceiling: after an OOM at batch size B, growth stops at 0.95 B (probing 5% higher after 10 clean batches)
     ceiling = dict(value=None, clean=0)
 
@@ -216,17 +248,19 @@ def _search_loop(config, samples_to_optim, target, device, data_mode, out_path, 
         hop_starts = None
         if hops_mode:  # drawn before the batch bookkeeping, so waiting consumes no batch index or attempt
             hop_starts = _hop_batch(config, samples_to_optim, cursor, num_samples, coord, device, batch_idx + 1,
-                                    after_pass=hop_wait['after_pass'])
+                                    after_pass=hop_wait['after_pass'], quota=hop_wait['quota'])
             if hop_starts is HOP_WAIT:  # bounded: the loop top re-runs maybe_curate and re-checks the stop files
                 hop_wait['since'] = hop_wait['since'] or time.time()
                 waited = time.time() - hop_wait['since']
                 if waited > hop_wait['limit']:
                     raise HopParentsUnavailable(
-                        f"{config.run_name}: no usable hop_parents.pt in {coord['dir']} after {waited:.0f} s (limit "
-                        f"{hop_wait['limit']:.0f} s): is any job running the curate pass? Resubmit once it exists.")
+                        f"{config.run_name}: no usable hop_parents.pt in {coord['dir']}, or no listed parent with a "
+                        f"kick left for this job, after {waited:.0f} s (limit {hop_wait['limit']:.0f} s): is any job "
+                        f"running the curate pass? Resubmit once it exists.")
                 if not hop_wait['told']:
-                    print(f"{config.run_name}: {HOP_WAIT} (missing, unreadable, or not yet from a pass after this "
-                          f"job's last shard); waiting up to {hop_wait['limit']:.0f} s")
+                    print(f"{config.run_name}: {HOP_WAIT} (missing, unreadable, not yet from a pass after this "
+                          f"job's last shard, or no kick left for this job on any listed parent); waiting up to "
+                          f"{hop_wait['limit']:.0f} s")
                     hop_wait['told'] = True
                 sleep(hop_wait['poll'])
                 continue
@@ -318,6 +352,11 @@ def _search_loop(config, samples_to_optim, target, device, data_mode, out_path, 
                 if hops_mode:  # an empty parent list counts as exhaustion only from a pass started after this shard
                     hb = read_json(os.path.join(coord['dir'], 'heartbeat.json')) or {}
                     hop_wait['after_pass'] = int(hb.get('passes', 0)) + 2
+                    q = hop_wait['quota']  # this batch's kicks: counted by a listing from that pass on
+                    for b_, c_ in q['draw'].items():
+                        q['this'][b_] = q['this'].get(b_, 0) + c_
+                    q['pending'].append((hop_wait['after_pass'], dict(q['draw'])))
+                    q['draw'] = {}
 
             cursor = min(cursor + config.batch_size, num_samples)  # a final partial batch ends at num_samples
             atomic_json_dump({'cursor': cursor, 'batch_idx': batch_idx, 'num_samples': num_samples,
