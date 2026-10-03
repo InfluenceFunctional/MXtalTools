@@ -706,7 +706,8 @@ def write_hop_parents(coord_dir, cfg, reg):
                 E=torch.as_tensor(E[order]), hop_starts=torch.as_tensor(starts[order]),
                 generation=torch.as_tensor(gen[order]), log_noise=tuple(h.get('log_noise', (-0.5, -0.5))),
                 sg=cfg.sg, z_prime=cfg.z_prime, energy_model_id=cfg.energy_model_id, passes=reg['passes'],
-                n_basins=len(E))  # 0: nothing found yet, so an empty list is not exhaustion (run_search._hop_batch)
+                n_basins=len(E),  # 0: nothing found yet, so an empty list is not exhaustion (run_search._hop_batch)
+                max_per_basin=int(h.get('max_per_basin', 32)))  # the limit a hop job holds itself to between passes
     atomic_torch_save(blob, os.path.join(coord_dir, 'hop_parents.pt'))
     return len(order)
 
