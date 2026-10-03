@@ -226,8 +226,11 @@ def init_samples_to_optim(config, target=None):
             else:
                 samples_to_optim = [samples_to_optim]
         config.num_samples = min(config.num_samples, len(samples_to_optim))
-        index_block = torch.arange(config.mol_seed * config.num_samples, (config.mol_seed + 1) * config.num_samples)
+        lo = config.mol_seed * config.num_samples
+        # the last block of a file whose length is not a multiple of num_samples is partial (it raised IndexError)
+        index_block = torch.arange(lo, min(lo + config.num_samples, len(samples_to_optim)))
         samples_to_optim = [samples_to_optim[ind] for ind in index_block]
+        config.num_samples = len(samples_to_optim)
         return samples_to_optim
     elif config.init_sample_method == 'in_config':
         samples_to_optim = config.samples_to_optim
