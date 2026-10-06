@@ -98,8 +98,23 @@ def build_image_tables(crystal_batch) -> ImageTables:
                        radius=crystal_batch.radius.to(dev).to(dtype).flatten(), ptr=ptr)
 
 
+def _nearest_in_group(group, dist, k: int):
+    """Mask of the entries that are among the ``k`` smallest ``dist`` of their ``group``.
+
+    Ties keep the earlier entry. The mask is in the caller's order, so filtering with it
+    leaves the survivors where they were and a group with at most ``k`` entries untouched.
+    """
+    by_dist = torch.argsort(dist, stable=True)
+    order = by_dist[torch.argsort(group[by_dist], stable=True)]          # by group, then by distance
+    g = group[order]
+    rank = torch.arange(g.numel(), device=g.device) - torch.searchsorted(g, g)
+    keep = torch.zeros(g.numel(), dtype=torch.bool, device=g.device)
+    keep[order[rank < k]] = True
+    return keep
+
+
 def select_images(tables: ImageTables, T_fc, T_cf, aunit_centroid, aunit_orientation,
-                  cutoff: float, max_translations: int = 10) -> dict:
+                  cutoff: float, max_translations: int = 10, max_images: int = None) -> dict:
     """Image molecules that can hold an atom within ``cutoff`` of the reference molecule.
 
     Works on molecule centres only. The lattice-translation window is set per crystal and
@@ -109,11 +124,17 @@ def select_images(tables: ImageTables, T_fc, T_cf, aunit_centroid, aunit_orienta
     within rho outside the window. N is clamped at ``max_translations``; ``capped`` marks
     the crystals where that clamp was hit and the list may be incomplete.
 
+    ``max_images``, if given, bounds the images kept per crystal: a crystal with more keeps
+    the ``max_images`` whose centres are nearest the reference molecule's, and is marked in
+    ``image_capped``. A cell squeezed far below any physical density has tens of thousands
+    of images in range; the bound is what keeps the pair search that follows finite there.
+    A crystal under the bound is returned exactly as without one.
+
     Returns a dict: ``graph`` [P] crystal index and ``op`` [P] operator index of each kept
     image, ``rel`` [P, 3] its centre relative to the reference molecule's centre, ``skel``
     [B, Z, A, 3] the atom offsets of each operator's copy about its own centre, ``capped``
-    [B], ``images_kept`` [B] and ``centres_examined`` [B]. ``rel`` and ``skel`` carry
-    gradients to the cell and pose arguments; the selection itself does not.
+    [B], ``image_capped`` [B], ``images_kept`` [B] and ``centres_examined`` [B]. ``rel`` and
+    ``skel`` carry gradients to the cell and pose arguments; the selection itself does not.
     """
     st = tables
     B = T_fc.shape[0]
@@ -155,27 +176,37 @@ def select_images(tables: ImageTables, T_fc, T_cf, aunit_centroid, aunit_orienta
         u = torch.einsum('bij,bkj->bki', Hi, cc[:, None, :] - skel_mean) - g
         n0 = torch.round(u)
         rho2 = rho.square()
-        keep_b, keep_k, keep_n = [], [], []
+        keep_b, keep_k, keep_n, keep_d = [], [], [], []
         for k in range(st.W.shape[1]):
             n = n0[bidx, k] + delta
             off = torch.einsum('tij,tj->ti', H[bidx], n - u[bidx, k])    # image centroid - cc
-            ok = (off.square().sum(1) <= rho2[bidx]) & st.kmask[bidx, k]
+            off2 = off.square().sum(1)
+            ok = (off2 <= rho2[bidx]) & st.kmask[bidx, k]
             if k == 0:
                 ok &= (n != 0).any(1)                                    # the reference molecule itself
             keep_b.append(bidx[ok])
             keep_k.append(torch.full((int(ok.sum()),), k, device=dev, dtype=torch.long))
             keep_n.append(n[ok])
+            if max_images is not None:
+                keep_d.append(off2[ok])
         pb, pk, pn = torch.cat(keep_b), torch.cat(keep_k), torch.cat(keep_n)
         order = torch.argsort(pb, stable=True)
         pb, pk, pn = pb[order], pk[order], pn[order]
+        image_capped = torch.zeros(B, dtype=torch.bool, device=dev)
+        if max_images is not None:
+            image_capped = torch.bincount(pb, minlength=B) > max_images
+            if bool(image_capped.any()):
+                near = _nearest_in_group(pb, torch.cat(keep_d)[order], max_images)
+                pb, pk, pn = pb[near], pk[near], pn[near]
 
     rel = torch.einsum('pij,pj->pi', H[pb], g[pb, pk] + pn - g[pb, 0])   # [P, 3]
-    return {'graph': pb, 'op': pk, 'rel': rel, 'skel': skel, 'capped': capped,
+    return {'graph': pb, 'op': pk, 'rel': rel, 'skel': skel, 'capped': capped, 'image_capped': image_capped,
             'images_kept': torch.bincount(pb, minlength=B), 'centres_examined': M * st.kmask.sum(1)}
 
 
 def pair_distances(tables: ImageTables, sel: dict, cutoff: float, max_block: int = 16_000_000,
-                   bucket: int = 4, prefilter: bool = True, return_vectors: bool = False) -> dict:
+                   bucket: int = 4, prefilter: bool = True, return_vectors: bool = False,
+                   max_pairs: int = None) -> dict:
     """Atom pairs within ``cutoff`` between the reference molecule and the kept images.
 
     The pairs are found without gradients, on dense blocks of (reference atom, image atom)
@@ -189,6 +220,13 @@ def pair_distances(tables: ImageTables, sel: dict, cutoff: float, max_block: int
     The distances returned are then recomputed for the kept pairs alone from ``sel['rel']``
     and ``sel['skel']``, by plain arithmetic, so they carry first and second derivatives to
     the cell and pose.
+
+    ``max_pairs``, if given, bounds the pairs kept per crystal: a crystal with more keeps
+    its ``max_pairs`` shortest and is marked in ``pair_capped`` [B]. The bound is applied
+    inside each block of the search as well as at the end, so no crystal ever holds more
+    than ``max_pairs`` pairs per block it appears in. A crystal under the bound is returned
+    exactly as without one. Together with ``select_images``' ``max_images`` this bounds the
+    memory of the search and of whatever consumes the list, whatever the cell.
 
     Returns a dict of flat per-pair tensors: ``dist``; ``graph`` (crystal index); ``ia`` and
     ``ib``, the reference atom and the image atom as indices within their molecule;
@@ -208,8 +246,10 @@ def pair_distances(tables: ImageTables, sel: dict, cutoff: float, max_block: int
         width = width.clamp(max=st.p.shape[1])
         r_ref = (skel[:, 0].square().sum(-1) * st.amask).amax(dim=1).sqrt()      # [B]
         reach2 = (cutoff + r_ref).square()
-        out_i, out_a, out_b = [], [], []
+        out_i, out_a, out_b, out_d = [], [], [], []
         n_dense = 0
+        n_graphs = st.p.shape[0]
+        over = torch.zeros(n_graphs, dtype=torch.bool, device=rel.device)
         for wdt in torch.unique(width).tolist():
             members = (width == wdt).nonzero().flatten()
             step = max(1, max_block // (wdt * wdt))
@@ -231,6 +271,14 @@ def pair_distances(tables: ImageTables, sel: dict, cutoff: float, max_block: int
                     d = torch.cdist(ref, img, compute_mode='donot_use_mm_for_euclid_dist')
                 ok = am[:, :, None] & am[:, None, :] & (d <= cutoff)
                 pi, ia, ib = ok.nonzero(as_tuple=True)
+                if max_pairs is not None:
+                    dd, gg = d[pi, ia, ib], b[pi]
+                    found = torch.bincount(gg, minlength=n_graphs)
+                    over |= found > max_pairs
+                    if bool((found > max_pairs).any()):
+                        near = _nearest_in_group(gg, dd, max_pairs)
+                        pi, ia, ib, dd = pi[near], ia[near], ib[near], dd[near]
+                    out_d.append(dd)
                 out_i.append(m[pi])
                 out_a.append(ia)
                 out_b.append(ib)
@@ -238,20 +286,28 @@ def pair_distances(tables: ImageTables, sel: dict, cutoff: float, max_block: int
             image, ia, ib = torch.cat(out_i), torch.cat(out_a), torch.cat(out_b)
         else:
             image = ia = ib = pb.new_zeros(0)
+        if max_pairs is not None and image.numel():
+            total = torch.bincount(pb[image], minlength=n_graphs)
+            over |= total > max_pairs
+            if bool((total > max_pairs).any()):
+                near = _nearest_in_group(pb[image], torch.cat(out_d), max_pairs)
+                image, ia, ib = image[near], ia[near], ib[near]
     graph = pb[image]
     vec = rel[image] + skel[graph, pk[image], ib] - skel[graph, 0, ia]
     out = {'dist': vec.square().sum(-1).sqrt(), 'graph': graph, 'ia': ia, 'ib': ib,
            'node_ref': st.ptr[graph] + ia, 'node_img': st.ptr[graph] + ib, 'image': image,
-           'z_src': st.z[graph, ib], 'z_tgt': st.z[graph, ia], 'dense_distances': n_dense}
+           'z_src': st.z[graph, ib], 'z_tgt': st.z[graph, ia], 'dense_distances': n_dense,
+           'pair_capped': over}
     if return_vectors:
         out['vec'] = vec
     return out
 
 
 def image_pairs(tables: ImageTables, T_fc, T_cf, aunit_centroid, aunit_orientation, cutoff: float,
-                max_translations: int = 10, **kwargs) -> dict:
-    """``select_images`` then ``pair_distances``; the pair dict plus ``capped``, ``images_kept`` and ``centres_examined``."""
-    sel = select_images(tables, T_fc, T_cf, aunit_centroid, aunit_orientation, cutoff, max_translations)
+                max_translations: int = 10, max_images: int = None, **kwargs) -> dict:
+    """``select_images`` then ``pair_distances``; the pair dict plus ``capped``, ``image_capped``,
+    ``images_kept`` and ``centres_examined``."""
+    sel = select_images(tables, T_fc, T_cf, aunit_centroid, aunit_orientation, cutoff, max_translations, max_images)
     out = pair_distances(tables, sel, cutoff, **kwargs)
-    out.update({k: sel[k] for k in ('capped', 'images_kept', 'centres_examined')})
+    out.update({k: sel[k] for k in ('capped', 'image_capped', 'images_kept', 'centres_examined')})
     return out

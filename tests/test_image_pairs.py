@@ -26,7 +26,7 @@ import torch
 
 from mxtaltools.analysis.vdw_analysis import elj_analysis
 from mxtaltools.constants.atom_properties import VDW_RADII
-from mxtaltools.crystal_building.image_pairs import build_image_tables, image_pairs
+from mxtaltools.crystal_building.image_pairs import build_image_tables, image_pairs, pair_distances, select_images
 from mxtaltools.dataset_utils.utils import collate_data_list
 
 DATASET = os.path.join(os.path.dirname(__file__), 'datasets', 'mini_new_csd.pt')
@@ -170,6 +170,60 @@ def test_node_indices_address_the_batch_atoms(crystals):
     assert torch.equal(batch.z.long()[new['node_img']], new['z_src'])
     assert torch.equal(batch.batch[new['node_ref']], new['graph'])
     assert torch.equal(batch.batch[new['node_img']], new['graph'])
+
+
+def test_caps_leave_ordinary_crystals_alone_and_bound_squeezed_ones(crystals):
+    """`max_images` and `max_pairs` are a memory bound for cells far below any physical density:
+    with them set above what a real crystal needs the lists are unchanged, entry for entry; on a
+    squeezed cell every crystal holds at most the caps, keeps its nearest images and shortest
+    pairs, and is flagged."""
+    batch = collate_data_list([c.clone() for c in crystals])
+    tables = build_image_tables(batch)
+    geom = (batch.T_fc, batch.T_cf, batch.aunit_centroid, batch.aunit_orientation)
+    free = image_pairs(tables, *geom, 6.0)
+    loose = image_pairs(tables, *geom, 6.0, max_images=100_000, max_pairs=10_000_000)
+    for key in ('dist', 'graph', 'ia', 'ib', 'image', 'node_ref', 'node_img'):
+        assert torch.equal(free[key], loose[key]), key
+    assert not bool(loose['image_capped'].any()) and not bool(loose['pair_capped'].any())
+
+    # the same molecules in cells a third the size: far more images and pairs in range
+    small = (batch.T_fc / 3, batch.T_cf * 3, batch.aunit_centroid, batch.aunit_orientation)
+    wide = select_images(tables, *small, 6.0)
+    wide_pairs = pair_distances(tables, wide, 6.0)
+    n_img, n_pair = 40, 300
+    assert int(wide['images_kept'].max()) > n_img
+    assert int(torch.bincount(wide_pairs['graph'], minlength=batch.num_graphs).max()) > n_pair
+
+    sel = select_images(tables, *small, 6.0, max_images=n_img)
+    assert int(sel['images_kept'].max()) == n_img
+    assert torch.equal(sel['image_capped'], wide['images_kept'] > n_img)
+    # the kept images are the nearest ones: none dropped is closer than any kept
+    centre2 = lambda s_: s_['rel'].square().sum(1)
+    for g in sel['image_capped'].nonzero().flatten().tolist():
+        kept = centre2(sel)[sel['graph'] == g].max()
+        every = centre2(wide)[wide['graph'] == g].sort().values
+        assert torch.isclose(kept, every[n_img - 1], rtol=1e-5)
+
+    capped = pair_distances(tables, sel, 6.0, max_pairs=n_pair)
+    per = torch.bincount(capped['graph'], minlength=batch.num_graphs)
+    full = pair_distances(tables, sel, 6.0)
+    full_per = torch.bincount(full['graph'], minlength=batch.num_graphs)
+    assert int(per.max()) == n_pair and torch.equal(capped['pair_capped'], full_per > n_pair)
+    assert torch.equal(per, full_per.clamp(max=n_pair))
+    for g in capped['pair_capped'].nonzero().flatten().tolist():
+        kept = capped['dist'][capped['graph'] == g].max()
+        every = full['dist'][full['graph'] == g].sort().values
+        assert torch.isclose(kept, every[n_pair - 1], rtol=1e-5)
+    # the block-level bound gives the same list as one block would (small blocks force the split)
+    split = pair_distances(tables, sel, 6.0, max_pairs=n_pair, max_block=4096)
+    assert torch.equal(torch.bincount(split['graph'], minlength=batch.num_graphs), per)
+    assert torch.allclose(split['dist'].sort().values, capped['dist'].sort().values, atol=1e-5)
+    # a capped list still carries gradients
+    x = batch.T_fc.clone().requires_grad_(True)
+    sel_g = select_images(tables, x / 3, torch.linalg.inv(x / 3), batch.aunit_centroid, batch.aunit_orientation, 6.0,
+                          max_images=n_img)
+    d = pair_distances(tables, sel_g, 6.0, max_pairs=n_pair)['dist']
+    assert torch.isfinite(torch.autograd.grad(d.sum(), x)[0]).all()
 
 
 def test_z_prime_above_one_is_refused():
