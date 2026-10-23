@@ -1,3 +1,11 @@
+"""Dataset manager for lists of MXtalTools molecule and crystal data objects.
+
+Provides ``DataManager``, which collates saved chunk files into dataset files, loads a
+saved dataset, filters, truncates and shuffles it, computes per-feature statistics and
+crystal/molecule index maps, and assigns standardised regression targets; and
+``qm9_targets_list``, the QM9 target names in the column order of ``y`` read by
+``DataManager.get_target``.
+"""
 import gc
 import glob
 import os
@@ -37,6 +45,53 @@ qm9_targets_list = ["rotational_constant_a",
 
 # noinspection PyAttributeOutsideInit
 class DataManager:
+    """Load, filter and summarise a dataset held in ``self.dataset``.
+
+    ``self.dataset`` is normally a list of MXtalTools data objects (``MolData`` or
+    ``MolCrystalData``); most methods read and replace it in place.
+
+    Parameters
+    ----------
+    datasets_path : str or path-like
+        Directory holding saved datasets and ``misc_data_for_*.npy`` files; stored as a
+        ``Path``.
+    device : str, optional
+        Device of the ``asym_unit_dict`` tensors. Default ``'cpu'``.
+    mode : str, optional
+        Identifier-grouping mode read by ``get_identifier_duplicates``, which accepts
+        ``'standard'`` (default) and ``'blind_test'``.
+    chunks_path : str or path-like, optional
+        Directory read by ``load_chunks``. If None,
+        ``self.datasets_path.joinpath('/classifier_chunks/')`` is used; because that
+        argument is an absolute path, the result is ``classifier_chunks`` at the
+        filesystem root (on the same drive on Windows), not a subdirectory of
+        ``datasets_path``.
+    seed : int, optional
+        Seed for the global NumPy and torch generators when ``config`` is None.
+        Default 0.
+    config : object, optional
+        Attribute namespace. When given, ``config.seed`` replaces ``seed``;
+        ``regression_target`` and ``sample_from_trajectory`` are copied if present in
+        ``config.__dict__``. ``config.type`` is read when ``dataset_type`` is None,
+        ``config.max_dataset_length`` by ``truncate_and_shuffle_dataset`` and
+        ``config.dumps_dirs`` by ``molecule_cluster_dataset_processing``.
+    dataset_type : str, optional
+        ``'crystal'`` and ``'mol_cluster'`` select type-specific branches; other values
+        take the generic path. If None, ``config.type`` is used, so ``config`` must then
+        be given.
+    do_crystal_indexing : bool, optional
+        If True (default), ``extract_misc_stats_and_indices`` rebuilds the
+        crystal/molecule index maps for crystal datasets.
+
+    Notes
+    -----
+    Construction seeds the global NumPy and torch generators, stores every entry of
+    ``ASYM_UNITS`` as a ``torch.Tensor`` (default floating dtype) on ``device`` in
+    ``self.asym_unit_dict``, builds the atom-property lookup tensors
+    (``init_atom_properties``) and sets ``self.times``, a dict of ``time()`` stamps
+    written by the loading, filtering, truncation and target-assignment methods.
+    ``self.regression_target`` is None unless taken from ``config``.
+    """
     def __init__(self,
                  datasets_path,
                  device='cpu',
@@ -81,6 +136,16 @@ class DataManager:
         self.times = {}
 
     def init_atom_properties(self):
+        """Build per-element property lookup tensors, in place.
+
+        Sets ``vdw_radii_tensor``, ``atom_weights_tensor``, ``electronegativity_tensor``,
+        ``group_tensor`` and ``period_tensor`` from the values of ``VDW_RADII``,
+        ``ATOM_WEIGHTS``, ``ELECTRONEGATIVITY``, ``GROUP`` and ``PERIOD`` in dict order;
+        those dicts are keyed 0 to 99 in order, so position ``i`` holds the value for
+        atomic number ``i``. ``extract_misc_stats_and_indices`` indexes them by ``z``;
+        ``get_reduced_volume_fraction`` indexes ``vdw_radii_tensor`` by ``x``. They are
+        created with torch defaults and not moved to ``device``.
+        """
         self.vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()))
         self.atom_weights_tensor = torch.tensor(list(ATOM_WEIGHTS.values()))
         self.electronegativity_tensor = torch.tensor(list(ELECTRONEGATIVITY.values()))
@@ -91,6 +156,34 @@ class DataManager:
                     chunks_patterns=None,
                     max_chunks=1e8,
                     subsamples_per_chunk=1e8):
+        """Load saved chunk files into a new ``self.dataset`` list.
+
+        Changes the process working directory to ``self.chunks_path`` (``os.chdir``)
+        and reads chunk files from there.
+
+        Parameters
+        ----------
+        chunks_patterns : list of str, optional
+            Filename prefixes. In each pattern, backslashes and forward slashes are
+            replaced by underscores, and files matching ``<pattern>*.pt`` or
+            ``<pattern>*.pkl`` are collected. If None, every directory entry is a
+            candidate.
+        max_chunks : int, optional
+            Maximum number of chunks to load. Default ``1e8``.
+        subsamples_per_chunk : int, optional
+            If smaller than a chunk's length, that many elements are drawn from the
+            chunk without replacement by the global NumPy generator; otherwise the whole
+            chunk is kept. Default ``1e8``.
+
+        Notes
+        -----
+        The candidate list is shuffled with ``random.Random(1)`` (a fixed seed) before
+        the first ``max_chunks`` are taken. Only names containing ``.pkl`` or ``.pt`` are
+        loaded, with ``torch.load(..., weights_only=False)``. A loaded list is used as
+        is; any other loaded object with ``is_batch`` True is split with
+        ``to_data_list()``. A chunk raising ``EOFError`` is skipped with a printed
+        message.
+        """
         os.chdir(self.chunks_path)
         if chunks_patterns is None:
             chunks = os.listdir()
@@ -136,23 +229,49 @@ class DataManager:
                                    precompute_edges: bool = False,
                                    single_identifier=None
                                    ):
-        """
+        """Load a dataset and prepare it and its statistics for modelling.
 
         Parameters
         ----------
-        precompute_edges: bool
-        do_shuffle
-        conv_cutoff : float
-        dataset_name
-        override_length
-        filter_conditions
-        filter_polymorphs
-        filter_duplicate_molecules
-        filter_protons
+        dataset_name : str
+            File name under ``datasets_path``. Passed to
+            ``molecule_cluster_dataset_processing`` for ``mol_cluster`` datasets and to
+            ``load_training_dataset`` otherwise.
+        override_length : int, optional
+            Maximum dataset length, forwarded to ``truncate_and_shuffle_dataset``.
+        filter_conditions : list, optional
+            Conditions for ``get_dataset_filter_inds``; see ``compute_filter``.
+        filter_polymorphs : bool, optional
+            If True, keep one element per identifier group (``filter_polymorphs``).
+            Default False.
+        filter_duplicate_molecules : bool, optional
+            If True, keep one element per unique molecular fingerprint
+            (``filter_duplicate_molecules``). Default False.
+        filter_protons : bool, optional
+            If True, atomic number 1 is removed from ``present_atom_types``; the atoms
+            themselves stay in the data. Default False.
+        conv_cutoff : float, optional
+            Edge cutoff for ``compute_edges``; used only when ``precompute_edges`` is
+            True.
+        do_shuffle : bool, optional
+            Forwarded to ``truncate_and_shuffle_dataset``. Default True.
+        precompute_edges : bool, optional
+            If True, call ``compute_edges(conv_cutoff)``. Default False.
+        single_identifier : str, optional
+            If given, ``self.dataset`` is replaced by ``len(self.dataset)`` references to
+            the first element whose ``identifier`` equals it (``list.index`` raises
+            ``ValueError`` if none does).
 
-        Returns
-        -------
-
+        Notes
+        -----
+        Steps, in order: load; ``dataset_filtration``; for crystal datasets in which
+        every ``z_prime`` equals 1, ``remove_zpg1_info``;
+        ``truncate_and_shuffle_dataset``; recompute ``self.misc_dataset`` and
+        ``self.dataset_stats`` on the truncated dataset with
+        ``extract_misc_stats_and_indices``; ``assign_regression_targets``; set
+        ``self.present_atom_types`` to the unique atomic numbers; set ``self.dataDims``
+        from ``get_data_dimensions``; then the optional edge and single-identifier
+        steps. Returns None.
         """
 
         if self.dataset_type == 'mol_cluster':
@@ -184,6 +303,12 @@ class DataManager:
             self.dataset = [self.dataset[good_ind] for _ in range(len(self.dataset))]
 
     def remove_zpg1_info(self):
+        """Truncate Z'-indexed crystal attributes to their first molecule, in place.
+
+        For every element of ``self.dataset``, keeps the first 3 columns of
+        ``aunit_centroid`` and ``aunit_orientation`` and the first column of
+        ``aunit_handedness``.
+        """
         # filter Z'>1 information if not needed
         for elem in self.dataset:
             elem.aunit_centroid = elem.aunit_centroid[:, :3]
@@ -193,6 +318,24 @@ class DataManager:
     def compute_edges(self,
                       conv_cutoff: float,
                       buffer: Optional[float] = 0.5):
+        """Precompute graph edges for every element of ``self.dataset``, in place.
+
+        Parameters
+        ----------
+        conv_cutoff : float
+            Edge cutoff, in the units of the element positions.
+        buffer : float, optional
+            Added to ``conv_cutoff`` for datasets other than ``mol_cluster``.
+            Default 0.5.
+
+        Notes
+        -----
+        For ``mol_cluster`` datasets, calls
+        ``molecule_cluster_edge_indexing(conv_cutoff)``; ``buffer`` is not used.
+        Otherwise calls each element's
+        ``construct_intra_radial_graph(cutoff=conv_cutoff + buffer)``, which sets
+        ``edges_dict`` and ``edge_index`` on the element from pairs of its own atoms.
+        """
         if self.dataset_type == 'mol_cluster':
             self.molecule_cluster_edge_indexing(conv_cutoff)
         else:
@@ -203,6 +346,27 @@ class DataManager:
                 # todo need a custom collation function for these
 
     def molecule_cluster_dataset_processing(self, dataset_name):
+        """Build ``self.dataset`` for a ``mol_cluster`` dataset from LAMMPS dump chunks.
+
+        Parameters
+        ----------
+        dataset_name : str
+            File name under ``datasets_path``; only its existence is checked.
+
+        Notes
+        -----
+        If ``datasets_path / dataset_name`` does not exist and ``config`` has
+        ``dumps_dirs``, converts the dumps in ``datasets_path / d`` for each ``d`` in
+        ``config.dumps_dirs`` into chunks under ``datasets_path / 'classifier_chunks'``
+        with ``generate_dataset_from_dumps(..., steps_per_save=1)``. Then calls
+        ``process_new_dataset(new_dataset_name=None,
+        chunks_patterns=config.dumps_dirs, save_dataset=False)``, converts
+        ``self.dataset`` with ``to_data_list()`` and sets ``self.dataset_stats`` from
+        ``self.misc_dataset``. As written, ``process_new_dataset`` with its default
+        ``build_stats=True`` raises ``TypeError`` when it concatenates
+        ``'misc_data_for_'`` with None, and ``load_chunks`` leaves ``self.dataset`` as a
+        list, which has no ``to_data_list``.
+        """
         # todo this almost certainly no longer works
         if not os.path.exists(self.datasets_path.joinpath(dataset_name)) and 'dumps_dirs' in self.config.__dict__.keys():
             # if it hasn't already been done, convert the relevant LAMMPS trajectories into trainable data objects
@@ -218,7 +382,21 @@ class DataManager:
         self.dataset_stats = self.misc_dataset['dataset_stats']
 
     def molecule_cluster_edge_indexing(self, conv_cutoff):
-        """prepopulate edge information - expensive to do repeatedly - will not work if we noise the coordinates"""
+        """Precompute minimum-image edges for each element of a ``mol_cluster`` dataset, in place.
+
+        Parameters
+        ----------
+        conv_cutoff : float
+            Maximum edge length, in the units of ``pos``.
+
+        Notes
+        -----
+        Calls ``argwhere_minimum_image_convention_edges(1, elem.pos, elem.T_fc,
+        conv_cutoff)`` for each element and sets its ``edge_index`` ([2, num_edges])
+        and ``edge_attr`` (the [num_edges] minimum-image distances). The edges reflect
+        the positions at call time and are not updated if the coordinates are later
+        noised.
+        """
         for ind in tqdm(range(len(self.dataset))):
             edges_dict = argwhere_minimum_image_convention_edges(1,
                                                                  self.dataset[ind].pos,
@@ -228,7 +406,25 @@ class DataManager:
             self.dataset[ind].edge_attr = edges_dict['dists']
 
     def truncate_and_shuffle_dataset(self, override_length=None, do_shuffle=True):
-        """defines train/test split as well as overall dataset size"""
+        """Truncate ``self.dataset`` to a maximum length, optionally in random order.
+
+        Parameters
+        ----------
+        override_length : int, optional
+            Maximum length. If None, ``config.max_dataset_length`` is used when
+            ``config`` is given, otherwise ``1000000000000``.
+        do_shuffle : bool, optional
+            If True (default), keeps ``dataset_length`` indices drawn without
+            replacement by the global NumPy generator, in random order. If False, keeps
+            ``np.linspace(0, len(self.dataset) - 1, dataset_length)`` cast to int, in
+            dataset order.
+
+        Notes
+        -----
+        Sets ``self.max_dataset_length`` and ``self.dataset_length``
+        (``min(len(self.dataset), max_dataset_length)``) and replaces ``self.dataset``.
+        No train/test split is made here.
+        """
         self.times['dataset_shuffle_start'] = time()
         # get dataset length & shuffle
         if override_length is not None:
@@ -249,6 +445,13 @@ class DataManager:
         self.times['dataset_shuffle_end'] = time()
 
     def assign_regression_targets(self):
+        """Store the standardised targets from ``get_target`` in each element's ``y``, in place.
+
+        For 1-D targets, element ``i`` gets ``y = targets[i]``. For targets with more
+        than one dimension and ``targets.shape[1] > 1``, it gets ``targets[None, i]``
+        (a leading dimension of 1). For targets with more than one dimension and
+        ``targets.shape[1] == 1``, no ``y`` is assigned.
+        """
         self.times['dataset_targets_assignment_start'] = time()
         targets = self.get_target()  # todo assign targets element-by-element in data list rather than as batch, omitting collation
         for ind in range(len(self.dataset)):
@@ -260,6 +463,23 @@ class DataManager:
         self.times['dataset_targets_assignment_end'] = time()
 
     def dataset_filtration(self, filter_conditions, filter_duplicate_molecules, filter_polymorphs):
+        """Remove elements of ``self.dataset`` by condition, identifier group and duplicate molecule.
+
+        Parameters
+        ----------
+        filter_conditions : list or None
+            Conditions for ``get_dataset_filter_inds``; skipped if None.
+        filter_duplicate_molecules : bool
+            If True, removes the indices returned by ``filter_duplicate_molecules``.
+        filter_polymorphs : bool
+            If True, removes the indices returned by ``filter_polymorphs``.
+
+        Notes
+        -----
+        The steps run in the order conditions, polymorphs, duplicate molecules; for
+        crystal datasets ``rebuild_crystal_indices`` runs after each applied step.
+        Removal counts are printed.
+        """
         self.times['dataset_filtering_start'] = time()
         if filter_conditions is not None:
             bad_inds = self.get_dataset_filter_inds(filter_conditions)
@@ -290,12 +510,50 @@ class DataManager:
         self.times['dataset_filtering_end'] = time()
 
     def filter_protons(self):
+        """Apply ``filter_graph_nodewise`` to ``self.dataset`` with the node mask ``self.dataset.x == 1``.
+
+        The mask marks the nodes to keep. ``self.dataset`` must be a collated object with
+        ``num_nodes`` and ``x``; a list dataset raises ``AttributeError``.
+        ``filter_graph_nodewise`` calls ``data.subgraph``, which the MXtalTools data
+        classes do not define. Not called by other methods of this class.
+        """
         init_len = self.dataset.num_nodes
         keep_bools = self.dataset.x == 1
         self.dataset = filter_graph_nodewise(self.dataset, keep_bools)  # this is broken with our custom datatype
         print(f"Proton filter removed {init_len - self.dataset.num_nodes} atoms leaving {self.dataset.num_nodes}")
 
     def get_data_dimensions(self):
+        """Collect feature names, standardisation vectors and dataset sizes into a dict.
+
+        Also sets ``atom_keys``, ``molecule_keys``, ``lattice_keys``, ``lattice_means``,
+        ``lattice_stds``, ``lattice_stats`` and ``length_covariance_matrix`` on
+        ``self``. Requires ``dataset_stats``, ``dataset_length``, ``target_mean``,
+        ``target_std`` and ``present_atom_types`` to be set.
+
+        Returns
+        -------
+        dict
+            ``'node_standardization_vector'``: array [6, 2] of (tight_mean, tight_std)
+            for each of ``atom_keys``, with row 0 (atomic number) set to (0, 1);
+            ``'graph_standardization_vector'``: array [3, 2] of (tight_mean, tight_std)
+            for each of ``molecule_keys``; ``'standardization_dict'``:
+            ``dataset_stats``; ``'dataset_length'``; ``'lattice_means'``,
+            ``'lattice_stds'``, ``'lattice_stats'`` and ``'lattice_length_cov_mat'``;
+            ``'regression_target'``, ``'target_mean'`` and ``'target_std'``;
+            ``'num_atom_features'``, ``'atom_features'``, ``'num_molecule_features'``
+            and ``'molecule_features'``; ``'allowed_atom_types'`` and
+            ``'num_atom_types'`` from ``present_atom_types``. For ``mol_cluster``
+            datasets, also ``'num_polymorphs'`` (the number of unique ``polymorph``
+            values) and ``'num_topologies'`` (0).
+
+        Notes
+        -----
+        For crystal datasets the lattice entries are the ``tight_mean`` and
+        ``tight_std`` of the 12 ``lattice_keys`` statistics, those statistics dicts
+        keyed by name, and ``torch.cov`` of the concatenated per-element
+        ``cell_lengths`` rows. Otherwise they are 12 zeros, 12 values of 0.01, 12 empty
+        lists and ``torch.ones((3, 3))``.
+        """
         self.atom_keys = ['atomic_number', 'vdw_radii', 'atom_weight', 'electronegativity', 'group', 'period']
         self.molecule_keys = ['num_atoms', 'radius', 'mol_volume']
         self.lattice_keys = ['cell_a', 'cell_b', 'cell_c',
@@ -353,6 +611,36 @@ class DataManager:
         return dim
 
     def get_target(self):
+        """Compute standardised regression targets for ``self.dataset``.
+
+        Sets ``self.target_mean`` and ``self.target_std``.
+
+        Returns
+        -------
+        torch.Tensor
+            ``(targets - target_mean) / target_std``, with ``targets`` built as described
+            in Notes (``torch.tensor`` over per-element values, or ``torch.cat`` of
+            per-element tensors along dim 0). If ``regression_target`` is None,
+            ``target_mean`` and ``target_std`` are set to 0 and 1 and a tensor of
+            ``len(self.dataset)`` zeros is returned.
+
+        Raises
+        ------
+        AssertionError
+            If ``regression_target`` is none of the named cases in Notes and reading it
+            from the elements' ``_store`` or building the tensor raises any exception.
+
+        Notes
+        -----
+        Targets by ``regression_target``: a name in ``qm9_targets_list`` reads that
+        column of ``elem.y``; ``'crystal_packing_coefficient'`` reads
+        ``packing_coeff``; ``'dipole'`` concatenates ``dipole``;
+        ``'normed_aunit_volume'`` concatenates ``aunit_volume() / radius**3``; any other
+        name reads ``elem._store[regression_target]``. Mean and std come from the
+        targets clipped to the 5th and 95th percentiles of all their entries, over
+        dim 0 when ``targets[0].ndim > 1`` and over all entries otherwise; the returned
+        values are not clipped. A std whose maximum is below ``1e-4`` is replaced by ones.
+        """
         if self.regression_target is not None:  # todo rewrite as data list method
             if self.regression_target in qm9_targets_list:
                 target_ind = qm9_targets_list.index(self.regression_target)
@@ -390,6 +678,15 @@ class DataManager:
             return torch.tensor([0 for _ in range(len(self.dataset))])
 
     def get_reduced_volume_fraction(self):
+        """Return ``reduced_volume`` over the summed van der Waals sphere volumes, per element.
+
+        Returns
+        -------
+        torch.Tensor
+            One entry per element along dim 0: ``elem.reduced_volume`` divided by the
+            sum of ``4 / 3 * pi * r ** 3`` over the element's atoms, with ``r`` looked
+            up in ``vdw_radii_tensor`` by ``elem.x``.
+        """
         red_vol = torch.tensor([elem.reduced_volume for elem in self.dataset])
         atom_volumes = torch.tensor(
             [torch.sum(4 / 3 * torch.pi * self.vdw_radii_tensor[elem.x] ** 3) for elem in self.dataset])
@@ -397,11 +694,33 @@ class DataManager:
         return targets
 
     def rebuild_crystal_indices(self):
+        """Recompute ``crystal_to_mol_dict``, ``mol_to_crystal_dict`` and ``unique_molecules_dict`` from ``self.dataset``, in place."""
         # identify which molecules are in which crystals and vice-versa
         self.crystal_to_mol_dict, self.mol_to_crystal_dict = self.generate_mol2crystal_mapping()
         self.unique_molecules_dict = self.identify_unique_molecules_in_crystals()
 
     def load_training_dataset(self, dataset_name):
+        """Load a saved dataset into ``self.dataset`` along with its miscellaneous data.
+
+        Parameters
+        ----------
+        dataset_name : str
+            File name under ``datasets_path``, ending in a 3-character suffix such as
+            ``.pt``.
+
+        Notes
+        -----
+        Loads with ``torch.load(..., weights_only=False)``; a loaded object whose
+        lower-cased ``str(type(...))`` (module path included) contains ``'batch'`` is
+        converted with ``to_data_list()``. Then loads ``misc_data_for_<stem>.npy`` from
+        ``datasets_path``, where ``<stem>`` is ``dataset_name`` without its last 3
+        characters and without everything up to and including its last ``'test_'``; if
+        that file is absent, computes the dict with ``extract_misc_stats_and_indices``.
+        The dict is stored as ``self.misc_dataset`` and each of its keys is also set as
+        an attribute of ``self``. If ``dataset_name`` contains ``'blind_test'``,
+        ``self.mode`` is set to ``'blind test'``. For crystal datasets whose name
+        contains ``'test'`` or ``'mini'``, ``rebuild_crystal_indices`` is called.
+        """
         self.times['dataset_loading_start'] = time()
         self.dataset = torch.load(self.datasets_path.joinpath(dataset_name), weights_only=False)
 
@@ -436,6 +755,37 @@ class DataManager:
                             samples_per_chunk=1e8,
                             build_stats: bool = True,
                             save_dataset=True):
+        """Collate chunk files into ``self.dataset`` and optionally save it with its statistics.
+
+        Parameters
+        ----------
+        new_dataset_name : str, optional
+            Base file name of the outputs. Must be a string when ``build_stats`` or
+            ``save_dataset`` is True.
+        test_dataset_size : int, optional
+            Maximum size of the ``test_`` subset. Default 10000.
+        max_chunks : int, optional
+            Forwarded to ``load_chunks``. Default ``1e8``.
+        chunks_patterns : list of str, optional
+            Forwarded to ``load_chunks``.
+        samples_per_chunk : int, optional
+            Forwarded to ``load_chunks`` as ``subsamples_per_chunk``. Default ``1e8``.
+        build_stats : bool, optional
+            If True (default), sets ``self.misc_dataset`` from
+            ``extract_misc_stats_and_indices`` and writes it with ``np.save`` to
+            ``datasets_path / ('misc_data_for_' + new_dataset_name)`` (``np.save``
+            appends ``.npy``).
+        save_dataset : bool, optional
+            If True (default), writes ``mini_<name>.pt``, ``test_<name>.pt`` and
+            ``<name>.pt`` under ``datasets_path``.
+
+        Notes
+        -----
+        The ``mini_`` file holds the first ``min(len(self.dataset), 100)`` elements and
+        the ``test_`` file the first ``min(len(self.dataset), test_dataset_size)``
+        elements, each as a list permuted by the global NumPy generator. The full file
+        holds ``self.dataset`` as loaded.
+        """
         self.load_chunks(chunks_patterns=chunks_patterns,
                          max_chunks=max_chunks,
                          subsamples_per_chunk=samples_per_chunk)
@@ -480,6 +830,35 @@ class DataManager:
     
 
     def extract_misc_stats_and_indices(self, dataset):  #do this batchwise for memory efficiency
+        """Compute per-feature statistics and, for crystal datasets, index maps.
+
+        Parameters
+        ----------
+        dataset : list or collated data object
+            Data objects; a list is collated with ``collate_data_list``.
+
+        Returns
+        -------
+        dict
+            ``'dataset_stats'``: dict of ``basic_stats`` results keyed by feature.
+            Atom-level ``'atomic_number'`` (``z``) and ``'vdw_radii'``,
+            ``'atom_weight'``, ``'electronegativity'``, ``'group'`` and ``'period'``
+            (looked up by ``z``); molecule-level ``'num_atoms'``, ``'radius'`` and
+            ``'mol_volume'``. Crystal datasets add ``'cell_a'``, ``'cell_b'``,
+            ``'cell_c'`` and ``'cell_alpha'``, ``'cell_beta'``, ``'cell_gamma'`` (columns
+            of ``cell_lengths`` and ``cell_angles``), ``'aunit_x'``, ``'aunit_y'``,
+            ``'aunit_z'`` and ``'aunit_rot_x'``, ``'aunit_rot_y'``, ``'aunit_rot_z'``
+            (first three columns of ``aunit_centroid`` and ``aunit_orientation``),
+            ``'cell_volume'`` and ``'packing_coefficient'``. With
+            ``do_crystal_indexing``, crystal datasets also get ``'crystal_to_mol_dict'``,
+            ``'mol_to_crystal_dict'`` and ``'unique_molecules_dict'``.
+
+        Notes
+        -----
+        The index maps are rebuilt by ``rebuild_crystal_indices`` from
+        ``self.dataset``, not from the ``dataset`` argument, and are also set as
+        attributes of ``self``.
+        """
         if isinstance(dataset, list):
             data_batch = collate_data_list(dataset)
         else:
@@ -528,9 +907,20 @@ class DataManager:
         return misc_data_dict
 
     def generate_mol2crystal_mapping(self):
-        """
-        some crystals have multiple molecules, and we do batch analysis of molecules with a separate indexing scheme
-        connect the crystal identifier-wise and mol-wise indexing with the following dicts
+        """Map dataset identifiers to molecule indices and back.
+
+        Some crystals have multiple molecules, and molecules are analysed with a
+        separate indexing scheme; these dicts connect the identifier-wise and
+        molecule-wise indexing. The current code assigns exactly one molecule index per
+        element of ``self.dataset``, in dataset order, regardless of ``z_prime``.
+
+        Returns
+        -------
+        crystal_to_mol_dict : dict
+            ``str(identifier)`` -> one-element list holding that element's molecule
+            index. If identifiers repeat, the last such element's index is kept.
+        mol_to_crystal_dict : dict
+            Molecule index -> ``str(identifier)``.
         """
         # print("Generating mol-to-crystal mapping")  # todo replace below with data-list based method
         mol_index = 0
@@ -547,11 +937,18 @@ class DataManager:
         return crystal_to_mol_dict, mol_to_crystal_dict
 
     def identify_unique_molecules_in_crystals(self):
-        """
-        identify all exactly unique molecules (up to mol fingerprint)
-        list their dataset indices in a dict
+        """Identify all exactly unique molecules (up to molecular fingerprint) and list their dataset indices.
 
-        at train time, we can use this to repeat sampling of identical molecules
+        At train time this can be used to repeat sampling of identical molecules.
+
+        Returns
+        -------
+        dict or None
+            Keys are the bytes of each unique fingerprint row; values are the lists of
+            indices of the elements carrying it. Only the first 2048 entries of each
+            element's ``fingerprint`` are used (one molecule per element). If
+            ``self.dataset[0]`` has no ``fingerprint`` attribute, a message mentioning
+            SMILES is printed and None is returned; no SMILES-based grouping is done.
         """
         if hasattr(self.dataset[0],'fingerprint'):
             # print("getting unique molecule fingerprints")
@@ -574,12 +971,30 @@ class DataManager:
         return molecules_in_crystals_dict
 
     def get_identifier_duplicates(self):
-        """
-        by CSD identifier
-        CSD entries with numbers on the end are subsequent additions to the same crystal
-        often polymorphs or repeat  measurements
+        """Group dataset indices by CSD identifier, or by blind test sample submission.
 
-        option for grouping identifier by blind test sample submission
+        In ``'standard'`` mode, groups by CSD identifier. CSD entries with numbers on
+        the end are subsequent additions to the same crystal, often polymorphs or repeat
+        measurements, so an identifier whose last character is a digit has its last two
+        characters removed before grouping. In ``'blind_test'`` mode, groups by the
+        first Roman numeral, searched from ``'XXX'`` down to ``'I'``, that is a
+        substring of the identifier.
+
+        Returns
+        -------
+        duplicate_lists : list of list of int
+            Index groups with more than one member.
+        duplicate_list_extension : list of int
+            Concatenation of ``duplicate_lists``.
+        duplicate_groups : dict
+            Group key -> index list, for groups with more than one member; the lists
+            are the same objects as in ``duplicate_lists``.
+
+        Raises
+        ------
+        AssertionError
+            If ``self.mode`` is neither ``'standard'`` nor ``'blind_test'``, including
+            the value ``'blind test'`` that ``load_training_dataset`` sets.
         """
         print('Getting identifier duplicates')
 
@@ -623,10 +1038,19 @@ class DataManager:
         return duplicate_lists, duplicate_list_extension, duplicate_groups
 
     def get_dataset_filter_inds(self, filter_conditions):
-        """
-        identify indices not passing certain filter conditions
-        conditions in the format [column_name, condition_type, [min, max] or [set]]
-        condition_type in ['range','in','not_in']
+        """Identify indices not passing certain filter conditions.
+
+        Parameters
+        ----------
+        filter_conditions : list
+            Conditions in the format ``[column_name, condition_type, [min, max] or
+            [set]]`` with ``condition_type`` in ``['range', 'in', 'not_in']``; each is
+            evaluated by ``compute_filter``.
+
+        Returns
+        -------
+        numpy.ndarray
+            Sorted unique indices of ``self.dataset`` failing at least one condition.
         """
         print('Filtering dataset starting from {} samples'.format(len(self.dataset)))
         bad_inds = []  # indices to be filtered
@@ -639,9 +1063,39 @@ class DataManager:
         return bad_inds
 
     def compute_filter(self, condition):
-        """
-        apply given filters
-        for atoms & molecules with potential Z'>1, need to adjust formatting a bit
+        """Apply one filter condition and return the indices of ``self.dataset`` that fail it.
+
+        Parameters
+        ----------
+        condition : list
+            ``[condition_key, condition_type, condition_range]``.
+
+        Returns
+        -------
+        list of int or torch.Tensor
+            Failing indices: a list for ``'atomic_number'``, a 1-D long tensor
+            otherwise.
+
+        Raises
+        ------
+        AssertionError
+            For keys other than ``'atomic_number'``: if ``get_condition_values`` does
+            not recognise the key, ``condition_type`` is not ``'range'``, ``'in'`` or
+            ``'not_in'``, or a ``'range'`` condition does not have max > min.
+        UnboundLocalError
+            For ``condition_type == 'not_in'`` on keys other than ``'atomic_number'``:
+            the matching indices are computed but not assigned, so the final print
+            fails.
+
+        Notes
+        -----
+        ``'atomic_number'`` ignores ``condition_type``: an element fails if any of its
+        ``z`` values is not in ``condition_range``. Other keys are read with
+        ``get_condition_values``, one value per element; ``'range'`` fails values
+        outside ``[min, max]`` (bounds inclusive) and ``'in'`` fails values equal to
+        none of ``condition_range``. No Z'-specific handling is applied. The
+        ``'crystal_identifier'`` values are a list, on which the ``'range'`` and
+        ``'in'`` comparisons raise ``TypeError``.
         """
         condition_key, condition_type, condition_range = condition
         if condition_key == 'atomic_number':
@@ -684,6 +1138,33 @@ class DataManager:
         return bad_inds
 
     def get_condition_values(self, condition_key):  # todo convert from batch back to data lists
+        """Return one value per element of ``self.dataset`` for a filter key.
+
+        Parameters
+        ----------
+        condition_key : str
+            One of ``'crystal_z_prime'`` (``z_prime``),
+            ``'asymmetric_unit_is_well_defined'`` (``is_well_defined``),
+            ``'crystal_symmetry_operations_are_nonstandard'``
+            (``nonstandard_symmetry``), ``'max_atomic_number'`` (``z.amax()``),
+            ``'molecule_num_atoms'`` (``num_atoms``), ``'molecule_radius'``
+            (``radius``), ``'crystal_space_group_number'`` (``sg_ind``),
+            ``'crystal_identifier'`` (``identifier``), ``'reduced_volume_fraction'``
+            (``get_reduced_volume_fraction``), ``'time_step'`` (``time_step``, built
+            with ``torch.Tensor``, the default floating dtype) or
+            ``'crystal_packing_coefficient'`` (``packing_coeff``).
+
+        Returns
+        -------
+        torch.Tensor or list
+            Tensor with one entry per element along dim 0, or a list of identifiers
+            for ``'crystal_identifier'``.
+
+        Raises
+        ------
+        AssertionError
+            If ``condition_key`` is not one of the above.
+        """
         if condition_key == 'crystal_z_prime':
             values = torch.tensor([elem.z_prime for elem in self.dataset])
         elif condition_key == 'asymmetric_unit_is_well_defined':
@@ -714,9 +1195,17 @@ class DataManager:
         return values
 
     def filter_polymorphs(self):
-        """
-        find duplicate examples and pick one representative per molecule
-        :return:
+        """Pick one representative per identifier group and return the other indices.
+
+        Groups come from ``get_identifier_duplicates`` (CSD identifier stems in
+        ``'standard'`` mode). For each group with more than one member, one index is
+        drawn by the global NumPy generator and kept; the others are returned. The
+        group lists are modified in place.
+
+        Returns
+        -------
+        list of int
+            Indices of ``self.dataset`` to remove.
         """
         # use CSD identifiers to pick out polymorphs
         duplicate_lists, duplicate_list_extension, duplicate_groups = self.get_identifier_duplicates()  # issue - some of these are not isomorphic (i.e., different ionization), maybe ~2% from early tests
@@ -735,9 +1224,24 @@ class DataManager:
         return bad_inds
 
     def filter_duplicate_molecules(self):
-        """
-        find duplicate examples and pick one representative per molecule
-        :return:
+        """Find duplicate examples and pick one representative per molecule.
+
+        For each entry of ``unique_molecules_dict`` with more than one molecule index,
+        the molecules are mapped to identifiers through ``mol_to_crystal_dict`` and to
+        dataset indices by identifier; one index is drawn by the global NumPy generator
+        and kept, and the others are returned. An identifier shared by several elements
+        maps to the last such index.
+
+        Returns
+        -------
+        list of int
+            Indices of ``self.dataset`` to remove.
+
+        Notes
+        -----
+        Requires ``unique_molecules_dict`` and ``mol_to_crystal_dict``, set by
+        ``rebuild_crystal_indices`` or from the loaded miscellaneous data; raises
+        ``AttributeError`` if ``unique_molecules_dict`` is None.
         """
         # the representative structure will be randomly sampled from all available identical molecules
         # we will add all others to 'bad_inds', and filter them out at our leisure
@@ -757,9 +1261,11 @@ class DataManager:
         return bad_inds
 
     def __getitem__(self, idx):
+        """Return ``self.dataset[idx]``."""
         return self.dataset[idx]
 
     def __len__(self):
+        """Return ``len(self.dataset)``."""
         return len(self.dataset)
 
 

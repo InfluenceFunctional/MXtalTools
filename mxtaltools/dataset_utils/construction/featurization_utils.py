@@ -544,6 +544,9 @@ def instantiate_crystal(aunit_centroid, aunit_handedness,
             max_z_prime=max_z_prime,
             mol_ind=torch.arange(z_prime, dtype=torch.long).repeat_interleave(
                 torch.stack([m.num_atoms for m in mols])),
+            # the unit map (stage 2, 2026-10-22): the merged molecule holds z_prime units, molecule k's atoms unit k
+            unit_ind=torch.arange(z_prime, dtype=torch.long).repeat_interleave(
+                torch.stack([m.num_atoms for m in mols])),
         )
 
     else:
@@ -571,6 +574,7 @@ def instantiate_crystal(aunit_centroid, aunit_handedness,
             cocrystal=False,
             max_z_prime=max_z_prime,
             mol_ind=torch.zeros(len(mol.z), dtype=torch.long),
+            unit_ind=torch.zeros(len(mol.z), dtype=torch.long),     # the unit map: one unit
         )
     return zp1_crystal
 

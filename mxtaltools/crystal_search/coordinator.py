@@ -2,53 +2,85 @@
 Coordination of many parallel crystal_search jobs through a shared directory (a "campaign"), with a per-stream stopping
 rule: stop a proposal stream once the expected effort to find the next new low-energy basin exceeds Z.
 
-Layout of a campaign directory:
+Layout of a campaign directory::
+
     coord.yaml                 campaign config (see CampaignConfig)
     shards/<run>/<cursor>_<batch>.pt   one per completed search batch, written by the GPU jobs (write_shard)
     registry.pt                the basin registry (single writer: the curate pass)
     stats.json / stats.md      per-stream statistics and verdicts, rewritten each pass
     STOP.<stream> / STOP       stop files the GPU jobs poll between batches
-    heartbeat.json             time and pass count of the last curate pass
+    heartbeat.json             time, host, pass count and new-shard count of the last curate pass
+    hop_parents.pt             basins a hop job may kick from (write_hop_parents), only when hops is configured
+    curator_owner.json         the curator lease, held during a pass run through maybe_curate or curate_locked
 
-GPU jobs never wait on anything here: they write shards (fail-open: a coordination I/O error never stops a search) and
-check the STOP files between batches. One curate pass (curate) is idempotent; every pass takes the curator lease
-(curate_locked: in a job through maybe_curate, by hand through main, in a loop through run_loop), and a pass while
-another holds it is skipped, never waited on. If the coordinator stops, the jobs simply run to their own budgets.
+GPU jobs never wait on the coordinator: they write shards (fail-open: a coordination I/O error never stops a search)
+and check the STOP files between batches; the one exception is a hop job, which waits a bounded time (then raises),
+still checking the STOP files, while hop_parents.pt is missing or unreadable, is empty but was written on a registry
+with no basin or by a pass that may predate the job's last shard, or lists no parent with a kick left for the job; an
+empty list from a later pass on a registry with basins ends the job (run_search._hop_batch). A curate pass (curate) is
+safe to repeat: each shard and prior is ingested once, and a stream's stop-confirmation streak advances only on a pass
+after new effort from that stream; every pass advances the pass count, and a pass without new effort can still stop a
+stream whose test holds once its settle time has passed (stopping rule below). curate itself takes no lease; a pass run
+inside a search job (maybe_curate), by hand (main), in a loop by a cheap CPU job (run_loop) or before an export (export)
+holds the curator lease, and a pass attempted while another process holds it does not run (the lease is never waited
+on). If the coordinator stops, the jobs simply run to their own budgets.
 
-Basins. A curate pass takes each physical state within window_kT of the energy reference, re-expresses it in its reduced
-cell (standardize.standardize_cells; RDFs do not depend on the cell choice, but the registry keeps reduced
-descriptions), computes its RDF, and assigns it to the basin of the nearest leader within identity_cut, else opens a basin
-(leader clustering: the first state of a basin is its leader; later states only join). identity_cut must be calibrated
-per system against a structure-identity test (COMPACK): the RDF distance at which two structures are the same packing
-differs between molecules and between kinds of pair (acridine end states: 0.050 by the rule of the GFN repository's
-campaign_compack.py, where 0.085 had held against the experimental forms; MIPCAS and NEHZOR landscapes: 0.12-0.13 at a
-fitted P(match) = 0.95). When unsure, a
-smaller cut splits one structure into several basins, which only delays the stop; a larger one merges different
-structures and stops early. The config records whether the cut was calibrated. Calibrate it on a short pilot campaign
-before the real one (the GFN repository's energy_sampling/eval/campaign_compack.py calibrate does this within a fixed
-COMPACK budget): changing the cut under a running campaign would reassign the basins it has built.
+Basins. A curate pass takes each physical state within window_kT of the energy reference (every physical state while
+there is no reference), re-expresses it in its reduced cell (standardize.standardize_cells; RDFs do not depend on the
+cell choice, but the registry keeps reduced descriptions; a state with no reduced cell is kept as stored and noted in
+the refused list), computes its RDF (rdf_mode: one channel per pair of bonded-environment labels, 'envwise', the
+default, or per pair of atom indices, 'atomwise'), and assigns it to the basin of the nearest leader within
+identity_cut -- leaders registered before its shard (or prior file) first, then those opened by earlier states of the
+same shard -- or else opens a new basin (leader clustering: the first state of a basin is its leader; later states only
+join; the basin's stored energy and parameters are those of its lowest-energy state). A hop state records the basin its
+start was kicked from as its parent (hits['parent']) and, where its shard gives one, its latent kick length (hit_kick);
+a basin it opens records the same parent (basin_parent) and is one generation below it (basin_gen).
+identity_cut must be calibrated per system against a structure-identity test (COMPACK): the RDF distance
+at which two structures are the same packing differs between molecules and between kinds of pair (acridine end states:
+0.050 by the rule of the GFN repository's campaign_compack.py, where 0.085 had held against the experimental forms;
+MIPCAS and NEHZOR landscapes: 0.12-0.13 at a fitted P(match) = 0.95). When unsure, a smaller cut splits one structure
+into several basins, which only delays the stop; a larger one merges different structures and stops early. The config
+records whether the cut was calibrated. Calibrate it on a short pilot campaign before the real one (the GFN repository's
+energy_sampling/eval/campaign_compack.py calibrate does this within a fixed COMPACK budget): changing the cut under a
+running campaign would reassign the basins it has built.
+A pass raises ValueError when identity_cut, rdf_mode or energy_model_id in coord.yaml differs from the registry's
+(curate).
 
-Stopping rule, per stream s (random starts, eLJ-prescreened starts, hops, ...), for each band b (e.g. 2 kT and 1 kT):
+Stopping rule, per stream s (random starts, eLJ-prescreened starts, hops, ...), for each band b (e.g. 2 kT and 1 kT)::
+
     f1_s  = basins with exactly one state within the band, over all streams and priors, that state from s; a hop state
-            that relaxed back into the basin it was kicked from, or one of that basin's ancestors, is left out of every
-            count (lineage_returns): it exists because its parent was found, so it is not an independent draw
+            that relaxed back into the basin it was kicked from, or into one of that basin's ancestors, is left out of
+            every count (lineage_returns)
     W_s   = the stream's effort: row-evaluations of the campaign's energy model (the final stage's target), from the
             shards; cheaper stages (an eLJ pre-screen) are recorded apart (row_evals_other) and not counted; failed
             attempts count through wall time only
     stop s when W_s / f1_hi(f1_s) > Z_b, where f1_hi is the exact one-sided 90% Poisson upper bound on f1_s,
     and N_s >= min_relaxations and the band holds at least min_hits of the stream's states, on passes_to_confirm
-    passes in a row, each after new effort from s (two passes over the same data are one look).
+    (default 2) passes in a row, each after new effort from s (a pass with no new effort from s leaves the streak
+    as it was if the test holds, and resets it if the test fails), or on one pass at least
+    max(confirm_settle_s, 3 x the wall time of the stream's longest shard) seconds after the pass that last saw
+    new effort from s, or, on a registry with no confirm_since entry for s, after the first pass to judge it
+    (confirm_settle_s: default 3600; verdicts).
+
 The Good-Turing ratio W/f1 estimates the effort per new basin without bias on the sep27 acridine data; the upper bound on
 f1 keeps it from stopping early by chance. A stream is exhausted when every band says stop; once STOP.<s> exists the
-stream stays stopped. The campaign stops (STOP) when every stream is stopped -- a hop stream with no eligible parent
-counts as stopped for this -- or total effort passes hard_cap. Termination: a stream with no new basins stops at
-W_s > 2.3 Z (f1_hi(0) = 2.30) once its jobs keep working, or once it has brought no new work for confirm_settle_s or
-three times its longest shard (whichever is longer) while the test holds; a stream that never reaches min_hits in a band,
-or whose jobs have all ended while its test fails, is bounded only by hard_cap (or a STOP file written by hand); nothing waits on a particular job.
+stream stays stopped (a pass never removes a stop file and treats a present STOP.<s> as a stop). The campaign stops
+(STOP) when there is at least one stream with a rule and every such stream is stopped, or when total effort reaches
+hard_cap; for the campaign stop only, a hop stream with a rule also counts as stopped on a pass that finds no eligible
+hop parent once hops exhaust_settle_s (default 3600 s) has passed since a pass last saw its effort (row_evals) change
+(curate). Termination: a stream with no new basins that meets min_relaxations and min_hits stops at W_s > 2.3 Z
+(f1_hi(0) = 2.30): after passes_to_confirm passes with new effort while its jobs keep delivering shards, or, once they
+deliver none, on the first pass after the settle time of the stopping rule. A stream with a rule that never delivers a
+shard, never reaches min_relaxations or min_hits in a band, or whose jobs all end while its test fails does not stop by
+the rule unless states of other streams later make its test hold (they can lower f1_s); the campaign stop then rests
+on hard_cap (default inf, i.e. no cap), a STOP file written by hand, or, for a hop stream only, the no-parent condition
+above (with no eligible parent left and the hop jobs ended, it holds on the first pass at least exhaust_settle_s after
+the one that saw their last effort, or after the first pass on a registry that had no hop_effort_since); nothing waits
+on a particular job.
 
 Model-agnostic: energies are whatever the search objective reports (energy_key), kT and the energy reference come from
 the config, and every shard carries the id of the energy model that scored it; the curate pass refuses shards (and priors)
-whose model id differs from the campaign's.
+whose model id differs from the campaign's, and refuses a prior file that fails to load or ingest (ingest_priors).
 """
 import argparse
 import glob
@@ -80,6 +112,9 @@ MIN_ANGULAR_FACTOR = 0.1  # physicality: cell_volume / prod(cell_lengths) (colla
 
 @dataclass
 class StreamRule:
+    """Stopping rule for one stream: Z maps a band name (a key of CampaignConfig.bands_kT) to the effort threshold per
+    new basin, in row-evaluations; the stream can stop only once it has min_relaxations relaxations and at least
+    min_hits of its states in each band of Z (lineage returns, see lineage_returns, not counted)."""
     Z: Dict[str, float]  # band name -> effort threshold per new basin (row-evaluations)
     min_relaxations: int = 2000
     min_hits: int = 20
@@ -87,6 +122,20 @@ class StreamRule:
 
 @dataclass
 class CampaignConfig:
+    """Campaign configuration, read from <coord_dir>/coord.yaml by load. mol_path is a torch file holding the molecule
+    (or a list whose first element is used) from which rebuild_crystals builds every crystal, in space group sg with
+    Z' = z_prime. identity_calibrated and identity_note are only reported, in the stats outputs. passes_to_confirm is
+    the number of passes in a row, each after new effort from the stream, on which a stream's stop test must hold
+    (see verdicts); confirm_settle_s (default 3600) is the time in seconds without new effort from a stream after which
+    a pass on which its test holds confirms the stop without that streak, the time applied being the longer of it and
+    three times the wall time of the stream's longest shard (see verdicts); rdf_batch is compute_rdfs' batch size in a
+    curate pass. rdf_mode sets the RDF channels of the identity metric, 'envwise' (default; one channel per pair of
+    bonded-environment labels) or 'atomwise' (one channel per pair of atom indices); it is recorded in the registry,
+    and curate raises when it differs from an existing registry's.
+    hops, when set, enables the hop stream and hop_parents.pt; keys read: stream (default 'hops'), window_kT (default
+    2.0), max_generation (default 3), max_per_basin (default 32), log_noise (default (-0.5, -0.5)), exhaust_settle_s
+    (default 3600: the seconds that must pass after a pass last saw the hop stream's effort change before, with no
+    eligible hop parent, it counts as stopped for the campaign stop; see curate)."""
     mol_path: str
     sg: int
     z_prime: int
@@ -120,6 +169,8 @@ class CampaignConfig:
 
     @staticmethod
     def load(path):
+        """Read a CampaignConfig from a YAML file; each entry of streams becomes a StreamRule. Unknown keys raise
+        TypeError; an rdf_mode other than 'envwise' or 'atomwise' raises ValueError."""
         raw = yaml.safe_load(open(path))
         raw['streams'] = {k: StreamRule(**v) for k, v in (raw.get('streams') or {}).items()}
         cfg = CampaignConfig(**raw)
@@ -129,8 +180,10 @@ class CampaignConfig:
 
 
 def energy_model_id(opt_stage, config):
-    """A string identifying the energy model that scores a search's final stage: its target and, for an MLIP, the model
-    file's size and the SHA1 of its first and last MB (so a replaced checkpoint at the same path gets a new id)."""
+    """A string identifying the energy model that scores a search's final stage (opt_stage: a dict or object with
+    optim_target). For target 'mace' or 'uma' (any case) with config.mace_predictor_path / uma_predictor_path set:
+    '<target>:<model file name>:<size in bytes>:<16 hex digits of the SHA1 of the file's first MiB and, when the file
+    exceeds 2 MiB, its last MiB>' (so a replaced checkpoint at the same path gets a new id); otherwise str(target)."""
     target = opt_stage['optim_target'] if isinstance(opt_stage, dict) else opt_stage.optim_target
     path = {'mace': getattr(config, 'mace_predictor_path', None),
             'uma': getattr(config, 'uma_predictor_path', None)}.get(str(target).lower())
@@ -151,12 +204,20 @@ def energy_model_id(opt_stage, config):
 # ---------------------------------------------------------------------------
 
 def stop_files(coord_dir, stream):
+    """The stop-file paths for a stream: [<coord_dir>/STOP, <coord_dir>/STOP.<stream>]."""
     return [os.path.join(coord_dir, 'STOP'), os.path.join(coord_dir, f'STOP.{stream}')]
 
 
 def write_shard(coord_dir, run_name, stream, cursor, batch_idx, rows, energy_key, meta):
-    """Write one shard for a completed batch. rows: list of MolCrystalData outputs. Fail-open: returns False (and prints)
-    instead of raising, so a coordination problem never stops a search job."""
+    """Write one shard for a completed batch, atomically, to
+    <coord_dir>/shards/<run_name>/<cursor:08d>_<batch_idx:06d>.pt.
+    rows: list of MolCrystalData outputs, each carrying energy_key. The shard is a dict of run, stream, cursor,
+    batch_idx, params [n, ``6 + 6 * max_z_prime``] float32 (full_cell_parameters), handedness [n, max_z_prime],
+    energy [n] (energy_key), lj [n] (NaN where a row has none), dataset_index [n] (-1 where absent), kick [n] (the
+    row's hop_kick, a hop start's latent kick length; NaN where absent) -- zero-row tensors when rows is empty (params
+    [0, 18], handedness [0, 2]) -- and every entry of meta (the curate pass reads energy_model_id, n_relaxations,
+    row_evals, n_attempts, wall_s and gpu). Returns True on success. Fail-open: returns False (and prints) instead of
+    raising, so a coordination problem never stops a search job."""
     try:
         if rows:
             from mxtaltools.dataset_utils.utils import collate_data_list
@@ -187,7 +248,12 @@ def write_shard(coord_dir, run_name, stream, cursor, batch_idx, rows, energy_key
 # ---------------------------------------------------------------------------
 
 def rebuild_crystals(cfg, params, hand):
-    """MolCrystalData crystals from stored parameters and the campaign's conformer (as search seeds are built)."""
+    """List of MolCrystalData crystals, one per row, from stored parameters and the campaign's conformer (as search
+    seeds are built): params [n, ``>= 6 + 6 * z_prime``] in full_cell_parameters order for max_z_prime = z_prime (3
+    lengths, 3 angles, ``3 * z_prime`` centroid columns, then ``3 * z_prime`` orientation columns; further columns are
+    not read), hand [n, >= z_prime]; space group cfg.sg, z_prime = max_z_prime = cfg.z_prime, the molecule loaded from
+    cfg.mol_path on every call (the first element if the file holds a list; its one-element num_atoms, mass,
+    mol_volume and radius tensors reshaped to 0-d), box analysis done."""
     from mxtaltools.dataset_utils.data_classes import MolCrystalData
     mol = torch.load(cfg.mol_path, weights_only=False)
     mol = mol[0] if isinstance(mol, list) else mol
@@ -208,6 +274,10 @@ def rebuild_crystals(cfg, params, hand):
 
 
 def compute_rdfs(crystals, batch_size=32, rdf_mode='envwise'):
+    """RDFs of a list of MolCrystalData, [n, n_channels, bins] float32 on the CPU (a zero-length tensor for an empty
+    list): clones of batch_size crystals at a time, collated without the RDF_DROP keys and analysed with
+    ``analyze(['rdf'], assign_outputs=False, **RDF_KW)``, RDF_KW's rdf_mode replaced by the rdf_mode argument (a
+    campaign passes 'envwise' or 'atomwise'), under no_grad. The input crystals are not modified."""
     from mxtaltools.dataset_utils.utils import collate_data_list
     out = []
     for lo in range(0, len(crystals), batch_size):
@@ -220,8 +290,11 @@ def compute_rdfs(crystals, batch_size=32, rdf_mode='envwise'):
 
 
 def rdf_distance_matrix(ra, rb, bin_width=10 / 99, chunk=64):
-    """[na, nb] distances equal to analysis.crystal_rdf.compute_rdf_distance: bin width times the mean, over channels
-    active (nonzero) in either RDF, of the L1 distance between the per-channel normalised CDFs."""
+    """[na, nb] float32 distances between RDFs ra [na, n_channels, bins] and rb [nb, n_channels, bins], equal to
+    analysis.crystal_rdf.compute_rdf_distance given a grid rr of spacing bin_width: bin width times the mean, over
+    channels active (nonzero) in either RDF, of the L1 distance between the per-channel normalised CDFs. The default
+    bin_width, ``10 / 99``, is the spacing of torch.linspace(0, 10, 100); the bin positions analyze returns with RDF_KW
+    are 0.1 apart. ra is processed chunk rows at a time."""
     def prep(r):
         s = r.sum(-1, keepdim=True)
         return torch.cumsum(r / (s + 1e-10), -1).permute(1, 0, 2).contiguous(), (s[..., 0] > 1e-12).float()
@@ -238,7 +311,8 @@ def rdf_distance_matrix(ra, rb, bin_width=10 / 99, chunk=64):
 
 
 def physical(params, lj):
-    """Rows that are crystals: lj below LJ_BLOWN_UP and angular factor V / (a b c) above MIN_ANGULAR_FACTOR."""
+    """[n] bool, rows that are crystals: lj below LJ_BLOWN_UP (NaN counts as 0, so passes) and angular factor
+    V / (a b c) above MIN_ANGULAR_FACTOR. params [n, >= 6]: cell lengths, then cell angles in radians; lj [n]."""
     a, b, c = params[:, 0], params[:, 1], params[:, 2]
     al, be, ga = params[:, 3], params[:, 4], params[:, 5]
     cos_a, cos_b, cos_g = torch.cos(al), torch.cos(be), torch.cos(ga)
@@ -251,6 +325,16 @@ def physical(params, lj):
 # ---------------------------------------------------------------------------
 
 def new_registry(cfg):
+    """An empty basin registry (a dict, version 1) recording cfg's energy_model_id, identity_cut and rdf_mode: per-basin
+    records (leaders, a tensor of the leaders' RDFs; the lists basin_E, basin_params, basin_hand, basin_first,
+    basin_gen, basin_parent), per-hit lists in hits (basin, stream, energy, run, cursor, parent), per-stream effort,
+    the ingested keys, refused inputs, the pass count, confirmation streaks (confirm) and the hop bookkeeping
+    (hop_starts, hop_blocked). Keys added later: confirm_effort (curate, verdicts) and confirm_since (verdicts: each
+    stream's row_evals at its last verdict, and the time of the verdict that last saw them grow or, failing that, of
+    the first verdict that found no time recorded for the stream), hit_kick (_record_hit: hit index -> latent kick
+    length, for hop starts whose shard gives one), hop_effort_seen and hop_effort_since (curate, with hops configured:
+    the hop stream's row_evals when a pass last saw them change, and that pass's time) and migrations
+    (backfill_lineage)."""
     return dict(version=1, energy_model_id=cfg.energy_model_id, identity_cut=cfg.identity_cut, rdf_mode=cfg.rdf_mode,
                 ingested=[],
                 leaders=torch.zeros(0), basin_E=[], basin_params=[], basin_hand=[], basin_first=[], basin_gen=[],
@@ -259,13 +343,20 @@ def new_registry(cfg):
 
 
 def _stream_effort(reg, stream):
+    """reg['effort'][stream], created on first use with relaxations, row_evals, attempts, wall_s and shards at zero and
+    an empty gpus count (ingest_shards adds max_shard_wall_s)."""
     return reg['effort'].setdefault(stream, dict(relaxations=0, row_evals=0.0, attempts=0, wall_s=0.0, shards=0,
                                                  gpus={}))
 
 
 def _assign(reg, cfg, rdfs, energies, params, hand, stream, run, cursor, parents=None, kicks=None):
-    """Leader clustering of new states against the registry (and each other, in arrival order). parents: for hop
-    states, the basin each was kicked from (sets the generation of a basin it opens)."""
+    """Leader clustering of new states against the registry (and each other, in arrival order): each state joins the
+    basin of the nearest leader registered before this call if within identity_cut, else the nearest leader opened
+    earlier in this call if within identity_cut, else opens a basin with itself as leader. One hit is recorded per
+    state (_record_hit). parents: for hop states, the basin each was kicked from; recorded as the hit's parent and, for
+    a basin the state opens, as its basin_parent, with basin_gen one more than the parent's (0 when the parent is -1 or
+    not a registered basin). kicks: per state, a hop start's latent kick length (NaN where the state has none), passed
+    to _record_hit; with None no kick is recorded."""
     leaders = reg['leaders']
     n = len(rdfs)
     if n == 0:
@@ -301,6 +392,10 @@ def _assign(reg, cfg, rdfs, energies, params, hand, stream, run, cursor, parents
 
 
 def _record_hit(reg, j, stream, E, params, hand, run, cursor, parent=-1, kick=None):
+    """Append one hit to reg['hits']: basin j, stream, energy E, run, cursor and parent (the basin a hop start was
+    kicked from; -1 otherwise). A kick that is neither None nor NaN (a hop start's latent kick length) is stored in
+    reg['hit_kick'], a dict created on first use, under the hit's index. When E is below the basin's stored energy,
+    the basin's energy, params and hand become this state's."""
     h = reg['hits']
     h['basin'].append(int(j))
     h['stream'].append(stream)
@@ -317,13 +412,19 @@ def _record_hit(reg, j, stream, E, params, hand, run, cursor, parent=-1, kick=No
 
 
 def _energy_ref(cfg, reg):
+    """cfg.energy_ref if set, else the lowest basin energy in the registry (inf while it has no basin)."""
     if cfg.energy_ref is not None:
         return float(cfg.energy_ref)
     return min(reg['basin_E']) if reg['basin_E'] else float('inf')
 
 
 def _ingest_rows(reg, cfg, params, hand, E, lj, stream, run, cursor, parents=None, kicks=None):
-    """Physical states within window of the reference: standardise, RDF, assign. Returns the number admitted."""
+    """Physical states within window of the reference: standardise, RDF, assign. Returns the number admitted. Admitted
+    rows are the physical ones (physical) at most cfg.window_kT kT above the energy reference as it stands when the
+    call starts (every physical row while there is none); they are rebuilt (rebuild_crystals), put in their reduced
+    cells (rows without one are kept as stored and counted in one reg['refused'] entry), given RDFs (cfg.rdf_batch,
+    cfg.rdf_mode) and assigned by _assign with the standardised params and handedness. parents and kicks, when given,
+    are per-row tensors, cut to the admitted rows and passed to _assign."""
     from mxtaltools.crystal_search.standardize import standardize_cells
     from mxtaltools.dataset_utils.utils import collate_data_list
     keep = physical(params, lj)
@@ -347,6 +448,7 @@ def _ingest_rows(reg, cfg, params, hand, E, lj, stream, run, cursor, parents=Non
 
 
 def _file_sha1(path):
+    """Hex SHA1 of a file's whole content, read in 1 MiB chunks; raises OSError if the file cannot be read."""
     h = hashlib.sha1()
     with open(path, 'rb') as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b''):
@@ -355,10 +457,18 @@ def _file_sha1(path):
 
 
 def ingest_priors(reg, cfg):
-    """Known structures (earlier searches, experimental forms) as stream 'prior'. Each prior file is a list of
-    MolCrystalData carrying energy_key and an 'energy_model_id' attribute (or the file sits beside <file>.model_id), or
-    a compact dict (params, handedness, energy, energy_model_id). A file is keyed by its path and the SHA1 of its
-    content, so a file whose content has changed is ingested again (its states are added; earlier hits stay)."""
+    """Known structures (earlier searches, experimental forms) as stream 'prior': ingests each file of cfg.priors whose
+    key is not yet in reg['ingested'] (mutates reg; no effort is counted). A file's key is its absolute path and the
+    first 16 hex digits of the SHA1 of its content (``prior:<path>@<sha1>``), so a file whose content has changed is
+    ingested again (its states are added; earlier hits stay); a file that cannot be read for hashing (OSError) is
+    skipped this pass, with a message, and tried again next pass. A prior file is either a list of MolCrystalData
+    carrying energy_key, whose model id is read from <file>.model_id if that exists, else from the first crystal's
+    'energy_model_id' attribute (lj 0 where absent); or a dict with params [N, ``6 + 6 * Z'``], handedness, energy,
+    energy_model_id and optional lj (default 0). Rows go through the same physical/window filter, standardisation and
+    basin assignment as shard rows (_ingest_prior_file). A file whose model id differs from cfg.energy_model_id is
+    recorded in reg['refused'], and so is a file that raises any Exception while it is loaded or ingested (reason
+    'prior not ingested (<type>: <message>)'); either way its key is marked ingested, so that content is not tried
+    again, while changed content (a new key) is ingested on a later pass."""
     for path in cfg.priors:
         try:
             key = f'prior:{os.path.abspath(path)}@{_file_sha1(path)[:16]}'  # new content at a path is new knowledge
@@ -376,7 +486,9 @@ def ingest_priors(reg, cfg):
 
 
 def _ingest_prior_file(reg, cfg, path, key):
-    """One prior file of ingest_priors, under its key: ingested, or refused for another energy model."""
+    """One prior file of ingest_priors (formats there), under key (mutates reg): its rows ingested, or the file recorded
+    in reg['refused'] for another energy model; either way key is appended to reg['ingested']. Errors propagate to
+    ingest_priors."""
     from mxtaltools.dataset_utils.utils import collate_data_list
     lst = torch.load(path, weights_only=False)
     if isinstance(lst, dict) and 'params' in lst:  # compact prior: params [N, 18], handedness, energy, model id
@@ -409,6 +521,15 @@ def _ingest_prior_file(reg, cfg, path, key):
 
 
 def ingest_shards(reg, cfg, coord_dir):
+    """Ingest every ``<coord_dir>/shards/*/*.pt`` not yet in reg['ingested'], in sorted path order (mutates reg). A file
+    that cannot be loaded is skipped and retried next pass; a shard whose energy_model_id differs from cfg's is recorded
+    in reg['refused']. Otherwise its effort (n_relaxations, default the row count; row_evals; n_attempts, default 1;
+    wall_s; gpu) is added to reg['effort'][stream], whose max_shard_wall_s (0 where absent) is raised to the shard's
+    wall_s when that is larger; for the hop stream (cfg.hops['stream'], default 'hops') its dataset_index is read as
+    each row's parent basin, counted in reg['hop_starts'] and recorded as the parent of the row's hit; and its rows are
+    filtered, standardised, RDF'd and assigned to basins (_ingest_rows), the shard's kick, when it has one, going with
+    them (a hit whose kick is not NaN gets an entry in reg['hit_kick']). Returns the number of shards accepted (refused
+    ones not counted)."""
     n_new = 0
     for path in sorted(glob.glob(os.path.join(coord_dir, 'shards', '*', '*.pt'))):
         key = os.path.relpath(path, coord_dir).replace('\\', '/')
@@ -450,9 +571,9 @@ def ingest_shards(reg, cfg, coord_dir):
 
 def lineage_returns(reg):
     """[n_hits] bool: hop hits that relaxed back into the basin they were kicked from, or into one of its ancestors
-    (the basins its lineage of hops came from). Such a hit exists only because its parent had been found, so it is not
-    an independent draw: counted, it would turn the parent's finder's singleton into a double and stop that stream
-    early. compute_stats leaves these hits out of every count."""
+    (the basins its lineage of hops came from, followed through basin_parent); compute_stats leaves these hits out of
+    every count. Hits with parent -1 (every non-hop hit), and every hit of a registry without hits['parent'], are
+    False; reg is not modified."""
     h = reg['hits']
     basin = np.asarray(h['basin'], dtype=np.int64)
     parent = np.asarray(h.get('parent', [-1] * len(basin)), dtype=np.int64)
@@ -471,16 +592,18 @@ def lineage_returns(reg):
 
 
 def backfill_lineage(reg, cfg, coord_dir):
-    """Rebuild the lineage record (hits['parent'], basin_parent) from the shards, for a registry written before hits
-    carried their hop parent or extended since by such code. Hits are appended one per admitted row of each ingested
-    shard, in row order, and the admitted rows are the shard's physical rows at or below the admission window's edge
-    at that time; so each run of consecutive hits with one (stream, run, cursor) is matched to the lowest-energy
-    physical rows of that shard, as many as the hits, which must carry exactly the hits' energies in row order (no
-    dependence on the current reference); a hop-stream hit then takes its row's dataset_index (the basin its start was kicked
-    from) as its parent. A basin's parent is that of its first hit, the one that opened it. A group that does not match
-    as a whole (a missing, rewritten or ambiguous shard) keeps -1 and is counted: MACE energies are quantised, so
-    energy ties make a partial match unsafe. Appends a record to
-    reg['migrations']; returns (hop hits, unmatched hits)."""
+    """Rebuild the lineage record (hits['parent'], basin_parent) from the shards, for a registry whose hits carry no
+    parent or whose lineage lists differ in length from its hits or basins (curate calls it then). Hits are appended one
+    per admitted row of each ingested shard, in row order, and the admitted rows are the shard's physical rows at or
+    below the admission window's edge at ingestion; so each run of k consecutive hop-stream hits with one (stream, run,
+    cursor) is matched to the rows of the single shard file ``<coord_dir>/shards/<run>/<cursor:08d>_*.pt`` that are
+    physical with energy at or below the k-th lowest physical energy, in row order (the energy reference plays no part),
+    which must carry exactly the hits' energies in order; each hit then takes its row's dataset_index (the basin its
+    start was kicked from) as its parent. A group that does not match as a whole (no such file or more than one, an
+    unreadable or rewritten shard, fewer than k physical rows, or a tie at the k-th energy that brings in more than k
+    rows) keeps parent -1, so its hits stay in every count, and is reported as unmatched; non-hop hits get -1. A basin's
+    parent is that of its first hit, the one that opened it. Mutates reg, appends a record to reg['migrations'] and
+    prints a summary; returns (hop hits, unmatched hits)."""
     h = reg['hits']
     n = len(h['basin'])
     parent = [-1] * n
@@ -525,12 +648,20 @@ def backfill_lineage(reg, cfg, coord_dir):
 
 
 def poisson_upper(k, conf=0.9):
-    """Exact one-sided upper confidence bound on a Poisson mean after observing k (Garwood)."""
+    """Exact one-sided upper confidence bound, at level conf, on a Poisson mean after observing k (Garwood):
+    chi2.ppf(conf, 2 (k + 1)) / 2."""
     from scipy.stats import chi2
     return float(chi2.ppf(conf, 2 * (k + 1)) / 2)
 
 
 def compute_stats(reg, cfg):
+    """Per-band and per-stream statistics from reg's hits, with lineage returns (lineage_returns) left out of every
+    count (reg is not modified). Returns a dict: energy_ref, n_basins, lineage_returns (the number of hits left out);
+    bands {band: width_kT, n_states, n_basins, f1}, over the counted hits of all streams and priors within the band;
+    streams {stream: relaxations, row_evals, attempts, bands {band: hits, basins_first, f1, effort_per_new = row_evals /
+    f1 (inf when f1 = 0), effort_per_new_lo = row_evals / poisson_upper(f1)}}, for every stream with recorded effort or
+    a rule in cfg.streams (streams is empty when cfg.bands_kT is). basins_first counts the basins the stream found first
+    that have a counted hit in the band."""
     ref = _energy_ref(cfg, reg)
     h = reg['hits']
     E = np.asarray(h['energy'], dtype=float)
@@ -565,9 +696,25 @@ def compute_stats(reg, cfg):
 
 
 def verdicts(stats, reg, cfg, now=None):
-    """Per-stream stop decisions (confirmed over passes_to_confirm passes after new effort, or at once when the test
-    holds and the stream has brought no new work for max(confirm_settle_s, 3 x its longest shard's wall_s)) and the
-    campaign STOP."""
+    """Per-stream stop decisions (confirmed over passes_to_confirm passes, each after new effort from the stream, or at
+    once when the test holds and the stream has brought no new effort for max(confirm_settle_s, 3 x its longest shard's
+    wall_s)) and the campaign STOP, from compute_stats' stats; now is the time of the verdict in seconds (default
+    time.time(), the clock of the host running the pass). Returns (decisions, campaign_stop, total). decisions has an
+    entry {stop, streak, why} for every stream in cfg.streams (one without statistics, which happens only when
+    cfg.bands_kT is empty, gets stop False, why 'no shards yet' and no streak; a stream with a rule but no shards has
+    statistics with zero relaxations and hits). A stream's test holds on a pass when relaxations >= min_relaxations
+    and, in every band of its Z, hits >= min_hits and effort_per_new_lo > Z (a band of Z that cfg.bands_kT lacks fails
+    it). Its streak, reg['confirm'][stream] (mutated), is reset to 0 when the test fails, advanced by one when the test
+    holds and the stream's row_evals exceed those recorded at its previous verdict (reg['confirm_effort'][stream],
+    mutated, recorded whenever the stream has statistics; with none recorded, as on its first verdict, the pass counts
+    as new effort), and otherwise kept. reg['confirm_since'][stream] (mutated) is set to now on a verdict with new
+    effort, and on the first verdict that finds no entry for the stream. stop is streak >= passes_to_confirm, or the
+    test holds and now - confirm_since >= max(cfg.confirm_settle_s, 3 x the wall_s of the stream's longest shard), that
+    wall_s read from the effort record's max_shard_wall_s or, without the key, taken as its mean wall_s per shard. why
+    lists the failed conditions, or reads 'all bands exhausted (<streak> pass(es))', or, when the settle time alone
+    gives the stop, 'all bands exhausted (final: no new work for <idle> s >= <settle> s)'. total is the row-evaluations
+    summed over every stream's effort; campaign_stop is True when cfg.streams is nonempty and every stream stops, or
+    total >= hard_cap. curate may add stops to both (see curate)."""
     now = time.time() if now is None else float(now)
     decisions = {}
     for s, rule in cfg.streams.items():
@@ -625,6 +772,9 @@ def verdicts(stats, reg, cfg, now=None):
 
 
 def write_outputs(coord_dir, cfg, reg, stats, decisions, campaign_stop, total):
+    """Write a pass's outputs to coord_dir: registry.pt (atomic), stats.json (atomic; the latest 50 refused inputs),
+    stats.md (a temporary file moved into place), STOP.<stream> for each stream whose decision is stop and STOP when
+    campaign_stop, each only if absent. Never removes a stop file."""
     atomic_torch_save(reg, os.path.join(coord_dir, 'registry.pt'))
     blob = dict(stats=stats, decisions=decisions, campaign_stop=campaign_stop, total_row_evals=total,
                 identity_cut=cfg.identity_cut, identity_calibrated=cfg.identity_calibrated,
@@ -669,8 +819,10 @@ def write_outputs(coord_dir, cfg, reg, stats, decisions, campaign_stop, total):
 
 
 def latent_representable(cfg, params, hand, rtol=1e-3):
-    """True where the latent round trip returns the same cell: kicking a cell the latent cannot represent (e.g. an axis
-    beyond the latent's range, which it clips) would compress it instead of perturbing it."""
+    """[n] bool, True where the latent round trip (canonicalize_orientation, latent_params(gauge_fix_free_axes=False),
+    latent_to_cell_params) returns every cell length within relative tolerance rtol; angles and positions are not
+    compared. Kicking a cell the latent cannot represent (e.g. an axis beyond the latent's range, which it clips) would
+    compress it instead of perturbing it."""
     from mxtaltools.dataset_utils.utils import collate_data_list
     if len(params) == 0:
         return torch.zeros(0, dtype=torch.bool)
@@ -683,7 +835,15 @@ def latent_representable(cfg, params, hand, rtol=1e-3):
 
 
 def write_hop_parents(coord_dir, cfg, reg):
-    """hop_parents.pt: the basins a hop job may kick from, least-hopped first. Empty when none is eligible."""
+    """Write hop_parents.pt: the basins a hop job may kick from, least-hopped first (ties: lowest energy first); returns
+    their number. Eligible: basin energy within hops window_kT (default 2.0) kT of the reference, generation <
+    max_generation (default 3), hop starts < max_per_basin (default 32), not in reg['hop_blocked'], and
+    latent_representable; a basin failing the last test is appended to reg['hop_blocked'] (mutated). The file holds
+    basin, params, hand, E, hop_starts, generation, log_noise (default (-0.5, -0.5)), sg, z_prime, energy_model_id,
+    passes, n_basins (the number of basins in the registry, eligible or not) and max_per_basin (the limit above);
+    run_search._hop_batch waits rather than stops on an empty list whose n_basins is 0, and draws a parent only while
+    the parent's listed hop starts plus the job's own kicks that no listing has counted yet are below max_per_basin.
+    The lists are empty when no basin is eligible (params [0, 18], hand [0, z_prime])."""
     h = cfg.hops or {}
     ref = _energy_ref(cfg, reg)
     E = np.asarray(reg['basin_E'], dtype=float)
@@ -713,7 +873,25 @@ def write_hop_parents(coord_dir, cfg, reg):
 
 
 def curate(coord_dir):
-    """One idempotent pass: ingest priors and new shards, update the registry, statistics, verdicts and stop files."""
+    """One pass over the campaign in coord_dir: load coord.yaml and registry.pt (a new registry if absent), ingest
+    priors and new shards, update the registry, statistics, verdicts, hop_parents.pt (when hops is configured), stop
+    files and heartbeat.json (time, host, passes, new_shards). Takes no lease: callers hold the curator lease
+    (curate_locked, maybe_curate). A registry lacking the hop or lineage fields gets them (basin_gen 0, basin_parent -1,
+    empty hop bookkeeping); one whose hits lack a parent, or whose lineage lists differ in length from its hits or
+    basins, is rebuilt by backfill_lineage; one without reg['confirm_effort'] has its confirmation streaks reset. Raises
+    ValueError if the registry's energy_model_id, identity_cut or rdf_mode (a registry without rdf_mode counts as
+    'envwise') differs from coord.yaml. After verdicts, a stream whose STOP.<s> already exists is marked stop whatever
+    its verdict (why names the file and the current verdict). With hops configured, stats['hop_parents'] is the number
+    of parents hop_parents.pt lists, and the hop stream, if it has a rule, also counts as stopped for the campaign stop
+    (its decision and stop file unchanged) on a pass where that number is 0 and at least hops exhaust_settle_s (default
+    3600) seconds, on the clock of the host running the pass, have passed since a pass last saw its row_evals change: a
+    pass whose hop row_evals differ from reg['hop_effort_seen'] (-1 when absent, so the first such pass is a change),
+    or a pass on a registry without reg['hop_effort_since'], records them there and its time in
+    reg['hop_effort_since'] (both mutated), so the settle clock starts on the first pass of any registry. campaign_stop
+    is verdicts' campaign_stop, or True when there is at least one stream with a rule and every such stream is stopped
+    under these additions. Safe to repeat -- each shard and prior is ingested once and a streak advances only after new
+    effort -- but every pass increments reg['passes'], and the settle times are judged at the time of the pass, so a
+    pass without new effort can stop a stream (verdicts) or the campaign. Returns (stats, decisions, campaign_stop)."""
     cfg = CampaignConfig.load(os.path.join(coord_dir, 'coord.yaml'))
     reg_path = os.path.join(coord_dir, 'registry.pt')
     reg = torch.load(reg_path, weights_only=False) if os.path.exists(reg_path) else new_registry(cfg)
@@ -761,7 +939,8 @@ def curate(coord_dir):
 
 
 def _heartbeat_age(coord_dir):
-    """Seconds since the last curate pass (heartbeat.json), on the filesystem's clock; inf when there is none."""
+    """Seconds since the last curate pass (heartbeat.json), on the filesystem's clock: the modification time of a probe
+    file written and removed in coord_dir now, minus that of heartbeat.json; inf when there is no heartbeat.json."""
     hb = os.path.join(coord_dir, 'heartbeat.json')
     if not os.path.exists(hb):
         return float('inf')
@@ -775,8 +954,10 @@ def _heartbeat_age(coord_dir):
 
 
 def curate_locked(coord_dir):
-    """One curate pass under the curator lease, as the jobs take it: for passes run by hand, by run_loop and by export.
-    Raises RunLeaseLost while another process is curating (it is never waited on)."""
+    """One curate pass under the curator lease (<coord_dir>/curator_owner.json, the lease maybe_curate takes; here
+    taken over once not renewed for 3600 s), released when the pass ends or raises: for passes run by hand (main), by
+    run_loop and by export. Raises RunLeaseLost while another process holds the lease (it is never waited on). Returns
+    curate's result."""
     from mxtaltools.crystal_search.run_state import RunLease
     lease = RunLease(os.path.join(coord_dir, 'curator'), stale_after_s=3600, settle_s=0.5)
     lease.acquire()
@@ -787,7 +968,9 @@ def curate_locked(coord_dir):
 
 
 def pending_shards(coord_dir, reg):
-    """Shard files on disk that the registry has not ingested (keys as ingest_shards writes them)."""
+    """Shard files on disk (``<coord_dir>/shards/*/*.pt``) that the registry has not ingested: a sorted list of their
+    keys as ingest_shards records them in reg['ingested'] (paths relative to coord_dir, '/'-separated). A refused shard
+    counts as ingested; one that could not be loaded does not."""
     done = set(reg['ingested'])
     keys = (os.path.relpath(p, coord_dir).replace('\\', '/')
             for p in sorted(glob.glob(os.path.join(coord_dir, 'shards', '*', '*.pt'))))
@@ -796,8 +979,10 @@ def pending_shards(coord_dir, reg):
 
 def maybe_curate(coord_dir, every_s):
     """Run a curate pass from inside a search job, between batches, when the last pass (heartbeat.json, judged on the
-    filesystem's clock) is older than every_s and no other job is curating (a curator lease, never waited on).
-    Fail-open: any error is printed and the search continues. Returns True if this call ran a pass."""
+    filesystem's clock by _heartbeat_age) is older than every_s, or absent, and no other process is curating (the
+    curator lease <coord_dir>/curator_owner.json, here stale after ``max(3 * every_s, 3600)`` s, never waited on). The
+    heartbeat is read again once the lease is held, and no pass runs if one finished meanwhile. Fail-open: any error is
+    printed and the search continues. Returns True if this call ran a pass."""
     from mxtaltools.crystal_search.run_state import RunLease, RunLeaseLost
     try:
         if _heartbeat_age(coord_dir) < every_s:
@@ -820,8 +1005,11 @@ def maybe_curate(coord_dir, every_s):
 
 
 def run_loop(coord_dir, interval_s=900.0, max_hours=None):
-    """Curate every interval_s (each pass under the curator lease; a pass while a search job holds it is skipped)
-    until two consecutive passes report the campaign stop, or max_hours."""
+    """Curate every interval_s seconds, each pass through curate_locked, until two completed passes in a row report
+    campaign_stop, or until max_hours has elapsed (checked after each attempt; None: no time limit, so it returns only
+    through the campaign stop). A pass while another process holds the curator lease is skipped, and a pass that raises
+    any other Exception is printed and retried next interval; neither counts toward nor resets the two-pass count.
+    SystemExit and KeyboardInterrupt propagate."""
     t0 = time.time()
     stopped_passes = 0
     while True:
@@ -843,10 +1031,14 @@ def run_loop(coord_dir, interval_s=900.0, max_hours=None):
 
 
 def export(coord_dir, band_kT, out_path, catch_up=True):
-    """The campaign's product: one crystal per basin within band_kT of the reference, in its reduced cell (the lowest-energy
-    state seen), with energy, basin id, number of states found in it, and the stream that found it first; plus
-    <out>.csv. With catch_up (default), a curate pass under the curator lease first ingests the shards the jobs wrote
-    after their last pass; raises if any shard on disk is still not in the registry. Returns the number exported."""
+    """The campaign's product: one crystal per basin within band_kT of the reference, lowest energy first, rebuilt from
+    the basin's lowest-energy state (in its reduced cell unless standardisation failed for that state) and carrying
+    energy_key (that energy), basin_id, basin_states (states assigned to the basin) and energy_model_id, saved as a list
+    to out_path; plus <out_path without extension>.csv with columns basin, energy, above_ref_kT, states, first_stream
+    (the stream that found the basin first) and first_run. With catch_up (default), a pass through curate_locked runs
+    first, ingesting the shards written since the last pass (RunLeaseLost if another process holds the curator lease).
+    Raises RuntimeError, before writing out_path, if any shard file on disk is still not in the registry
+    (pending_shards). Returns the number exported."""
     if catch_up:  # the jobs' last shards arrive after the last pass they ran: ingest everything on disk first
         curate_locked(coord_dir)
     cfg = CampaignConfig.load(os.path.join(coord_dir, 'coord.yaml'))
@@ -877,6 +1069,10 @@ def export(coord_dir, band_kT, out_path, catch_up=True):
 
 
 def main():
+    """Command line on coord_dir: with --export BAND_KT OUT, export (with its catch-up pass) and print the count; else
+    with --loop, run_loop(--interval, default 900 s, --max_hours); else one pass through curate_locked, then print
+    stats.md. SIGTERM is turned into SystemExit(128 + signum), so a pass in progress unwinds and releases the curator
+    lease."""
     ap = argparse.ArgumentParser(description='crystal_search campaign coordinator')
     ap.add_argument('coord_dir')
     ap.add_argument('--loop', action='store_true')

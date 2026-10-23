@@ -1,3 +1,11 @@
+"""Ellipsoid-overlap methods mixed into MolCrystalData.
+
+Each molecule of a cluster batch is represented by an ellipsoid built from the
+covariance of its atomic positions, and a pretrained MLP
+(``dataset_utils/ellipsoid_overlap_model.pt``) predicts the overlap of each pair formed
+by an asymmetric-unit molecule and a neighbouring molecule.
+"""
+
 import os
 from pathlib import Path
 import torch.nn.functional as F
@@ -13,24 +21,59 @@ from mxtaltools.models.modules.components import ResidualMLP
 
 # noinspection PyAttributeOutsideInit
 class MolCrystalEllipsoidOps:
+    """Mixin computing ellipsoid representations and predicted overlaps for cluster batches."""
 
     def compute_ellipsoidal_overlap(self,
                                     surface_padding: float = 0,
                                     return_details: Optional[bool] = False,
                                     model: Optional = None,
                                     **kwargs):
-        """
-        Compute an energy function given the overlaps of molecules in an ellipsoid representation
-        Using our pretrained ellipsoid overlap function
+        """Predict the summed ellipsoid overlap between asymmetric-unit molecules and their neighbours.
 
-        Only works on cluster batches (rather than crystal batches)
+        Uses the pretrained ellipsoid overlap model. Only works on cluster batches
+        (rather than crystal batches): it reads ``aux_ind``, per-graph ``radius`` and
+        ``edges_dict['n_repeats']``, which exists only when the radial graph was built
+        with ``aux_ind`` (construct_radial_graph on a cluster).
 
-        1) embed all molecules as ellipsoids
-        2) get inter-ellipsoidal edges
-        3) parameterize ellipsoid pairs
-        4) format batch to ellipsoid model
-        5) evaluate overlaps
-        6) convert overlaps to energies
+        Steps: embed the molecules as ellipsoids and pair molecules with
+        ``aux_ind >= 1`` against molecules with ``aux_ind == 0``
+        (get_ellipsoid_embedding); evaluate the model on the 22 pair features; sum the
+        predicted overlaps per graph. The result is an overlap, not an energy.
+        ``self`` is modified only when the model is loaded into
+        ``self.ellipsoid_model``.
+
+        Parameters
+        ----------
+        surface_padding : float, optional
+            Length in Angstrom added to the ellipsoid semi-axes and to the pairing
+            radius (see get_ellipsoid_embedding). Default 0.
+        return_details : bool, optional
+            Also return per-pair volumes and the per-graph overlap volume. Default
+            False.
+        model : torch.nn.Module, optional
+            Overlap model to evaluate. If None, ``self.ellipsoid_model`` is used,
+            loaded by load_ellipsoid_model if absent.
+        **kwargs
+            Accepted and ignored.
+
+        Returns
+        -------
+        torch.Tensor or tuple
+            Without ``return_details``: ``normed_ellipsoid_overlap`` [num_graphs], the
+            sum over each graph's pairs of the model's normalised overlap (third model
+            output, clipped at 0). With ``return_details``: the tuple
+            ``(normed_ellipsoid_overlap, v1_pred, v2_pred, v1, v2, norm_factor,
+            molwise_ellipsoid_overlap)``, where ``v1_pred`` and ``v2_pred`` [num_pairs]
+            are the first two model outputs times ``norm_factor ** 3``; ``v1``, ``v2``
+            and ``norm_factor`` [num_pairs] are as returned by featurize_ellipsoids;
+            and ``molwise_ellipsoid_overlap`` [num_graphs] is the per-graph sum of
+            ``normalised overlap * v1n * v2n / (v1n + v2n) * norm_factor ** 3`` in cubic
+            Angstrom, with ``v1n``, ``v2n`` the normalised volumes.
+
+        Raises
+        ------
+        RuntimeError
+            If ``edges_dict`` is absent.
         """
         if model is None:
             if not hasattr(self, "ellipsoid_model"):
@@ -74,6 +117,34 @@ class MolCrystalEllipsoidOps:
             return normed_ellipsoid_overlap, v1_pred, v2_pred, v1, v2, norm_factor, molwise_ellipsoid_overlap
 
     def get_ellipsoid_embedding(self, surface_padding):
+        """Build ellipsoids for the molecules of a cluster batch and featurise the interacting pairs.
+
+        Molecules are taken as consecutive blocks of ``num_atoms`` atoms,
+        ``edges_dict['n_repeats']`` blocks per graph. Pairs come from
+        get_intermolecular_ellipsoid_edges, and only molecules in at least one pair
+        are embedded (reindex_ellipsoid_mols). Each ellipsoid's axes are the
+        eigenvectors of the molecule's atomic position covariance
+        (compute_ellipsoid_eigvecs, called so that Gaussian noise of standard
+        deviation 0.01 is always added to the coordinates; repeated calls are
+        therefore not deterministic). Its semi-axis lengths are the square roots of
+        the eigenvalues (clamped at 0, plus 1e-3) divided by the largest of the three,
+        times the graph's ``radius``, plus ``surface_padding``, clipped below at
+        ``max(1.5 * (radius + surface_padding) / radius, 0.1)``. Pairs are then
+        featurised by featurize_ellipsoids. ``self`` is not modified.
+
+        Parameters
+        ----------
+        surface_padding : float
+            Length in Angstrom added to every semi-axis and to the pairing radius.
+
+        Returns
+        -------
+        tuple
+            ``(edge_j_good, molwise_batch, norm_factor, normed_v1, normed_v2, v1, v2,
+            x)``: the index of the ``aux_ind == 0`` molecule of each pair
+            [num_pairs]; the graph index of every molecule [tot_num_mols]; and the
+            outputs of featurize_ellipsoids (``norm_factor`` is its ``max_val``).
+        """
         mols_per_cluster = torch.tensor(self.edges_dict['n_repeats'], device=self.device)
         tot_num_mols = torch.sum(mols_per_cluster)
         tot_mol_index = torch.arange(tot_num_mols, device=self.device).repeat_interleave(
@@ -115,6 +186,53 @@ class MolCrystalEllipsoidOps:
         return edge_j_good, molwise_batch, norm_factor, normed_v1, normed_v2, v1, v2, x
 
     def featurize_ellipsoids(self, Ip, edge_i_good, edge_j_good, eps, mol_centroids, mol_id_map, semi_axis_lengths):
+        """Compute the 22 pair features read by the overlap model.
+
+        For each pair, ``e1`` and ``e2`` are the semi-axis vectors ([num_pairs, 3, 3],
+        one per row) of molecules ``edge_i_good`` and ``edge_j_good``, and ``r`` is the
+        centroid displacement from the ``edge_i_good`` molecule to the ``edge_j_good``
+        molecule. All three are divided by ``max_val``, the pair's longest semi-axis
+        plus ``eps``. Row ``i`` of ``e1`` is negated where component ``i`` of
+        ``e1^T r`` is negative, and row ``i`` of ``e2`` where component ``i`` of
+        ``e2^T (-r)`` is negative. Features, in order and after those sign changes:
+        ``|r|`` (1); the matrix of dot
+        products between the unit semi-axes of ``e1`` and of ``e2``, flattened
+        row-major (9); the semi-axis lengths of ``e1`` (3) and of ``e2`` (3); the
+        projections of the semi-axes of ``e1`` onto ``r_hat`` (3) and of ``e2`` onto
+        ``-r_hat`` (3), where ``r_hat`` is the unit vector of ``r + eps``. All are in
+        normalised units. ``self`` is not modified.
+
+        Parameters
+        ----------
+        Ip : torch.Tensor
+            [num_necessary_mols, 3, 3] unit ellipsoid axes of the embedded molecules,
+            one per row.
+        edge_i_good, edge_j_good : torch.Tensor
+            [num_pairs] global molecule indices of the two molecules of each pair.
+        eps : float
+            Added to ``max_val`` and to the normalised displacement before it is
+            normalised to ``r_hat``.
+        mol_centroids : torch.Tensor
+            [tot_num_mols, 3] molecule centroids.
+        mol_id_map : torch.Tensor
+            [tot_num_mols] map from global molecule index to embedded-molecule index.
+        semi_axis_lengths : torch.Tensor
+            [num_necessary_mols, 3] semi-axis lengths in Angstrom.
+
+        Returns
+        -------
+        tuple
+            ``(max_val, normed_v1, normed_v2, v1, v2, x)``: the normalisation length
+            [num_pairs] in Angstrom; the normalised volumes ``v / max_val ** 3``
+            [num_pairs]; the ellipsoid volumes [num_pairs] in cubic Angstrom; and the
+            features [num_pairs, 22].
+
+        Raises
+        ------
+        ValueError
+            If ``Ip``, ``v1``, ``v2`` or ``semi_axis_lengths`` contain non-finite
+            values, or ``v1`` or ``semi_axis_lengths`` contain non-positive values.
+        """
         # featurize pairs
         r = mol_centroids[edge_j_good] - mol_centroids[edge_i_good]
         edge_i_local = mol_id_map[edge_i_good]
@@ -175,6 +293,40 @@ class MolCrystalEllipsoidOps:
     def compute_ellipsoid_eigvecs(self, add_noise, atoms_per_necessary_mol, cov_eps, molwise_batch_subset,
                                   num_necessary_mols,
                                   subset_pos, tot_mol_index_subset):
+        """Return the eigen-decomposition of each molecule's atomic position covariance.
+
+        Positions are centred on each molecule's all-atom centroid. If
+        ``add_noise > 0`` or the centred positions require grad, Gaussian noise of
+        standard deviation ``cov_eps`` is added. The covariance is the per-molecule
+        mean outer product, symmetrised, plus ``1e-3`` times the identity. ``self`` is
+        not modified.
+
+        Parameters
+        ----------
+        add_noise : float
+            Noise is added when this is positive; its value is otherwise unused.
+        atoms_per_necessary_mol : torch.Tensor
+            [num_necessary_mols] atom count per molecule.
+        cov_eps : float
+            Standard deviation of the added noise, in Angstrom.
+        molwise_batch_subset : torch.Tensor
+            [num_necessary_mols] graph index per molecule; only its length is used.
+        num_necessary_mols : int
+            Number of molecules.
+        subset_pos : torch.Tensor
+            [num_subset_atoms, 3] positions of the atoms of these molecules.
+        tot_mol_index_subset : torch.Tensor
+            [num_subset_atoms] molecule index (0 to num_necessary_mols - 1) of each
+            atom, non-decreasing.
+
+        Returns
+        -------
+        eigvals_sorted : torch.Tensor
+            [num_necessary_mols, 3] eigenvalues in square Angstrom, descending.
+        eigvecs_sorted : torch.Tensor
+            [num_necessary_mols, 3, 3] unit eigenvectors, one per row, in the same
+            order.
+        """
         # get principal axes
         centered_mol_pos = center_batch(subset_pos,
                                         tot_mol_index_subset,
@@ -205,6 +357,32 @@ class MolCrystalEllipsoidOps:
         return eigvals_sorted, eigvecs_sorted
 
     def reindex_ellipsoid_mols(self, edge_i_good, edge_j_good, molwise_batch, tot_mol_index, tot_num_mols):
+        """Select the molecules that appear in at least one pair and index them compactly.
+
+        Selected molecules keep ascending global order. ``self`` is not modified.
+
+        Parameters
+        ----------
+        edge_i_good, edge_j_good : torch.Tensor
+            [num_pairs] global molecule indices of the two molecules of each pair.
+        molwise_batch : torch.Tensor
+            [tot_num_mols] graph index of each molecule.
+        tot_mol_index : torch.Tensor
+            [num_nodes] global molecule index of each atom.
+        tot_num_mols : int
+            Total number of molecules in the batch.
+
+        Returns
+        -------
+        tuple
+            ``(atoms_per_necessary_mol, mol_id_map, molwise_batch_subset,
+            num_necessary_mols, subset_pos, tot_mol_index_subset)``: atom count per
+            selected molecule [num_necessary_mols]; map from global to selected
+            molecule index, -1 where unselected [tot_num_mols]; graph index per
+            selected molecule [num_necessary_mols]; number of selected molecules;
+            ``self.pos`` of their atoms [num_subset_atoms, 3]; and the selected
+            molecule index of each of those atoms [num_subset_atoms].
+        """
         necessary_mol_inds = torch.unique(torch.cat([edge_i_good, edge_j_good]))
         num_necessary_mols = len(necessary_mol_inds)
         mol_id_map = torch.full((tot_num_mols,), -1, device=self.device)
@@ -225,7 +403,36 @@ class MolCrystalEllipsoidOps:
         return atoms_per_necessary_mol, mol_id_map, molwise_batch_subset, num_necessary_mols, subset_pos, tot_mol_index_subset
 
     def get_intermolecular_ellipsoid_edges(self, molwise_batch, surface_padding, tot_mol_index, tot_num_mols):
-        """get edges"""
+        """Pair molecules outside the asymmetric unit with molecules inside it, by centroid distance.
+
+        A molecule's centroid is the mean of its atom positions and its ``aux_ind`` the
+        maximum over its atoms. Candidate pairs link a molecule with ``aux_ind >= 1``
+        (``edge_i``) to one with ``aux_ind == 0`` (``edge_j``) in the same graph, from a
+        neighbour search of radius ``2 * max(radius + surface_padding)`` over the batch
+        with ``max_num_neighbors=50``. A pair is kept when its centroid distance is
+        below ``2 * (radius + surface_padding)`` for the graph of ``edge_i``. ``self``
+        is not modified.
+
+        Parameters
+        ----------
+        molwise_batch : torch.Tensor
+            [tot_num_mols] graph index of each molecule.
+        surface_padding : float
+            Length in Angstrom added to ``radius``.
+        tot_mol_index : torch.Tensor
+            [num_nodes] molecule index of each atom.
+        tot_num_mols : int
+            Total number of molecules.
+
+        Returns
+        -------
+        edge_i_good : torch.Tensor
+            [num_pairs] index of the ``aux_ind >= 1`` molecule of each pair.
+        edge_j_good : torch.Tensor
+            [num_pairs] index of the ``aux_ind == 0`` molecule of each pair.
+        mol_centroids : torch.Tensor
+            [tot_num_mols, 3] molecule centroids.
+        """
         max_ellipsoid_radius = self.radius + surface_padding
         mol_centroids = scatter(self.pos, tot_mol_index, dim=0, dim_size=tot_num_mols, reduce='mean')
         mol_aux_inds = scatter(self.aux_ind, tot_mol_index, dim=0, dim_size=tot_num_mols, reduce='max')
@@ -338,6 +545,14 @@ class MolCrystalEllipsoidOps:
     """
 
     def load_ellipsoid_model(self):
+        """Load the pretrained overlap model into ``self.ellipsoid_model``, in place.
+
+        Builds ``ResidualMLP(22, 512, 3, 8, None, 0)`` (22 inputs, hidden width 512,
+        3 outputs, 8 residual blocks, no normalisation, no dropout), loads the state dict
+        from ``ellipsoid_overlap_model.pt`` in the ``mxtaltools/dataset_utils``
+        directory (``weights_only=True``, mapped to ``self.device``), moves the model
+        to ``self.device`` and puts it in eval mode.
+        """
         self.ellipsoid_model = ResidualMLP(
             22, 512, 3, 8, None, 0
         )

@@ -1,3 +1,27 @@
+"""Per-space-group feature vectors, built at import from SYM_OPS and LATTICE_TYPE.
+
+Attributes
+----------
+feature_length : int
+    237 (230 + 6 + 1), the width of each feature row.
+unique_lattices : list of str
+    The six distinct LATTICE_TYPE values ('triclinic', 'monoclinic',
+    'orthorhombic', 'tetragonal', 'hexagonal', 'cubic') in the iteration
+    order of a Python ``set`` built from them. That order follows string
+    hashing, which is randomised per interpreter process unless
+    ``PYTHONHASHSEED`` is fixed, so the list order, and with it the column
+    each crystal system occupies in SG_FEATURE_TENSOR, can differ between
+    processes.
+SG_FEATURE_TENSOR : torch.Tensor
+    [231, 237] tensor created with torch's default device and floating dtype
+    at import time (CPU and float32 unless changed beforehand), indexed
+    directly by space-group number. Row 0 is all zeros. For space
+    group i in 1-230, column i - 1 is 1 (space-group one-hot), column
+    230 + unique_lattices.index(LATTICE_TYPE[i]) is 1 (crystal-system
+    one-hot over columns 230-235), and column 236 holds len(SYM_OPS[i]), the
+    unnormalised number of general-position operators in the conventional
+    cell (1 to 192). All other entries are 0.
+"""
 import torch
 from mxtaltools.constants.space_group_info import LATTICE_TYPE, SYM_OPS
 

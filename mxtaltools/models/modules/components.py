@@ -1,3 +1,11 @@
+"""Neural-network building blocks: normalization and activation selectors, residual
+scalar and scalar-plus-vector MLPs, vector-to-scalar and vector activation layers, and a
+node embedding block.
+
+Vector features are laid out as [num_samples, 3, channels], with the Cartesian axis in
+dimension 1.
+"""
+
 import sys
 from typing import Optional, Tuple
 
@@ -20,16 +28,33 @@ class Scalarizer(nn.Module):
                  output_dim: int = None,
                  ):
         """
-        Generate a learned invariant representation of dimension :math:`(k)` from a list of vectors of dimension :math:`v=(k x 3)`.
+        Map vectors [n, 3, hidden_dim] to rotation-invariant scalars [n, output_dim].
 
-        Generate m vectors as a linear combination of the k vectors of v, take their normalized dot products with the components of v, concatenate to the norms of v, and linearly combine to the so-called scalarized representation of v.
+        A bias-free linear layer reduces the ``hidden_dim`` input channels to
+        ``r = max(hidden_dim // 4, 1)``. The reduced vectors give their norms [n, r] and
+        the dot products of the unit reduced vectors with ``embedding_dim`` unit
+        directions, each a bias-free linear combination of the reduced vectors,
+        [n, embedding_dim * r]. The concatenation passes through ``Linear(4 * r,
+        output_dim)``, :class:`Normalization` (called without a batch vector),
+        :class:`Activation` and dropout. Norms in the denominators carry an epsilon of
+        1e-3.
 
-        Args:
-            hidden_dim (int): feature depth of input and output
-            embedding_dim (int): number of vectors to use for dot-product projection
-            norm_mode (str): type of normalization to use
-            act_func (str): type of activation to use
-            dropout (float): dropout probability
+        Parameters
+        ----------
+        hidden_dim : int
+            Channel count of the input vectors.
+        embedding_dim : int
+            Number of learned directions. The concatenated width ``(1 + embedding_dim) * r``
+            matches the ``4 * r`` inputs of the final linear layer only when
+            ``embedding_dim`` is 3.
+        norm_mode : str or None
+            Normalization name for :class:`Normalization`.
+        act_func : str or None
+            Activation name for :class:`Activation`.
+        dropout : float, optional
+            Dropout probability. Default 0.
+        output_dim : int, optional
+            Output width. Defaults to ``hidden_dim``.
         """
         super(Scalarizer, self).__init__()
         if output_dim is None:
@@ -48,6 +73,7 @@ class Scalarizer(nn.Module):
     def forward(self,
                 v: torch.Tensor
                 ) -> torch.Tensor:
+        """Return scalars [n, output_dim] from vectors ``v`` [n, 3, hidden_dim]."""
         eps = 1e-3
         v_red = self.dim_red(v)
         norm = torch.linalg.norm(v_red, dim=1)
@@ -67,13 +93,24 @@ class VectorActivation(nn.Module):
     r"""
     Modified implementation of the vector activation function from https://github.com/FlyingGiraffe/vnn/blob/master/models/vn_layers.py
 
-    Generates an axis as a learned linear combination of input v, then the normalized overlaps of all the components of v.
+    A bias-free linear combination of the input channels gives one axis per sample,
+    normalised to unit length (epsilon 1e-5). For each channel, the component ``c`` of the
+    vector along that axis (not normalised by the vector's length) is clipped to
+    ``min(c, 0)``, passed through :class:`Activation`, and ``-activation(min(c, 0)) * axis``
+    is added to the channel.
 
-    Applies an activation function on the vector overlaps, such that, e.g., for ReLU activation, vectors with negative overlap are rotated to be perpendicular to the learned axis (zero overlap) and vectors with positive overlap are untouched.
+    Channels with ``c >= 0`` therefore receive ``-activation(0) * axis``, which is zero for
+    ``'relu'``, ``'gelu'``, ``'leaky relu'`` and ``'tanh'``. With ``'relu'`` every
+    correction is zero and the layer returns its input unchanged; with ``'gelu'`` a
+    channel with ``c < 0`` gets ``-gelu(c) * axis`` added, which shrinks the magnitude of
+    its negative component.
 
-    Args:
-        hidden_dim (int): feature depth of input/output vectors, :math:`(k\times 3)`
-        act_func (str): activation function to apply to the normalized vector overlaps with the learned axis
+    Parameters
+    ----------
+    hidden_dim : int
+        Channel count ``k`` of the input and output vectors [n, 3, k].
+    act_func : str or None
+        Activation name for :class:`Activation`, applied to the clipped components.
     """
 
     def __init__(self,
@@ -87,6 +124,7 @@ class VectorActivation(nn.Module):
     def forward(self,
                 v: torch.Tensor
                 ) -> torch.Tensor:
+        """Return the activated vectors, same shape as ``v`` [n, 3, hidden_dim]."""
         direction = self.embedding(v)[..., -1]
         normed_direction = direction / (torch.linalg.norm(direction, dim=1, keepdim=True) + 1e-5)
 
@@ -116,11 +154,21 @@ class VectorActivation(nn.Module):
 # noinspection PyAttributeOutsideInit
 class Normalization(nn.Module):
     r"""
-    Wrapper module for several normalization options
+    Wrapper module for several normalization options, selected by name.
 
-    Args:
-        norm (str): type of normalization function
-        filters (int): feature depth of objects to be normalized
+    Parameters
+    ----------
+    norm : str or None
+        ``'batch'`` (:class:`torch.nn.BatchNorm1d`), ``'layer'``
+        (:class:`torch.nn.LayerNorm`), ``'graph layer'``
+        (:class:`torch_geometric.nn.LayerNorm`), ``'graph'``
+        (:class:`torch_geometric.nn.GraphNorm`), ``'instance'``
+        (:class:`torch.nn.InstanceNorm1d`), ``'graph vector layer'``
+        (:class:`VectorLayerNorm` in ``'graph'`` mode), ``'vector layer'``
+        (:class:`VectorLayerNorm` in ``'node'`` mode), or None (identity). Any other
+        string prints a message and calls ``sys.exit()``.
+    filters : int
+        Feature width of the inputs to be normalized.
     """
 
     def __init__(self,
@@ -151,6 +199,21 @@ class Normalization(nn.Module):
     def forward(self,
                 x: torch.Tensor,
                 batch: Optional[torch.LongTensor] = None):
+        """Normalize ``x``.
+
+        The layer is called as ``norm(x, batch)`` when ``batch`` is given and the mode is
+        not ``'batch'``, ``'layer'`` or None, and as ``norm(x)`` otherwise.
+        :class:`torch.nn.InstanceNorm1d` takes no second argument, so ``'instance'`` with
+        a ``batch`` raises TypeError.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Features, [num_samples, filters], or vectors [num_samples, 3, filters] for the
+            vector modes.
+        batch : torch.LongTensor, optional
+            Graph index of each row of ``x``, [num_samples].
+        """
 
         if batch is not None and self.norm_type != 'batch' and self.norm_type != 'layer' and self.norm_type is not None:
             return self.norm(x, batch)
@@ -160,11 +223,18 @@ class Normalization(nn.Module):
 
 class Activation(nn.Module):
     r"""
-    Wrapper module for several activation options
+    Wrapper module for several activation options, selected by name.
 
-    Args:
-        activation_func (str): type of activation function
-        filters (int): feature depth of objects to be normalized
+    Parameters
+    ----------
+    activation_func : str or None
+        Case-insensitive name: ``'relu'``, ``'gelu'``, ``'leaky relu'``, ``'tanh'`` or
+        ``'sigmoid'`` (the :mod:`torch.nn.functional` functions), or ``'kernel'``
+        (:class:`KernelActivation` with 10 basis functions over span 4). None gives the
+        identity. Any other string assigns no activation, so :meth:`forward` raises
+        AttributeError.
+    filters : int
+        Feature width of the inputs; used only by ``'kernel'``.
     """
 
     def __init__(self,
@@ -190,6 +260,7 @@ class Activation(nn.Module):
     def forward(self,
                 x: torch.Tensor
                 ) -> torch.Tensor:
+        """Apply the selected activation to ``x``."""
         return self.activation(x)
 
 
@@ -198,10 +269,20 @@ class KernelActivation(nn.Module):
     Function for learning an activation function for every node in a given layer, as a linear combination of basis functions over a given span.
     Uses nn.Conv1d groups option for efficient evaluation.
 
-    Args:
-        n_basis (int): number of basis functions
-        span (float): span over which to define localized basis functions
-        filters (int): feature depth of inputs to be activated
+    Each input value is expanded over ``n_basis`` Gaussians ``exp(-gamma * (x - c)**2)``
+    with centres ``c = torch.linspace(-span, span, n_basis)`` (buffer ``dict``) and
+    ``gamma = 1 / (6 * spacing**2)`` for the centre spacing (buffer ``gamma``). A
+    bias-free ``nn.Conv1d`` with ``groups=filters`` combines the basis responses of each
+    channel into one output per channel.
+
+    Parameters
+    ----------
+    n_basis : int
+        Number of basis functions.
+    span : float
+        Basis centres are spread evenly over ``[-span, span]``.
+    filters : int
+        Feature width of the inputs to be activated.
     """
 
     def __init__(self,
@@ -230,6 +311,7 @@ class KernelActivation(nn.Module):
     def kernel(self,
                x: torch.Tensor
                ) -> torch.Tensor:
+        """Return the Gaussian basis responses of ``x`` [n, filters] as [n, filters, n_basis]."""
         # x has dimention batch, features, y, x
         # must return object of dimension batch, features, y, x, basis
         x = x.unsqueeze(2)
@@ -241,6 +323,7 @@ class KernelActivation(nn.Module):
     def forward(self,
                 x: torch.Tensor
                 ) -> torch.Tensor:
+        """Apply the learned activation to ``x`` [n, filters]."""
         x = self.kernel(x).unsqueeze(-1).unsqueeze(-1)  # run activation, output shape batch, features, y, x, basis
         x = x.reshape(x.shape[0], x.shape[1] * x.shape[2], x.shape[3],
                       x.shape[4])  # concatenate basis functions with filters
@@ -252,17 +335,50 @@ class KernelActivation(nn.Module):
 # noinspection PyAttributeOutsideInit
 class scalarMLP(nn.Module):  # todo simplify and smooth out +1's and other custom methods for a general depth controller
     r"""
-    Flexible multi-layer perceptron module, with several options.
+    Flexible residual multi-layer perceptron module, with several options.
 
-    Args:
-        layers (int): number of fully-connected layers
-        filters (int): feature depth with FC layers
-        input_dim (int): feature depth of inputs
-        output_dim (int): feature depth of outputs
-        activation (str): activation function
-        seed (int): random seed
-        dropout (float): dropout probability
-        ramp_depth (bool): whether to ramp the feature depth exponentially from input_dim to output_dim through the network
+    Each of the ``layers`` blocks computes
+    ``x = r(x) + dropout(act(norm(linear(x))))``, or
+    ``x = r(x) + dropout(act(linear(norm(x))))`` when ``norm_after_linear`` is False.
+    ``r`` is a clone of ``x`` when every hidden width equals ``input_dim`` and a
+    bias-free linear layer (``residue_adjust``) otherwise. A bias-free linear output layer
+    maps the last hidden width to ``output_dim``; it is the identity when they match.
+
+    Parameters
+    ----------
+    layers : int
+        Number of residual blocks. Must be at least 1; with 0 the constructor raises
+        IndexError.
+    filters : int
+        Hidden width of every block. Not used when ``ramp_depth`` is True.
+    input_dim : int
+        Width of the input features.
+    output_dim : int
+        Width of the output.
+    activation : str or None, optional
+        Activation name for :class:`Activation`. Default ``'gelu'``.
+    seed : int, optional
+        Passed to ``torch.manual_seed`` at construction. Default 0.
+    dropout : float, optional
+        Dropout probability after each block's activation. Default 0.
+    norm : str or None, optional
+        Normalization name for :class:`Normalization`. Default None (identity).
+    norm_after_linear : bool, optional
+        Normalize the linear layer's output (True) or the block input (False). Default
+        True.
+    bias : bool, optional
+        Whether the block linear layers have a bias. Default True.
+    ramp_depth : bool, optional
+        If True, block ``i`` (``i = 0 .. layers - 1``) has width
+        ``int(input_dim ** (1 + (p - 1) * i / layers))`` with
+        ``p = log(output_dim) / log(input_dim)``: the widths change geometrically from
+        ``input_dim`` (block 0) toward ``output_dim``, and the output layer makes the last
+        step. Default False.
+
+    Notes
+    -----
+    Construction calls ``torch.manual_seed(seed)``, which reseeds torch's global random
+    number generator.
     """
 
     def __init__(self,
@@ -297,7 +413,11 @@ class scalarMLP(nn.Module):  # todo simplify and smooth out +1's and other custo
 
     def init_scalar_filters(self, filters):
         """
-        returns a list with layers + 1 integer elements
+        Set the per-block widths and residual projections; returns None.
+
+        Assigns ``s_filters_in`` and ``s_filters_out`` (lists of length ``n_layers``) and
+        ``same_depth``; when the widths are not all equal, also builds ``residue_adjust``,
+        one bias-free ``Linear(s_filters_in[i], s_filters_out[i])`` per block.
         """
         if self.ramp_depth:  # smoothly ramp feature depth across layers
             # linear scaling
@@ -322,7 +442,7 @@ class scalarMLP(nn.Module):  # todo simplify and smooth out +1's and other custo
             self.same_depth = True
 
     def init_scalar_transforms(self):
-        """scalar MLP layers"""
+        """Build the per-block linear, activation, normalization and dropout modules and the output layer."""
 
         '''working layers'''
         self.fc_layers = torch.nn.ModuleList([
@@ -363,7 +483,23 @@ class scalarMLP(nn.Module):  # todo simplify and smooth out +1's and other custo
                 batch: Optional[torch.LongTensor] = None
                 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
 
-        """initialize to correct feature dimension"""
+        """Apply the MLP.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input features, [num_samples, input_dim].
+        return_latent : bool, optional
+            Also return the last hidden activation, before the output layer.
+        batch : torch.LongTensor, optional
+            Graph index of each row, forwarded to every block's :class:`Normalization`.
+
+        Returns
+        -------
+        torch.Tensor or tuple of torch.Tensor
+            The output, [num_samples, output_dim]; with ``return_latent``,
+            ``(output, latent)`` where ``latent`` has the last hidden width.
+        """
 
         for i, (norm, linear, activation, dropout) in enumerate(
                 zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts)):
@@ -389,7 +525,72 @@ class scalarMLP(nn.Module):  # todo simplify and smooth out +1's and other custo
 # noinspection PyAttributeOutsideInit
 class vectorMLP(scalarMLP):
     r"""
-    scalarMLP model with l=1 vector track added with o3 equivariance
+    scalarMLP model with l=1 vector track added with o3 equivariance.
+
+    Takes scalars ``x`` [n, input_dim] and vectors ``v`` [n, 3, vector_input_dim]. Each
+    block ``i``:
+
+    1. takes residuals of ``x`` and ``v`` (clones when the widths do not change, else
+       bias-free linear projections);
+    2. adds (``v_to_s_combination='sum'``) or concatenates (``'concatenate'``) a
+       :class:`Scalarizer` embedding of ``v`` to ``x``;
+    3. updates ``x`` as a :class:`scalarMLP` block does;
+    4. updates ``v`` to ``(res_v + g * vact(vnorm(W v))) / 1.6``, where ``W`` is a
+       bias-free channel-mixing linear layer, ``vnorm`` is the ``vector_norm``
+       normalization, ``vact`` is a :class:`VectorActivation`, and the gate ``g``
+       [n, 1, width] is ``act(norm(linear(x)))`` of the updated scalars.
+
+    Bias-free output layers map the scalar track to ``output_dim`` and the vector track to
+    ``vector_output_dim`` (identities when the widths already match). Every operation on
+    ``v`` mixes only the channel dimension or scales by quantities built from norms and
+    dot products, so with ``vector_norm`` None, ``'vector layer'`` or
+    ``'graph vector layer'`` and invariant ``x``, ``v`` transforms equivariantly under
+    orthogonal transformations of its Cartesian axis.
+
+    Parameters
+    ----------
+    layers : int
+        Number of blocks. Must be at least 1.
+    filters : int
+        Hidden width of both tracks. Not used when ``ramp_depth`` is True.
+    input_dim : int
+        Width of the input scalars.
+    output_dim : int
+        Width of the output scalars.
+    vector_input_dim : int
+        Channel count of the input vectors.
+    vector_output_dim : int
+        Channel count of the output vectors.
+    activation : str or None, optional
+        Activation name for the scalar blocks, the gates, the :class:`Scalarizer` layers
+        and the :class:`VectorActivation` layers. Default ``'gelu'``.
+    seed : int, optional
+        Passed to ``torch.manual_seed`` at construction. Default 0.
+    dropout : float, optional
+        Dropout probability in the scalar blocks and :class:`Scalarizer` layers. Default 0.
+    norm : str or None, optional
+        Normalization name for the scalar blocks, the gates and the :class:`Scalarizer`
+        layers. Default None.
+    norm_after_linear : bool, optional
+        As in :class:`scalarMLP`, for the scalar track. Default True.
+    bias : bool, optional
+        Whether the scalar block linear layers have a bias. Default True.
+    vector_norm : str or None, optional
+        Normalization name for the vector blocks. Default None.
+    ramp_depth : bool, optional
+        As in :class:`scalarMLP`. The vector widths use base ``vector_input_dim`` with
+        ``p = log(vector_output_dim) / log(input_dim)``, i.e. with the scalar input
+        width in the denominator. Default False.
+    v_to_s_combination : str, optional
+        ``'sum'`` or ``'concatenate'``. ``'concatenate'`` doubles the scalar width entering
+        each block's linear layer, which is built for the undoubled width, so that setting
+        raises a shape error in :meth:`forward`; any other value raises AssertionError
+        there. Default ``'sum'``.
+
+    Notes
+    -----
+    Construction calls ``torch.manual_seed(seed)``, which reseeds torch's global random
+    number generator.
     """
 
     def __init__(self,
@@ -437,6 +638,12 @@ class vectorMLP(scalarMLP):
         self.init_vector_transforms()
 
     def init_vector_filters(self, filters):
+        """Set the per-block vector widths and residual projections; returns None.
+
+        Assigns ``v_filters_in``, ``v_filters_out`` and ``v_same_depth``; when the widths
+        are not all equal, also builds ``v_residue_adjust``, one bias-free linear layer per
+        block.
+        """
         if self.ramp_depth:  # smoothly ramp feature depth across layers
             # linear scaling
             # self.n_filters = torch.linspace(self.input_dim, self.output_dim, self.n_layers).long().tolist()
@@ -460,7 +667,7 @@ class vectorMLP(scalarMLP):
             self.v_same_depth = True
 
     def init_vector_transforms(self):
-        """vector MLP layers"""
+        """Build the per-block vector, gating, scalarizer and vector-activation modules and the vector output layer."""
         '''working layers'''
         self.v_fc_layers = torch.nn.ModuleList([
             nn.Linear(self.v_filters_in[i], self.v_filters_out[i], bias=False)
@@ -506,6 +713,31 @@ class vectorMLP(scalarMLP):
                 return_latent: bool = False,
                 batch: Optional[torch.LongTensor] = None
                 ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        """Apply the MLP to scalars and vectors.
+
+        Prints a message when ``x`` or ``v`` contains NaN, before each block and after the
+        last one; the values are not changed.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input scalars, [num_samples, input_dim].
+        v : torch.Tensor
+            Input vectors, [num_samples, 3, vector_input_dim].
+        return_latent : bool, optional
+            Also return the last hidden scalar activation, before the output layer.
+        batch : torch.LongTensor, optional
+            Graph index of each row, forwarded to the scalar and vector block
+            normalizations (not to the gate normalizations or the :class:`Scalarizer`
+            layers).
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            ``(x_out, v_out)`` with ``x_out`` [num_samples, output_dim] and ``v_out``
+            [num_samples, 3, vector_output_dim]; with ``return_latent``,
+            ``(x_out, v_out, latent)``.
+        """
 
         for i, (s_norm, s_linear, s_act, s_dropout,
                 v_norm, v_linear, v_act,
@@ -557,6 +789,7 @@ class vectorMLP(scalarMLP):
                      x: torch.Tensor,
                      v: torch.Tensor
                      ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Return the block-``i`` residuals of ``x`` and ``v``: clones when the widths do not change, else the bias-free residual projections."""
         if self.same_depth:
             x = x.clone()
         else:
@@ -571,6 +804,23 @@ class vectorMLP(scalarMLP):
 
 
 class EmbeddingBlock(torch.nn.Module):
+    """Initial node embedding: a learned embedding of the integer type in column 0,
+    concatenated with the remaining columns and passed through a linear layer.
+
+    Parameters
+    ----------
+    init_node_embedding_dim : int
+        Output width.
+    num_input_classes : int
+        The embedding table has ``num_input_classes + 1`` rows, so type indices
+        ``0 .. num_input_classes`` are valid.
+    num_scalar_input_features : int
+        Total input width, including column 0. The linear layer takes
+        ``atom_type_embedding_dim + num_scalar_input_features - 1`` inputs.
+    atom_type_embedding_dim : int
+        Width of the type embedding.
+    """
+
     def __init__(self,
                  init_node_embedding_dim: int,
                  num_input_classes: int,
@@ -583,6 +833,7 @@ class EmbeddingBlock(torch.nn.Module):
 
     def forward(self,
                 x: Tensor) -> Tensor:
+        """Embed ``x`` [num_nodes, num_scalar_input_features] (or [num_nodes]) to [num_nodes, init_node_embedding_dim]; column 0 is cast to long as the type index."""
 
         if x.dim() == 1:
             x = x.unsqueeze(1)  # make dim 1 explicit
@@ -596,6 +847,26 @@ class EmbeddingBlock(torch.nn.Module):
 class ResidualMLP(nn.Module):
     """
     a simpler general-purpose MLP
+
+    Computes ``x = relu(input_layer(x))``, then ``num_layers`` residual blocks
+    ``x = x + dropout(relu(norm(linear(x))))``, then a linear output layer. All linear
+    layers have biases.
+
+    Parameters
+    ----------
+    input_dim : int
+        Width of the input features.
+    hidden_dim : int
+        Width of every hidden layer.
+    output_dim : int
+        Width of the output.
+    num_layers : int
+        Number of residual blocks; 0 is allowed.
+    norm : object or None
+        If not None, each block uses ``nn.LayerNorm(hidden_dim)`` (the value itself is
+        not inspected); if None, the identity.
+    dropout_p : float
+        Dropout probability in each block.
     """
     def __init__(self, input_dim, hidden_dim, output_dim, num_layers,
                  norm, dropout_p):
@@ -622,6 +893,7 @@ class ResidualMLP(nn.Module):
         self.output_layer = nn.Linear(hidden_dim, output_dim)
 
     def forward(self, x):
+        """Map ``x`` [..., input_dim] to [..., output_dim]."""
         x = F.relu(self.input_layer(x))
         for layer, dropout, norm in zip(self.hidden_layers, self.dropouts, self.norms):
             residual = x

@@ -1,0 +1,18 @@
+{
+ "schema_version": 1,
+ "table_file": "fd_tables_v1.json",
+ "table_sha256": "0dddede823729a1ca2bebcad55dccf77294b81bc1845e0d4a8bdf7c7e3b1bafd",
+ "generator": "mxtaltools/crystal_fd/generate_fd_tables.py",
+ "generator_commit": "1a0c138bbc9b84c687e33014c6953ff8aaea4219",
+ "working_tree_dirty": true,
+ "cctbx_version": "2025.11",
+ "date": "2026-10-15",
+ "den": 24,
+ "groups": 230,
+ "input_hashes": {
+  "SYM_OPS": "12aa3bcff828e1d85bde107e28a981d97cf1921e6656ee52de474daf7736dc76",
+  "NORMALIZER_OPS": "c5812e8d21b356668b42726b456e829b2cc9845d5bda15af3889ff1ba898849a",
+  "CONTINUOUS_DIMS": "91180b60b45f444fc44d979a18d036ca0457ab21925c95aa48ef0b864ce07a4f",
+  "ASYM_UNITS": "79685e8c3553c900caa386ca99cf3be87f58f69c875a6e01ebc5667e21733c5b"
+ }
+}

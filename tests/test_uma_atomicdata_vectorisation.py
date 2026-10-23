@@ -15,8 +15,9 @@ reproduce three different notions of "which atoms are the asymmetric unit":
     image atoms unit_cell_pos already covers;
   * a plain unit-cell batch -> all of batch.z.
 
-and then TILE each aunit sym_mult times, image-major, to match unit_cell_pos's
-layout. Tiling versus repeat_interleaving is the failure that would be invisible:
+and then TILE each unit sym_mult times, unit by unit (image-major within a unit; at
+Z'=1 the whole aunit image-major), to match unit_cell_pos's layout
+(crystal_building.utils.unit_cell_gather_index; unit_cell_z for the list path). Tiling versus repeat_interleaving is the failure that would be invisible:
 both give the right SHAPE, both collate cleanly, and the energies would simply be
 wrong. test_tiling_is_not_repeat_interleave pins it directly.
 
@@ -43,8 +44,8 @@ from mxtaltools.mlip_interfaces.uma_utils import (
     batch_to_fairchem_atomicdata,
     batch_to_fairchem_batch,
     verify_fairchem_batch_equivalence,
-    _tiled_gather_index,
 )
+from mxtaltools.crystal_building.utils import unit_cell_gather_index
 from fairchem.core.datasets.atomic_data import atomicdata_list_to_batch
 
 DATASET = os.path.join(os.path.dirname(__file__), 'datasets', 'mini_new_csd.pt')
@@ -156,7 +157,8 @@ def test_tiling_is_not_repeat_interleave(crystals):
     """
     b = _built(crystals, 0, 3)
     z, batch_ind = b.z, b.batch
-    gather, out_n = _tiled_gather_index(batch_ind, b.sym_mult, b.num_graphs)
+    assert int(b.z_prime.max()) == 1          # the Z'=1 tiling; Z'>1 is unit by unit (tests/test_unit_cell_elements.py)
+    gather, out_n = unit_cell_gather_index(batch_ind, b.z_prime, b.sym_mult, b.num_graphs)
     got = z[gather]
     expected = torch.cat([z[batch_ind == i].repeat(int(b.sym_mult[i]))
                           for i in range(b.num_graphs)])

@@ -1,3 +1,6 @@
+"""Local optimization of crystal cell parameters by gradient descent (``gradient_descent_optimization``) and its
+helpers: per-step loss terms, records and convergence checks, asymmetric-unit centroid wrapping and
+canonicalization, and noised resampling about optimized crystals (``sample_about_crystal``)."""
 import copy
 import gc
 from argparse import Namespace
@@ -21,17 +24,20 @@ from mxtaltools.models.utils import enforce_1d_bound, softmax_and_score
 def dict2namespace(data_dict: dict):
     """
     Recursively converts a dictionary and its internal dictionaries into an
-    argparse.Namespace
+    argparse.Namespace.
+
+    Nested dictionaries are replaced by namespaces inside ``data_dict`` itself,
+    so the input dictionary is modified in place.
 
     Parameters
     ----------
     data_dict : dict
-        The input dictionary
+        The input dictionary.
 
-    Return
-    ------
+    Returns
+    -------
     data_namespace : argparse.Namespace
-        The output namespace
+        The output namespace.
     """
     for k, v in data_dict.items():
         if isinstance(v, dict):
@@ -52,7 +58,9 @@ def wrap_centroid(raw_centroid: torch.Tensor) -> torch.Tensor:
     describes a valid crystal -- then clamp to [0, CELL_EDGE] STRAIGHT-THROUGH: the value honours the
     builders' clip while the gradient reaches the raw parameter unchanged. So, unlike the hardtanh
     bound in clean_cell_parameters (zero gradient at and beyond a face, which rprop never leaves),
-    no centre can freeze at an asymmetric-unit face or a cell face."""
+    no centre can freeze at an asymmetric-unit face or a cell face.
+    Elementwise: raw_centroid (fractional, [num_graphs, 3 * max_z_prime] where called here) -> a new tensor of the
+    same shape; values that round to exactly 1 after the floor are mapped to 0."""
     wrapped = raw_centroid - torch.floor(raw_centroid).detach()
     wrapped = torch.where(wrapped >= 1, wrapped - 1, wrapped)  # float rounding can land exactly on 1, which is 0
     return wrapped + (wrapped.clamp(0, CELL_EDGE) - wrapped).detach()
@@ -67,8 +75,12 @@ def canonicalize_aunit(crystal_batch):
     ~1e-7 off orthogonal, which rotmat2rotvec amplifies near a rotation by pi) and puts rotvecs on the +z hemisphere
     the latent transforms expect. Needed after a wrap-mode relaxation, whose centres may sit anywhere in the cell,
     before anything that reads asymmetric-unit coordinates (cleaning, latent transforms, datasets).
-    Requires current T_fc / T_cf (box_analysis). Raises if some molecule has no image in its box,
-    i.e. the tabulated box is not a fundamental domain for that crystal's operator list."""
+    Requires current T_fc / T_cf (box_analysis). Raises ValueError if some molecule has no image in its box
+    (best margin below -1e-5), i.e. the tabulated box is not a fundamental domain for that crystal's operator list.
+    The image chosen is the one whose centre is deepest inside the box (largest min over axes of 1 - c / box); ties
+    keep the lower operator index. Slots k with z_prime <= k are left unchanged. Builds and caches
+    crystal_batch.asym_unit_dict if absent; replaces aunit_centroid, aunit_orientation and aunit_handedness with new
+    tensors (the cell and T_fc / T_cf are not touched, box_analysis is not rerun) and returns None."""
     from mxtaltools.crystal_building.zp_doubling import proper_rotvecs
     if not hasattr(crystal_batch, 'asym_unit_dict'):
         crystal_batch.asym_unit_dict = crystal_batch.build_asym_unit_dict()
@@ -127,11 +139,33 @@ def canonicalize_aunit(crystal_batch):
 
 
 def get_annealing_factor(start_value, stop_value, total_time, step_iters):
+    """Return the multiplicative factor that takes ``start_value`` to ``stop_value`` in ``total_time / step_iters``
+    multiplications, ``(stop_value / start_value) ** (step_iters / total_time)``.
+
+    Raises
+    ------
+    AssertionError
+        If ``stop_value`` is not positive.
+    """
     assert stop_value > 0, "Setting final value as zero breaks this module"
     return (stop_value / start_value) ** (1 / (total_time / step_iters))
 
 
 class CrystalParams(nn.Module):
+    """Per-row learnable cell parameters with optionally fixed columns.
+
+    Each row of ``init_sample`` becomes its own ``nn.Parameter`` holding that row's free columns
+    (``params``, an ``nn.ParameterList``); the fixed columns are kept in the ``fixed_vals`` buffer. Both are
+    detached clones of ``init_sample``. With ``fixed_dims`` None the buffer is ``init_sample[:, None]``
+    ([n, 1, param_dim]) and is not read. ``stacked()`` reassembles the full [n, param_dim] tensor.
+
+    Parameters
+    ----------
+    init_sample : torch.Tensor
+        [n, param_dim] initial values.
+    fixed_dims : list of int, optional
+        Column indices held fixed. None (default) leaves every column free.
+    """
     def __init__(self, init_sample, fixed_dims=None):
         super().__init__()
         # fixed_dims: list of column indices to freeze
@@ -147,6 +181,8 @@ class CrystalParams(nn.Module):
         self.register_buffer('fixed_vals', init_sample[:, fixed_dims].clone().detach())
 
     def stacked(self):
+        """Return a new [n, param_dim] tensor: the free columns from the per-row Parameters (differentiable) and the
+        fixed columns from ``fixed_vals``."""
         free = torch.stack(list(self.params), dim=0)  # [n, n_free]
         full = torch.zeros(free.shape[0], free.shape[1] + len(self.fixed_dims),
                            device=free.device, dtype=free.dtype)
@@ -156,9 +192,15 @@ class CrystalParams(nn.Module):
         return full
 
     def update_params(self, new_values, mask=None):
-        """
-        new_values: [batch_size, param_dim] tensor
-        mask: optional boolean mask [batch_size] to only update accepted samples
+        """Copy rows of ``new_values`` into the per-row Parameters in place, without gradient tracking.
+
+        Parameters
+        ----------
+        new_values : torch.Tensor
+            [n, n_free] values; row i is copied into ``params[i]``, so each row must have the shape of the free
+            columns (the full param_dim only when no columns are fixed).
+        mask : torch.Tensor, optional
+            [n] bool; only rows where it is True are copied. None copies every row of ``new_values``.
         """
         with torch.no_grad():
             if mask is None:
@@ -203,23 +245,148 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         early_stop: Optional[list] = None,
         early_stop_ref: Optional[float] = None,
         early_stop_kT: float = 1.0,
+        exp6_kwargs: Optional[dict] = None,
 ):
     """
-    do a local optimization via gradient descent on some score function
+    Do a local optimization via gradient descent on a per-row loss.
 
-    centroid_boundary: how molecule centres are bounded while optimising.
-      'clamp' (default): clean_cell_parameters' hardtanh bound to the asymmetric-unit box -- a centre that
-        reaches a face gets zero gradient there and never moves again.
-      'wrap': centres are wrapped into the unit cell (wrap_centroid) and may cross any asymmetric-unit face;
-        the returned samples are re-expressed inside the box by canonicalize_aunit. records['params'] then
-        holds the UNWRAPPED centres (a continuous trajectory for the convergence check).
-    intermediates_path: where the best states so far are saved when the batch runs out of memory after step 0
-      (run_search passes a per-run file and resumes from it only at the same batch position).
-    early_stop: [[step, margin_kT], ...] energy cascade. At each listed step a row whose loss exceeds
-      early_stop_ref + margin_kT * early_stop_kT is retired: it leaves the batch (later steps evaluate only the rest,
-      which is what saves compute), keeps its best state so far, and is returned with early_stopped = True. Inactive
-      without early_stop_ref (run_search passes its running minimum final energy, so the first batch never retires).
-      Retired rows count as converged; the 95% convergence quorum is taken over active rows only.
+    Each step clones ``init_crystal_batch`` (only its still-active rows), sets the current parameters with
+    ``set_cell_parameters``, cleans them with ``clean_cell_parameters(mode='hard', canonicalize_orientations=True)``,
+    evaluates ``analyze`` on ``'lj'``, ``'elj'`` and the compute mapped from ``optim_target`` (plus
+    ``'reduction_en'`` with ``enforce_reduced``), records parameters and outputs (``update_record``) and takes one
+    optimizer step on the mean of the per-row loss (``loss_and_backprop``). The loop runs at most
+    ``max_num_steps - 1`` steps; it stops earlier when every row has been retired by ``early_stop`` or, once at
+    least ``min(max_num_steps, 50)`` steps have run, when ``check_convergence`` marks every row converged. For each
+    row, the parameters recorded at its lowest-loss step are then set on a fresh clone of ``init_crystal_batch``
+    (``skip_box_analysis=False``, no cleaning) and re-analyzed under ``torch.no_grad`` with ``assign_outputs=True``.
+
+    Parameters
+    ----------
+    init_sample : torch.Tensor
+        [num_graphs, 6 + 6 * max_z_prime] initial cell parameters in the ``full_cell_parameters`` layout, one row
+        per graph of ``init_crystal_batch``; optimized as per-row Parameters (``CrystalParams``).
+    init_crystal_batch : MolCrystalData
+        The crystals to optimize. Only clones are analyzed; ``load_ellipsoid_model`` is called on it when
+        ``optim_target`` is ``'ellipsoid'``.
+    optimizer_func : torch.optim.Optimizer or str
+        Optimizer class or name, resolved by ``init_opt``. ``optimizer_func.lower()`` is also called
+        unconditionally, so only a string currently works; ``'mcmc'`` raises AssertionError.
+    init_lr : float, optional
+        Initial learning rate.
+    max_num_steps : int, optional
+        Number of rows in the parameter record; at most ``max_num_steps - 1`` steps are taken.
+    show_tqdm : bool, optional
+        Show a progress bar.
+    convergence_eps : float
+        Per-row threshold used by ``check_convergence``.
+    grad_norm_clip : float, optional
+        Maximum gradient norm, taken jointly over all rows' parameters (``clip_grad_norm_``).
+    optim_target : str, optional
+        Loss selector (case-insensitive): ``'lj'``, ``'elj'``, ``'exp6'``, ``'qlj'``, ``'silu'``, ``'ellipsoid'``,
+        ``'reduce'`` (compute ``'reduction_en'``), ``'uma'``, ``'mace'`` or ``'rdf_dist'``; the loss is chosen by
+        ``compute_loss``. Any other value raises KeyError here, including the further targets ``compute_loss``
+        accepts.
+    score_model : torch.nn.Module, optional
+        Placed in the ``compute_loss`` config; read only by targets this function does not accept.
+    target_packing_coeff : torch.Tensor, optional
+        If given, adds the squared packing-coefficient deviation (``compute_auxiliary_loss``).
+    do_box_restriction : bool, optional
+        Adds the asymmetric-unit length penalty of ``compute_auxiliary_loss``.
+    cutoff : float, optional
+        Passed to ``analyze`` as ``cutoff`` and ``rdf_cutoff`` and used as the RDF range for ``'rdf_dist'``;
+        None (default) uses 10.
+    compression_factor : float, optional
+        Weight of the ``compute_auxiliary_loss`` pressure term; 0 disables it.
+    enforce_reduced : bool, optional
+        Adds ``'reduction_en'`` to the computes, passes ``margin=0.01`` to the per-step ``analyze`` (0
+        otherwise), adds ``10000 * relu(reduction_en)`` to the loss, and drops from the returned list every crystal
+        whose final ``compute_cell_reduction_penalty()`` is not below 1e-3.
+    supercell_size : int, optional
+        Passed to ``analyze``.
+    anneal_lr : bool, optional
+        Multiply the learning rate after every step by the ``get_annealing_factor`` that reaches 0.01 of
+        ``init_lr`` after ``int(0.75 * max_num_steps)`` steps; the decay continues past that point. False keeps
+        it constant.
+    predictor : optional
+        Forwarded to ``analyze`` (the MLIP predictor for ``'uma'`` and ``'mace'``).
+    mc_kT : float
+        Read only by the Monte Carlo branch, which raises before using it.
+    log_noise_range : list
+        Read only by the Monte Carlo branch, which raises before using it.
+    target_rdf : torch.Tensor, optional
+        Target RDF for ``'rdf_dist'``, moved to ``init_sample``'s device; [..., n_channels, n_bins].
+    target_latent : torch.Tensor, optional
+        Moved to ``init_sample``'s device and placed in the ``compute_loss`` config; read only by a target this
+        function does not accept.
+    elementwise : bool
+        Forwarded to ``analyze`` during the steps; the final analysis passes False.
+    atomwise : bool
+        Forwarded to ``analyze`` during the steps; the final analysis passes True.
+    repulsion : float
+        Forwarded to ``analyze`` in the final analysis only; the steps pass ``repulsion=1``.
+    rdf_warmup : optional
+        Channel warm-up length in steps for ``'rdf_dist'`` (see ``compute_loss``); None weights all channels
+        equally.
+    centroid_boundary : str
+        How molecule centres are bounded while optimising.
+
+        - ``'clamp'`` (default): clean_cell_parameters' hardtanh bound to the asymmetric-unit box -- a centre that
+          reaches a face gets zero gradient there and never moves again.
+        - ``'wrap'``: centres are wrapped into the unit cell (wrap_centroid) and may cross any asymmetric-unit
+          face; the returned samples are re-expressed inside the box by canonicalize_aunit. records['params'] then
+          holds the UNWRAPPED centres (a continuous trajectory for the convergence check).
+    intermediates_path : str
+        Where the best states so far are saved when the batch runs out of memory after step 0
+        (run_search passes a per-run file and resumes from it only at the same batch position).
+    early_stop : list, optional
+        [[step, margin_kT], ...] energy cascade. At each listed step a row whose loss exceeds
+        ``early_stop_ref + margin_kT * early_stop_kT`` is retired: it leaves the batch (later steps evaluate only the
+        rest, which is what saves compute), keeps its best state so far, and is returned with early_stopped = True.
+        Inactive without early_stop_ref (run_search passes its running minimum final energy, so the first batch
+        never retires). Retired rows count as converged; the 95% convergence quorum is taken over active rows only.
+    early_stop_ref : float, optional
+        Reference loss for ``early_stop``; None disables the cascade.
+    early_stop_kT : float
+        Scale applied to every ``early_stop`` margin.
+    exp6_kwargs : dict, optional
+        Options of the ``'exp6'`` compute, forwarded to every ``analyze`` call with ``exp6_`` prefixed to each key
+        (``{'params': 'w99', 'charges': 'gasteiger'}`` becomes ``exp6_params='w99', exp6_charges='gasteiger'``);
+        see ``MolCrystalAnalysis.compute_exp6_energy``, whose pair form is fixed. None uses that method's defaults.
+
+    Returns
+    -------
+    samples_list : list
+        One data object per crystal (``batch_to_list``) with its lowest-loss parameters and the attributes assigned
+        by the final ``analyze``. With an active cascade each also carries ``early_stopped``, a [1] bool tensor.
+        With ``enforce_reduced`` the list can be shorter than ``num_graphs``.
+    records : dict of torch.Tensor
+        CPU tensors stacked along a leading step dimension, one per step taken: every tensor output of the first
+        step's ``analyze`` other than ``'rdf'``, plus ``'cp'`` (packing coefficient) and ``'loss'``; after a row
+        retires its entries are NaN (``'loss'``: inf). ``'params'`` is the float32 [n_steps, num_graphs,
+        6 + 6 * max_z_prime] parameter record (cleaned parameters, except the unwrapped centres in wrap mode).
+
+    Raises
+    ------
+    ValueError
+        If ``centroid_boundary`` is not in ``CENTROID_BOUNDARIES``; also from ``canonicalize_aunit`` in wrap mode.
+    KeyError
+        If ``optim_target`` is not one of the targets listed above.
+    AttributeError
+        If ``optimizer_func`` is not a string.
+    AssertionError
+        If ``optimizer_func`` is ``'mcmc'`` or a name ``init_opt`` does not know, or on an ``'rdf_dist'`` match
+        (see Notes).
+    RuntimeError
+        A RuntimeError or ValueError raised inside the step loop is re-raised unchanged. When ``is_cuda_oom``
+        classifies it as out-of-memory and at least one step has run, the [num_graphs, n_params] best
+        parameters so far are first saved with ``torch.save`` to ``intermediates_path``.
+
+    Notes
+    -----
+    With ``optim_target`` exactly ``'rdf_dist'`` (compared case-sensitively here) the function also shows a
+    plotly figure of log loss against step (``traj_fig``) and, if the lowest final-step loss has natural log below
+    -2.5, prints a message, saves that crystal to ``'<identifier[0]>_standardized_match.pt'`` in the working
+    directory and raises AssertionError.
     """  # todo implement wrapping over periodic latent DoF
     if centroid_boundary not in CENTROID_BOUNDARIES:
         raise ValueError(f"centroid_boundary must be one of {CENTROID_BOUNDARIES}, got {centroid_boundary!r}")
@@ -242,6 +409,7 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         'mace': 'mace',
         'rdf_dist': 'rdf',
         'elj': 'elj',
+        'exp6': 'exp6',
         'lj':'lj'
     }
     energy_computes.append(target_map[optim_target.lower()])
@@ -358,6 +526,7 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                         atomwise=atomwise,
                         assign_outputs=True,
                         bins=100,
+                        **{f'exp6_{k}': v for k, v in (exp6_kwargs or {}).items()},
                     )
 
                     """ record some stats"""
@@ -445,7 +614,8 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
             assign_outputs=True,
             elementwise=False,
             atomwise=True,
-            bins=100
+            bins=100,
+            **{f'exp6_{k}': v for k, v in (exp6_kwargs or {}).items()},
         )
     samples_list = crystal_batch.batch_to_list()
     if cascade:
@@ -533,6 +703,35 @@ def _full_rows(value, active_idx, n, fill=float('nan')):
 
 
 def update_record(crystal_batch, outputs, params_record, records, s_ind, active_idx=None):
+    """Record one step's parameters and outputs and return the records dict.
+
+    ``crystal_batch.full_cell_parameters()`` (detached, on CPU) is written into ``params_record[s_ind]`` in place.
+    With ``active_idx`` only those rows are written; the others first copy row ``s_ind - 1`` when ``s_ind > 0``.
+    When ``records`` is None it is created with an empty list for every key of ``outputs`` except ``'rdf'``, plus
+    ``'cp'`` and ``'loss'``. Every tensor output whose key is in ``records``, and ``crystal_batch.packing_coeff``
+    under ``'cp'``, is appended as a detached CPU tensor, padded with NaN to all n rows when ``active_idx`` is
+    given (``_full_rows``). ``'loss'`` is appended by ``loss_and_backprop``.
+
+    Parameters
+    ----------
+    crystal_batch : MolCrystalData
+        The batch evaluated this step (active rows only).
+    outputs : dict
+        ``analyze`` results for ``crystal_batch``.
+    params_record : torch.Tensor
+        [max_num_steps, n, n_params] parameter record, modified in place.
+    records : dict or None
+        Lists of per-step tensors, or None on the first call.
+    s_ind : int
+        Step index.
+    active_idx : torch.Tensor, optional
+        Indices of the evaluated rows among the n; None means every row, in order.
+
+    Returns
+    -------
+    dict
+        ``records`` with this step appended.
+    """
     n = params_record.shape[1]
     p = crystal_batch.full_cell_parameters().detach().cpu()  # must put this before the .backward()
     if active_idx is None:
@@ -554,6 +753,40 @@ def update_record(crystal_batch, outputs, params_record, records, s_ind, active_
 
 def loss_and_backprop(cluster_batch, crystal_batch, grad_norm_clip, optimizer, outputs, param_module, records,
                       loss_config, aux_config, opt_step, active_idx=None, n_total=None):
+    """Compute the per-row loss, record it, and take one optimizer step on its mean.
+
+    The loss is ``compute_loss`` followed by ``compute_auxiliary_loss``. It is appended to ``records['loss']``
+    detached on CPU and padded to ``n_total`` rows with inf for rows outside ``active_idx`` (``_full_rows``).
+    ``loss.mean()`` is backpropagated, the gradients of ``param_module.parameters()`` are clipped to total norm
+    ``grad_norm_clip`` and ``optimizer.step()`` is called. Returns None.
+
+    Parameters
+    ----------
+    cluster_batch : MolCrystalData
+        Batch returned by ``analyze(return_cluster=True)``.
+    crystal_batch : MolCrystalData
+        The evaluated crystal batch.
+    grad_norm_clip : float
+        Maximum total gradient norm.
+    optimizer : torch.optim.Optimizer
+        Optimizer over ``param_module``.
+    outputs : dict
+        ``analyze`` results.
+    param_module : CrystalParams
+        The optimized parameters.
+    records : dict
+        Records dict with a ``'loss'`` list.
+    loss_config : argparse.Namespace
+        Passed to ``compute_loss`` as ``config``.
+    aux_config : argparse.Namespace
+        Passed to ``compute_auxiliary_loss`` as ``config``.
+    opt_step : int
+        Current step, passed to ``compute_loss``.
+    active_idx : torch.Tensor, optional
+        Indices of the evaluated rows; None means every row.
+    n_total : int, optional
+        Total number of rows; needed when ``active_idx`` is given.
+    """
     loss = compute_loss(cluster_batch, crystal_batch, outputs, loss_config, opt_step)
     loss = compute_auxiliary_loss(cluster_batch, loss, outputs, aux_config)
 
@@ -566,6 +799,22 @@ def loss_and_backprop(cluster_batch, crystal_batch, grad_norm_clip, optimizer, o
 
 
 def get_mc_noised_samples(crystal_batch, log_noise_range):
+    """Return ``crystal_batch.latent_params()`` with each row moved along a random unit direction by
+    ``10 ** u``, u uniform on [log_noise_range[0], log_noise_range[1]], then clipped to [-1, 1].
+
+    Parameters
+    ----------
+    crystal_batch : MolCrystalData
+        Batch whose latent parameters are perturbed. ``latent_params()`` canonicalizes its asymmetric units (and
+        free centroid axes) in place first; the noised latents are not assigned back.
+    log_noise_range : sequence of float
+        Base-10 exponent range of the step length.
+
+    Returns
+    -------
+    torch.Tensor
+        Noised latents, same shape as ``latent_params()``.
+    """
     samples = crystal_batch.latent_params()
     rand_dir = torch.randn_like(samples)
     rand_dir = rand_dir / rand_dir.norm(dim=-1, keepdim=True)
@@ -579,6 +828,14 @@ def get_mc_noised_samples(crystal_batch, log_noise_range):
 def parse_mc_step(T, cluster_batch, compression_factor, crystal_batch, current_energy, current_state,
                   do_box_restriction, enforce_reduced, optim_target, outputs, param_module, records, score_model,
                   target_packing_coeff, target_rdf, target_latent, cutoff):
+    """Metropolis acceptance step for the Monte Carlo mode of ``gradient_descent_optimization``, which raises
+    before reaching it.
+
+    Written to accept each row with probability ``min(1, exp(-(E_prop - E_curr) / T))``, update ``current_energy``
+    and ``current_state`` in place for accepted rows, copy ``current_state`` into ``param_module`` and append
+    ``current_energy`` to ``records['loss']``. Its calls to ``compute_loss`` and ``compute_auxiliary_loss`` do not
+    match their current signatures, so a call currently raises TypeError at the first of them.
+    """
     # 1. Compute energy of the proposal (noised_samples)
     proposal_energy = compute_loss(cluster_batch, crystal_batch, optim_target, outputs, score_model, target_rdf,
                                    target_latent, cutoff)
@@ -606,6 +863,12 @@ def parse_mc_step(T, cluster_batch, compression_factor, crystal_batch, current_e
 def init_mc_state(compression_factor, cutoff, do_box_restriction, energy_computes, enforce_reduced, init_crystal_batch,
                   mc_kT, optim_target, param_module, score_model, std_margin, supercell_size, target_packing_coeff,
                   uma_predictor, target_rdf, target_latent):
+    """Initial state for the Monte Carlo mode of ``gradient_descent_optimization``, which raises before reaching it.
+
+    Sets ``param_module.stacked()`` on a clone of ``init_crystal_batch`` and analyzes it; it would return
+    ``(mc_kT, energy, param_module.stacked().clone())``, but its calls to ``compute_loss`` and
+    ``compute_auxiliary_loss`` do not match their current signatures, so a call currently raises TypeError.
+    """
     # Initialize param_module and get initial energy
     crystal_batch = init_crystal_batch.clone().detach()
     crystal_batch.set_cell_parameters(param_module.stacked())
@@ -632,6 +895,29 @@ def init_mc_state(compression_factor, cutoff, do_box_restriction, energy_compute
 
 
 def init_opt(init_lr, optimizer_func, param_module):
+    """Build an optimizer over ``param_module.parameters()`` with learning rate ``init_lr``.
+
+    Parameters
+    ----------
+    init_lr : float
+        Learning rate.
+    optimizer_func : str or callable
+        An optimizer class (any callable taking ``(params, lr=...)``), or a case-insensitive name: ``'sgd'``,
+        ``'adam'``, ``'rprop'``, ``'rmsprop'``, ``'adamw'``, ``'adadelta'``, ``'nadam'``, ``'adagrad'``,
+        ``'asgd'``, or ``'mcmc'``, which gives ``optim.SGD``.
+    param_module : torch.nn.Module
+        Module whose parameters are optimized.
+
+    Returns
+    -------
+    torch.optim.Optimizer
+        The constructed optimizer.
+
+    Raises
+    ------
+    AssertionError
+        If ``optimizer_func`` is a string not listed above.
+    """
     if isinstance(optimizer_func, str):
         if optimizer_func.lower() == 'sgd':
             optimizer_func = optim.SGD
@@ -662,6 +948,17 @@ def init_opt(init_lr, optimizer_func, param_module):
 
 
 def traj_fig(x, y, names=[None, None], yrange=None, xrange=None):
+    """Show a plotly figure of ``y`` against ``x``, one line per column, with markers on the first and last rows.
+
+    Parameters
+    ----------
+    x, y : torch.Tensor
+        [T, N]; column i is trajectory "Run i".
+    names : list
+        x- and y-axis titles.
+    yrange, xrange : optional
+        Axis ranges passed to plotly.
+    """
     import plotly.graph_objects as go
     fig = go.Figure()
 
@@ -677,10 +974,25 @@ def traj_fig(x, y, names=[None, None], yrange=None, xrange=None):
 
 def ema_trajectory(traj: torch.Tensor, alpha: float = 0.1) -> torch.Tensor:
     """
-    Vectorized normalised EMA along time (dim=0): entry t is sum_{s<=t} (1 - alpha)^(t - s) traj[s] divided by
-    sum_{s<=t} (1 - alpha)^(t - s), so a constant trajectory gives that constant. traj: [T, N, D]. (Until 2026-09-28
-    the result was also multiplied by alpha, so check_convergence's convergence_eps acted as a bound 1 / alpha = 10x
-    looser than written; configs written before then carry thresholds tuned against that.)
+    Vectorized normalized EMA along time (dim=0).
+
+    Entry t is ``sum_{s<=t} (1 - alpha) ** (t - s) * traj[s] / sum_{s<=t} (1 - alpha) ** (t - s)``, so a constant
+    trajectory c gives c. The weights are formed as ``(1 - alpha) ** (T - 1 - s)`` in ``traj``'s dtype, so for long
+    trajectories the earliest weights can underflow to zero and the earliest entries become NaN (0 / 0). (Until
+    2026-09-28 the result was also multiplied by alpha, so check_convergence's convergence_eps acted as a bound
+    1 / alpha = 10x looser than written; configs written before then carry thresholds tuned against that.)
+
+    Parameters
+    ----------
+    traj : torch.Tensor
+        [T, N, D] trajectory.
+    alpha : float
+        Smoothing factor.
+
+    Returns
+    -------
+    torch.Tensor
+        [T, N, D].
     """
     T = traj.size(0)
     w = (1 - alpha) ** torch.arange(T, device=traj.device, dtype=traj.dtype)  # [T]
@@ -694,6 +1006,47 @@ def ema_trajectory(traj: torch.Tensor, alpha: float = 0.1) -> torch.Tensor:
 
 
 def compute_loss(cluster_batch, crystal_batch, outputs, config, opt_step):
+    """Return the per-row loss selected by ``config.optim_target`` (case-insensitive).
+
+    - ``'lj'``, ``'silu'``, ``'qlj'``, ``'elj'``, ``'exp6'``, ``'ellipsoid'``, ``'uma'``, ``'mace'``: the ``outputs``
+      entry of the same name.
+    - ``'reduce'``: ``outputs['reduction_en']``.
+    - ``'inter_overlaps'``: ``inter_overlap_loss(cluster_batch, crystal_batch)``; ``inter_overlap_loss`` takes one
+      argument, so this currently raises TypeError.
+    - ``'classification_score'``: minus ``softmax_and_score`` of the first two output columns of
+      ``config.score_model(cluster_batch, force_edges_rebuild=False)``.
+    - ``'rdf_score'``: softplus of column 2 of that score-model output.
+    - ``'rdf_dist'``: ``compute_rdf_distance(outputs['rdf'][0], config.target_rdf, linspace(0, config.cutoff,
+      n_bins), channel_weights)`` plus ``softplus(5 * (outputs['elj'] + 307)) / 5 / 100``, with n_channels and
+      n_bins the last two dimensions of ``config.target_rdf``. With ``config.rdf_warmup`` set, channel c has weight
+      ``sigmoid((opt_step - onset_c) / (rdf_warmup / (2 * n_channels)))``, the onsets evenly spaced on
+      [0, rdf_warmup]; otherwise every weight is 1.
+    - ``'latent_dist'``: the per-row Euclidean norm of ``config.target_latent - crystal_batch.latent_params()``.
+
+    Parameters
+    ----------
+    cluster_batch : MolCrystalData
+        Batch returned by ``analyze(return_cluster=True)``.
+    crystal_batch : MolCrystalData
+        The crystal batch that was analyzed.
+    outputs : dict
+        ``analyze`` results.
+    config : argparse.Namespace
+        Needs ``optim_target``, and ``score_model``, ``target_rdf``, ``cutoff``, ``rdf_warmup`` or
+        ``target_latent`` as the target requires.
+    opt_step : int
+        Current step; read by ``'rdf_dist'``.
+
+    Returns
+    -------
+    torch.Tensor
+        Per-row loss.
+
+    Raises
+    ------
+    UnboundLocalError
+        If ``optim_target`` matches none of the targets above.
+    """
     if config.optim_target.lower() == 'lj':  # todo obviate this with analysis keys
         loss = outputs['lj']
 
@@ -705,6 +1058,9 @@ def compute_loss(cluster_batch, crystal_batch, outputs, config, opt_step):
 
     elif config.optim_target.lower() == 'elj':
         loss = outputs['elj']
+
+    elif config.optim_target.lower() == 'exp6':
+        loss = outputs['exp6']
 
     elif config.optim_target.lower() == 'inter_overlaps':  # force molecules apart by separating their centroids
         loss = inter_overlap_loss(cluster_batch, crystal_batch)
@@ -764,6 +1120,33 @@ def compute_loss(cluster_batch, crystal_batch, outputs, config, opt_step):
 
 
 def compute_auxiliary_loss(cluster_batch, loss, outputs, config):
+    """Return ``loss`` plus the penalties enabled in ``config``, added out of place (``loss`` itself is returned
+    when none is enabled).
+
+    With L = ``cluster_batch.scale_lengths_to_aunit()`` ([num_graphs, 3] asymmetric-unit edge lengths) and
+    cp = ``cluster_batch.packing_coeff``:
+
+    - ``target_packing_coeff`` not None: ``(cp - target_packing_coeff) ** 2``.
+    - ``do_box_restriction``: ``80000 / L ** 12`` summed over the three axes.
+    - ``compression_factor`` nonzero: ``compression_factor * L.sum(dim=1) * sigmoid((0.65 - cp) / 0.01)``.
+    - ``enforce_reduced``: ``10000 * relu(outputs['reduction_en'])``.
+
+    Parameters
+    ----------
+    cluster_batch : MolCrystalData
+        Batch returned by ``analyze(return_cluster=True)``.
+    loss : torch.Tensor
+        Per-row base loss; not modified.
+    outputs : dict
+        ``analyze`` results; ``'reduction_en'`` is read when ``enforce_reduced``.
+    config : argparse.Namespace
+        Needs ``target_packing_coeff``, ``do_box_restriction``, ``compression_factor`` and ``enforce_reduced``.
+
+    Returns
+    -------
+    torch.Tensor
+        The penalized per-row loss.
+    """
     if config.target_packing_coeff is not None:
         cp_loss = (cluster_batch.packing_coeff - config.target_packing_coeff) ** 2
         loss = loss + cp_loss
@@ -790,6 +1173,28 @@ def compute_auxiliary_loss(cluster_batch, loss, outputs, config):
 
 
 def inter_overlap_loss(cluster_batch):
+    """Per-crystal penalty on molecules whose centroids lie within twice the molecular radius.
+
+    Molecule centroids are the mean atom positions per molecule (from ``mol_ind``). Each directed edge of
+    ``radius_graph`` over the centroids (radius ``2 * cluster_batch.radius.amax()``, at most 10 neighbours per
+    centroid, so a close pair usually appears in both directions) contributes ``relu(2 - d / radius)``, with d the
+    centroid distance and radius that crystal's ``radius``; contributions are summed per crystal.
+
+    Parameters
+    ----------
+    cluster_batch : MolCrystalData
+        Cluster batch with ``mol_ind``, ``radius`` and ``num_atoms`` (atoms per molecule).
+
+    Returns
+    -------
+    torch.Tensor
+        [num_graphs] summed penalty.
+
+    Raises
+    ------
+    AssertionError
+        If any crystal has Z' > 1.
+    """
     # enforce molecules far enough away that they cannot possibly overlap
     # intermolecular centroid range repulsion
     assert cluster_batch.z_prime.amax() == 1, "molwise business not implemented for Z'>1"
@@ -862,6 +1267,9 @@ fig.show()
 
 
 def _init_for_local_opt(lr, max_num_steps, optimizer_func, sample, num_atoms):
+    """Return an optimizer over ``[sample]``, two MultiplicativeLR schedulers (factor 0.975, and the factor that
+    grows ``lr`` 100-fold in ``max_num_steps // 10`` steps), ``hit_max_lr`` (False), ``max_lr`` (100 times
+    ``lr``) and zero-initialized record tensors, as one tuple in the order of the return statement."""
     optimizer = optimizer_func([sample], lr=lr)
     max_lr_target_time = max_num_steps // 10
     max_lr = lr * 100
@@ -908,6 +1316,34 @@ def _init_for_local_opt(lr, max_num_steps, optimizer_func, sample, num_atoms):
 #
 
 def check_convergence(params_record, s_ind, convergence_eps, optimizer, init_lr, active=None):
+    """Per-row convergence flags from the recent parameter trajectory.
+
+    ``params_record[:s_ind]`` is smoothed with ``ema_trajectory`` (alpha 0.1). A row is converged when the absolute
+    step-to-step change of its smoothed parameters, averaged over the 49 differences among the last 50 smoothed steps
+    and over all parameter columns, is below ``convergence_eps``. With ``active``, inactive rows are marked converged
+    and the converged share is taken over active rows only (1 when none are active); without it, over all rows. If
+    that share exceeds 0.95, every row is marked converged.
+
+    Parameters
+    ----------
+    params_record : torch.Tensor
+        [max_num_steps, n, n_params] parameter record.
+    s_ind : int
+        Number of recorded steps; at least 50.
+    convergence_eps : float
+        Threshold on the averaged absolute change, in the units of ``params_record``.
+    optimizer : torch.optim.Optimizer
+        Not used.
+    init_lr : float
+        Not used.
+    active : torch.Tensor, optional
+        [n] bool mask of active rows.
+
+    Returns
+    -------
+    torch.Tensor
+        [n] bool.
+    """
     smoothed = ema_trajectory(params_record[:s_ind])
     diffs = smoothed[s_ind - 50:s_ind, :, :].diff(dim=0).abs().mean((0, 2))
     converged = diffs < convergence_eps
@@ -928,19 +1364,44 @@ def sample_about_crystal(opt_samples: Union[list],
                          cutoff: Optional[float] = 10,
                          do_silu_pot: Optional[bool] = False,
                          ):
-    """Draw `num_samples` noisy neighbourhoods around each optimized crystal.
+    """Draw ``num_samples`` noisy neighbourhoods around each optimized crystal.
 
     Restored from 8dea6b56^ (deleted 2025-12-10 in the Niggli-sampling removal),
     where its only caller -- parallel_synthesis.otf_synthesize_crystals -- was
-    missed.  That dangling import made `mxtaltools.modeller` and `main.py`
+    missed.  That dangling import made ``mxtaltools.modeller`` and ``main.py``
     un-importable for ~8.5 months; see docs/design/refactor_plan.md G1.
 
-    Restored WITHOUT the original `enforce_niggli` argument: that commit removed
-    the parameter from `clean_cell_parameters`.  The sole caller never passed it
+    Restored WITHOUT the original ``enforce_niggli`` argument: that commit removed
+    the parameter from ``clean_cell_parameters``.  The sole caller never passed it
     and its default was False, so dropping it preserves the original behaviour.
 
-    Returns a list of `num_samples` lists, each holding one noised copy of every
-    input sample, with `lj`, `scaled_lj` and `es_pot` attached per sample.
+    Each draw builds a fresh batch (collated from the list, or cloned),
+    applies ``noise_cell_parameters(noise_level)`` then
+    ``clean_cell_parameters(mode='hard')``, and evaluates
+    ``build_and_analyze(cutoff=cutoff, return_cluster=True)``.
+
+    Parameters
+    ----------
+    opt_samples : list or MolCrystalData
+        The crystals: a list of data objects, or a batch.
+    noise_level : float
+        Standard deviation passed to ``noise_cell_parameters`` (standardized
+        units; its 12-column layout matches only Z' = 1).
+    num_samples : int
+        Number of noised copies of the whole set.
+    cutoff : float, optional
+        Passed to ``build_and_analyze``.
+    do_silu_pot : bool, optional
+        Also attach ``silu`` from ``cluster_batch.compute_silu_energy()``.
+
+    Returns
+    -------
+    list of list
+        ``num_samples`` lists, each holding one noised copy of every
+        input sample, with ``lj``, ``scaled_lj`` and ``es_pot`` (and ``silu``
+        with ``do_silu_pot``) attached per sample. The samples are detached
+        CPU copies; the attached energies are indexed from the computed
+        tensors without being moved.
     """
     samples_record = []
     for _ in range(num_samples):

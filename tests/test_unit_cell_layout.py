@@ -1,10 +1,12 @@
 """
 The layout contract of `build_unit_cell`, checked geometrically rather than assumed.
 
-WHY THIS FILE EXISTS. `unit_cell_pos` is consumed as IMAGE-MAJOR: all atoms of
-symmetry image 0, then all of image 1, and so on. Every consumer re-derives the
-element assignment from that assumption by tiling the asymmetric unit's `z` array --
-production through `_tiled_gather_index`, and the ground-truth fixtures in
+WHY THIS FILE EXISTS. At Z'=1 `unit_cell_pos` is consumed as IMAGE-MAJOR: all atoms
+of symmetry image 0, then all of image 1, and so on (at Z'>1 unit by unit, each unit
+image-major: tests/characterization pins that layout geometrically). Every consumer
+re-derives the element assignment from that assumption by tiling the asymmetric unit's
+`z` array -- production through `crystal_building.utils.unit_cell_gather_index` (since
+2026-10-23; `uma_utils._tiled_gather_index` before), and the ground-truth fixtures in
 `test_uma_vs_stock_fairchem.py` / `test_mace_vs_stock.py` independently through
 `np.tile`.
 

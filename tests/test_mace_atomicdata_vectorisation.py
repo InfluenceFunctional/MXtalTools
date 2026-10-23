@@ -15,8 +15,9 @@ reproduce three different notions of "which atoms are the asymmetric unit":
     atoms unit_cell_pos already covers;
   * a plain unit-cell batch -> all of batch.z;
 
-and it must TILE each aunit sym_mult times, image-major, to match unit_cell_pos's
-layout. Tiling versus repeat_interleaving is the failure that would be invisible:
+and it must TILE each unit sym_mult times, unit by unit (image-major within a unit;
+at Z'=1 the whole aunit image-major), to match unit_cell_pos's layout
+(crystal_building.utils.unit_cell_gather_index; unit_cell_z for the list path). Tiling versus repeat_interleaving is the failure that would be invisible:
 both give the right SHAPE, both collate cleanly, and the energies would simply be
 wrong. Pinned directly in test_tiling_is_not_repeat_interleave.
 
@@ -54,7 +55,7 @@ from mxtaltools.mlip_interfaces.AL_mace_utils import (
     mace_batch_differences,
     _mace_resolve_aunit_z,
 )
-from mxtaltools.mlip_interfaces.uma_utils import _tiled_gather_index
+from mxtaltools.crystal_building.utils import unit_cell_gather_index
 from mace.tools.torch_geometric.dataloader import Collater
 
 #: RANDOM CSD, deliberately -- this file tests the BUILDER, not the energy.
@@ -457,7 +458,8 @@ def test_tiling_is_not_repeat_interleave(crystals, model):
     """
     b = _built(crystals, 3)
     z, batch_ind = _mace_resolve_aunit_z(b, False, False)
-    gather, out_n = _tiled_gather_index(batch_ind, b.sym_mult, b.num_graphs)
+    assert int(b.z_prime.max()) == 1          # the Z'=1 tiling; Z'>1 is unit by unit (tests/test_unit_cell_elements.py)
+    gather, out_n = unit_cell_gather_index(batch_ind, b.z_prime, b.sym_mult, b.num_graphs)
     tiled = z[gather]
 
     lo = 0

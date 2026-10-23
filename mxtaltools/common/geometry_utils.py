@@ -1,3 +1,11 @@
+"""Geometry helpers for molecules and crystal cells.
+
+Principal inertial axes of point clouds (unit masses), cell volumes and
+fractional/Cartesian transform matrices, crystal-system constraints on cell
+parameters, rotation-vector and rotation-matrix conversions, molecular volume
+estimates, and distances between crystals in the latent cell parameterization.
+Angles are in radians throughout.
+"""
 import sys
 from math import sqrt
 from typing import Optional
@@ -15,22 +23,30 @@ from mxtaltools.models.functions.radial_graph import radius
 
 def compute_principal_axes_np(coords):
     """
-    Compute the principal inertial axes for a given set of particle coordinates, ignoring particle mass.
-    
-    Use our overlap rules to ensure a fixed direction for all axes under almost all circumstances, excepting e.g., certain symmetric molecules.
-    
+    Compute the principal inertial axes of one point cloud, with unit masses.
+
+    The coordinates are centred on their mean. Eigenvectors of the inertial
+    tensor are sorted by ascending moment and stored as rows. Each axis is then
+    flipped so that its overlap with the vector from the centroid to the
+    farthest point is non-negative (an exactly zero overlap counts as positive;
+    among points equidistant to 8 decimals the lowest index is used). If any
+    overlap magnitude is below 1e-3 and the flipped basis is left-handed, the
+    axis with the smallest overlap magnitude is negated. The signs are not
+    unique for some symmetric point clouds.
+
     Parameters
     ----------
-    coords
+    coords : np.ndarray
+        Point coordinates, [num_points, 3].
 
     Returns
     -------
-    Ip : np.array(3,3)
-        Principal inertial axes.
-    Ipm : np.array(3)
-        Principal inertial moments
-    I : np.array(3)
-        Inertial tensor in original frame
+    Ip : np.ndarray
+        Principal axes as rows, sorted by ascending moment, [3, 3].
+    Ipm : np.ndarray
+        Principal moments in ascending order, in squared coordinate units, [3].
+    I : np.ndarray
+        Inertial tensor of the centred coordinates in the input frame, [3, 3].
     """  # todo harmonize with torch version - currently disagrees ~0.5% of the time
     points = coords - coords.mean(0)
 
@@ -74,22 +90,31 @@ def compute_principal_axes_np(coords):
 
 def compute_inertial_tensor_torch(x: torch.tensor, y: torch.tensor, z: torch.tensor):
     """
-    Compute the principal inertial axes for a given set of particle coordinates, ignoring particle mass.
+    Build the inertial tensor of one point cloud (unit masses) and its eigendecomposition.
+
+    The coordinates are used as given, without centring. The tensor is
+    assembled with ``torch.tensor`` from the summed components, so it is a new
+    tensor on ``x.device`` that is not connected to the autograd graph of the
+    inputs.
 
     Parameters
     ----------
-    x : torch.tensor
-    y : torch.tensor
-    z : torch.tensor
+    x : torch.Tensor
+        x coordinates, [num_points].
+    y : torch.Tensor
+        y coordinates, [num_points].
+    z : torch.Tensor
+        z coordinates, [num_points].
 
     Returns
     -------
-    Ip : np.array(3,3)
-        Principal inertial axes.
-    Ipm : np.array(3)
-        Principal inertial moments
-    I : np.array(3)
-        Inertial tensor in original frame
+    I : torch.Tensor
+        Inertial tensor, [3, 3].
+    Ip : torch.Tensor
+        Complex eigenvectors from ``torch.linalg.eig``, one per column,
+        unsorted, [3, 3].
+    Ipm : torch.Tensor
+        Complex eigenvalues from ``torch.linalg.eig``, unsorted, [3].
     """  # todo harmonize with numpy version - currently disagrees ~0.5% of the time
     Ixy = -torch.sum(x * y)
     Iyz = -torch.sum(y * z)
@@ -107,27 +132,40 @@ def compute_inertial_tensor_torch(x: torch.tensor, y: torch.tensor, z: torch.ten
 
 def single_molecule_principal_axes_torch(coords: torch.tensor, masses=None, return_direction=False):
     """
-    Compute the principal inertial axes for a given set of particle coordinates, ignoring particle mass.
+    Compute the principal inertial axes of one point cloud (unit masses), with sign rules.
 
-    Use our overlap rules to ensure a fixed direction for all axes under almost all circumstances, excepting e.g., certain symmetric molecules.
+    The coordinates are not centred here: the inertial tensor and the reference
+    direction are both taken about the origin, so ``coords`` should already be
+    centred. Eigenvectors (real parts from ``torch.linalg.eig``) are sorted by
+    ascending moment and stored as rows. The reference direction is the
+    position of the point farthest from the origin (lowest index among exact
+    ties), unnormalised. Exactly zero overlaps with it are set to 1e-9. Each
+    axis is flipped to a non-negative overlap with the reference direction; if
+    any overlap magnitude is below 1e-8, the axis with the smallest overlap
+    magnitude is then replaced by the cross product of the other two axes,
+    taken in increasing index order.
 
     Parameters
     ----------
-    coords : torch.tensor(n,3)
-    masses : None
-        not used
+    coords : torch.Tensor
+        Point coordinates, [num_points, 3].
+    masses : optional
+        Not used. If not None, a message is printed and the calculation
+        proceeds without masses.
     return_direction : bool
-        whether to add the direction between centroid and most distant coordinate to the output
+        If True, also return the reference direction.
 
     Returns
     -------
-    Ip : torch.tensor(3,3)
-        Principal inertial axes.
-    Ipm : torch.tensor(3)
-        Principal inertial moments
-    I : torch.tensor(3)
-        Inertial tensor in original frame
-
+    Ip : torch.Tensor
+        Principal axes as rows, sorted by ascending moment, [3, 3].
+    Ipm : torch.Tensor
+        Principal moments in ascending order, [3].
+    I : torch.Tensor
+        Inertial tensor about the origin, [3, 3].
+    direction : torch.Tensor
+        Coordinates of the farthest point, [3]; returned only when
+        ``return_direction`` is True.
     """
     if masses is not None:
         print('Inertial tensor is purely geometric! Calculation will not account for varying masses')
@@ -172,19 +210,30 @@ def single_molecule_principal_axes_torch(coords: torch.tensor, masses=None, retu
 def list_molecule_principal_axes_torch(coords_list: list = None,
                                        skip_centring=False):
     """
-    Parallel computation of principal inertial axes from a list of coordinate lists.
+    Compute principal inertial axes (unit masses) for a list of point clouds of different sizes.
+
+    Each cloud is centred on its mean unless ``skip_centring`` is True, the
+    clouds are concatenated, and the axes are computed with
+    ``scatter_compute_Ip`` (which adds Gaussian noise to the coordinates when
+    they require grad). Each axis is then oriented against the vector from the
+    origin to the cloud's farthest point by ``get_overlaps`` and
+    ``correct_Ip_directions``.
 
     Parameters
     ----------
-    coords_list : list(torch.tensor(n,3))
+    coords_list : list of torch.Tensor
+        Point clouds, each [num_points_i, 3].
     skip_centring : bool
-        Whether to skip centering each point cloud - e.g., if the input is already centered
+        If True, use the coordinates as given (already centred).
 
     Returns
     -------
-    Ip_fin : list(torch.tensor(3,3))
-    Ipm_fin : list(torch.tensor(3))
-    I : list(torch.tensor(3,3))
+    Ip_fin : torch.Tensor
+        Principal axes as rows, sorted by ascending moment, [num_graphs, 3, 3].
+    Ipm_fin : torch.Tensor
+        Principal moments in ascending order, [num_graphs, 3].
+    I : torch.Tensor
+        Inertial tensors, [num_graphs, 3, 3].
     """
     if not skip_centring:  # todo accelerate with scatter
         coords_list_centred = [coord - coord.mean(0) for coord in coords_list]
@@ -215,22 +264,64 @@ def batch_molecule_principal_axes_torch(coords_i: torch.FloatTensor,
                                         heavy_atoms_only: bool = True,
                                         atom_types: Optional[torch.LongTensor] = None, ):
     """
-    Parallel computation of principal inertial axes from a list of coordinate lists.
+    Compute principal inertial axes (unit masses) for a batch of molecules.
+
+    Coordinates are centred per graph with ``center_batch``: on the centroid of
+    the heavy atoms (``atom_types > 1``) when ``heavy_atoms_only`` is True,
+    otherwise on the centroid of all atoms; every atom is translated. The
+    inertial tensor and the reference direction then use the heavy atoms only,
+    or all atoms when ``heavy_atoms_only`` is False. The reference direction is
+    the unit vector from the centroid to the farthest of those atoms. Axes come
+    from ``scatter_compute_Ip``, which adds Gaussian noise of standard
+    deviation 0.05 to the coordinates when they require grad, and are oriented
+    by ``get_overlaps`` and ``correct_Ip_directions`` so that each axis has a
+    non-negative overlap with the reference direction. The handedness of the
+    returned basis is not fixed; it can be left- or right-handed. The inputs
+    are not modified.
 
     Parameters
     ----------
-    skip_centring : bool
-        Whether to skip centering each point cloud - e.g., if the input is already centered
+    coords_i : torch.FloatTensor
+        Atom coordinates, [num_nodes, 3], grouped contiguously by graph in
+        batch order.
+    batch : torch.LongTensor
+        Graph index of each atom, [num_nodes].
+    num_graphs : int
+        Number of graphs in the batch.
+    nodes_per_graph : torch.LongTensor
+        Atom count per graph, [num_graphs]; must equal ``bincount(batch)``.
+    heavy_atoms_only : bool
+        If True (default), centre on and compute the axes from atoms with
+        ``atom_types > 1`` only. Every graph must then contain at least one
+        such atom: ``scatter_compute_Ip`` sizes its output by the largest
+        graph index among the selected atoms, and
+        ``batch_get_furthest_node_vector`` has no node to select for an empty
+        graph.
+    atom_types : torch.LongTensor, optional
+        Atomic numbers, [num_nodes]; required when ``heavy_atoms_only`` is True.
 
     Returns
     -------
-    Ip_fin : list(torch.tensor(3,3))
-    Ipm_fin : list(torch.tensor(3))
-    I : list(torch.tensor(3,3))
+    Ip_fin : torch.Tensor
+        Principal axes as rows, sorted by ascending moment, [num_graphs, 3, 3].
+    Ipm_fin : torch.Tensor
+        Principal moments in ascending order, in squared coordinate units,
+        [num_graphs, 3].
+    I : torch.Tensor
+        Inertial tensors of the centred (and, under grad, noised)
+        coordinates, [num_graphs, 3, 3].
+
+    Raises
+    ------
+    ValueError
+        If ``bincount(batch, minlength=num_graphs)`` differs from
+        ``nodes_per_graph`` (an explicit raise, so it holds under ``python -O``;
+        before 2026-10-22 a bare assert).
     """
     bc = torch.bincount(batch, minlength=num_graphs)
-    assert torch.equal(bc, nodes_per_graph), \
-        f"bincount(batch) vs num_atoms mismatch:\n  bincount={bc.tolist()}\n  num_atoms={nodes_per_graph.tolist()}"
+    if not torch.equal(bc, nodes_per_graph):  # an explicit raise, so it holds under python -O (was a bare assert)
+        raise ValueError(f"bincount(batch) vs num_atoms mismatch:\n  bincount={bc.tolist()}\n"
+                         f"  num_atoms={nodes_per_graph.tolist()}")
     coords = center_batch(coords_i, batch, num_graphs, nodes_per_graph,
                           center_on_heavy_atoms=heavy_atoms_only, atom_types=atom_types)
 
@@ -273,20 +364,12 @@ def batch_molecule_principal_axes_torch(coords_i: torch.FloatTensor,
 
 
 def correct_Ip_directions(Ip, overlaps, signs, overlap_threshold: float = 1e-5):
-    """ # TODO speed this up for large batches
-    Enforce positive overlaps for given inertial principal axes with a given canonical direction, given their overlaps.
+    """
+    Flip principal axes to non-negative overlap with a reference direction (unreachable definition).
 
-    Parameters
-    ----------
-    Ip : torch.tensor(3,3)
-    overlaps : torch.tensor(3)
-    signs : torch.tensor(3)
-    overlap_threshold : float
-
-    Returns
-    -------
-    Ip_fin: torch.tensor(3,3)
-        Inertial principal axes with positive overlaps to the given canonical direction
+    A second function named ``correct_Ip_directions`` is defined later in this
+    module and replaces this one at import, so this body is never called
+    through the module attribute. See that definition for the behavior.
     """
     handedness = compute_Ip_handedness(Ip)
     # if the vectors have negative overlap, flip the direction,
@@ -323,19 +406,30 @@ def correct_Ip_directions(Ip, overlaps, signs, overlap_threshold: float = 1e-5):
 
 def correct_Ip_directions(Ip, overlaps, signs, overlap_threshold: float = 1e-5):
     """
-    Enforce positive overlaps for given inertial principal axes with a given canonical direction, given their overlaps.
+    Flip principal axes to non-negative overlap with a reference direction.
+
+    Row ``i`` of each ``Ip[n]`` is multiplied by ``signs[n, i]``. For graphs
+    where any ``|overlaps[n]|`` is below ``overlap_threshold`` and the input
+    basis ``Ip[n]`` (before the sign flips) is left-handed, the axis with the
+    smallest ``|overlaps[n]|`` is additionally negated. The inputs are not
+    modified.
 
     Parameters
     ----------
-    Ip : torch.tensor(3,3)
-    overlaps : torch.tensor(3)
-    signs : torch.tensor(3)
+    Ip : torch.Tensor
+        Principal axes as rows, [num_graphs, 3, 3].
+    overlaps : torch.Tensor
+        Overlap of each axis with the reference direction, [num_graphs, 3].
+    signs : torch.Tensor
+        Sign applied to each axis, [num_graphs, 3]; ``get_overlaps`` supplies
+        the overlap signs with zeros mapped to +1.
     overlap_threshold : float
+        Magnitude below which an overlap counts as vanishing.
 
     Returns
     -------
-    Ip_fin: torch.tensor(3,3)
-        Inertial principal axes with positive overlaps to the given canonical direction
+    Ip_fin : torch.Tensor
+        Oriented principal axes as rows, [num_graphs, 3, 3].
     """
     handedness = compute_Ip_handedness(Ip)
     # if the vectors have negative overlap, flip the direction,
@@ -372,17 +466,21 @@ def correct_Ip_directions(Ip, overlaps, signs, overlap_threshold: float = 1e-5):
 
 def get_overlaps(Ip, direction):
     """
-    Compute overlaps and signs for given inertial principal axes with a given canonical direction
+    Compute the overlap of each principal axis with a reference direction, and its sign.
 
     Parameters
     ----------
-    Ip : torch.tensor(3,3)
-    direction : torch.tensor(3)
+    Ip : torch.Tensor
+        Principal axes as rows, [num_graphs, 3, 3].
+    direction : torch.Tensor
+        Reference direction per graph, [num_graphs, 3].
 
     Returns
     -------
-    overlaps : torch.tensor(3)
-    signs : torch.tensor(3)
+    overlaps : torch.Tensor
+        ``Ip[n] @ direction[n]``, [num_graphs, 3].
+    signs : torch.Tensor
+        Sign of each overlap with exact zeros set to +1, [num_graphs, 3].
     """
     overlaps = torch.einsum('nij,nj->ni', (Ip,
                                            direction))  # Ip.dot(direction) # check if the principal components point towards or away from the CoG
@@ -393,18 +491,26 @@ def get_overlaps(Ip, direction):
 
 def batch_get_furthest_node_vector(all_coords: torch.FloatTensor, batch: torch.LongTensor, num_graphs: int) -> Tensor:
     """
-    Compute cardinal direction for a list of sets of coordinates, defined as the vector from the centroid to the furthest coordinate.
-    Output is not unique for certain symmetric inputs.
+    Return, for each graph, the coordinates of its node farthest from the origin.
+
+    Distances are measured from the origin, so the result is the vector from
+    each graph's centroid only when the coordinates are already centred per
+    graph. Ties are resolved by ``torch_scatter.scatter_max``; the result is not
+    unique for some symmetric inputs.
 
     Parameters
     ----------
-    all_coords : torch.tensor(n,3)
-    batch : torch.tensor(n)
+    all_coords : torch.FloatTensor
+        Node coordinates, [num_nodes, 3].
+    batch : torch.LongTensor
+        Graph index of each node, [num_nodes].
     num_graphs : int
+        Number of graphs.
 
     Returns
     -------
-    direction : torch.tensor(num_graphs, 3)
+    direction : torch.Tensor
+        Farthest-node coordinates per graph, unnormalised, [num_graphs, 3].
     """
     dists = torch.linalg.norm(all_coords, axis=1)  # CoM is at 0,0,0 by construction
     max_dist, max_ind = scatter_max(dists, batch, dim_size=num_graphs)
@@ -413,7 +519,12 @@ def batch_get_furthest_node_vector(all_coords: torch.FloatTensor, batch: torch.L
 
 
 def nan_hook(name, tensor_ref, batch):
-    """Return a backward hook that prints debug info and halts on NaN gradients."""
+    """Return a tensor backward hook that raises on NaN gradients.
+
+    The hook prints ``name``, ``tensor_ref`` and ``batch`` and raises
+    ``AssertionError`` if the gradient contains NaN; otherwise it returns
+    ``torch.nan_to_num(grad)``.
+    """
 
     def _hook(grad):
         if torch.isnan(grad).any():
@@ -430,18 +541,45 @@ def scatter_compute_Ip(all_coords, batch,
                        eps: float = 0.05,
                        add_noise: bool = False):
     """
-    Parallel function to compute inertial for a list of unequal sized sets of coordinates.
+    Compute inertial tensors (unit masses) and their principal axes for a batch of point clouds.
+
+    The coordinates are used as given, without centring. When ``all_coords``
+    requires grad or ``add_noise`` is True, Gaussian noise with standard
+    deviation ``eps`` is added to the coordinates first, and every returned
+    quantity is computed from the noised coordinates. The decomposition uses
+    ``torch.linalg.eigh``; axis signs are as it returns them. If ``eigh``
+    raises a RuntimeError on a CUDA tensor, it is repeated on CPU and the
+    results are moved to ``'cuda'``. The number of graphs is
+    ``batch.max() + 1``.
 
     Parameters
     ----------
-    all_coords : torch.tensor(n,3)
-    batch : torch.tensor(n)
+    all_coords : torch.Tensor
+        Point coordinates, [num_nodes, 3].
+    batch : torch.LongTensor
+        Graph index of each point, [num_nodes].
+    eps : float
+        Standard deviation of the added noise.
+    add_noise : bool
+        If True, add noise even when ``all_coords`` does not require grad.
 
     Returns
     -------
-    Ip : torch.tensor(num_graphs, 3, 3)
-    Ipm : torch.tensor(num_graphs, 3)
-    I : torch.tensor(num_graphs, 3, 3)
+    Ip : torch.Tensor
+        Principal axes (eigenvectors) as rows, sorted by ascending moment,
+        [num_graphs, 3, 3].
+    Ipm : torch.Tensor
+        Principal moments (eigenvalues) in ascending order, [num_graphs, 3].
+    inertial_tensor : torch.Tensor
+        Inertial tensors, [num_graphs, 3, 3].
+
+    Raises
+    ------
+    RuntimeError
+        If ``torch.linalg.eigh`` raises a RuntimeError on a non-CUDA tensor (e.g.
+        non-finite coordinates); the message names the graphs whose inertia tensor
+        is not finite. An explicit raise, so it holds under ``python -O`` (before
+        2026-10-22 a bare assert, and ``-O`` fell through to an UnboundLocalError).
     """
 
     """
@@ -481,8 +619,11 @@ def scatter_compute_Ip(all_coords, batch,
             Ipm_c, Ip_c = torch.linalg.eigh(inertial_tensor.cpu())
             Ipm_c = Ipm_c.to('cuda')
             Ip_c = Ip_c.to('cuda')
-        else:
-            assert False, "Ipm error"
+        else:  # an explicit raise, so it holds under python -O (was `assert False, "Ipm error"`)
+            bad = torch.nonzero(~torch.isfinite(inertial_tensor).flatten(1).all(1)).flatten().tolist()
+            raise RuntimeError(f"scatter_compute_Ip: torch.linalg.eigh failed on the inertia tensors"
+                               + (f"; graph(s) {bad[:8]}{' and more' if len(bad) > 8 else ''} of this batch have "
+                                  f"non-finite coordinates" if bad else "") + f" ({e})") from e
     Ipms, Ip_o = torch.real(Ipm_c), torch.real(Ip_c)
 
     # Ip_o, Ipms, _ = torch.linalg.svd(inertial_tensor)  # superior numerical stability, yet equivalent for symmetric positive semi-definite
@@ -506,17 +647,21 @@ def scatter_compute_Ip(all_coords, batch,
 
 def extract_batching_info(nodes_list, device='cpu'):
     """
-    Extract batch and ptr info from a list of sets of coordinates.
+    Build a batch vector and cumulative pointer from a list of point sets.
 
     Parameters
     ----------
-    nodes_list : list(torch.tensor(n,3)) with different n throughout
-    device : str
+    nodes_list : list of torch.Tensor
+        Point sets, each [num_points_i, ...]; only their lengths are used.
+    device : str or torch.device
+        Device of the returned tensors.
 
     Returns
     -------
-    batch : torch.tensor(num_nodes)
-    ptr : torch.tensor(num_graphs + 1)
+    batch : torch.LongTensor
+        Set index of each point, [num_nodes].
+    ptrs : torch.Tensor
+        Cumulative point counts starting at 0, [num_graphs + 1].
     """
     ptrs = [0]
     ptrs.extend([len(coord) for coord in nodes_list])
@@ -528,18 +673,28 @@ def extract_batching_info(nodes_list, device='cpu'):
 
 def sph2cart_rotvec(angles):
     """
-    Transform from axis-angle in polar coordinates to rotation vector
+    Convert rotation vectors from spherical (theta, phi, r) to Cartesian components.
+
+    ``rotvec = r * (sin(theta) cos(phi), sin(theta) sin(phi), cos(theta))``,
+    with ``theta`` the polar angle of the rotation axis, ``phi`` its azimuthal
+    angle and ``r`` the rotation angle, all in radians.
 
     Parameters
     ----------
-    angles : (nx3)
-        theta, phi, r
+    angles : np.ndarray or torch.Tensor
+        Columns (theta, phi, r), [n, 3] or [3].
 
     Returns
     -------
-    rotvec : (nx3)
-        x, y, z
+    rotvec : np.ndarray or torch.Tensor or None
+        Cartesian rotation vectors (x, y, z), same shape as ``angles``.
+        ``None``, after printing a message, for any other input type.
 
+    Notes
+    -----
+    The [3] torch branch passes the three scalar components to
+    ``torch.Tensor(...)`` as separate arguments rather than stacking them;
+    the [n, 3] torch branch and both numpy branches stack them.
     """
 
     if isinstance(angles, np.ndarray):
@@ -569,19 +724,26 @@ def sph2cart_rotvec(angles):
 
 def cart2sph_rotvec(rotvec):
     """
-    transform rotation vector with axis rotvec/norm(rotvec) and angle ||rotvec||
-    to spherical coordinates theta, phi and r=||rotvec||
+    Convert Cartesian rotation vectors to spherical (theta, phi, r).
+
+    ``r`` is the vector norm (the rotation angle), ``theta =
+    atan2(sqrt(ux^2 + uy^2), uz)`` in [0, pi] is the polar angle of the unit
+    axis ``u`` and ``phi = atan2(uy, ux)`` in [-pi, pi] is its azimuthal angle,
+    all in radians. For torch input ``r = sqrt(|rotvec|^2 + 1e-12)`` and
+    ``u = rotvec / max(r, 1e-8)``, so a zero vector gives finite values; for
+    numpy input a zero vector divides by zero.
 
     Parameters
     ----------
-    rotvec : (nx3)
-        x, y, z
+    rotvec : np.ndarray or torch.Tensor
+        Cartesian rotation vectors (x, y, z), [n, 3] or [3].
 
     Returns
     -------
-    angles : (nx3)
-        theta, phi, r
-
+    angles : np.ndarray or torch.Tensor or None
+        Columns (theta, phi, r), [n, 3]. A [3] input is promoted to [1, 3] and
+        the result keeps that shape. ``None``, after printing a message, for
+        any other input type.
     """
     if isinstance(rotvec, np.ndarray):
         r = np.linalg.norm(rotvec, axis=-1)
@@ -625,20 +787,32 @@ def cart2sph_rotvec(rotvec):
 
 def batch_compute_fractional_transform(cell_lengths, cell_angles):
     """
-    compute f->c and c->f transforms as well as cell volume in a vectorized, differentiable way
+    Compute fractional-Cartesian transform matrices and cell volumes for a batch of cells.
+
+    ``T_fc`` is upper triangular with the cell vectors as columns (a along x,
+    b in the xy plane), so Cartesian coordinates are ``T_fc @ frac`` and
+    fractional coordinates are ``T_cf @ cart``. The matrices are built with
+    differentiable tensor operations, on the device and in the dtype of
+    ``cell_lengths``. They use the signed volume ``sign(f) * a * b * c *
+    sqrt(|f|)``, with ``f = 1 - cos^2(alpha) - cos^2(beta) - cos^2(gamma) +
+    2 cos(alpha) cos(beta) cos(gamma)``, which is negative for angle triples
+    with ``f < 0``; the returned volume is its absolute value.
 
     Parameters
     ----------
-    cell_lengths : torch.tensor(nx3)
-        a, b, c
-    cell_angles : torch.tensor(nx3)
-        alpha, beta, gamma
+    cell_lengths : torch.Tensor
+        Cell lengths (a, b, c), [n, 3].
+    cell_angles : torch.Tensor
+        Cell angles (alpha, beta, gamma) in radians, [n, 3].
 
     Returns
     -------
-        fc_transform : torch.tensor(n,3,3)
-        cf_transform : torch.tensor(n,3,3)
-        cell_volumes : torch.tensor(n)
+    T_fc : torch.Tensor
+        Fractional-to-Cartesian matrices, [n, 3, 3].
+    T_cf : torch.Tensor
+        Cartesian-to-fractional matrices, [n, 3, 3].
+    cell_volumes : torch.Tensor
+        Absolute cell volumes, in cubed length units, [n].
     """
     cos_a = torch.cos(cell_angles)
     sin_a = torch.sin(cell_angles)
@@ -675,18 +849,22 @@ def batch_compute_fractional_transform(cell_lengths, cell_angles):
 
 def cell_vol_torch(v: torch.tensor, a: torch.tensor):
     """
-    compute the volume of a parallelpiped given basis vector lengths and internal angles
+    Compute the volume of one cell from its lengths and angles.
+
+    ``a * b * c * sqrt(|1 - cos^2(alpha) - cos^2(beta) - cos^2(gamma) +
+    2 cos(alpha) cos(beta) cos(gamma)|)``.
+
     Parameters
     ----------
-    v : torch.tensor(3)
-        [a b c]
-    a : torch.tensor(3)
-        [alpha beta gamma]
+    v : torch.Tensor
+        Cell lengths (a, b, c), [3].
+    a : torch.Tensor
+        Cell angles (alpha, beta, gamma) in radians, [3].
 
     Returns
     -------
-    cell_volume : float
-
+    cell_volume : torch.Tensor
+        Volume in cubed length units, 0-d.
     """
     ''' Calculate cos and sin of cell angles '''
     cos_a = torch.cos(a)  # in natural units
@@ -700,18 +878,22 @@ def cell_vol_torch(v: torch.tensor, a: torch.tensor):
 
 def batch_cell_vol_torch(v: torch.tensor, a: torch.tensor):
     """
-    Batched computation of unit cell volumes given basis vector lengths and internal angles.
+    Compute cell volumes for a batch of cells from their lengths and angles.
+
+    Same formula as ``cell_vol_torch``, applied row-wise; the result is
+    non-negative for positive lengths.
 
     Parameters
     ----------
-    v : torch.tensor(n, 3)
-        batch of [a, b, c] lengths
-    a : torch.tensor(n, 3)
-        batch of [alpha, beta, gamma] angles in radians
+    v : torch.Tensor
+        Cell lengths (a, b, c), [n, 3].
+    a : torch.Tensor
+        Cell angles (alpha, beta, gamma) in radians, [n, 3].
 
     Returns
     -------
-    cell_volumes : torch.tensor(n)
+    cell_volumes : torch.Tensor
+        Volumes in cubed length units, [n].
     """
     ''' Calculate cos and sin of cell angles '''
     cos_a = torch.cos(a)  # in natural units
@@ -747,19 +929,27 @@ def cell_vol_angle_factor(cell_angles):
 
 def compute_Ip_handedness(Ip):
     """
-    determine the right or left handedness from the cross products of principal inertial axes
-    np.array or torch.tensor input, single or multiple samples
-
+    Return the handedness of axis bases as the sign of ``Ip[0] . (Ip[1] x Ip[2])``.
 
     Parameters
     ----------
-    Ip : (opt n, 3, 3)
-        principal inertial tensor
+    Ip : np.ndarray or torch.Tensor
+        Axes as rows, [3, 3] or [n, 3, 3].
 
     Returns
     -------
-    handedness : (n)
-        +/- 1, the handedness of the cross products of principal inertial axes
+    handedness : scalar, np.ndarray or torch.Tensor
+        +1 for right-handed, -1 for left-handed, 0 for a degenerate basis.
+        A scalar for [3, 3] input (a 0-d float tensor for torch) and [n] for
+        [n, 3, 3] input. For numpy [n, 3, 3] input, entry ``i`` is the sign of
+        ``sum_j Ip[i, 0] . (Ip[j, 1] x Ip[j, 2])``, summed over every sample
+        ``j``, not only ``j = i``. Other dimensionalities return None.
+
+    Raises
+    ------
+    SystemExit
+        If ``Ip`` is neither a numpy array nor a torch tensor (a message is
+        printed first).
     """
     if isinstance(Ip, np.ndarray):
         if Ip.ndim == 2:
@@ -780,18 +970,22 @@ def compute_Ip_handedness(Ip):
 
 def cell_vol_np(v, a):
     """
-    compute the volume of a parallelpiped given basis vector lengths and internal angles
+    Compute the volume of one cell from its lengths and angles, with numpy.
+
+    Same formula as ``cell_vol_torch``; the result is non-negative for
+    positive lengths.
+
     Parameters
     ----------
-    v : np.array(3)
-        [a b c]
-    a : np.array(3)
-        [alpha beta gamma]
+    v : np.ndarray
+        Cell lengths (a, b, c), [3].
+    a : np.ndarray
+        Cell angles (alpha, beta, gamma) in radians, [3].
 
     Returns
     -------
     cell_volume : float
-
+        Volume in cubed length units.
     """
     """ Calculate cos and sin of cell angles """
     cos_a = np.cos(a)  # in natural units
@@ -805,23 +999,29 @@ def cell_vol_np(v, a):
 
 def coor_trans_matrix_np(opt, v, a, return_vol=False):
     """
-    compute f->c and c->f transforms as well as cell volume in a vectorized, differentiable way
+    Compute one fractional-Cartesian transform matrix with numpy.
+
+    Same matrix elements as ``batch_compute_fractional_transform`` for a
+    single cell, in float64. Prints a warning if any angle exceeds pi.
 
     Parameters
     ----------
-    opt : str 'c_to_f' or 'f_to_c'
-        which direction to transform between fractional and cartesian
-    v : np.array(3)
-        a, b, c
-    a : np.array(3)
-        alpha, beta, gamma
+    opt : str
+        ``'c_to_f'`` for Cartesian-to-fractional or ``'f_to_c'`` for
+        fractional-to-Cartesian; any other value returns a zero matrix.
+    v : np.ndarray
+        Cell lengths (a, b, c), [3].
+    a : np.ndarray
+        Cell angles (alpha, beta, gamma) in radians, [3].
     return_vol : bool, optional
-        return the absolute value of the cell volume
+        If True, also return the absolute cell volume.
 
     Returns
     -------
-        transform : np.array(3,3)
-        cell_volumes : float
+    transform : np.ndarray
+        Transform matrix, [3, 3].
+    cell_volume : float
+        Absolute cell volume; returned only when ``return_vol`` is True.
     """
     """ Calculate cos and sin of cell angles """  # todo test - enforce this agrees with the torch version
     if np.amax(a) > np.pi:
@@ -861,7 +1061,21 @@ def coor_trans_matrix_np(opt, v, a, return_vol=False):
 
 def mol_batch_vdW_volume(mol_batch):
     """
-    wrapper for batch_compute_vdW_volume
+    Estimate vdW volumes for a molecule batch with ``batch_compute_molecule_volume``.
+
+    Reads ``mol_batch.z``, ``mol_batch.pos``, ``mol_batch.batch`` and
+    ``mol_batch.num_graphs``, and passes the values of ``VDW_RADII`` (keyed by
+    atomic number) as a float32 lookup on the device of ``mol_batch.z``.
+
+    Parameters
+    ----------
+    mol_batch
+        Batched molecule data object.
+
+    Returns
+    -------
+    volumes : torch.Tensor
+        Estimated molecular volumes, [num_graphs].
     """
     return batch_compute_molecule_volume(
         mol_batch.z,
@@ -881,26 +1095,32 @@ def batch_compute_molecule_volume(
         vdw_radii_tensor: torch.Tensor
 ):
     """
-    Estimate molecular vdW volumes for a batch of molecules using a sphere-overlap correction.
+    Estimate molecular vdW volumes for a batch of molecules from atomic spheres and pairwise overlaps.
 
-    Sums atomic sphere volumes then subtracts pairwise sphere-sphere intersection volumes
-    scaled by an empirical correction factor (~0.73) to approximate triple overlaps.
+    The volume is the sum of atomic sphere volumes minus 0.7272 times the sum
+    of pairwise sphere-sphere intersection (lens) volumes. Pairs are searched
+    within ``2 * vdw_radii_tensor.max()`` inside each molecule (at most 100
+    neighbours per atom), each unordered pair is counted once, and pairs
+    farther apart than the sum of their radii contribute zero. Volumes are in
+    cubed units of the radii and positions.
 
     Parameters
     ----------
-    atom_types : torch.LongTensor(n)
-        Atomic numbers used to index vdw_radii_tensor
-    pos : torch.FloatTensor(n, 3)
-        Atomic coordinates
-    batch : torch.LongTensor(n)
-        Graph index for each atom
+    atom_types : torch.LongTensor
+        Atomic numbers used to index ``vdw_radii_tensor``, [num_nodes].
+    pos : torch.FloatTensor
+        Atomic coordinates, [num_nodes, 3].
+    batch : torch.LongTensor
+        Graph index of each atom, [num_nodes].
     num_graphs : int
+        Number of graphs.
     vdw_radii_tensor : torch.Tensor
-        Lookup table of vdW radii indexed by atomic number
+        vdW radius lookup indexed by atomic number.
 
     Returns
     -------
-    corrected_mol_volume : torch.FloatTensor(num_graphs)
+    corrected_mol_volume : torch.FloatTensor
+        Estimated volumes, [num_graphs].
     """
     atom_volumes = 4 / 3 * torch.pi * vdw_radii_tensor[atom_types] ** 3
     raw_vdw_volumes = scatter(atom_volumes, batch, dim=0, dim_size=num_graphs, reduce='sum')
@@ -946,33 +1166,50 @@ def probe_compute_molecule_volume(
         min_iters: int = 5
 ):
     """
-    Estimate molecular vdW volumes via Monte Carlo probe sampling, iterating until convergence.
+    Estimate molecular vdW volumes by Monte Carlo sampling in each molecule's bounding box.
 
-    Random probes are scattered within each molecule's bounding box; the fraction inside
-    any atomic vdW sphere gives the volume estimate. Runs until the relative change in
-    the running mean drops below eps for min_iters consecutive iterations.
+    Each iteration draws ``probes_per_mol`` uniform points in each molecule's
+    axis-aligned bounding box, padded on every side by
+    ``vdw_radii_tensor.max()``, and takes the box volume times the fraction of
+    probes inside at least one atomic sphere. Once more than ``min_iters``
+    iterations have run, the loop stops when, for every molecule, the mean
+    absolute step of the running mean (normalised by that molecule's average
+    running mean) over the last ``min_iters`` steps is below ``eps``; it also
+    stops after ``max_iters`` iterations. Volumes are in cubed units of the
+    radii and positions.
 
     Parameters
     ----------
-    atom_types : torch.LongTensor(n)
-    pos : torch.FloatTensor(n, 3)
-    batch : torch.LongTensor(n)
+    atom_types : torch.LongTensor
+        Atomic numbers used to index ``vdw_radii_tensor``, [num_nodes].
+    pos : torch.FloatTensor
+        Atomic coordinates, [num_nodes, 3].
+    batch : torch.LongTensor
+        Graph index of each atom, [num_nodes].
     num_graphs : int
+        Number of graphs.
     vdw_radii_tensor : torch.Tensor
-        Lookup table of vdW radii indexed by atomic number
+        vdW radius lookup indexed by atomic number.
     probes_per_mol : int
-        Number of random probes per molecule per iteration
+        Number of probes per molecule per iteration.
     eps : float
-        Convergence threshold on relative change in running mean
+        Convergence threshold on the normalised step of the running mean.
     max_iters : int
-        Maximum number of sampling iterations
+        Maximum number of iterations; must exceed ``min_iters``.
     min_iters : int
-        Minimum iterations before convergence is checked
+        Number of iterations before convergence is checked, and the window of
+        steps the check averages over.
 
     Returns
     -------
-    volumes : torch.FloatTensor(num_graphs)
-        Converged volume estimates
+    volumes : torch.FloatTensor
+        Mean of all per-iteration estimates, [num_graphs].
+
+    Raises
+    ------
+    UnboundLocalError
+        If the loop ends before any convergence check has run
+        (``max_iters <= min_iters``).
     """
     volume_record = []
     converged = False
@@ -1022,16 +1259,31 @@ def probe_compute_molecule_volume(
 
 def grid_compute_molecule_volume(atom_types, pos, vdw_radii_tensor, eps):
     """
-    brute force grid approach to computing vdW volume for a single molecule
+    Estimate the vdW volume of one molecule by counting occupied points on refining grids.
+
+    The grid spans the atoms' bounding box padded by ``vdw_radii_tensor.amax()``.
+    Its nominal spacing starts at 0.075 and is multiplied by 0.75 on each
+    iteration; a grid point is occupied if it lies within the vdW radius of
+    any atom. From the third iteration on, the loop stops when the change
+    between the last two estimates divided by the second estimate is below
+    ``eps``, printing the iteration index and that ratio at each check; it
+    runs at most 11 iterations. Grids are created on the default device.
+
     Parameters
     ----------
-    atom_types
-    pos
-    vdw_radii_tensor
+    atom_types : torch.LongTensor
+        Atomic numbers used to index ``vdw_radii_tensor``, [num_atoms].
+    pos : torch.Tensor
+        Atomic coordinates, [num_atoms, 3].
+    vdw_radii_tensor : torch.Tensor
+        vdW radius lookup indexed by atomic number.
+    eps : float
+        Convergence threshold on the relative change between iterations.
 
     Returns
     -------
-
+    occupied_volume : torch.Tensor
+        Box volume times the occupied fraction of the last grid, 0-d.
     """
     convergence_history = []
     dx = 0.1
@@ -1078,16 +1330,26 @@ def grid_compute_molecule_volume(atom_types, pos, vdw_radii_tensor, eps):
 
 def grid_compute_molecule_volume_pointwise(atom_types, pos, vdw_radii_tensor, eps):
     """
-    brute force grid approach to computing vdW volume for a single molecule
+    Estimate the vdW volume of one molecule on refining grids.
+
+    The body is identical to ``grid_compute_molecule_volume``; see that
+    function for the procedure.
+
     Parameters
     ----------
-    atom_types
-    pos
-    vdw_radii_tensor
+    atom_types : torch.LongTensor
+        Atomic numbers used to index ``vdw_radii_tensor``, [num_atoms].
+    pos : torch.Tensor
+        Atomic coordinates, [num_atoms, 3].
+    vdw_radii_tensor : torch.Tensor
+        vdW radius lookup indexed by atomic number.
+    eps : float
+        Convergence threshold on the relative change between iterations.
 
     Returns
     -------
-
+    occupied_volume : torch.Tensor
+        Box volume times the occupied fraction of the last grid, 0-d.
     """
     convergence_history = []
     dx = 0.1
@@ -1134,14 +1396,17 @@ def grid_compute_molecule_volume_pointwise(atom_types, pos, vdw_radii_tensor, ep
 
 def norm_circular_components(components: torch.tensor):
     """
-    Use Pythagoras to norm the sum of squares to the unit circle.
+    Scale each row of a two-component tensor to unit Euclidean norm.
+
     Parameters
     ----------
-    components : torch.tensor(n, 2)
+    components : torch.Tensor
+        [n, 2].
 
     Returns
     -------
-    normed_components : torch.tensor(n, 2)
+    normed_components : torch.Tensor
+        [n, 2].
     """
 
     return components / torch.sqrt(torch.sum(components ** 2, dim=-1))[:, None]
@@ -1149,19 +1414,26 @@ def norm_circular_components(components: torch.tensor):
 
 def components2angle(components: torch.tensor, norm_components=True):
     """
-    Take two non-normalized components[n, 2] representing sin(angle) and cos(angle), compute the resulting angle,
-    following     https://ai.stackexchange.com/questions/38045/how-can-i-encode-angle-data-to-train-neural-networks
+    Convert (sin, cos) component pairs to angles.
 
-    Optionally norm the sum of squares - doesn't appear to do much though.
+    Returns ``atan2(components[:, 0], components[:, 1])`` in radians, in
+    [-pi, pi], following
+    https://ai.stackexchange.com/questions/38045/how-can-i-encode-angle-data-to-train-neural-networks.
+    With ``norm_components`` the rows are first scaled to unit norm, which
+    leaves the angle of any nonzero row unchanged.
 
     Parameters
     ----------
-    components : torch.tensor(n, 2)
+    components : torch.Tensor
+        Unnormalised (sin, cos) pairs, [n, 2].
     norm_components : bool, optional
+        If True (default), normalise the rows with
+        ``norm_circular_components`` first.
 
     Returns
     -------
-    angles : torch.tensor(n, 2)
+    angles : torch.Tensor
+        [n].
     """
 
     if norm_components:
@@ -1175,15 +1447,17 @@ def components2angle(components: torch.tensor, norm_components=True):
 
 def angle2components(angle: torch.tensor):
     """
-    Decompose an angle into sin(angle) and cos(angle)
+    Decompose angles into (sin, cos) columns.
 
     Parameters
     ----------
-    angle : torch.tensor(n)
+    angle : torch.Tensor
+        Angles in radians, [n].
 
     Returns
     -------
-    sin(angle), cos(angle) : torch.tensor, torch.tensor
+    components : torch.Tensor
+        Columns (sin(angle), cos(angle)), [n, 2].
     """
 
     return torch.cat((torch.sin(angle)[:, None], torch.cos(angle)[:, None]), dim=1)
@@ -1195,8 +1469,43 @@ def old_enforce_crystal_system(lattice_lengths,
                                symmetries_dict: Optional[dict] = None
                                ):
     """
-    enforce physical bounds on cell parameters
+    Project cell parameters onto their crystal-system constraints, one sample at a time.
+
+    Lattice names come from ``symmetries_dict['lattice_type']`` indexed by
+    space group (case-insensitive). Unlike ``enforce_crystal_system``, tied
+    parameters copy the first component instead of averaging: tetragonal and
+    hexagonal set a and b to a; rhombohedral sets a, b and c to a and all
+    angles to alpha; cubic sets a, b and c to a. Angles: monoclinic fixes
+    alpha and gamma to pi/2; orthorhombic, tetragonal and cubic fix all angles
+    to pi/2; hexagonal fixes alpha and beta to pi/2 and gamma to 2 pi/3.
+    Triclinic is unchanged. Returns new tensors; the inputs are not modified.
     https://en.wikipedia.org/wiki/Crystal_system
+
+    Parameters
+    ----------
+    lattice_lengths : torch.Tensor
+        Cell lengths (a, b, c), [n, 3].
+    lattice_angles : torch.Tensor
+        Cell angles (alpha, beta, gamma) in radians, [n, 3].
+    sg_inds : torch.Tensor
+        Space-group indices, [n]; a 0-d index yields one lattice name, so only
+        n == 1 works with it.
+    symmetries_dict : dict, optional
+        Symmetry info with a ``'lattice_type'`` lookup; built with
+        ``init_sym_info()`` when None.
+
+    Returns
+    -------
+    fixed_lengths : torch.Tensor
+        [n, 3].
+    fixed_angles : torch.Tensor
+        [n, 3].
+
+    Raises
+    ------
+    SystemExit
+        If a lattice name is not one of the handled systems (a message is
+        printed first).
     """  # todo vectorize this function, and clean it up in general
 
     if symmetries_dict is None:
@@ -1289,8 +1598,37 @@ def old_enforce_crystal_system(lattice_lengths,
 
 def enforce_crystal_system2(lattice_lengths, lattice_angles, lattices):
     """
-    enforce physical bounds on cell parameters
+    Project cell parameters onto their crystal-system constraints, given lattice names.
+
+    Per-sample loop. Triclinic: unchanged. Monoclinic: alpha = gamma = pi/2.
+    Orthorhombic: all angles pi/2. Tetragonal: a and b set to their mean, all
+    angles pi/2. Hexagonal: a and b set to their mean, alpha = beta = pi/2,
+    gamma = 2 pi/3. Rhombohedral: a, b and c set to their mean, all angles set
+    to their mean. Cubic: a, b and c set to their mean, all angles pi/2.
+    Returns new tensors; the inputs are not modified.
     https://en.wikipedia.org/wiki/Crystal_system
+
+    Parameters
+    ----------
+    lattice_lengths : torch.Tensor
+        Cell lengths (a, b, c), [n, 3].
+    lattice_angles : torch.Tensor
+        Cell angles (alpha, beta, gamma) in radians, [n, 3].
+    lattices : sequence of str
+        Lattice name per sample (case-insensitive), length n.
+
+    Returns
+    -------
+    fixed_lengths : torch.Tensor
+        [n, 3].
+    fixed_angles : torch.Tensor
+        [n, 3].
+
+    Raises
+    ------
+    SystemExit
+        If a lattice name is not one of the handled systems (a message is
+        printed first).
     """  # todo double check these limits
 
     pi_tensor = torch.ones_like(lattice_lengths[0, 0]) * torch.pi
@@ -1379,11 +1717,45 @@ def enforce_crystal_system(
         symmetries_dict: Optional[dict] = None,
 ):
     """
-    Enforce crystal-system constraints on cell parameters.
+    Project cell parameters onto the constraints of each sample's crystal system.
 
-    lattice_lengths: [B, 3] or [3]
-    lattice_angles:  [B, 3] or [3]
-    sg_inds: scalar or [B]
+    Vectorised over the batch; the inputs are cloned, not modified. The
+    lattice system of each sample is ``symmetries_dict["lattice_code"]``
+    indexed by its space group, with codes from ``LATTICE_TO_CODE``:
+
+    - triclinic: unchanged;
+    - monoclinic: alpha = gamma = pi/2;
+    - orthorhombic: all angles pi/2;
+    - tetragonal: a and b set to their mean, all angles pi/2;
+    - hexagonal: a and b set to their mean, alpha = beta = pi/2,
+      gamma = 2 pi/3;
+    - rhombohedral: a, b and c set to their mean, all angles set to their mean;
+    - cubic: a, b and c set to their mean, all angles pi/2.
+
+    Parameters
+    ----------
+    lattice_lengths : torch.Tensor
+        Cell lengths (a, b, c), [B, 3] or [3].
+    lattice_angles : torch.Tensor
+        Cell angles (alpha, beta, gamma) in radians, [B, 3] or [3].
+    sg_inds : int or torch.Tensor
+        Space-group indices, scalar or [B]; a scalar applies to every sample.
+    symmetries_dict : dict, optional
+        Must contain ``"lattice_code"``, a LongTensor mapping space-group index
+        to lattice code; built with ``init_sym_info()`` when None.
+
+    Returns
+    -------
+    fixed_lengths : torch.Tensor
+        Same shape as ``lattice_lengths``.
+    fixed_angles : torch.Tensor
+        Same shape as ``lattice_angles``.
+
+    Raises
+    ------
+    ValueError
+        If any space-group index maps to a negative lattice code (with
+        ``init_sym_info()``, index 0).
     """
 
     if symmetries_dict is None:
@@ -1472,9 +1844,32 @@ def cell_parameters_to_box_vectors(opt: str,
                                    cell_lengths: torch.tensor,
                                    cell_angles: torch.tensor,
                                    return_vol: bool = False):
-    """  # TODO I believe this is a duplicate function
-    Initially borrowed from Nikos
-    Quickly convert from cell lengths and angles to fractional transform matrices fractional->cartesian or cartesian->fractional
+    """
+    Compute one fractional-Cartesian transform matrix with torch.
+
+    Initially borrowed from Nikos. Computes the same matrix elements as
+    ``coor_trans_matrix_np``, and as ``batch_compute_fractional_transform``
+    for a single cell; for ``'f_to_c'`` the columns are the cell vectors. The
+    matrix is float32 on the device of ``cell_lengths``.
+
+    Parameters
+    ----------
+    opt : str
+        ``'c_to_f'`` for Cartesian-to-fractional or ``'f_to_c'`` for
+        fractional-to-Cartesian; any other value returns a zero matrix.
+    cell_lengths : torch.Tensor
+        Cell lengths (a, b, c), [3].
+    cell_angles : torch.Tensor
+        Cell angles (alpha, beta, gamma) in radians, [3].
+    return_vol : bool
+        If True, also return the absolute cell volume.
+
+    Returns
+    -------
+    transform : torch.Tensor
+        Transform matrix, [3, 3].
+    cell_volume : torch.Tensor
+        Absolute cell volume, 0-d; returned only when ``return_vol`` is True.
     """
     ''' Calculate cos and sin of cell angles '''
     cos_a = torch.cos(cell_angles)
@@ -1533,18 +1928,26 @@ def batch_compute_mol_radius(coords: torch.FloatTensor,
                              nodes_per_graph: torch.LongTensor,
                              ) -> Tensor:
     """
-    Batched version of compute_mol_radius.
+    Compute, per graph, the maximum distance from the centroid of all nodes to any node.
+
+    Centroids are expanded to nodes with ``repeat_interleave(nodes_per_graph)``,
+    so nodes must be grouped contiguously by graph in batch order.
 
     Parameters
     ----------
-    coords : torch.FloatTensor(n, 3)
-    batch : torch.LongTensor(n)
+    coords : torch.FloatTensor
+        Node coordinates, [num_nodes, 3].
+    batch : torch.LongTensor
+        Graph index of each node, [num_nodes].
     num_graphs : int
-    nodes_per_graph : torch.LongTensor(num_graphs)
+        Number of graphs.
+    nodes_per_graph : torch.LongTensor
+        Node count per graph, [num_graphs].
 
     Returns
     -------
-    radii : torch.FloatTensor(num_graphs)
+    radii : torch.FloatTensor
+        [num_graphs].
     """
     centroids = get_batch_centroids(coords, batch, num_graphs)
     dists = torch.linalg.norm(coords - centroids.repeat_interleave(nodes_per_graph, 0), dim=-1)
@@ -1579,23 +1982,32 @@ def center_batch(coords: torch.FloatTensor,
                  atom_types: Optional[torch.LongTensor] = None,
                  ) -> Tensor:
     """
-    Subtract the centroid from each graph's coordinates, returning zero-centered positions.
+    Subtract each graph's centroid from its coordinates, returning a new tensor.
+
+    Centroids are expanded to nodes with ``repeat_interleave(nodes_per_graph)``,
+    so nodes must be grouped contiguously by graph in batch order.
 
     Parameters
     ----------
-    coords : torch.FloatTensor(n, 3)
-    batch : torch.LongTensor(n)
+    coords : torch.FloatTensor
+        Node coordinates, [num_nodes, 3].
+    batch : torch.LongTensor
+        Graph index of each node, [num_nodes].
     num_graphs : int
-    nodes_per_graph : torch.LongTensor(num_graphs)
+        Number of graphs.
+    nodes_per_graph : torch.LongTensor
+        Node count per graph, [num_graphs].
     center_on_heavy_atoms : bool
-        If True, compute the centroid using only heavy atoms (atom_types > 1)
-        but translate all atoms
-    atom_types : torch.LongTensor(n), optional
-        Required when center_on_heavy_atoms is True
+        If True, compute the centroid from atoms with ``atom_types > 1`` only;
+        all atoms are translated.
+    atom_types : torch.LongTensor, optional
+        Atomic numbers, [num_nodes]; required when ``center_on_heavy_atoms``
+        is True.
 
     Returns
     -------
-    coords_centered : torch.FloatTensor(n, 3)
+    coords_out : torch.FloatTensor
+        Centred coordinates, [num_nodes, 3].
     """
     if center_on_heavy_atoms:
         mask = atom_types > 1
@@ -1650,10 +2062,33 @@ def compute_mol_mass(z: torch.LongTensor,
 
 def rotvec2rotmat(mol_rotation: torch.tensor, basis='cartesian'):
     """
-    get applied rotation matrix
-    mol_rotation here is a list of rotation vectors [n_samples, 3]
-    rotvec -> rotation matrix directly (see https://en.wikipedia.org/wiki/Rodrigues%27_rotation_formula)
-    rotvec -> quat -> rotation matrix (old way)
+    Convert rotation vectors to rotation matrices with Rodrigues' formula.
+
+    ``R = I + sin(r) K + (1 - cos(r)) K @ K``, where ``r`` is the rotation
+    angle in radians and ``K`` is the cross-product matrix of the unit axis
+    (https://en.wikipedia.org/wiki/Rodrigues%27_rotation_formula).
+
+    Parameters
+    ----------
+    mol_rotation : torch.Tensor
+        Rotation vectors, [n, 3]. For ``basis='cartesian'`` these are
+        Cartesian axis-angle vectors (norm = angle); a zero vector gives NaN.
+        For ``basis='spherical'`` the columns are (theta, phi, r): polar and
+        azimuthal angle of the axis and the rotation angle, as produced by
+        ``lat2sph_rotvec`` or ``cart2sph_rotvec``; r = 0 gives NaN.
+    basis : str
+        ``'cartesian'`` (default) or ``'spherical'``.
+
+    Returns
+    -------
+    applied_rotation_list : torch.Tensor
+        Rotation matrices, [n, 3, 3]. The identity term is float32, so the
+        dtype follows type promotion with float32.
+
+    Raises
+    ------
+    SystemExit
+        If ``basis`` is not recognised (a message is printed first).
     """
     if basis == 'cartesian':
         r = torch.linalg.norm(mol_rotation, dim=1)
@@ -1683,16 +2118,28 @@ def rotvec2rotmat(mol_rotation: torch.tensor, basis='cartesian'):
 def extract_rotmat(target_position: torch.FloatTensor,
                    original_position: torch.FloatTensor) -> Tensor:
     """
-    Compute the rotation matrix R such that R @ original_position ≈ target_position.
+    Return ``target_position^T @ inv(original_position)`` for single or batched 3x3 matrices.
+
+    The result ``M`` satisfies ``M @ original_position = target_position^T``;
+    for a symmetric ``target_position`` (such as the identity) this is
+    ``M @ original_position = target_position``.
 
     Parameters
     ----------
-    target_position : torch.FloatTensor(n, 3, 3) or (3, 3)
-    original_position : torch.FloatTensor(n, 3, 3) or (3, 3)
+    target_position : torch.FloatTensor
+        [n, 3, 3] or [3, 3].
+    original_position : torch.FloatTensor
+        Invertible matrices, same shape as ``target_position``.
 
     Returns
     -------
-    rotmat : torch.FloatTensor(n, 3, 3) or (3, 3)
+    rotmat : torch.FloatTensor
+        [n, 3, 3] or [3, 3].
+
+    Raises
+    ------
+    AssertionError
+        If ``target_position`` is neither 2-D nor 3-D.
     """
     if target_position.ndim == 3:
         return torch.einsum('nji, njk -> nik', target_position, torch.linalg.inv(original_position))
@@ -1722,10 +2169,10 @@ def apply_rotation_to_batch(elems, rotations, batch):
 def rotmat2rotvec_stable(rotation_matrices: torch.Tensor) -> torch.Tensor:
     """Rotation matrices [n, 3, 3] (proper, orthogonal up to rounding) -> rotation vectors [n, 3], angle in [0, pi],
     in the input dtype. Accurate for EVERY rotation, including those at or near the identity and near a rotation by pi,
-    where rotmat2rotvec's float32 trace test (|(tr - 1)/2| >= 1) replaces the rotation with pi about (1, 1, 1): a
+    where rotmat2rotvec's float32 trace test (``|(tr - 1)/2| >= 1``) replaces the rotation with pi about (1, 1, 1): a
     different orientation. Here the matrix goes to a unit quaternion by Shepperd's method in float64 (the largest of
     w^2, x^2, y^2, z^2 is taken from the diagonal, so no division by a small number), then
-    angle = 2 atan2(|v|, w) with w >= 0."""
+    ``angle = 2 atan2(|v|, w)`` with w >= 0."""
     R = rotation_matrices.double()
     m00, m11, m22 = R[:, 0, 0], R[:, 1, 1], R[:, 2, 2]
     tr = m00 + m11 + m22
@@ -1764,21 +2211,29 @@ def rotmat2rotvec_stable(rotation_matrices: torch.Tensor) -> torch.Tensor:
 
 def rotmat2rotvec(rotation_matrix_list, warn_on_bad_determinant=True):
     """
-    Convert a batch of rotation matrices to rotation vectors (axis-angle).
+    Convert rotation matrices to rotation vectors (unit axis times angle).
 
-    Uses the Rodrigues formula: axis from the skew-symmetric part, angle from the trace.
-    Degenerate cases (near-identity or near-pi rotations) are handled by clamping to a
-    fallback rotation of pi around [1,1,1].
+    The axis is the normalised skew-symmetric part
+    ``(R[2,1] - R[1,2], R[0,2] - R[2,0], R[1,0] - R[0,1])`` and the angle is
+    ``arccos((trace - 1) / 2)`` in radians, in [0, pi]. Rows where
+    ``|(trace - 1) / 2| >= 1``, where the angle or axis is NaN, or where the
+    three axis components sum to exactly zero are returned as a rotation by
+    pi about (1, 1, 1) / sqrt(3), whatever the input rotation. This includes
+    the exact identity and exact rotations by pi; ``rotmat2rotvec_stable``
+    handles those cases. The input is not modified.
 
     Parameters
     ----------
-    rotation_matrix_list : torch.FloatTensor(n, 3, 3)
+    rotation_matrix_list : torch.FloatTensor
+        Rotation matrices, [n, 3, 3].
     warn_on_bad_determinant : bool
-        Print a warning if any matrix has det < 0 (i.e. is a reflection, not a rotation)
+        If True, print a warning when any matrix has a negative determinant
+        (a reflection); the conversion still proceeds.
 
     Returns
     -------
-    rotvecs : torch.FloatTensor(n, 3)
+    rotvecs : torch.FloatTensor
+        Rotation vectors, [n, 3].
     """
     # Fixed!
     if warn_on_bad_determinant:
@@ -1828,18 +2283,22 @@ old version
 
 def sample_random_valid_rotvecs(num_samples):
     """
-    Sample uniformly random rotation vectors with theta restricted to the upper half-sphere (z ≥ 0).
+    Sample random rotation vectors with non-negative z component.
 
-    Directions are drawn from a Gaussian (giving uniform spherical coverage) and norms
-    are drawn uniformly from (0, 2π].
+    Directions are Gaussian samples normalised to unit length, uniform on the
+    sphere, then reflected into the z >= 0 hemisphere. Norms (rotation angles,
+    radians) are uniform on [0, 2 pi) and clipped below at 0.05. The tensor is
+    created on CPU in the default float dtype.
 
     Parameters
     ----------
     num_samples : int
+        Number of rotation vectors.
 
     Returns
     -------
-    rotvecs : torch.FloatTensor(num_samples, 3)
+    random_vectors : torch.Tensor
+        Rotation vectors, [num_samples, 3].
     """
     # random directions on the sphere, getting naturally the correct distribution of theta, phi
     random_vectors = torch.randn(size=(num_samples, 3))
@@ -1853,7 +2312,22 @@ def sample_random_valid_rotvecs(num_samples):
 
 
 def embed_vector_to_rank3(v):
-    """embed an nxk vector as a symmetric 3-tensor"""
+    """
+    Embed vectors as symmetric rank-3 tensors.
+
+    ``P[n, i, j, k] = (delta_ij v[n, k] + delta_ik v[n, j] + delta_jk v[n, i]) / 3``,
+    with the Kronecker delta ``torch.eye(3)`` created on CPU.
+
+    Parameters
+    ----------
+    v : torch.Tensor
+        [n, 3].
+
+    Returns
+    -------
+    P : torch.Tensor
+        [n, 3, 3, 3].
+    """
     delta = torch.eye(3)
     P = torch.einsum('ij,nk->nijk', delta, v) + \
         torch.einsum('ik,nj->nijk', delta, v) + \
@@ -1863,13 +2337,33 @@ def embed_vector_to_rank3(v):
 
 def fractional_transform(coords, transform_matrix):
     """
-    Transform between fractional/cartesian bases.
-    Assumes the fractional->cartesian transform is the transpose of the box vectors
-    Args:
-        coords:
-        transform_matrix:
+    Apply a fractional-Cartesian transform matrix to coordinates (numpy or torch).
 
-    Returns: transformed_coords
+    Each coordinate vector ``x`` becomes ``transform_matrix @ x``. With a
+    fractional-to-Cartesian matrix whose columns are the cell vectors (the
+    transpose of row-stacked box vectors, as ``T_fc`` from
+    ``batch_compute_fractional_transform``) this maps fractional to Cartesian;
+    with ``T_cf`` it maps Cartesian to fractional. Dispatches to
+    ``fractional_transform_np`` or ``fractional_transform_torch``.
+
+    Parameters
+    ----------
+    coords : np.ndarray or torch.Tensor
+        [n, 3] or [n, m, 3] with a [3, 3] matrix, or [n, 3] with one matrix
+        per row, [n, 3, 3].
+    transform_matrix : np.ndarray or torch.Tensor
+        [3, 3] or [n, 3, 3], of the same array type as ``coords``.
+
+    Returns
+    -------
+    transformed_coords : np.ndarray or torch.Tensor
+        Same shape as ``coords``; None for any other combination of
+        dimensions.
+
+    Raises
+    ------
+    AssertionError
+        If ``coords`` is neither a numpy array nor a torch tensor.
     """
     if isinstance(coords, np.ndarray):
         return fractional_transform_np(coords, transform_matrix)
@@ -1883,18 +2377,22 @@ def fractional_transform_np(coords, transform_matrix):
     """
     Apply a fractional/cartesian transform to numpy coordinate arrays.
 
-    Dispatches on the combination of coords and transform_matrix dimensionality:
-    (n,3)+(3,3) → per-point transform; (n,m,3)+(3,3) → per-atom-in-molecule;
-    (n,3)+(n,3,3) → per-graph batched transform.
+    Each coordinate vector ``x`` becomes ``transform_matrix @ x``. Dispatches
+    on dimensionality: [n, 3] or [n, m, 3] coordinates with one [3, 3]
+    matrix, or [n, 3] coordinates with one matrix per row, [n, 3, 3]. Any
+    other combination returns None.
 
     Parameters
     ----------
     coords : np.ndarray
+        [n, 3] or [n, m, 3].
     transform_matrix : np.ndarray
+        [3, 3] or [n, 3, 3].
 
     Returns
     -------
     transformed : np.ndarray
+        Same shape as ``coords``.
     """
     if coords.ndim == 2 and transform_matrix.ndim == 2:
         return np.einsum('nj,ij->ni', coords, transform_matrix)
@@ -1908,16 +2406,22 @@ def fractional_transform_torch(coords, transform_matrix):
     """
     Apply a fractional/cartesian transform to torch coordinate tensors.
 
-    Same dispatch logic as fractional_transform_np.
+    Same dispatch as ``fractional_transform_np``: each coordinate vector ``x``
+    becomes ``transform_matrix @ x`` for [n, 3] or [n, m, 3] coordinates with
+    one [3, 3] matrix, or [n, 3] coordinates with one matrix per row,
+    [n, 3, 3]. Any other combination returns None.
 
     Parameters
     ----------
     coords : torch.FloatTensor
+        [n, 3] or [n, m, 3].
     transform_matrix : torch.FloatTensor
+        [3, 3] or [n, 3, 3].
 
     Returns
     -------
     transformed : torch.FloatTensor
+        Same shape as ``coords``.
     """
     if coords.ndim == 2 and transform_matrix.ndim == 2:
         return torch.einsum('nj,ij->ni', (coords, transform_matrix))
@@ -1945,13 +2449,23 @@ def compute_ellipsoid_volume(e):
 
 def compute_cosine_similarity_matrix(e1, e2):
     """
-    compute the row-to-row dot products for batches of ellipsoids [n, i, j]
-    returns the [n, i, i] matrix of dot products between rows in e1 and e2
+    Compute dot products between the rows of paired batched matrices.
 
-    permuting the order of e1, e2, results in transposition of the overlap matrix
-    :param e1:
-    :param e2:
-    :return:
+    ``out[n, i, k] = e1[n, i] . e2[n, k]``. The rows are not normalised, so
+    these are cosines only for unit rows. Swapping ``e1`` and ``e2``
+    transposes the last two dimensions of the result.
+
+    Parameters
+    ----------
+    e1 : torch.Tensor
+        [n, i, j].
+    e2 : torch.Tensor
+        [n, k, j].
+
+    Returns
+    -------
+    overlaps : torch.Tensor
+        [n, i, k].
     """
     return torch.einsum('nij, nkj -> nik', e1, e2)
 
@@ -1960,17 +2474,25 @@ def safe_batched_eigh(covs, chunk=10000):
     """
     Chunked symmetric eigendecomposition with a CPU fallback for CUSOLVER failures.
 
+    Calls ``torch.linalg.eigh`` on consecutive chunks. A chunk that raises a
+    RuntimeError containing ``CUSOLVER_STATUS_INVALID_VALUE`` is recomputed
+    on CPU (after printing a message) and moved back to ``covs.device``; CUDA
+    out-of-memory errors and other RuntimeErrors are re-raised. Outputs are
+    cast to float32.
+
     Parameters
     ----------
-    covs : torch.FloatTensor(n, d, d)
-        Batch of symmetric matrices
+    covs : torch.Tensor
+        Batch of symmetric matrices, [n, d, d].
     chunk : int
-        Number of matrices per kernel call
+        Number of matrices per ``eigh`` call.
 
     Returns
     -------
-    eigenvalues : torch.FloatTensor(n, d)
-    eigenvectors : torch.FloatTensor(n, d, d)
+    eigenvalues : torch.FloatTensor
+        Eigenvalues in ascending order, [n, d].
+    eigenvectors : torch.FloatTensor
+        Eigenvectors as columns, [n, d, d].
     """
     out_vals, out_vecs = [], []
     for i in range(0, covs.shape[0], chunk):
@@ -1993,23 +2515,29 @@ def safe_batched_eigh(covs, chunk=10000):
 
 def lat2sph_rotvec(lat_orientations, z_prime):
     """
-    Map latent orientation parameters (normalized to [-1, 1]) to spherical rotation vectors.
+    Map latent orientation parameters in [-1, 1] to spherical rotation vectors.
 
-    Inverse of sph_rotvec2lat. The three latent dimensions map as:
-      theta ∈ [-1,1] → [0, π/2]      (upper half-sphere polar angle)
-      phi   ∈ [-1,1] → [-π, π]       (azimuthal angle)
-      r     ∈ [-1,1] → [0, 2π]       (rotation magnitude)
+    Inverse of ``sph_rotvec2lat``. Each consecutive triplet ``(x0, x1, x2)``
+    of the last dimension maps as:
+
+    - theta = (pi/4) x0 + pi/4: [-1, 1] -> [0, pi/2], polar angle of the axis;
+    - phi = pi x1: [-1, 1] -> [-pi, pi], azimuthal angle of the axis;
+    - r = pi x2 + pi: [-1, 1] -> [0, 2 pi], rotation angle.
+
+    Values outside [-1, 1] follow the same affine maps without clipping.
 
     Parameters
     ----------
-    lat_orientations : torch.FloatTensor(..., z_prime * 3)
+    lat_orientations : torch.Tensor
+        Latent orientations, [..., 3 * z_prime].
     z_prime : int
-        Number of asymmetric units
+        Number of orientation triplets (Z') in the last dimension.
 
     Returns
     -------
-    sph_rotvec : torch.FloatTensor(..., z_prime * 3)
-        Spherical rotation vectors [theta, phi, r] for each asymmetric unit
+    sph_rotvec : torch.Tensor
+        (theta, phi, r) triplets in radians; a new tensor with the shape of
+        ``lat_orientations``.
     """
     lat = lat_orientations.view(*lat_orientations.shape[:-1], z_prime, 3)
 
@@ -2032,7 +2560,29 @@ def lat2sph_rotvec(lat_orientations, z_prime):
 
 def simple_latent_distance(l1: torch.Tensor,
                            l2: torch.Tensor) -> torch.Tensor:
-    """euclidean distances, but with wrapped angular dimensions"""
+    """
+    Euclidean distance between latent vectors with the periodic orientation dimensions wrapped.
+
+    The latent layout is taken as 6 cell dimensions, 3 * Zp centroid
+    dimensions, then 3 * Zp orientation triplets (theta, phi, r; see
+    ``lat2sph_rotvec``), with ``Zp = (l1.shape[-1] - 6) // 6``. In every
+    orientation triplet the phi and r differences are wrapped into [-1, 1)
+    (period 2) before the norm; all other dimensions, including theta, are
+    not wrapped. The inputs are not modified.
+
+    Parameters
+    ----------
+    l1 : torch.Tensor
+        Latent vectors, [n, 6 + 6 * Zp].
+    l2 : torch.Tensor
+        Latent vectors broadcastable against ``l1``; the difference must be
+        2-D.
+
+    Returns
+    -------
+    dist : torch.Tensor
+        [n] (the broadcast batch size).
+    """
     max_z_prime = (l1.shape[-1] - 6) // 6
     angs = [False] * 6
     for zp in range(max_z_prime):
@@ -2054,9 +2604,39 @@ def simple_latent_distance(l1: torch.Tensor,
 def compute_latent_distance(latents1: torch.Tensor,
                             latents2: torch.Tensor) -> torch.Tensor:
     """
-    Compute a distance metric between crystals in the latent parameterization.
-    :param params:
-    :return:
+    Weighted distance between crystals in the latent cell parameterization.
+
+    ``Zp = (latents1.shape[1] - 6) // 6`` is inferred from the width; the
+    layout is 6 cell dimensions, 3 * Zp centroid dimensions, then 3 * Zp
+    orientation dimensions (see ``lat2sph_rotvec``). The result is
+
+    ``0.5 * box + 0.836 * 0.25 * pos / Zp + 0.293 * 0.25 * rot / Zp``
+
+    where ``box`` is the Euclidean distance over the 6 cell dimensions,
+    ``pos`` the Euclidean distance over all centroid dimensions (neither is
+    wrapped), and ``rot`` the sum over the Zp orientation triplets of the
+    geodesic angle ``arccos((trace(R1 @ R2^T) - 1) / 2)``, in radians, between
+    the rotation matrices built by ``rotvec2rotmat(..., 'spherical')``. The
+    cosine is clamped to [-1 + 1e-7, 1 - 1e-7], so identical inputs give a
+    small positive distance rather than exactly zero.
+
+    Parameters
+    ----------
+    latents1 : torch.Tensor
+        Latent vectors, [n, 6 + 6 * Zp].
+    latents2 : torch.Tensor
+        Latent vectors with the same last dimension, broadcastable against
+        ``latents1`` along the first dimension (e.g. [1, K] against [n, K]).
+
+    Returns
+    -------
+    dists : torch.Tensor
+        [n] (the broadcast batch size).
+
+    Raises
+    ------
+    AssertionError
+        If the last dimensions of ``latents1`` and ``latents2`` differ.
     """
     n_params = latents1.shape[1]
     assert latents1.shape[-1] == latents2.shape[-1]
@@ -2135,8 +2715,29 @@ def crystal_parameter_distmat(
         max_block=2048,
 ):
     """
-    Blockwise distance matrix with adaptive block size.
-    Tries to keep ~target_entries distances per kernel call.
+    Pairwise ``compute_latent_distance`` matrix of a set of latent vectors, computed in row blocks.
+
+    Rows are processed in blocks of
+    ``B = max(min_block, min(max_block, target_entries // max(N, 1)))``, so each call
+    to ``compute_latent_distance`` handles about ``B * N`` pairs. The diagonal
+    holds the small positive self-distance of ``compute_latent_distance``,
+    not zero.
+
+    Parameters
+    ----------
+    latents : torch.Tensor
+        Latent vectors, [N, K].
+    target_entries : int
+        Approximate number of distances per block.
+    min_block : int
+        Minimum rows per block.
+    max_block : int
+        Maximum rows per block.
+
+    Returns
+    -------
+    distmat : torch.Tensor
+        [N, N], allocated on ``latents.device`` in the default float dtype.
     """
     device = latents.device
     N, K = latents.shape
@@ -2163,18 +2764,22 @@ def sph_rotvec2lat(sph_rotvec, z_prime):
     """
     Map spherical rotation vectors to latent orientation parameters normalized to [-1, 1].
 
-    Inverse of lat2sph_rotvec.
+    Inverse of ``lat2sph_rotvec``. Each consecutive (theta, phi, r) triplet of
+    the last dimension maps without clipping to
+    ``((theta - pi/4) / (pi/4), phi / pi, (r - pi) / pi)``, so [0, pi/2],
+    [-pi, pi] and [0, 2 pi] map to [-1, 1].
 
     Parameters
     ----------
-    sph_rotvec : torch.FloatTensor(..., z_prime * 3)
-        Spherical rotation vectors [theta, phi, r] for each asymmetric unit
+    sph_rotvec : torch.Tensor
+        (theta, phi, r) triplets in radians, [..., 3 * z_prime].
     z_prime : int
-        Number of asymmetric units
+        Number of orientation triplets (Z') in the last dimension.
 
     Returns
     -------
-    lat_orientations : torch.FloatTensor(..., z_prime * 3)
+    lat_orientations : torch.Tensor
+        A new tensor with the shape of ``sph_rotvec``.
     """
     sph = sph_rotvec.view(*sph_rotvec.shape[:-1], z_prime, 3)
 

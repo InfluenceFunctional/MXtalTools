@@ -27,7 +27,7 @@ import torch
 from mxtaltools.common.geometry_utils import batch_compute_fractional_transform, rotvec2rotmat, rotmat2rotvec, \
     rotmat2rotvec_stable
 from mxtaltools.common.sym_utils import cell_reduction_penalty
-from mxtaltools.crystal_building.utils import canonicalize_rotvec
+from mxtaltools.crystal_building.utils import canonicalize_rotvec, unit_cell_z
 
 SG_DOUBLED = 14
 #: half-lattice origin shifts of the parent that keep SYM_OPS[14]'s form (they move the origin between inversion
@@ -54,15 +54,18 @@ def proper_rotvecs(poses: torch.Tensor):
 
 
 def _t_fc(lengths, angles):
+    """float64 T_fc [3, 3] of one cell from lengths [3] and angles [3] in radians."""
     t_fc, _, _ = batch_compute_fractional_transform(torch.as_tensor(lengths, dtype=torch.float64)[None],
                                                     torch.as_tensor(angles, dtype=torch.float64)[None])
     return t_fc[0]
 
 
 def _basis_candidates(q_max: int = 120, p_max: int = 5, r_max: int = 8):
-    """(p, q, r, s, det) with r even, s odd, det = ps - qr = +-1: the ac-plane basis changes of the doubled lattice
-    that keep SYM_OPS[14]'s form (the MONO_GLIDE setting group of sym_utils). The range covers parents far from
-    reduced (May search chunks needed |q| up to 41); a parent beyond it raises in double_zp1_params."""
+    """[K, 5] float64 rows (p, q, r, s, det) with r even, s odd, det = ps - qr = +-1: the ac-plane basis changes of
+    the doubled lattice that keep SYM_OPS[14]'s form (the MONO_GLIDE setting group of sym_utils). p and s range over
+    [-p_max, p_max], q over [-q_max, q_max] and r over [-r_max, r_max]; the table is cached per argument triple. The
+    range covers parents far from reduced (May search chunks needed |q| up to 41); a parent beyond it raises in
+    double_zp1_params (reduce=True)."""
     key = (q_max, p_max, r_max)
     if key not in _CANDIDATES:
         rows = [(p, q, r, s, p * s - q * r)
@@ -74,8 +77,8 @@ def _basis_candidates(q_max: int = 120, p_max: int = 5, r_max: int = 8):
 
 
 def _cell_of(v):
-    """lengths and angles (alpha, beta, gamma) of the lattice whose vectors are the columns of v; alpha and gamma are
-    snapped to pi/2 when within 1e-6 (stored monoclinic cells carry float32(pi/2))."""
+    """lengths and angles (alpha, beta, gamma, radians) of the lattice whose vectors are the columns of v; alpha and
+    gamma are snapped to pi/2 when within 1e-6 (stored monoclinic cells carry float32(pi/2))."""
     lengths = torch.linalg.norm(v, dim=0)
     ang = lambda i, j: torch.arccos((v[:, i] @ v[:, j]) / lengths[i] / lengths[j])
     angles = torch.stack([ang(1, 2), ang(0, 2), ang(0, 1)])
@@ -86,8 +89,12 @@ def _cell_of(v):
 
 
 def reduced_doubling_basis(lengths, angles) -> Optional[torch.Tensor]:
-    """3x3 integer basis change P (columns in the (2a, b, c) basis) giving a zero-reduction-penalty doubled cell, or
-    None if no candidate within the searched range has zero penalty."""
+    """3x3 integer basis change P = [[p, 0, r], [0, det, 0], [q, 0, s]] (float64; columns are the new lattice vectors
+    in the (2a, b, c) basis) giving a zero-reduction-penalty doubled cell, or None if no candidate within the searched
+    range (_basis_candidates) has zero penalty. lengths [3] and angles [3] (radians) are the parent cell's. Each
+    candidate cell is scored by cell_reduction_penalty for sg 14 with margin 0, in float32, with alpha = gamma = pi/2;
+    a penalty <= 1e-12 counts as zero. Among zero-penalty candidates the identity is preferred, then det = +1, then the
+    smallest ``|a'| + |c'|``."""
     v0 = _t_fc(lengths, angles) @ torch.diag(torch.tensor([2.0, 1.0, 1.0], dtype=torch.float64))
     p, q, r, s, det = _basis_candidates().T
     a_new = p[:, None] * v0[:, 0] + q[:, None] * v0[:, 2]
@@ -112,7 +119,14 @@ def double_zp1_params(lengths, angles, centroid, rotvec, handedness: float, redu
                       origin=(0.0, 0.0, 0.0), basis: Optional[torch.Tensor] = None) -> dict:
     """Z'=1 sg14 parameters (lengths, angles in radians, fractional centroid [3], rotvec [3], handedness) -> the Z'=2
     parameters of the same crystal: dict(lengths [3], angles [3], centroid [2, 3] in [0, 1), rotvec [2, 3],
-    handedness [2], M = the doubled lattice vectors in the parent basis (columns), origin, reduction_penalty)."""
+    handedness [2], M = the doubled lattice vectors in the parent basis (columns), origin, reduction_penalty).
+    Inputs are converted to float64 and flattened; tensor outputs are float64, M is [3, 3], origin [3], and
+    reduction_penalty a float (cell_reduction_penalty for sg 14, margin 0, computed in float32). Both molecules get the
+    same rotvec (canonical, +z hemisphere) and handedness. `basis`, if given, is the 3x3 basis change in the (2a, b, c)
+    basis and is used as is; otherwise reduce=True takes reduced_doubling_basis and reduce=False the identity
+    (a' = 2a, b' = b, c' = c). `origin` is a fractional shift of the parent origin, subtracted from the centroid before
+    the mapping. Raises RuntimeError when reduce=True finds no zero-penalty basis, or when the doubled cell is not a
+    proper rotation of the parent lattice (raised unless torch.allclose(U U^T, I, atol=1e-6) and det U > 0)."""
     lengths, angles, centroid, rotvec = (torch.as_tensor(x, dtype=torch.float64).reshape(-1)
                                          for x in (lengths, angles, centroid, rotvec))
     origin_t = torch.as_tensor(origin, dtype=torch.float64)
@@ -162,16 +176,17 @@ def _molecule_of(crystal):
 
 
 def _unit_cell_frac(crystal):
-    """(fractional unit-cell atoms wrapped into [0, 1), element of each, T_fc) via mol2ucell(std_orientation=True),
-    the geometry every energy route scores."""
+    """(fractional unit-cell atoms wrapped into [0, 1), element of each, T_fc) via mol2ucell(std_orientation=True) on
+    a collated clone, the geometry the crystal energy routes build at their default std_orientation=True."""
     from mxtaltools.dataset_utils.utils import collate_data_list
     b = collate_data_list([crystal.clone()])
     with torch.no_grad():
         b.mol2ucell(std_orientation=True)
     t_fc = b.T_fc[0].double()
     f = b.unit_cell_pos.double() @ torch.linalg.inv(t_fc).T
-    z_mol = crystal.z[:int(crystal.num_atoms) // int(crystal.z_prime)]
-    z = z_mol.repeat(f.shape[0] // len(z_mol))
+    # the unit cell's layout, each unit tiled sym_mult times, unit by unit (until 2026-10-23: unit 0's z tiled over the
+    # whole cell, the other compound's elements on a two-compound crystal; audit #15)
+    z = unit_cell_z(b.z, b.z_prime.reshape(-1)[0], b.sym_mult[0])
     return f - torch.floor(f), z, t_fc
 
 
@@ -180,7 +195,10 @@ def doubling_deviation(parent, doubled, m, origin):
     and its copy shifted by the parent a are mapped into the doubled basis (f_D = M^-1 (f_P - origin)) and matched,
     element by element and modulo the DOUBLED lattice, to the doubled unit cell. Requiring every mapped parent atom to
     be the nearest match of exactly one doubled atom rules out e.g. molecule 1 stacked onto molecule 0, which a
-    match modulo the parent lattice cannot see."""
+    match modulo the parent lattice cannot see. parent (Z'=1) and doubled (Z'=2) are single MolCrystalData, m [3, 3]
+    and origin [3] as double_zp1_params returns them; neither crystal is modified. Fractional differences are wrapped
+    by rounding each component. Returns (inf, False) when the doubled cell does not hold exactly twice the parent's
+    atoms, in total or for any element."""
     fp, zp, _ = _unit_cell_frac(parent)
     fd, zd, t_fc_d = _unit_cell_frac(doubled)
     if len(fd) != 2 * len(fp):
@@ -204,11 +222,17 @@ def doubling_deviation(parent, doubled, m, origin):
 
 def double_zp1_crystal(crystal, reduce: bool = True, origin: Union[str, tuple] = 'best', check: bool = True,
                        tol: float = 1e-3):
-    """Z'=2 MolCrystalData describing the Z'=1 sg14 crystal `crystal` (built the way the search builds Z'=2
-    crystals: the molecule duplicated). origin='best' picks the parent origin shift keeping the doubled centres
-    farthest from the periodic x / z faces. check=True rebuilds both unit cells and raises unless the doubled atoms
-    match the parent's, and its a-shifted copy's, one-to-one within `tol` Angstrom (doubling_deviation). Rotvecs are
-    canonical (+z hemisphere) and the attribute shapes are those of search outputs.
+    """(doubled, params): the Z'=2 MolCrystalData describing the Z'=1 sg14 crystal `crystal` (built the way the search
+    builds Z'=2 crystals: the molecule duplicated), and the double_zp1_params dict it was built from. `crystal` is a
+    single MolCrystalData and is not modified; its first centroid, rotvec and handedness are read, and z, pos and any
+    of x, smiles, identifier, mol_volume, mass and radius it carries go into the molecule. `reduce` is forwarded to
+    double_zp1_params. origin='best' picks, among ORIGINS, the parent origin shift keeping the doubled centres
+    farthest from the periodic x / z faces (the first on ties); a tuple is used as given. The doubled crystal has
+    float32 cell parameters, max_z_prime=2, the parent's identifier and do_box_analysis=True. check=True rebuilds both
+    unit cells (mol2ucell with std_orientation=True) and raises RuntimeError unless the doubled atoms match the
+    parent's, and its a-shifted copy's, one-to-one within `tol` Angstrom (doubling_deviation). Raises ValueError
+    unless `crystal` is Z'=1 sg14 in the standard SYM_OPS[14] setting (nonstandard_symmetry false), and RuntimeError
+    from double_zp1_params. Rotvecs are canonical (+z hemisphere) and the attribute shapes are those of search outputs.
     Energies are not copied; per molecule they equal the parent's."""
     from mxtaltools.dataset_utils.data_classes import MolCrystalData
     if int(crystal.sg_ind) != SG_DOUBLED or int(crystal.z_prime) != 1:

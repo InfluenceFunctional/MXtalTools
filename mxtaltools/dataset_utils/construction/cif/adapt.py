@@ -27,12 +27,29 @@ __all__ = ['build_unit_cell_components', 'to_crystal_dict']
 def build_unit_cell_components(crystal: CifCrystal) -> Dict[str, list]:
     """Expand the deposited set by every symmetry operator.
 
+    Each 4x4 operator in ``crystal.symmetry.operators`` is applied to the
+    fractional site coordinates ``crystal.sites.frac``; for each component the
+    image is shifted by the integer floor of its unweighted fractional centroid,
+    so the centroid lands in [0, 1) and the component moves rigidly, and is then
+    converted to Cartesian with the cell's fractional-to-Cartesian matrix.
+
+    Parameters
+    ----------
+    crystal : CifCrystal
+        Source crystal; read only.
+
     Returns
     -------
-    dict with 'coordinates' and 'atomic_numbers', each a list of length
-    `sym_mult * n_components` -- one entry per molecule in the unit cell, matching
-    the order `extract_crystal_data` gets from `unit_cell.components`.
+    dict
+        ``'coordinates'``: list of [n_atoms_k, 3] float Cartesian arrays, in the
+        units of ``crystal.cell_lengths``. ``'atomic_numbers'``: list of
+        [n_atoms_k] copies of the component's ``crystal.sites.z``. Each list has
+        length ``len(operators) * n_components`` -- one entry per molecule in
+        the unit cell, matching the order `extract_crystal_data` gets from
+        `unit_cell.components`.
 
+    Notes
+    -----
     Ordering is OPERATOR-MAJOR then component: [op0 comp0, op0 comp1, op1 comp0, ...].
     Stated because it is contracted -- `crystal_rebuild_checks` matches atoms
     positionally, and `z.repeat(sym_mult)` downstream TILES rather than
@@ -69,14 +86,46 @@ def to_crystal_dict(crystal: CifCrystal,
     """Render a `CifCrystal` in the incumbent `crystal_dict` schema.
 
     Every key `extract_crystal_data` produces is present with the same dtype and
-    units, so nothing downstream needs to know which reader produced it.  Two
-    keys are added, both prefixed so they cannot collide with the incumbent's:
+    units, so nothing downstream needs to know which reader produced it.  Three
+    keys are added, all prefixed so they cannot collide with the incumbent's:
 
-      ``native_operators_are_standard``  whether the file's operators match
-          SYM_OPS[sg] exactly, in order. False for ~37.5 % of the CSD and NOT an
-          error; recorded so a dataset can be audited after the fact.
-      ``native_reader``  marks provenance, so a dataset built by this reader is
-          distinguishable from one built by CCDC.
+    - ``native_file_space_group_symbol``: ``crystal.symmetry.symbol``, the
+      file's own H-M symbol, or the canonical symbol when the file gives none;
+      ``space_group_symbol`` holds the canonical ``SPACE_GROUPS[number]``.
+    - ``native_operators_are_standard``: whether the file's operators match
+      SYM_OPS[sg] element-wise, in order and with the same count, under
+      ``np.allclose(atol=1e-6)``. False for ~37.5 % of the CSD and NOT an
+      error; recorded so a dataset can be audited after the fact.
+    - ``native_reader``: always True; marks provenance, so a dataset built by
+      this reader is distinguishable from one built by CCDC.
+
+    Parameters
+    ----------
+    crystal : CifCrystal
+        Source crystal; read only.
+    identifier : str, optional
+        Value for ``'identifier'`` and for error messages; falls back to
+        ``crystal.identifier`` when not given or empty.
+
+    Returns
+    -------
+    dict
+        ``identifier``; ``space_group_symbol`` (canonical) and the three
+        ``native_*`` keys above; scalar cell entries ``lattice_a/b/c`` (from
+        ``crystal.cell_lengths``) and ``lattice_alpha/beta/gamma`` in radians;
+        ``fc_transform`` and
+        ``cell_volume`` from `coor_trans_matrix_np`; ``z_prime`` as float;
+        ``z_value``, ``symmetry_multiplicity`` and ``space_group_number`` as int;
+        ``space_group_setting`` fixed at 0; ``symmetry_operators`` as a list of
+        4x4 float arrays; ``unit_cell_coordinates`` and
+        ``unit_cell_atomic_numbers`` from `build_unit_cell_components`.
+
+    Raises
+    ------
+    ValueError
+        If the number of unit-cell components differs from
+        ``round(symmetry_multiplicity * z_prime)``, i.e. the deposited set's
+        component count differs from Z'.
     """
     ident = identifier or crystal.identifier
     sym = crystal.symmetry

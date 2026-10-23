@@ -7,14 +7,14 @@ Discarding it and re-parsing later would mean re-deriving what the depositor
 already stated.
 
 What the tag gives, measured over 400 random CSD entries -- present in **100 %**
-of them, and multi-unit in 40 %:
+of them, and multi-unit in 40 %::
 
     60.0 %   one moiety      'C21 H28 N2 O2'
     27.2 %   two moieties    'C7 H8 N4 O2,C6 H7 B1 O3'          <- a cocrystal
     11.2 %   three
      1.5 %   four
 
-It encodes three things a component decomposition cannot:
+It encodes three things a component decomposition cannot::
 
     stoichiometry   '2(H2 O1)'      a dihydrate
     formal charge   'C2 H5 N4 1+'   a salt, not a neutral cocrystal
@@ -47,7 +47,13 @@ _ELEMENT = re.compile(r'([A-Z][a-z]?)\s*([0-9]*\.?[0-9]*)')
 
 
 class Moiety(NamedTuple):
-    """One comma-separated unit of `_chemical_formula_moiety`."""
+    """One comma-separated unit of `_chemical_formula_moiety`.
+
+    `count` is the leading coefficient (1.0 when absent), `elements` maps element
+    symbol to its count in one unit, `charge` is the signed trailing formal charge
+    (0 when unstated), and `raw` is the whitespace-stripped unit text as written,
+    coefficient and charge included.
+    """
 
     count: float                 # stoichiometric coefficient; 0.75 does occur
     elements: Dict[str, float]   # element -> count within ONE unit
@@ -56,16 +62,30 @@ class Moiety(NamedTuple):
 
     @property
     def is_fractional(self) -> bool:
-        """A non-integer coefficient means disorder, not stoichiometry."""
+        """A non-integer coefficient means disorder, not stoichiometry.
+
+        True when `count` differs from its nearest integer by more than 1e-9.
+        """
         return abs(self.count - round(self.count)) > 1e-9
 
 
 def parse_formula_moiety(text: Optional[str]) -> List[Moiety]:
     """`'C7 H8 N4 O2,2(H2 O1)'` -> two `Moiety` records.
 
-    Returns [] for a missing tag. Never raises: this is captured metadata, and a
-    malformed moiety string must not fail a read that is otherwise sound.
-    Callers that need it to be well-formed should check the result.
+    Returns [] for a missing tag (None or ''). This is captured metadata, and a
+    malformed moiety string is not meant to fail a read that is otherwise sound:
+    malformed units are skipped or partially parsed rather than refused, so
+    callers that need it to be well-formed should check the result. One kind of
+    input does raise: an element symbol followed, optionally after whitespace,
+    by a bare '.' with no digits (e.g. 'C. H4') reaches ``float('.')`` and
+    raises ValueError.
+
+    Units are split on commas outside parentheses. A unit of the form
+    ``n(...)`` takes `n` as its coefficient; a trailing whitespace-separated
+    ``k+`` / ``k-`` (``k`` defaulting to 1) is the charge; element tokens are an
+    uppercase letter plus optional lowercase letter and an optional count
+    (default 1), summed when a symbol repeats. A unit with no element token is
+    dropped.
     """
     if not text:
         return []
@@ -117,7 +137,10 @@ def hill_formula(z: np.ndarray) -> str:
     """Atomic numbers -> a Hill-notation formula string ('C7 H6 O2').
 
     Hill order (C, H, then alphabetical) so two components of the same species
-    produce the same string and can be grouped by equality.
+    produce the same string and can be grouped by equality. C and then H come
+    first whenever present, so H leads when there is no C ('H1 Cl1'); the other
+    symbols follow in sorted order. A count of 1 is written explicitly
+    ('H2 O1'). Symbols come from ``ase.data.chemical_symbols``.
     """
     from ase.data import chemical_symbols
     counts: Dict[str, int] = {}
@@ -137,6 +160,10 @@ def component_formulas(z: np.ndarray, component_index: np.ndarray) -> List[str]:
 
     The bridge a cocrystal implementation needs: it turns "component 3" into
     "H2 O1", so components can be matched against the declared moieties.
+
+    `z` and `component_index` are parallel [n_sites] arrays. Returns a list of
+    length ``component_index.max() + 1`` ([] for empty input); an index with no
+    sites yields ''.
     """
     n = int(component_index.max()) + 1 if len(component_index) else 0
     return [hill_formula(z[component_index == k]) for k in range(n)]

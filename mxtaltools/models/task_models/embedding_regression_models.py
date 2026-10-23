@@ -1,3 +1,5 @@
+"""MLP regression heads applied to precomputed molecule embeddings: an equivariant head on
+scalar and vector embeddings, and an invariant head on scalar embeddings."""
 from typing import Optional
 
 import torch
@@ -7,7 +9,30 @@ from mxtaltools.models.modules.components import vectorMLP, scalarMLP
 
 
 class EquivariantEmbeddingRegressor(BaseGraphModel):
-    """single property prediction head for pretrained embeddings"""
+    """Single-property prediction head for pretrained embeddings, with a scalar and a
+    vector output track.
+
+    Construction calls ``torch.manual_seed(seed)``, which reseeds torch's global random
+    number generator. ``self.model`` is a :class:`vectorMLP` with scalar input width
+    ``config.bottleneck_dim + conditions_dim``, vector input channels
+    ``config.bottleneck_dim``, and ``num_targets`` scalar outputs and vector output
+    channels. No featurization or standardization buffers are set up.
+
+    Parameters
+    ----------
+    seed : int
+        Seed for ``torch.manual_seed``; also passed to the MLP.
+    config : Namespace
+        MLP settings: ``num_layers``, ``hidden_dim``, ``norm``, ``dropout``,
+        ``bottleneck_dim`` and ``vector_norm``.
+    num_targets : int, optional
+        Width of the scalar output and channel count of the vector output. Default 1.
+    conditions_dim : int, optional
+        Extra scalar input columns beyond ``config.bottleneck_dim``. Default 0.
+    prediction_type : str, optional
+        Stored as ``self.prediction_type``; not read by this class. Default
+        ``'scalar'``.
+    """
 
     def __init__(self, seed, config,
                  num_targets: int = 1,
@@ -36,7 +61,23 @@ class EquivariantEmbeddingRegressor(BaseGraphModel):
     def forward(self,
                 x: torch.Tensor,
                 v: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """no need to do standardization, inputs are raw outputs from autoencoder model
+        """Apply the equivariant MLP to scalar and vector embeddings.
+
+        No standardization is done; the inputs (raw outputs of an autoencoder model) are
+        passed to :meth:`vectorMLP.forward` as given.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Scalar inputs, [num_samples, bottleneck_dim + conditions_dim].
+        v : torch.Tensor
+            Vector inputs, [num_samples, 3, bottleneck_dim].
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            ``(x_out, v_out)``: scalar outputs [num_samples, num_targets] and vector
+            outputs [num_samples, 3, num_targets].
         """
 
         x, v = self.model(x=x, v=v)
@@ -45,7 +86,31 @@ class EquivariantEmbeddingRegressor(BaseGraphModel):
 
 
 class InvariantEmbeddingRegressor(BaseGraphModel):
-    """single property prediction head for pretrained embeddings"""
+    """Single-property prediction head for pretrained embeddings, scalar inputs and
+    outputs only.
+
+    Construction calls ``torch.manual_seed(seed)``, which reseeds torch's global random
+    number generator. ``self.model`` is a :class:`scalarMLP` from
+    ``config.bottleneck_dim + conditions_dim`` input columns to ``num_targets`` outputs.
+    The buffers ``target_mean`` and ``target_std`` are registered but not read by this
+    class.
+
+    Parameters
+    ----------
+    seed : int
+        Seed for ``torch.manual_seed``; also passed to the MLP.
+    config : Namespace
+        MLP settings: ``num_layers``, ``hidden_dim``, ``norm``, ``dropout`` and
+        ``bottleneck_dim``.
+    num_targets : int, optional
+        Width of the output. Default 1.
+    conditions_dim : int, optional
+        Extra input columns beyond ``config.bottleneck_dim``. Default 0.
+    target_standardization_tensor : torch.Tensor, optional
+        Entries ``[0]`` and ``[1]`` are registered as the ``target_mean`` and
+        ``target_std`` buffers. If None, both buffers are the 0-dim tensor 1.0 (the mean
+        default is 1, not 0).
+    """
 
     def __init__(self, seed, config,
                  num_targets: int = 1,
@@ -78,7 +143,21 @@ class InvariantEmbeddingRegressor(BaseGraphModel):
     def forward(self,
                 x: torch.Tensor,
                 ) -> torch.Tensor:
-        """no need to do standardization, inputs are raw outputs from autoencoder model
+        """Apply the MLP to scalar embeddings.
+
+        No standardization is done; the inputs (raw outputs of an autoencoder model) are
+        passed to :meth:`scalarMLP.forward` as given, and the output is not
+        de-standardized with ``target_mean`` or ``target_std``.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Inputs, [num_samples, bottleneck_dim + conditions_dim].
+
+        Returns
+        -------
+        torch.Tensor
+            Outputs, [num_samples, num_targets].
         """
 
         x = self.model(x=x)

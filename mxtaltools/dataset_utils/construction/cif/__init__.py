@@ -20,6 +20,7 @@ from .sites import SiteSet, sites_from_block, element_from_symbol
 from .symmetry import SymmetryInfo, space_group_from_block, parse_symop
 from .topology import ComponentSet, components_from_block
 from .reader import CifCrystal, read_cif, read_cif_block
+from .rhombohedral import reexpress_rhombohedral_axes
 from .composition import Moiety, parse_formula_moiety, hill_formula, component_formulas
 
 __all__ = [
@@ -30,6 +31,6 @@ __all__ = [
     'SiteSet', 'sites_from_block', 'element_from_symbol',
     'SymmetryInfo', 'space_group_from_block', 'parse_symop',
     'ComponentSet', 'components_from_block',
-    'CifCrystal', 'read_cif', 'read_cif_block',
+    'CifCrystal', 'read_cif', 'read_cif_block', 'reexpress_rhombohedral_axes',
     'Moiety', 'parse_formula_moiety', 'hill_formula', 'component_formulas',
 ]

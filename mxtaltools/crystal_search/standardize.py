@@ -9,11 +9,11 @@ the glide plane by b/4, so without it about 30% of their lattices cannot reach t
 c +- a turns the c-glide into an n-glide, which no shift undoes). At margin 0 that cell is unique per lattice for
 monoclinic groups up to the sign of the basis (tests/test_monoclinic_reduction_walls.py) and for triclinic ones in the
 tri_niggli convention; higher systems' penalties fix only the crystal-system metric, so any cell with that metric is
-reduced and N = I.
+reduced and N = I (a higher-system cell without that metric has no candidate and is not handled).
 
 Only crystals whose own operator list is SYM_OPS[sg] as a set are handled (a P2_1/n or P2_1/a description of sg 14 is
 not: its basis changes are a different group, and the asymmetric-unit box is the standard setting's). standardize_cells
-flags such rows and apply_basis_change refuses them.
+reports such rows as nonstandard (raising, or flagging them, per on_failure) and apply_basis_change refuses them.
 
 Why not MolCrystalOps.compute_standard_cell (spglib): on no-wall acridine search outputs it refused 0.15% of crystals
 (pseudo-symmetry within 1e-3 A makes spglib report a supercell or a supergroup) and returned a different crystal for
@@ -27,9 +27,15 @@ asymmetric-unit box with crystal_opt_utils.canonicalize_aunit. same_crystal_devi
 Choosing N: the stored lattice is first reduced without regard to the setting group (Gauss-Lagrange in the ac-plane for
 monoclinic groups, b being the unique axis; Niggli for triclinic ones), then every small correction M (entries within
 +-3; signed axis permutations for triclinic) is tried: N = N0 M must keep SYM_OPS[sg] (with some grid shift) and have
-det +1 (MXtalTools bases are right-handed). The cell with zero margin-0 penalty is taken: the identity when the stored cell already is
-reduced (its parameters are then left exactly as they are), else the one closest to the identity. A crystal with no
-zero-penalty candidate raises (or is flagged with on_failure='flag') -- nothing is dropped silently.
+det +1 (MXtalTools bases are right-handed). The cell with zero margin-0 penalty is taken: the identity when the stored
+cell already is reduced (its parameters are then left exactly as they are), else the one closest to the identity. A
+crystal with no zero-penalty candidate raises (or is flagged with on_failure='flag') -- nothing is dropped silently.
+
+normalizer_images is a separate operation on the same stored parameters: it leaves the cell as it is and returns each
+crystal as given, followed by one copy per origin shift in its space group's list of Euclidean-normaliser coset
+representatives (constants.space_group_info.NORMALIZER_OPS), each copy's molecules back in their asymmetric-unit box.
+It handles only space groups whose list is non-empty and holds pure origin shifts, and does not compare a crystal's
+own operator list with SYM_OPS[sg].
 """
 import itertools
 
@@ -69,7 +75,9 @@ def _all_in(W, w, Wt, wt, tol):
 def setting_shift(N, sg, tol=1e-6):
     """The origin shift o [3] (old fractional coordinates, from the quarter-cell grid, zero preferred) with which the
     basis change N (integer, det +-1) maps SYM_OPS[sg] onto itself -- x_new = N^-1 (x - o), so the operator (W, w)
-    becomes (N^-1 W N, N^-1 (W o + w - o)) -- or None if N is not in the setting group."""
+    becomes (N^-1 W N, N^-1 (W o + w - o)) -- or None if N is not in the setting group. Operators are compared within
+    tol (translations mod 1). The result is cached per (sg, N rounded to integers), whatever tol a later call passes; a
+    fresh copy of o is returned."""
     N = np.asarray(N, dtype=np.float64)
     key = (int(sg), np.round(N).astype(np.int64).tobytes())
     if key not in _SHIFT_CACHE:
@@ -91,7 +99,8 @@ def keeps_operators(N, sg, tol=1e-6):
 
 def standard_setting(ops, sg, tol=1e-6):
     """True if a crystal's operator list `ops` [k, 4, 4] is SYM_OPS[sg] as a set (any order; translations mod 1).
-    None (no stored list) counts as standard."""
+    None (no stored list) counts as standard. The test: `ops` has as many operators as SYM_OPS[sg] and each is within
+    tol of one of them. The result is cached per (sg, ops rounded to 1e-6), whatever tol a later call passes."""
     if ops is None:
         return True
     o = ops.detach().cpu().double().numpy() if torch.is_tensor(ops) else np.asarray(ops, dtype=np.float64)
@@ -104,6 +113,8 @@ def standard_setting(ops, sg, tol=1e-6):
 
 
 def metric(lengths, angles):
+    """Metric tensor G [3,3] (G_ij = a_i . a_j, an ndarray in the squared units of the lengths) of the cell with lengths
+    (a, b, c) and angles (alpha, beta, gamma) in radians."""
     a, b, c = lengths
     al, be, ga = angles
     return np.array([[a * a, a * b * np.cos(ga), a * c * np.cos(be)],
@@ -112,6 +123,8 @@ def metric(lengths, angles):
 
 
 def cell_from_metric(G):
+    """Inverse of metric: (lengths [3], angles [3] (alpha, beta, gamma) in radians) of the cell with metric G [3,3];
+    the cosines are clipped to [-1, 1]."""
     L = np.sqrt(np.diag(G))
     al = np.arccos(np.clip(G[1, 2] / (L[1] * L[2]), -1, 1))
     be = np.arccos(np.clip(G[0, 2] / (L[0] * L[2]), -1, 1))
@@ -120,7 +133,9 @@ def cell_from_metric(G):
 
 
 def _gauss_reduce_ac(G):
-    """Gauss-Lagrange reduction of the (a, c) plane of metric G. Returns the 3x3 integer N0 (b column untouched)."""
+    """Gauss-Lagrange reduction of the (a, c) plane of metric G. Returns the 3x3 integer N0 with det +1: its a and c
+    columns are the reduced pair (a' no longer than c', 2 ``|a'.c'|`` <= a'.a') and b' = b or -b, the sign that of the
+    2x2 change's determinant. Raises RuntimeError if the reduction has not ended after 10000 steps."""
     M = np.eye(2, dtype=np.int64)  # columns: u, v in (a, c) coordinates
     g = np.array([[G[0, 0], G[0, 2]], [G[0, 2], G[2, 2]]])
 
@@ -194,7 +209,8 @@ def _penalty0(sg, L, A):
 
 def _system_angles(sg, angles):
     """Monoclinic cells have alpha = gamma = 90 exactly; float32 storage leaves them 4e-8 rad off, which a strongly
-    skewed basis amplifies into a spurious penalty."""
+    skewed basis amplifies into a spurious penalty. Returns a float64 copy of angles [3] (radians), with alpha and
+    gamma set to np.pi / 2 for a monoclinic sg and no change for any other."""
     angles = np.asarray(angles, dtype=np.float64).copy()
     if _system(sg) == 'monoclinic':
         angles[0] = angles[2] = np.pi / 2
@@ -202,8 +218,14 @@ def _system_angles(sg, angles):
 
 
 def choose_basis(sg, lengths, angles):
-    """(N [3,3] int, new lengths, new angles, n_zero_candidates) for one crystal; N is None if no candidate cell has
-    zero margin-0 penalty."""
+    """(N [3,3] int, new lengths [3], new angles [3], n_zero_candidates) for one crystal of space group sg with cell
+    lengths and angles [3] (radians; for a monoclinic sg, alpha and gamma are first set to np.pi / 2, and a returned
+    input cell carries that). A cell already at zero margin-0 penalty gives (I, its lengths, its angles, 1), with no
+    candidate search; otherwise N is the zero-penalty candidate nearest the identity (smallest ``abs(N - I).sum()``,
+    ties by N's entries) and n_zero_candidates counts the zero-penalty candidates. N is None, with the input cell and 0,
+    if no candidate cell has zero margin-0 penalty (always so for a higher-system cell not already at zero). Zero
+    means at most PENALTY_ZERO. The Gauss (monoclinic) and Niggli (triclinic; spglib.niggli_reduce, imported on that
+    path only) reductions raise RuntimeError if they fail."""
     sg = int(sg)
     lengths = np.asarray(lengths, dtype=np.float64)
     angles = _system_angles(sg, angles)
@@ -243,8 +265,17 @@ def apply_basis_change(batch, Ns, rows=None):
     keep SYM_OPS[sg], with the origin shift o = setting_shift(N, sg), and have det +1; each changed crystal's own
     operators must be SYM_OPS[sg] -- all checked). The crystal is unchanged: new cell from the metric N^T G N, centres
     x_new = N^-1 (x - o), poses rotated by the change of Cartesian frame Q = T_fc_new N^-1 T_cf_old, then every
-    molecule's image back in its asymmetric-unit box (canonicalize_aunit). Rows not in `rows` (default: those with
-    N != I) keep their parameters exactly. Returns the new batch (a clone)."""
+    molecule's image back in its asymmetric-unit box (canonicalize_aunit). Ns: n basis changes ([n,3,3], any shape
+    with ``n * 9`` entries, cast to int64); rows: [n] bool. Rows not in `rows` (default: those with N != I) keep their
+    parameters exactly. For a monoclinic sg the metric G is taken with alpha = gamma = np.pi / 2.
+    Reads sg_ind, symmetry_operators, cell_lengths, cell_angles, aunit_centroid, aunit_orientation, aunit_handedness,
+    z_prime and max_z_prime; on the clone it assigns the cell and asymmetric-unit parameters and reruns box_analysis.
+    Centres are wrapped into [0, 1) before canonicalize_aunit; padding slots of lower-Z' crystals are not transformed; a
+    changed row's centre in (CELL_EDGE, 1) on an axis the asymmetric-unit box spans whole is set to 0 when nearer 1.
+    Raises ValueError for a selected row whose operators or N fail the checks. canonicalize_aunit runs on every row of
+    the clone (the unselected rows' asymmetric-unit parameters are put back afterwards), so its ValueError, for a
+    molecule with no image in its box, can come from an unselected row. Returns the new batch (a clone; the input batch
+    is not modified), unchanged when no row is selected."""
     from mxtaltools.crystal_search.crystal_opt_utils import canonicalize_aunit
     out = batch.clone()
     n = out.num_graphs
@@ -323,17 +354,24 @@ def apply_basis_change(batch, Ns, rows=None):
 def normalizer_images(batch, table=None):
     """Every description of each crystal under its space group's Euclidean normaliser: (images, source, coset).
 
-    For a row of space group G with coset representatives (I, w_j) of N_E(G) / G in `table` (default NORMALIZER_OPS),
-    the images are the identity followed by one per representative, K = 1 + len(table[G]) consecutive rows: the same
-    crystal with every asymmetric-unit centre (all Z' molecules together; a global origin shift) moved by w_j, wrapped
-    into [0, 1), then each molecule re-expressed in its asymmetric-unit box by canonicalize_aunit (float64 poses,
-    canonical rotvecs). The cell is unchanged. Every image is a row, including coincident ones (a coset that fixes the
-    crystal), so each crystal contributes exactly K rows. The identity image is the input row as given, not refolded.
+    For a row of space group G with coset representatives (I, w_j) of N_E(G) / G in `table` (default NORMALIZER_OPS;
+    keyed by the space-group number as a string, each entry a list of (W, w) pairs), the images are the identity
+    followed by one per representative, K = 1 + len(table[G]) consecutive rows: the same crystal with every
+    asymmetric-unit centre (all Z' molecules together; a global origin shift) moved by w_j, wrapped into [0, 1), then
+    each molecule re-expressed in its asymmetric-unit box by canonicalize_aunit (float64 poses, canonical rotvecs); a
+    moved image's centre then in (CELL_EDGE, 1) on an axis the box spans whole is set to 0 when nearer 1. The cell is
+    unchanged. Every image is a row, including coincident ones (a coset that fixes the crystal), so each crystal
+    contributes exactly K rows. The identity image is the input row as given, not refolded. Padding slots of lower-Z'
+    crystals are not moved. box_analysis is run on the images only if they carry no T_fc.
 
     Only pure-translation cosets are implemented (every W the identity; true of 80 space groups including 2 and 14);
     a row whose space group has a coset with another point part raises NotImplementedError, as does a space group with
-    no entry. Molecular point symmetry is not applied. Returns (images: a new batch, source: [M] long index of each
-    image's input row, coset: [M] long, 0 for the identity). The input batch is not modified."""
+    no entry or an empty one (229 and 230 in NORMALIZER_OPS). Molecular point symmetry is not applied. The crystal's own
+    operator list is not compared with SYM_OPS[G]: canonicalize_aunit folds with the stored operators into the box
+    tabulated for G, on every image row (the identity rows' parameters are put back afterwards), and its ValueError,
+    for a molecule with no image in its box, is not caught. Returns (images: a new batch, source: [M] long index of
+    each image's input row, coset: [M] long, 0 for the identity and j for table[G][j - 1]; source and coset are on the
+    CPU). The input batch is not modified."""
     from mxtaltools.constants.space_group_info import NORMALIZER_OPS
     from mxtaltools.crystal_search.crystal_opt_utils import canonicalize_aunit
     from mxtaltools.dataset_utils.utils import collate_data_list
@@ -377,11 +415,16 @@ def normalizer_images(batch, table=None):
 
 
 def standardize_cells(batch, on_failure='raise'):
-    """Return (standardised clone of the batch, info). info: N [n,3,3] int (identity where unchanged), origin [n,3]
-    (the shift o of x_new = N^-1 (x - o); zero where unchanged), changed [n] bool, ok [n] bool, nonstandard [n] bool
-    (operators not SYM_OPS[sg]: not handled, ok False), n_zero [n] (zero-penalty candidate cells found: 2 is the
-    +-basis pair, which describe one cell). Crystals already reduced keep their parameters exactly. on_failure='raise'
-    raises ValueError listing the crystals not handled; 'flag' leaves them unchanged with ok False."""
+    """Return (standardised clone of the batch, info); chooses N from cell_lengths, cell_angles, sg_ind and
+    symmetry_operators, applies it with apply_basis_change to the rows it changes, and does not modify the input batch.
+    info is a dict of numpy arrays: N [n,3,3] int (identity where unchanged), origin [n,3] (the shift o of
+    x_new = N^-1 (x - o); zero where unchanged), changed [n] bool, ok [n] bool, nonstandard [n] bool (operators not
+    SYM_OPS[sg]: not handled, ok False), n_zero [n] (zero-penalty candidate cells found: 2 is the +-basis pair, which
+    describe one cell; 1 for a cell already reduced, whose candidates are not searched; 0 where not handled). Crystals
+    already reduced keep their parameters exactly. on_failure='raise' raises ValueError listing the crystals not handled
+    (at most 20 indices per reason); any other value (e.g. 'flag') leaves them unchanged with ok False. Under either
+    setting the RuntimeError of choose_basis's reductions and the ValueError canonicalize_aunit can raise inside
+    apply_basis_change are not caught."""
     n = batch.num_graphs
     L = batch.cell_lengths.double().cpu().numpy()
     A = batch.cell_angles.double().cpu().numpy()
@@ -420,8 +463,11 @@ def standardize_cells(batch, on_failure='raise'):
 def _snap_edge_sliver(batch, rows):
     """The crystal builders clip a centre coordinate to [0, CELL_EDGE]; one in (CELL_EDGE, 1) is built up to 1e-4 of a
     cell length away from where it is (canonicalize_aunit can pick such an image). On an axis the asymmetric-unit box
-    spans whole (box extent 1, so 1 is 0 by a lattice translation) the value is moved to whichever of 0 and CELL_EDGE is
-    nearer, halving the worst case and making a centre that sits at a face essentially exact."""
+    spans whole (box extent 1, so 1 is 0 by a lattice translation) a value nearer 1 than CELL_EDGE is set to 0, and one
+    nearer CELL_EDGE is left for the builders to clip there, so the built centre lands on whichever of 0 and CELL_EDGE
+    is nearer, halving the worst case and making a centre that sits at a face essentially exact. Only rows where `rows`
+    ([n] bool tensor) is True; batch.aunit_centroid is assigned a new tensor. Reads batch.asym_unit_dict, which
+    canonicalize_aunit builds when absent."""
     from mxtaltools.crystal_search.crystal_opt_utils import CELL_EDGE
     box = torch.stack([batch.asym_unit_dict[str(int(sg))] for sg in batch.sg_ind]).to(batch.aunit_centroid.device)
     cen = batch.aunit_centroid.clone()
@@ -434,23 +480,28 @@ def _snap_edge_sliver(batch, rows):
 
 
 def unit_cell_fractional(batch):
-    """[(fractional coordinates [m,3] float64, atomic numbers [m]) per crystal] of the unit cell mxtaltools builds."""
+    """[(fractional coordinates [m,3] float64, atomic numbers [m]) per crystal] of the unit cell mxtaltools builds
+    (mol2ucell on a clone; the batch is not modified): T_fc^-1 applied to unit_cell_pos, not wrapped, and the crystal's
+    elements in the unit cell's layout (``crystal_building.utils.unit_cell_z``: each unit tiled sym_mult times, unit by
+    unit; until 2026-10-23 the whole z tiled, wrong for units of different compounds). Both are numpy arrays."""
+    from mxtaltools.crystal_building.utils import unit_cell_z
     b = batch.clone()
     b.mol2ucell()
     out = []
+    zp = b.z_prime.reshape(-1)
     for i in range(b.num_graphs):
         T = b.T_fc[i].double().cpu()
         pos = b.unit_cell_pos[b.unit_cell_batch == i].double().cpu()
         frac = torch.linalg.solve(T, pos.T).T.numpy()
-        zmol = b.z[b.batch == i].cpu().numpy()
-        out.append((frac, np.tile(zmol, len(frac) // len(zmol))))
+        out.append((frac, unit_cell_z(b.z[b.batch == i], zp[i], b.sym_mult[i]).cpu().numpy()))
     return out
 
 
 def same_crystal_deviation(before, after, N, origin=None):
     """Max over atoms (both directions) of the distance, in Angstrom, from each atom of `before`, mapped into `after`'s
-    basis by x_new = N^-1 (x - origin) (origin [n,3], default zero), to the nearest same-element atom image of `after`.
-    [n] float64."""
+    basis by x_new = N^-1 (x - origin) (N [n,3,3]; origin [n,3], default zero), to the nearest same-element atom image
+    of `after`, the image being chosen by rounding the fractional difference and the distance measured with after's
+    T_fc. [n] float64; inf where the two unit cells have different atom counts."""
     ua, ub = unit_cell_fractional(before), unit_cell_fractional(after)
     origin = np.zeros((len(ua), 3)) if origin is None else np.asarray(origin, dtype=np.float64).reshape(len(ua), 3)
     T_new = after.T_fc.double().cpu().numpy()

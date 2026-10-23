@@ -52,6 +52,8 @@ def _replace(tmp, path, budget_s=REPLACE_BUDGET_S):
 
 
 def atomic_torch_save(obj, path):
+    """torch.save obj to path atomically: written, flushed and fsynced to <path>.<pid>.tmp, then renamed over path by
+    _replace; the temporary file is removed if it still exists afterwards (the save or the rename raised)."""
     tmp = f'{path}.{os.getpid()}.tmp'
     try:
         with open(tmp, 'wb') as fh:
@@ -65,6 +67,8 @@ def atomic_torch_save(obj, path):
 
 
 def atomic_json_dump(obj, path):
+    """json.dump obj to path atomically, in text mode, by the same temporary-file, fsync and rename steps as
+    atomic_torch_save."""
     tmp = f'{path}.{os.getpid()}.tmp'
     try:
         with open(tmp, 'w') as fh:
@@ -87,7 +91,8 @@ def read_json(path):
 
 
 def committed_outputs(opt_outs, state):
-    """The prefix of the output list that the progress state vouches for (state['n_out'] rows)."""
+    """The prefix of the output list that the progress state vouches for (state['n_out'] rows); opt_outs unchanged if
+    state has no 'n_out' or it is None. Raises RuntimeError if opt_outs is shorter than n_out."""
     n_out = state.get('n_out')
     if n_out is None:
         return opt_outs
@@ -98,6 +103,9 @@ def committed_outputs(opt_outs, state):
 
 
 def owner_record():
+    """This process's lease record, a dict with owner, job, restart, host and pid. With SLURM_JOB_ID non-empty, owner is
+    'slurm:<job>:<restart>:<host>:<pid>', job is that string and restart is the int SLURM_RESTART_COUNT (0 if unset
+    or empty); otherwise owner is '<host>:<pid>' and job and restart are None."""
     host, pid = socket.gethostname(), os.getpid()
     job = os.environ.get('SLURM_JOB_ID')
     if job:
@@ -107,10 +115,16 @@ def owner_record():
 
 
 def owner_id():
+    """The owner string of owner_record()."""
     return owner_record()['owner']
 
 
 class RunLease:
+    """One-writer lease for a run, held in the JSON file <stem>_owner.json and recording owner_record() (see the
+    module docstring). stale_after_s is the lease age, in seconds of file modification time, from which another owner
+    may take it over; settle_s is the pause in acquire() between writing the lease and re-checking it; heartbeat_s is
+    the interval at which the heartbeat thread touches the lease, by default stale_after_s / 4 clipped to [0.5, 60] s.
+    Constructing a lease does not touch the filesystem."""
     def __init__(self, stem, stale_after_s=1800.0, settle_s=2.0, heartbeat_s=None):
         self.path = f'{stem}_owner.json'
         self.record = owner_record()
@@ -132,6 +146,11 @@ class RunLease:
             os.remove(probe)
 
     def acquire(self):
+        """Take the lease or raise RunLeaseLost. A lease file naming another owner is taken over at once if it is the
+        same SLURM job with a lower restart count, taken over if its age (_age_s) is at least stale_after_s, and
+        otherwise refused with RunLeaseLost; a missing or unreadable file, or one naming this owner, is taken without
+        an age check. The record is then written, settle_s is slept, check() confirms (and renews) ownership, and the
+        heartbeat thread is started."""
         held = read_json(self.path)
         if held is not None and held.get('owner') != self.owner:
             requeue = (self.record['job'] is not None and held.get('job') == self.record['job']
@@ -150,9 +169,12 @@ class RunLease:
         self._start_heartbeat()
 
     def renew(self):
+        """Write this process's record to the lease file with atomic_json_dump, without checking the current owner."""
         atomic_json_dump(self.record, self.path)
 
     def check(self):
+        """Raise RunLeaseLost unless the lease file names this owner (a missing or unreadable file also raises);
+        otherwise renew it."""
         held = read_json(self.path)
         if held is None or held.get('owner') != self.owner:
             raise RunLeaseLost(f"{self.path}: lease now held by {None if held is None else held.get('owner')}, "
@@ -160,9 +182,11 @@ class RunLease:
         self.renew()
 
     def _start_heartbeat(self):
-        """Keep the lease fresh between saves: touch it every heartbeat_s while it still names this owner; stop as
-        soon as a read names another owner (the next check() then raises before any write). A read that fails (e.g.
-        while renew() replaces the file) does not stop it."""
+        """Keep the lease fresh between saves: touch it (os.utime; OSError ignored) every heartbeat_s while it still
+        names this owner. The thread stops only when a read names another owner (the next check() then raises before
+        any write) or release() sets the stop event; a read that finds the file missing or unreadable (e.g. while
+        renew() replaces it) skips that touch and the thread keeps beating, leaving ownership to check(). Starts at
+        most one daemon thread per lease; a stopped thread is not restarted."""
         if self._thread is not None:
             return
 
@@ -181,6 +205,8 @@ class RunLease:
         self._thread.start()
 
     def release(self):
+        """Stop the heartbeat thread (joined for up to 5 s), then delete the lease file if it still names this
+        owner."""
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=5)
@@ -190,6 +216,10 @@ class RunLease:
 
 
 class StopRequest:
+    """Reasons to leave the batch loop (see the module docstring). Construction installs signal handlers: SIGUSR1,
+    where the platform has it, records the signal number in signalled; SIGTERM raises SystemExit(128 + signum). The
+    previous handlers are kept for close(). Outside the main thread signal.signal raises ValueError, which is
+    ignored, so no handler is installed and only stop_files (stored as strings) apply."""
     def __init__(self, stop_files=()):
         self.stop_files = [str(f) for f in stop_files]
         self.signalled = None
@@ -204,12 +234,16 @@ class StopRequest:
                 pass
 
     def _handler(self, signum, frame):
+        """Record signum for reason()."""
         self.signalled = signum
 
     def _terminate(self, signum, frame):
+        """Raise SystemExit(128 + signum)."""
         raise SystemExit(128 + int(signum))  # unwind: the caller's finally releases the lease; saves are atomic
 
     def reason(self):
+        """'signal <signum>' once SIGUSR1 has been received, else 'stop file <path>' for the first of stop_files that
+        exists, else None."""
         if self.signalled is not None:
             return f'signal {self.signalled}'
         for f in self.stop_files:
@@ -218,6 +252,7 @@ class StopRequest:
         return None
 
     def close(self):
+        """Restore the signal handlers replaced at construction."""
         for sig, handler in self._previous.items():
             signal.signal(sig, handler)
         self._previous = {}

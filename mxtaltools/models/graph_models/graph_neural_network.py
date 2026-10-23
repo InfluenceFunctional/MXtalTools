@@ -1,3 +1,7 @@
+"""Message-passing graph network trunks producing per-node embeddings: :class:`ScalarGNN`
+(scalar node features), :class:`VectorGNN` (scalar and Cartesian-vector node features)
+and :class:`MolCrystalScalarGNN` (scalar features over an inside/outside molecular-crystal
+cluster graph)."""
 from typing import Optional, Tuple
 
 import torch
@@ -9,6 +13,62 @@ from mxtaltools.models.modules.graph_convolution import MConv, v_MConv
 
 
 class ScalarGNN(torch.nn.Module):
+    """Message-passing network mapping node features and positions to per-node embeddings.
+
+    Node features are embedded by an :class:`EmbeddingBlock` (column 0 as an integer
+    type index, the remaining columns concatenated, then a linear layer to
+    ``node_dim``) and passed through a :class:`scalarMLP`. Each of ``num_convs``
+    stages then applies an :class:`MConv` over the edges, with a radial basis
+    expansion of the edge lengths as edge attributes, followed by a
+    :class:`scalarMLP`. A bias-free linear layer maps ``node_dim`` to
+    ``embedding_dim`` (an identity when they are equal).
+
+    Parameters
+    ----------
+    input_node_dim : int
+        Width of the input node features, including column 0.
+    node_dim : int
+        Hidden node width.
+    fcs_per_gc : int
+        Number of blocks in each :class:`scalarMLP`.
+    message_dim : int
+        Message width of each :class:`MConv`.
+    embedding_dim : int
+        Output width.
+    num_convs : int
+        Number of convolution stages. With 0, no edges or distances are used.
+    num_radial : int
+        Number of radial basis functions; also the edge-attribute width of each
+        :class:`MConv`.
+    num_input_classes : int, optional
+        Passed to :class:`EmbeddingBlock`, whose table has ``num_input_classes + 1``
+        rows. Default 101.
+    cutoff : float, optional
+        Stored as the float32 buffer ``cutoff`` and passed to the radial basis.
+        Default 5.0.
+    max_num_neighbors : int, optional
+        Stored as ``max_num_neighbors``; not read by this module. Default 32.
+    envelope_exponent : int, optional
+        Envelope exponent of :class:`BesselBasisLayer`; used only with
+        ``radial_embedding='bessel'``. Default 5.
+    activation : str, optional
+        Activation name for the :class:`scalarMLP` blocks and the :class:`MConv`
+        messages. Default ``'gelu'``.
+    atom_type_embedding_dim : int, optional
+        Width of the type embedding in :class:`EmbeddingBlock`. Default 5.
+    norm : str or None, optional
+        Normalization name for the :class:`scalarMLP` blocks; the :class:`MConv`
+        layers are built with ``norm=None``. Default None.
+    dropout : float, optional
+        Dropout probability in the :class:`scalarMLP` blocks. Default 0.
+    radial_embedding : str, optional
+        ``'bessel'`` (:class:`BesselBasisLayer` with ``cutoff``) or ``'gaussian'``
+        (:class:`GaussianEmbedding` with ``num_radial`` centres evenly spaced from 0
+        to ``cutoff``). Any other value leaves ``rbf`` unset, so :meth:`forward`
+        raises AttributeError when ``num_convs > 0``. Default ``'bessel'``.
+    override_cutoff : float, optional
+        If given, used instead of ``cutoff``.
+    """
     def __init__(self,
                  input_node_dim: int,
                  node_dim: int,
@@ -86,8 +146,23 @@ class ScalarGNN(torch.nn.Module):
                          pos: torch.Tensor,
                          dist: Optional[torch.Tensor] = None,
                          ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        compute elements for radial & spherical embeddings
+        """Return the edge lengths and their radial basis expansion.
+
+        Parameters
+        ----------
+        edge_index : torch.LongTensor
+            Edges, [2, num_edges]; read only when ``dist`` is None.
+        pos : torch.Tensor
+            Node positions, [num_nodes, 3]; read only when ``dist`` is None.
+        dist : torch.Tensor, optional
+            Precomputed edge lengths, [num_edges]; returned unchanged.
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            ``(dist, rbf)``: the Euclidean distances between ``pos[edge_index[0]]`` and
+            ``pos[edge_index[1]]``, [num_edges], in the units of ``pos``, and
+            ``self.rbf(dist)``, [num_edges, num_radial].
         """
         if dist is None:
             i, j = edge_index  # i->j source-to-target
@@ -102,6 +177,29 @@ class ScalarGNN(torch.nn.Module):
                 edge_index: torch.LongTensor,
                 dist: Optional[torch.Tensor] = None
                 ) -> torch.Tensor:
+        """Embed the nodes of a batch of graphs.
+
+        Parameters
+        ----------
+        z : torch.Tensor
+            Node features, [num_nodes, input_node_dim] or [num_nodes] (treated as one
+            column); column 0 is cast to long and embedded as the type index.
+        pos : torch.Tensor
+            Node positions, [num_nodes, 3].
+        batch : torch.LongTensor
+            Graph index of each node, [num_nodes]; forwarded to the
+            :class:`scalarMLP` normalizations.
+        edge_index : torch.LongTensor
+            Edges, [2, num_edges]; read only when ``num_convs > 0``.
+        dist : torch.Tensor, optional
+            Precomputed edge lengths, [num_edges]; when None they are computed from
+            ``pos``.
+
+        Returns
+        -------
+        torch.Tensor
+            Node embeddings, [num_nodes, embedding_dim].
+        """
 
         x = self.init_node_embedding(z)
         x = self.zeroth_fc_block(x=x, batch=batch)
@@ -116,6 +214,72 @@ class ScalarGNN(torch.nn.Module):
 
 
 class VectorGNN(torch.nn.Module):
+    """Message-passing network over scalar and Cartesian-vector node features.
+
+    Scalars ``x`` are embedded by an :class:`EmbeddingBlock` (an identity when
+    ``atom_type_embedding_dim`` is 0) and vectors ``v`` by a bias-free linear layer
+    over their channel axis, from ``v_input_node_dim`` to ``node_dim`` channels; a
+    :class:`vectorMLP` then updates both. Each of ``num_convs`` stages applies an
+    :class:`MConv` to ``x`` and a :class:`v_MConv` to ``v``, both with a radial basis
+    expansion of the edge lengths as edge attributes, followed by a
+    :class:`vectorMLP`. Bias-free linear output layers map the scalar track to
+    ``embedding_dim`` and the vector track to ``v_embedding_dim`` channels
+    (identities when the width already equals ``node_dim``).
+
+    Parameters
+    ----------
+    input_node_dim : int
+        Width of the input scalars, including column 0; not used when
+        ``atom_type_embedding_dim`` is 0.
+    node_dim : int
+        Hidden width of both tracks. When ``atom_type_embedding_dim`` is 0, the input
+        scalars must already have this width.
+    fcs_per_gc : int
+        Number of blocks in each :class:`vectorMLP`.
+    message_dim : int
+        Message width of each :class:`MConv` and :class:`v_MConv`.
+    embedding_dim : int
+        Output width of the scalar track.
+    num_convs : int
+        Number of convolution stages. With 0, no edges or distances are used.
+    num_radial : int
+        Number of radial basis functions; also the edge-attribute width of each
+        convolution.
+    num_input_classes : int, optional
+        Passed to :class:`EmbeddingBlock`, whose table has ``num_input_classes + 1``
+        rows. Default 101.
+    cutoff : float, optional
+        Stored as the float32 buffer ``cutoff`` and passed to the radial basis.
+        Default 5.0.
+    max_num_neighbors : int, optional
+        Stored as ``max_num_neighbors``; not read by this module. Default 32.
+    envelope_exponent : int, optional
+        Envelope exponent of :class:`BesselBasisLayer`; used only with
+        ``radial_embedding='bessel'``. Default 5.
+    activation : str, optional
+        Activation name for the :class:`vectorMLP` layers and the :class:`MConv`
+        messages. Default ``'gelu'``.
+    atom_type_embedding_dim : int, optional
+        Width of the type embedding in :class:`EmbeddingBlock`; 0 replaces the
+        embedding with an identity. Default 5.
+    norm : str or None, optional
+        Scalar normalization name for the :class:`vectorMLP` layers; the
+        convolutions are built with ``norm=None``. Default None.
+    vector_norm : str or None, optional
+        Vector normalization name for the :class:`vectorMLP` layers. Default None.
+    dropout : float, optional
+        Dropout probability, passed to the :class:`vectorMLP` layers. Default 0.
+    radial_embedding : str, optional
+        ``'bessel'`` or ``'gaussian'``, as in :class:`ScalarGNN`; any other value
+        leaves ``rbf`` unset, so :meth:`forward` raises AttributeError when
+        ``num_convs > 0``. Default ``'bessel'``.
+    override_cutoff : float or torch.Tensor, optional
+        If given, used instead of ``cutoff``; a tensor is cloned and detached.
+    v_embedding_dim : int, optional
+        Output channel count of the vector track. Defaults to ``embedding_dim``.
+    v_input_node_dim : int, optional
+        Input channel count of ``v``. Defaults to 1.
+    """
     def __init__(self,
                  input_node_dim: int,
                  node_dim: int,
@@ -224,8 +388,21 @@ class VectorGNN(torch.nn.Module):
                          edge_index: torch.LongTensor,
                          pos: torch.Tensor
                          ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        compute elements for radial & spherical embeddings
+        """Return the edge lengths and their radial basis expansion.
+
+        Parameters
+        ----------
+        edge_index : torch.LongTensor
+            Edges, [2, num_edges].
+        pos : torch.Tensor
+            Node positions, [num_nodes, 3].
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            ``(dist, rbf)``: the Euclidean distances between ``pos[edge_index[0]]`` and
+            ``pos[edge_index[1]]``, [num_edges], in the units of ``pos``, and
+            ``self.rbf(dist)``, [num_edges, num_radial].
         """
         i, j = edge_index  # i->j source-to-target
         dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
@@ -239,6 +416,31 @@ class VectorGNN(torch.nn.Module):
                 batch: torch.LongTensor,
                 edges_dict: dict
                 ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Embed the scalar and vector node features of a batch of graphs.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Node scalars, [num_nodes, input_node_dim] or [num_nodes] (column 0 is cast
+            to long and embedded as the type index); [num_nodes, node_dim] when
+            ``atom_type_embedding_dim`` is 0.
+        v : torch.Tensor
+            Node vectors, [num_nodes, 3, v_input_node_dim].
+        pos : torch.Tensor
+            Node positions, [num_nodes, 3].
+        batch : torch.LongTensor
+            Graph index of each node, [num_nodes]; forwarded to the
+            :class:`vectorMLP` layers.
+        edges_dict : dict
+            ``edges_dict['edge_index']``, [2, num_edges], is read only when
+            ``num_convs > 0``; otherwise ``edges_dict`` is not read.
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            ``(x_out, v_out)`` with ``x_out`` [num_nodes, embedding_dim] and ``v_out``
+            [num_nodes, 3, v_embedding_dim].
+        """
 
         x = self.init_node_embedding(x)
         v = self.init_vector_embedding(v)
@@ -256,6 +458,59 @@ class VectorGNN(torch.nn.Module):
 
 
 class MolCrystalScalarGNN(torch.nn.Module):
+    """Scalar message-passing network over an inside/outside molecular-crystal cluster graph.
+
+    Layers are built as in :class:`ScalarGNN`. :meth:`forward` convolves over the
+    intramolecular and intermolecular edges together, applies each stage's
+    :class:`scalarMLP` to the inside nodes only, and after every stage copies the
+    inside-node features to all nodes of their graph with
+    :meth:`periodize_molecular_crystal`.
+
+    Parameters
+    ----------
+    input_node_dim : int
+        Width of the input node features, including column 0.
+    node_dim : int
+        Hidden node width.
+    fcs_per_gc : int
+        Number of blocks in each :class:`scalarMLP`.
+    message_dim : int
+        Message width of each :class:`MConv`.
+    embedding_dim : int
+        Output width.
+    num_convs : int
+        Number of convolution stages.
+    num_radial : int
+        Number of radial basis functions; also the edge-attribute width of each
+        :class:`MConv`.
+    num_input_classes : int, optional
+        Passed to :class:`EmbeddingBlock`, whose table has ``num_input_classes + 1``
+        rows. Default 101.
+    cutoff : float, optional
+        Stored as the float32 buffer ``cutoff`` and passed to the radial basis.
+        Default 5.0.
+    max_num_neighbors : int, optional
+        Stored as ``max_num_neighbors``; not read by this module. Default 32.
+    envelope_exponent : int, optional
+        Envelope exponent of :class:`BesselBasisLayer`; used only with
+        ``radial_embedding='bessel'``. Default 5.
+    activation : str, optional
+        Activation name for the :class:`scalarMLP` blocks and the :class:`MConv`
+        messages. Default ``'gelu'``.
+    atom_type_embedding_dim : int, optional
+        Width of the type embedding in :class:`EmbeddingBlock`. Default 5.
+    norm : str or None, optional
+        Normalization name for the :class:`scalarMLP` blocks; the :class:`MConv`
+        layers are built with ``norm=None``. Default None.
+    dropout : float, optional
+        Dropout probability in the :class:`scalarMLP` blocks. Default 0.
+    radial_embedding : str, optional
+        ``'bessel'`` or ``'gaussian'``, as in :class:`ScalarGNN`; any other value
+        leaves ``rbf`` unset, so :meth:`forward` raises AttributeError when
+        ``num_convs > 0``. Default ``'bessel'``.
+    override_cutoff : float, optional
+        If given, used instead of ``cutoff``.
+    """
     def __init__(self,
                  input_node_dim: int,
                  node_dim: int,
@@ -332,8 +587,21 @@ class MolCrystalScalarGNN(torch.nn.Module):
                          edge_index: torch.LongTensor,
                          pos: torch.Tensor
                          ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        compute elements for radial & spherical embeddings
+        """Return the edge lengths and their radial basis expansion.
+
+        Parameters
+        ----------
+        edge_index : torch.LongTensor
+            Edges, [2, num_edges].
+        pos : torch.Tensor
+            Node positions, [num_nodes, 3].
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            ``(dist, rbf)``: the Euclidean distances between ``pos[edge_index[0]]`` and
+            ``pos[edge_index[1]]``, [num_edges], in the units of ``pos``, and
+            ``self.rbf(dist)``, [num_edges, num_radial].
         """
         i, j = edge_index  # i->j source-to-target
         dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
@@ -348,6 +616,43 @@ class MolCrystalScalarGNN(torch.nn.Module):
                 ptr: torch.LongTensor,
                 edges_dict: dict
                 ) -> torch.Tensor:
+        """Embed a batch of molecular-crystal cluster graphs, reducing to the inside nodes.
+
+        ``edges_dict['edge_index']`` and ``edges_dict['edge_index_inter']`` are
+        concatenated along dim 1 and their lengths computed from ``pos``. In each
+        stage the :class:`MConv` is applied to all nodes over all of these edges, the
+        stage's :class:`scalarMLP` output replaces the rows ``inside_inds``, and
+        :meth:`periodize_molecular_crystal` copies the inside rows to every node of
+        their graph and writes ``aux_ind`` into the last feature column.
+
+        Parameters
+        ----------
+        z : torch.Tensor
+            Node features, [num_nodes, input_node_dim] or [num_nodes] (treated as one
+            column); column 0 is cast to long and embedded as the type index.
+        pos : torch.Tensor
+            Node positions, [num_nodes, 3].
+        batch : torch.LongTensor
+            Graph index of each node, [num_nodes]. The zeroth :class:`scalarMLP`
+            receives ``batch``; the stage blocks receive ``batch[inside_inds]``.
+        aux_ind : torch.Tensor
+            Node region label, [num_nodes], written into the last feature column of
+            every node after each stage.
+        ptr : torch.LongTensor
+            Node offsets of the graphs, [num_graphs + 1].
+        edges_dict : dict
+            Edge dict in the form returned by ``build_radial_graph`` with ``aux_ind``.
+            ``'edge_index'``, ``'edge_index_inter'``, ``'inside_inds'``,
+            ``'outside_inds'``, ``'inside_batch'`` and ``'n_repeats'`` are looked up
+            even when ``num_convs`` is 0; ``'outside_inds'`` is not otherwise used.
+
+        Returns
+        -------
+        torch.Tensor
+            With ``num_convs > 0``, embeddings of the inside nodes in the order of
+            ``inside_inds``, [num_inside, embedding_dim]; with ``num_convs`` 0,
+            embeddings of all nodes, [num_nodes, embedding_dim].
+        """
 
         x = self.init_node_embedding(z)
         x = self.zeroth_fc_block(x=x, batch=batch)
@@ -374,6 +679,41 @@ class MolCrystalScalarGNN(torch.nn.Module):
         return self.output_layer(x)
 
     def periodize_molecular_crystal(self, inside_batch, inside_inds, n, n_repeats, ptr, x, aux_ind):
+        """Copy inside-node features to every node of their graph and rewrite the last column.
+
+        For each graph ``ii``, rows ``ptr[ii]:ptr[ii + 1]`` of ``x`` are overwritten
+        with that graph's inside rows (``x[inside_inds[inside_batch == ii]]``) tiled
+        ``n_repeats[ii]`` times along dim 0. The tiled block must have as many rows as
+        the graph has nodes, or a single row, which is broadcast to all of them;
+        otherwise the assignment raises RuntimeError. Each node receives the features
+        of its matching inside node only when the
+        graph's nodes are laid out as consecutive copies of its inside nodes in the
+        same order. The last column of ``x`` is then set to ``aux_ind``.
+
+        Parameters
+        ----------
+        inside_batch : torch.LongTensor
+            Graph index of each inside node, [num_inside].
+        inside_inds : torch.LongTensor
+            Indices of the inside nodes, [num_inside].
+        n : int
+            Index of the current convolution stage.
+        n_repeats : list of int
+            Number of copies per graph, length ``num_graphs``.
+        ptr : torch.LongTensor
+            Node offsets of the graphs, [num_graphs + 1].
+        x : torch.Tensor
+            Node features, [num_nodes, node_dim]; modified in place.
+        aux_ind : torch.Tensor
+            Node region label, [num_nodes].
+
+        Returns
+        -------
+        torch.Tensor
+            ``x``, [num_nodes, node_dim]; on the last stage
+            (``n == len(self.interaction_blocks) - 1``), ``x[inside_inds]``,
+            [num_inside, node_dim].
+        """
         for ii in range(len(ptr) - 1):  # enforce periodicity for each crystal, assuming invariant node features
             # copy the first asymmetric unit to all periodic images (safe since all are SE(3) invariant)
             # assumes the crystals are ordered specifically in this way

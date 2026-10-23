@@ -88,8 +88,9 @@ def _spglib_cell(b, i):
     """the (lattice, fractional positions, numbers) compute_standard_cell hands spglib for crystal i"""
     cellpar = b.full_cell_parameters()[i, :6].clone().numpy()
     cellpar[3:] *= 180 / np.pi
+    from mxtaltools.crystal_building.utils import unit_cell_z
     positions = fractional_transform(b.unit_cell_pos[b.unit_cell_batch == i], b.T_cf[i]).numpy()
-    numbers = b.z[b.batch == i].repeat(b.sym_mult[i]).numpy()
+    numbers = unit_cell_z(b.z[b.batch == i], b.z_prime.reshape(-1)[i], b.sym_mult[i]).numpy()
     return cellpar_to_cell(cellpar), positions, numbers
 
 
@@ -172,8 +173,9 @@ def test_space_group_mismatch_raises(molecules):
 @pytest.mark.filterwarnings('ignore::DeprecationWarning')
 def test_oblique_cell_scores_like_its_standard_cell(molecules):
     """The same crystal in a very oblique basis and in its standard cell must build the same cluster.
-    get_cart_translations bounds how far a translated cell reaches by the cell's farthest corner; the old
-    |a+b+c| collapses when a and c nearly cancel and dropped interacting neighbours (elj off by up to ~2000)."""
+    get_cart_translations once bounded how far a translated cell reaches by |a+b+c|, which collapses when a and c
+    nearly cancel and dropped interacting neighbours (elj off by up to ~2000); since 2026-10-18 it tests the cell's
+    molecules themselves, searched exactly in any basis."""
     sg, n = 14, 16
     b = _crystals(molecules, sg, n, seed=114, scramble=3)
     std = b.clone().compute_standard_cell()

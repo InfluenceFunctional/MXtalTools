@@ -1,3 +1,51 @@
+"""Per-molecule force-field and polymorph lookup tables for small organic molecules.
+
+Molecules are keyed by name (``'acridine'``, ``'anthracene'``,
+``'2,7-dihydroxynaphthalene'``, ``'nicotinamide'``, ``'benzamide'``,
+``'isonicotinamide'``); not every table covers every molecule. Per-atom
+tables use 1-based atom indices.
+
+FF_PATH_DICT : dict[str, str]
+    Molecule name to a force-field ``.lt`` file name with a ``gaff2_`` prefix
+    (a bare file name, no directory); nicotinamide and acridine only.
+MOLECULE_SYM_INDICES : dict[str, dict[int, int]]
+    Molecule name to an identity map over its atom indices, 1 to
+    ``MOLECULE_NUM_ATOMS[name]``.
+MOLECULE_ATOM_TYPES_MASSES : dict[str, str]
+    Molecule name to a text block headed ``Masses`` with one line per
+    atom-type number giving its mass and a ``#`` comment naming the type
+    (nicotinamide types 1-8: ha, h4, hn, n, nb, c, ca, o; acridine types 1-3:
+    nb, ca, ha).
+MOLECULE_NUM_ATOM_TYPES : dict[str, int]
+    Number of atom types per molecule: 8 for nicotinamide, 3 for acridine.
+MOLECULE_MASSES : dict[str, float]
+    Molecular mass per molecule (179.22 for acridine, 122.12 for
+    nicotinamide).
+MOLECULE_NUM_ATOMS : dict[str, int]
+    Number of atoms, hydrogens included, per molecule.
+MOLECULE_SHORTHAND : dict[str, str]
+    Short molecule tag: ``'nic1'`` for nicotinamide, ``'AC1'`` for acridine.
+ATOM_TYPES : dict[str, dict[int, int]]
+    Molecule name to a map from atom index to atom-type number, for
+    nicotinamide, benzamide, isonicotinamide and acridine. For nicotinamide
+    and acridine the numbers follow ``MOLECULE_ATOM_TYPES_MASSES``. Benzamide
+    and isonicotinamide have no ``MOLECULE_ATOM_TYPES_MASSES`` entry; their
+    values are drawn from the nicotinamide numbers 1-8, and neither assigns
+    the ``nb`` type (5).
+ATOM_CHARGES : dict[str, dict[int, float]]
+    Molecule name to a map from atom index to partial charge, for the same
+    four molecules as ``ATOM_TYPES``.
+structure2polymorph : dict[str, int]
+    ``'<molecule>/<structure>'`` key (``'nicotinamide/NICOAM07'``,
+    ``'acridine/Form2'``, ``'<molecule>/liquid'``, ...) to a 0-based
+    polymorph index: 0-9 for nicotinamide and 0-7 for acridine, with the
+    liquid last.
+polymorph2form : dict[str, dict[int, str]]
+    Molecule name to a map from the polymorph index of
+    ``structure2polymorph`` to a display label (``'Nic I'``, ``'Acr II'``,
+    ``'Acr Liq'``, ...). Nicotinamide indices 4 and 5 both map to
+    ``'Nic V'``.
+"""
 FF_PATH_DICT = {'nicotinamide': 'gaff2_nicotinamid_long.lt',
                 'acridine': 'gaff2_acridine.lt'}
 

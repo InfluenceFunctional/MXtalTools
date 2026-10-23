@@ -1,3 +1,13 @@
+"""Radial distribution functions of crystal cluster batches and distances between them.
+
+`crystal_rdf` histograms the intermolecular edge lengths of a crystal cluster batch into one or
+more channels (all pairs, element pairs, within-molecule atom-index pairs, or bonded-environment
+pairs) and divides by the volume of each radial shell. `compute_rdf_distance` compares RDFs by the
+mean, over active channels, of the 1-D earth mover's distance between unit-normalised channels;
+`compute_rdf_distmat`, `compute_rdf_distmat_parallel` and `rdf_radial_graph` build pairwise
+matrices and neighbour lists from that distance.
+"""
+
 import itertools
 import math
 from typing import Tuple, Optional, Union
@@ -17,10 +27,57 @@ def crystal_rdf(crystal_batch,
                 mode: Optional[str] = None,
                 atomic_numbers_override: Optional[torch.LongTensor] = None
                 ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-    """
-    faster rdf calculation
-    technically returns the radial density function, not the dimensionless g(r), as we aren't
-    dividing by the true density in the calculation
+    """Radial density function over the intermolecular edges of a crystal cluster batch.
+
+    Distances are the Euclidean lengths ``|pos[edges[0]] - pos[edges[1]]|`` of the edges in
+    ``precomputed_distances_dict['edge_index_inter']``, each assigned to the graph of its first
+    endpoint (``crystal_batch.batch[edges[0]]``). Only edges in that list contribute, so distances
+    beyond the cutoff the radial graph was built with are absent whatever ``rrange`` is. Counts are
+    divided by the volume of each spherical shell, ``4/3 * pi * (r_{k+1}**3 - r_k**3)`` for the bin
+    edges ``r = linspace(rrange[0], rrange[1], bins + 1)``. No division by a number density is made,
+    so the result is a radial density, not the dimensionless g(r). Finally every bin is multiplied by
+    `smooth_cutoff` evaluated at its upper edge with cutoff ``rrange[-1]`` and onset
+    ``rrange[-1] - 1``: bins whose upper edge is at or below the onset are unchanged and the last bin
+    is zero.
+
+    Parameters
+    ----------
+    crystal_batch : MolCrystalData
+        Batched crystal cluster; not modified. Every mode reads ``pos``, ``batch`` and
+        ``num_graphs``. ``'elementwise'`` also reads ``z``; ``'atomwise'`` reads ``num_atoms[0]`` and
+        the length of ``z``; ``'envwise'`` reads ``aux_ind``, ``z``, ``z_prime`` and ``mol_ind``
+        through `get_1WL_env_labels`.
+    precomputed_distances_dict : dict
+        Edge dictionary of the batch's radial graph; required despite the None default.
+        ``'edge_index_inter'`` [2, num_edges] is read in every mode; ``'envwise'`` also reads
+        ``'edge_index'`` and ``'intramolecular_dist'``.
+    rrange : tuple of float
+        (r_min, r_max) of the histogram, in the length units of ``crystal_batch.pos``. Default
+        (0, 10).
+    bins : int
+        Number of histogram bins. Default 100.
+    mode : str, optional
+        Channel partition. ``'elementwise'``: one channel per unordered pair of elements
+        (`get_elementwise_dists`). ``'atomwise'``: one channel per unordered pair of within-molecule
+        atom indices, the indices being ``arange(num_atoms[0])`` tiled over all atoms of the batch, so
+        every molecule in the batch is assumed to have the same size and atom order (not checked).
+        ``'envwise'``: one channel per unordered pair of bonded-environment labels from
+        `get_1WL_env_labels`. These three modes use the Gaussian-smoothed `smooth_1d_histogram`. Any
+        other value, including None, gives one all-pairs channel histogrammed by the hard-binned
+        `batch_histogram_1d`.
+    atomic_numbers_override : torch.LongTensor, optional
+        Element list for ``'elementwise'`` mode; ignored in other modes.
+
+    Returns
+    -------
+    smoothed_rdf : torch.Tensor
+        [num_graphs, num_channels, bins] shell-volume-normalised histogram after the envelope;
+        num_channels is 1 when ``mode`` is not one of the three channelled modes.
+    bin_centers : torch.Tensor
+        [bins] upper bin edges, ``r[1:]``, with ``requires_grad`` set.
+    rdfs_dict : dict
+        Map from channel index to channel name (for example ``'C_to_N'`` or ``'0_to_3'``); empty
+        when ``mode`` is not one of the three channelled modes.
     """
     device = crystal_batch.pos.device
     num_graphs = crystal_batch.num_graphs
@@ -54,6 +111,9 @@ def crystal_rdf(crystal_batch,
 
     elif atomwise:  # todo this is only implemented for an identical atom indexing (assumes batch is repetition of same molecule)
         # todo add flag that this won't work on mixed batches
+        # the labels tile graph 0's WHOLE asymmetric unit (num_atoms[0]), not its units: at Z'>1 the channel meaning
+        # changes (audit #24, scheduled by no stage); no unit is read here, so the unit map is not consulted (a row
+        # whose units cannot be read is refused earlier, by the split)
         mol_size = crystal_batch.num_atoms[0].item()
         tot_num_repeats = len(crystal_batch.z) // mol_size
         atom_inds = torch.arange(mol_size, device=device).repeat(tot_num_repeats)
@@ -102,6 +162,51 @@ def crystal_rdf(crystal_batch,
 
 
 def get_1WL_env_labels(crystal_batch, precomputed_distances_dict):
+    """Label every atom of a crystal cluster batch by its bonded environment in the asymmetric unit.
+
+    Bonds are the edges of ``precomputed_distances_dict['edge_index']`` whose
+    ``'intramolecular_dist'`` is below 1.8 (in the units of the stored distances). Every bond endpoint
+    must be an asymmetric-unit atom (``aux_ind == 0``). On the asymmetric-unit atoms of the whole
+    batch jointly, labels start from the distinct (atomic number, degree) pairs, degree counting the
+    bond edges whose first index is the atom, and are refined by 1-WL colour refinement: each round
+    relabels an atom by its current label together with the sorted labels of its bonded neighbours.
+    Refinement stops when the number of distinct labels stops changing, or after 32 rounds. Labels
+    are the consecutive integers from 0 and are shared by all graphs of the batch.
+
+    The labels are then copied onto the cluster. For graph g with Z' = ``z_prime[g]``, the
+    asymmetric-unit atoms are split into its units in storage order, as the unit map of the rows the
+    cluster was built from says (``crystal_building.utils.unit_layout``: Z' equal blocks of
+    ``num_atoms // z_prime`` atoms at this stage); the cluster atoms of graph
+    g whose ``mol_ind`` is at least the first ``mol_ind`` of block z and below that of block z + 1
+    (for the last block, up to and including the graph's largest ``mol_ind``) receive block z's
+    labels, tiled. This assumes
+    those atoms are stored as whole molecule copies in the asymmetric-unit atom order; atom-count
+    divisibility is asserted, the order is not.
+
+    Parameters
+    ----------
+    crystal_batch : MolCrystalData
+        Batched crystal cluster; reads ``aux_ind``, ``z``, ``batch``, ``num_graphs``, ``z_prime``
+        and ``mol_ind``. Not modified.
+    precomputed_distances_dict : dict
+        Provides ``'edge_index'`` [2, num_intra_edges] and ``'intramolecular_dist'``
+        [num_intra_edges].
+
+    Returns
+    -------
+    torch.LongTensor
+        [num_nodes] environment label of every atom of ``crystal_batch``.
+
+    Raises
+    ------
+    ValueError
+        If a crystal's units cannot be read (``unit_layout``: e.g. ``num_atoms`` not divisible by its
+        Z'), or a graph's asymmetric-unit (``aux_ind == 0``) atom count is not its units' total
+        (explicit raises; before 2026-10-22 the divisibility was a bare assert).
+    AssertionError
+        If a bond touches an atom outside the asymmetric unit, a Z'-molecule's cluster atom count is
+        not divisible by its atoms per molecule, or any atom is left unlabelled.
+    """
     intra_edges = precomputed_distances_dict['edge_index']
     intra_dists = precomputed_distances_dict['intramolecular_dist']
 
@@ -167,6 +272,14 @@ def get_1WL_env_labels(crystal_batch, precomputed_distances_dict):
     #     labels_full[node_mask] = labels_g.repeat(n_copies_g)
     labels_full = torch.full((crystal_batch.z.shape[0],), -1, dtype=torch.long, device=device)
     node_idx = torch.arange(crystal_batch.z.shape[0], device=device)
+    # the units of each crystal, from the unit map of the rows the cluster was built from (the one reader,
+    # crystal_building.utils.unit_layout; a cluster carries no unit_ind, so the layout is the rows' Z' equal
+    # contiguous blocks of num_atoms // z_prime atoms, which its aux_ind == 0 atoms hold in unit order). This reads
+    # the ABSENCE path even when the rows carried a map: right only because every build refuses a map that is not
+    # those blocks before a cluster exists. The stage that lifts equal / contiguous units must carry the rows' unit
+    # atom counts (or unit_ptr) onto the cluster and read them here (stage-2 review, 2026-10-23)
+    from mxtaltools.crystal_building.utils import unit_layout
+    per_unit = unit_layout(crystal_batch, 'envwise RDF labels').atoms_per_unit.tolist()
 
     for g in range(crystal_batch.num_graphs):
         node_mask = crystal_batch.batch == g
@@ -175,8 +288,10 @@ def get_1WL_env_labels(crystal_batch, precomputed_distances_dict):
 
         z_prime_g = int(crystal_batch.z_prime[g].item())
         n_asym = labels_g.shape[0]
-        assert n_asym % z_prime_g == 0, f"graph {g}: n_asym={n_asym} not divisible by Z'={z_prime_g}"
-        atoms_per_mol = n_asym // z_prime_g
+        atoms_per_mol = per_unit[g]
+        if n_asym != atoms_per_mol * z_prime_g:
+            raise ValueError(f"envwise RDF labels: graph {g} holds {n_asym} asymmetric-unit (aux_ind == 0) atoms, "
+                             f"but its {z_prime_g} unit(s) hold {atoms_per_mol} atoms each")
 
         # asym mol_inds, one per Z'-mol, in asym-block order
         asym_block_ids = crystal_batch.mol_ind[asym_g_mask][::atoms_per_mol]
@@ -202,6 +317,24 @@ def get_1WL_env_labels(crystal_batch, precomputed_distances_dict):
     return labels_full
 
 def smooth_cutoff(d, rc, ron):
+    """Raised-cosine envelope, 1 up to ``ron`` and falling to 0 at ``rc``.
+
+    Returns ``0.5 * (1 + cos(pi * x)) * (d <= rc)`` with ``x = clamp((d - ron) / (rc - ron), 0, 1)``.
+
+    Parameters
+    ----------
+    d : torch.Tensor
+        Distances, any shape.
+    rc : float
+        Cutoff; the envelope is 0 at and beyond it.
+    ron : float
+        Onset of damping, below ``rc``.
+
+    Returns
+    -------
+    torch.Tensor
+        Envelope with the shape of ``d``.
+    """
     # d: distances
     # rc: cutoff
     # ron: onset of damping
@@ -216,6 +349,47 @@ def smooth_cutoff(d, rc, ron):
 
 
 def smooth_1d_histogram(bins, device, dist, graph_indexed_pairs, num_graphs, num_pairs, rrange, sigma=None):
+    """Gaussian-smoothed histograms of distances, one per (graph, channel).
+
+    Each distance whose ``graph_indexed_pairs`` entry is non-negative adds
+    ``delta_r * N(c_k; d, sigma)`` to every bin k of histogram ``graph_indexed_pairs``, where N is
+    the normal density, ``delta_r = (rmax - rmin) / bins`` and the kernel centres are
+    ``c = linspace(rmin, rmax, bins)``. Distances outside ``rrange`` are neither clipped nor dropped;
+    they contribute through the Gaussian tails. Entries with a negative index are dropped.
+
+    Parameters
+    ----------
+    bins : int
+        Number of bins per histogram.
+    device : torch.device or str
+        Device of the returned tensors.
+    dist : torch.Tensor
+        [num_edges] distances.
+    graph_indexed_pairs : torch.LongTensor
+        [num_edges] flat histogram index ``graph * num_pairs + channel`` of each distance, or
+        negative to drop it.
+    num_graphs : int
+        Number of graphs.
+    num_pairs : int
+        Number of channels per graph.
+    rrange : tuple of float
+        (rmin, rmax).
+    sigma : float, optional
+        Gaussian width; defaults to ``(rmax - rmin) / bins``.
+
+    Returns
+    -------
+    hist : torch.Tensor
+        [num_graphs, num_pairs, bins] smoothed counts.
+    rdf_density : torch.Tensor
+        [num_graphs, num_pairs] ones.
+
+    Notes
+    -----
+    The kernel centres are spaced by ``(rmax - rmin) / (bins - 1)`` and run from ``rmin`` to
+    ``rmax`` inclusive, whereas ``delta_r`` and the default ``sigma`` use ``(rmax - rmin) / bins``;
+    the centres do not coincide with the midpoints of ``linspace(rmin, rmax, bins + 1)``.
+    """
     rmin, rmax = rrange
     bin_centers = torch.linspace(rmin, rmax, bins, device=device)
 
@@ -257,6 +431,37 @@ def smooth_1d_histogram(bins, device, dist, graph_indexed_pairs, num_graphs, num
 
 
 def new_1d_histogram(bins, device, dists, graph_indexed_pairs, num_graphs, num_pairs, rrange):
+    """Hard-binned histograms of distances, one per (graph, channel).
+
+    Each distance whose ``graph_indexed_pairs`` entry is non-negative and with
+    ``rmin <= d < rmax`` adds 1 to bin ``floor((d - rmin) / delta_r)``, where
+    ``delta_r = (rmax - rmin) / bins``; all other distances are dropped.
+
+    Parameters
+    ----------
+    bins : int
+        Number of bins per histogram.
+    device : torch.device or str
+        Device of the returned tensors.
+    dists : torch.Tensor
+        [num_edges] distances.
+    graph_indexed_pairs : torch.LongTensor
+        [num_edges] flat histogram index ``graph * num_pairs + channel`` of each distance, or
+        negative to drop it.
+    num_graphs : int
+        Number of graphs.
+    num_pairs : int
+        Number of channels per graph.
+    rrange : tuple of float
+        (rmin, rmax).
+
+    Returns
+    -------
+    hist : torch.Tensor
+        [num_graphs, num_pairs, bins] counts.
+    rdf_density : torch.Tensor
+        [num_graphs, num_pairs] float32 ones.
+    """
     valid = graph_indexed_pairs >= 0
     gip = graph_indexed_pairs[valid]
     d = dists[valid]
@@ -289,6 +494,32 @@ def get_elementwise_dists(atom_types: torch.LongTensor,
                           edge_in_crystal_number: torch.LongTensor,
                           atomic_numbers_override: Optional[torch.LongTensor] = None
                           ):
+    """Assign each edge to the unordered element-pair channel of its graph.
+
+    Parameters
+    ----------
+    atom_types : torch.LongTensor
+        [num_nodes] atomic numbers, used directly as lookup-table indices.
+    edges : torch.LongTensor
+        [2, num_edges] node indices.
+    device : torch.device or str
+        Device of the default element list and the lookup table.
+    edge_in_crystal_number : torch.LongTensor
+        [num_edges] graph index of each edge.
+    atomic_numbers_override : torch.LongTensor, optional
+        Atomic numbers defining the channels. Default: B, C, N, O, F, P, S, Cl, Br
+        (5, 6, 7, 8, 9, 15, 16, 17, 35).
+
+    Returns
+    -------
+    graph_indexed_pairs : torch.LongTensor
+        [num_edges] ``graph * num_pairs + pair``, with ``num_pairs = E * (E + 1) / 2`` for E listed
+        elements and ``pair`` the upper-triangular index of the two endpoints' list positions; -1
+        where either endpoint's element is not listed.
+    rdfs_dict : dict
+        Map from pair index to ``'<el1>_to_<el2>'`` with el1 at or before el2 in the element list.
+        Names are element symbols for the default list and ``str(Z)`` for an override.
+    """
     if atomic_numbers_override is None:
         relevant_elements = torch.tensor([5, 6, 7, 8, 9, 15, 16, 17, 35], dtype=torch.long, device=device)
         element_symbols = {5: 'B', 6: 'C', 7: 'N', 8: 'O', 9: 'F', 15: 'P', 16: 'S', 17: 'Cl', 35: 'Br'}
@@ -337,6 +568,40 @@ def get_atomwise_dists_old(atom_types: torch.LongTensor,
                            edge_in_crystal_number: torch.LongTensor,
                            mol_num_atoms: torch.LongTensor,
                            ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
+    """Group edge distances by (graph, within-molecule atom-index pair) with dense boolean masks.
+
+    With A = ``mol_num_atoms[0]``, pair (a, b), a <= b, collects the edges whose first endpoint has
+    index a and whose second endpoint has index b; edges whose first index exceeds the second are
+    not collected.
+
+    Parameters
+    ----------
+    atom_types : torch.LongTensor
+        [num_nodes] within-molecule atom index of each node.
+    edges : torch.LongTensor
+        [2, num_edges] node indices.
+    dists : torch.Tensor
+        [num_edges] edge lengths.
+    device : torch.device or str
+        Device of the masks.
+    num_graphs : int
+        Number of graphs.
+    edge_in_crystal_number : torch.LongTensor
+        [num_edges] graph index of each edge.
+    mol_num_atoms : torch.LongTensor
+        [num_graphs] atoms per molecule; all entries must equal the first (asserted).
+
+    Returns
+    -------
+    dists_per_hist : torch.Tensor
+        [num_graphs * num_pairs] number of distances in each (graph, pair) group, graph-major, with
+        ``num_pairs = A * (A + 1) / 2``.
+    sorted_dists : torch.Tensor
+        The distances concatenated in that group order.
+    rdfs_dict : dict
+        Map from pair index to a name built from the string form of 0-d tensors, for example
+        ``'tensor(0)_to_tensor(1)'`` on CPU.
+    """
     assert torch.all(mol_num_atoms == mol_num_atoms[0]), "atomwise rdf not set up for variable molecule sizes"
     all_atoms = torch.arange(mol_num_atoms[0], device=atom_types.device)
     num_atoms = len(all_atoms)
@@ -374,6 +639,28 @@ def get_atomwise_dists(atom_inds,
                        edge_in_crystal_number: torch.LongTensor,
                        mol_num_atoms: torch.LongTensor,
                        ) -> Tuple[torch.Tensor, dict]:
+    """Assign each edge to the unordered label-pair channel of its graph.
+
+    Parameters
+    ----------
+    atom_inds : torch.Tensor
+        [num_nodes] integer label of each node. With A the number of distinct labels, the labels
+        are assumed to be exactly 0, ..., A - 1 (not checked).
+    edges : torch.LongTensor
+        [2, num_edges] node indices.
+    edge_in_crystal_number : torch.LongTensor
+        [num_edges] graph index of each edge.
+    mol_num_atoms : torch.LongTensor
+        Unused.
+
+    Returns
+    -------
+    graph_indexed_pairs : torch.LongTensor
+        [num_edges] ``graph * num_pairs + pair``, with ``num_pairs = A * (A + 1) / 2`` and ``pair``
+        the upper-triangular index of (smaller label, larger label).
+    rdfs_dict : dict
+        Map from pair index to ``'<a>_to_<b>'`` for labels a <= b.
+    """
 
     A = len(torch.unique(atom_inds))
     num_pairs = A * (A + 1) // 2
@@ -407,6 +694,34 @@ def get_rdf_inds(crystal_batch,
                  mode: str,
                  device: Union[torch.device, str]
                  ) -> Tuple[torch.LongTensor, torch.LongTensor]:
+    """Select the centre ('inside') and neighbour ('outside') node indices for an RDF.
+
+    Parameters
+    ----------
+    crystal_batch : MolCrystalData
+        Reads ``aux_ind`` and ``pos``.
+    mode : str
+        ``'intermolecular'``, ``'all'`` or ``'intramolecular'``; consulted only when ``aux_ind`` is
+        not None.
+    device : torch.device or str
+        Device ``out_inds`` is moved to in the ``'intermolecular'`` and ``'all'`` modes; when
+        ``aux_ind`` is None, the device of both outputs. ``in_inds`` otherwise stays on the device
+        of ``aux_ind``.
+
+    Returns
+    -------
+    in_inds : torch.LongTensor
+        Nodes with ``aux_ind == 0``, or all nodes when ``aux_ind`` is None.
+    out_inds : torch.LongTensor
+        Nodes with ``aux_ind == 1`` for ``'intermolecular'``, all nodes for ``'all'``, and
+        ``in_inds`` itself for ``'intramolecular'``; all nodes when ``aux_ind`` is None.
+
+    Raises
+    ------
+    AssertionError
+        If ``aux_ind`` is not None and ``mode`` is none of the three values; a message is printed
+        first.
+    """
     #  whether to include intramolecular edges
 
     if crystal_batch.aux_ind is not None:
@@ -434,14 +749,36 @@ def batch_histogram_1d(data_tensor: torch.Tensor,
                        num_hists: int,
                        rrange: list[int, int] = [0, 10],
                        nbins: int = 100) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    very fast approximate batch histogram accurate up to n digits where n is log10(nbins)
+    """Histogram a flat tensor of values into one histogram per batch index.
 
-    data_tensor: 1d tensor of datapoints in torch.float32, from an arbitrary number of samples of arbitrary size
-    batch: index of which sample each datapoint belongs to
-    num_graphs: number of samples represented in data_tensor, equal to max(batch) + 1
-    rrange: histogram range
-    nbins: number of bins of resulting histogram - more bins reduces the distortion of the discretization procedure this hist uses
+    A value x of sample b is counted in bin
+    ``round(clip(x, rrange[0], rrange[1] - epsilon) / rrange[1] * nbins)`` of histogram b, with
+    ``epsilon = (rrange[1] - rrange[0]) / nbins`` and ``torch.round`` (half to even). For
+    ``rrange[0] == 0`` bin k therefore collects values within half a bin width of ``k * epsilon``,
+    that is, of the lower edge of returned bin k rather than its centre; values below the range
+    are counted in the first bin, and values from about ``rrange[1] - 1.5 * epsilon`` upward,
+    including those beyond ``rrange[1]``, in the last. The index divides by ``rrange[1]``, not by the
+    range width, so for ``rrange[0] != 0`` the bins do not follow the returned edges.
+
+    Parameters
+    ----------
+    data_tensor : torch.Tensor
+        [num_values] values to histogram.
+    batch : torch.LongTensor
+        [num_values] histogram index of each value, in [0, num_hists).
+    num_hists : int
+        Number of histograms.
+    rrange : list of float
+        [min, max] histogram range. Default [0, 10].
+    nbins : int
+        Number of bins per histogram. Default 100.
+
+    Returns
+    -------
+    hists : torch.Tensor
+        [num_hists, nbins] counts.
+    bin_edges : torch.Tensor
+        [nbins + 1] ``linspace(rrange[0], rrange[1], nbins + 1)``.
     """
     epsilon = (rrange[1] - rrange[0]) / nbins  # important to bracket bins
     ones = torch.ones_like(data_tensor)
@@ -460,22 +797,34 @@ def batch_histogram_1d(data_tensor: torch.Tensor,
 
 def parallel_compute_rdf_torch(dists_list: torch.tensor, raw_density=True, rrange=None, bins=None,
                                remove_radial_scaling=False):
-    """
-    Compute the radial distribution given a list of distances with parallel execution for speed.
+    """Compute one radial distribution per tensor of distances.
+
+    Each tensor is histogrammed with ``torch.histc`` over ``rrange`` (values outside the range are
+    ignored), one tensor at a time, and the histograms are stacked.
 
     Parameters
     ----------
-    dists_list : list of torch tensors
+    dists_list : list of torch.Tensor
+        n 1-D tensors of distances (or the rows of a 2-D tensor); lengths may differ.
     raw_density : bool
-        If true, use uniform density of 1 everywhere, else estimate the density from the dist list.
-    rrange : [min_range, max_range], optional
-    bins : int
-    remove_radial_scaling : removes inverse scaling in RDF, giving something more like the unnormalized radial CDF.
+        If True, every density is 1. If False, each density is estimated from the smaller half of
+        that tensor's sorted distances as ``count / (4/3 * pi * ptp**3)``, ptp being their maximum
+        minus minimum; any exception during the estimate sets that density to 1.
+    rrange : list of float, optional
+        [min, max] histogram range; defaults to [0.5, 10].
+    bins : int, optional
+        Number of bins; defaults to 100.
+    remove_radial_scaling : bool
+        If True, the histograms are divided by the density only, not by the shell volumes.
 
     Returns
     -------
-    rdf : torch.tensor(n, n_bins)
-    bin_edges : torch.tensor(n_bins + 1)
+    rdf : torch.Tensor
+        [n, bins] histograms divided by the shell volumes ``4/3 * pi * (r_{k+1}**3 - r_k**3)`` and
+        by the density (by the density only when ``remove_radial_scaling``).
+    bin_upper_edges : torch.Tensor
+        [bins] upper bin edges ``r[1:]`` of ``r = linspace(rrange[0], rrange[1], bins + 1)``, with
+        ``requires_grad`` set.
     """
 
     hist_range = [0.5, 10] if rrange is None else rrange
@@ -511,6 +860,30 @@ def parallel_compute_rdf_torch(dists_list: torch.tensor, raw_density=True, rrang
 
 
 def compute_rdf_distmat(rdf_record, bins, show_tqdm=True, chunk_size=250):
+    """Symmetric matrix of `compute_rdf_distance` between every pair of RDFs.
+
+    For each i >= 1, the distances from ``rdf_record[i]`` to ``rdf_record[:i]`` are computed in
+    chunks of at most ``chunk_size`` RDFs and stored in row i; the strictly lower triangle is then
+    added to its transpose. The diagonal is zero.
+
+    Parameters
+    ----------
+    rdf_record : torch.Tensor
+        [num_rdfs, num_channels, num_bins] RDFs.
+    bins : torch.Tensor
+        Uniformly spaced radial grid of the RDFs; only ``bins[1] - bins[0]`` is used, as the bin
+        width.
+    show_tqdm : bool
+        Show a progress bar over rows.
+    chunk_size : int
+        Maximum number of RDFs compared with row i per call.
+
+    Returns
+    -------
+    torch.Tensor
+        [num_rdfs, num_rdfs] distances in the units of ``bins``, allocated by ``torch.zeros`` on the
+        default device whatever the device of ``rdf_record``.
+    """
     rdf_dists = torch.zeros(rdf_record.shape[0], rdf_record.shape[0])
 
     for i in tqdm(range(1, len(rdf_record)), disable=not show_tqdm):
@@ -531,6 +904,32 @@ def compute_rdf_distmat_block(rdf_record: torch.Tensor,
                               rr,
                               i_range,
                               j_range) -> torch.Tensor:
+    """One block of the strictly lower triangle of the RDF distance matrix.
+
+    Parameters
+    ----------
+    rdf_record : torch.Tensor
+        [num_rdfs, num_channels, num_bins] RDFs.
+    rr : torch.Tensor
+        Uniformly spaced radial grid; only ``rr[1] - rr[0]`` is used.
+    i_range : list of int
+        [start, stop) global row indices of the block.
+    j_range : list of int
+        [start, stop) global column indices of the block.
+
+    Returns
+    -------
+    torch.Tensor
+        [i_range[1] - i_range[0], j_range[1] - j_range[0]] float32 block holding
+        `compute_rdf_distance` where the global row index exceeds the global column index, and 0
+        elsewhere.
+
+    Notes
+    -----
+    Row and column indices are truncated at the number of entries in the block,
+    ``(i_range[1] - i_range[0]) * (j_range[1] - j_range[0])``, not at the number of RDFs; rows or
+    columns at or above that product are left at 0.
+    """
     device = rdf_record.device
 
     num_rdfs = (j_range[1] - j_range[0]) * (i_range[1] - i_range[0])
@@ -554,6 +953,30 @@ def compute_rdf_distmat_block(rdf_record: torch.Tensor,
 
 
 def compute_rdf_distmat_parallel(rdf_record, rr, num_cpus, chunk_size=250):
+    """Symmetric matrix of ``log10(1 + d)`` for the RDF distances d, computed block-wise in a process pool.
+
+    The index range is split into blocks of ``chunk_size``; every (row block, column block) pair is
+    evaluated by `compute_rdf_distmat_block` in a ``multiprocessing.Pool`` of ``num_cpus``
+    workers, the assembled strictly lower triangle is added to its transpose, and
+    ``log10(1 + d)`` is returned. Unlike `compute_rdf_distmat`, the result is log-transformed.
+
+    Parameters
+    ----------
+    rdf_record : torch.Tensor
+        [num_rdfs, num_channels, num_bins] RDFs.
+    rr : torch.Tensor
+        Uniformly spaced radial grid; only ``rr[1] - rr[0]`` is used.
+    num_cpus : int
+        Number of worker processes.
+    chunk_size : int
+        Block edge length.
+
+    Returns
+    -------
+    torch.Tensor
+        [num_rdfs, num_rdfs] ``log10(1 + d)``, allocated by ``torch.zeros`` on the default device.
+        Entries affected by the index truncation in `compute_rdf_distmat_block` are 0.
+    """
     import multiprocessing as mp
     from math import ceil
 
@@ -592,21 +1015,48 @@ def compute_rdf_distmat_parallel(rdf_record, rr, num_cpus, chunk_size=250):
 
 
 def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None, return_numpy: bool = False, channel_weights: torch.tensor=None):
-    """
-    Compute a distance metric between two radial distribution functions including sub_rdfs where sub_rdfs are e.g., particular interatomic RDFS within a certain sample (elementwise or atomwise modes).
+    """Distance between multi-channel RDFs: mean over active channels of the 1-D earth mover's distance.
 
-    If all inputs are numpy arrays, output will be a numpy array, and vice-versa with torch tensors.
+    Each channel of each RDF is divided by its sum over bins (plus 1e-10); the earth mover's
+    distance ``sum_k |cumsum(p1)_k - cumsum(p2)_k|`` (`earth_movers_distance_torch`) is computed per
+    channel and multiplied by the bin width ``rr[1] - rr[0]``. Channels are active when their
+    unnormalised sum exceeds 1e-12 in either RDF. Without ``channel_weights`` the result is
+    ``sum(emd * active) / max(n_active, 1)``, so two RDFs with no active channel are at distance 0;
+    with them it is ``sum(emd * active * w) / max(sum(active * w), 1e-10)``. ``rdf1`` and ``rdf2``
+    broadcast against each other over their leading dimensions.
+
     Parameters
     ----------
-    rdf1 : array(n_sub_rdfs, n_bins)
-    rdf2 : array(n_sub_rdfs, n_bins)
-    rr : array(n_bins + 1)
-        is the bin edges used for both rdfs
-    n_parallel_rdf2: int, optional
-        Optionally in parallel compare many rdf2's to a single rdf1
+    rdf1 : torch.Tensor or np.ndarray
+        [..., num_channels, num_bins] RDF(s), for example [num_channels, num_bins] for one
+        structure. If it is not a tensor, ``rdf1`` and ``rdf2`` are converted with
+        ``torch.Tensor`` (float32, CPU) and the result is returned as a NumPy array.
+    rdf2 : torch.Tensor or np.ndarray
+        [..., num_channels, num_bins] RDF(s) with the same channel count as ``rdf1`` (asserted);
+        converted only when ``rdf1`` is not a tensor.
+    rr : torch.Tensor or np.ndarray
+        Uniformly spaced radial grid of both RDFs, such as the bin positions returned by
+        `crystal_rdf`; converted with ``torch.Tensor`` if not a tensor. Only ``rr[1] - rr[0]`` is
+        used, and the distance is in its units.
+    n_parallel_rdf2 : int, optional
+        If given, ``rdf1`` is first replaced by ``rdf1.tile(n_parallel_rdf2, 1, 1)``, giving
+        [n_parallel_rdf2, num_channels, num_bins] for a single [num_channels, num_bins] ``rdf1``.
+    return_numpy : bool
+        Return a detached CPU NumPy array; forced to True when ``rdf1`` is not a tensor.
+    channel_weights : torch.Tensor, optional
+        [num_channels] weight of each channel, moved to the device of the distances.
+
     Returns
     -------
+    torch.Tensor or np.ndarray
+        Distances with the broadcast leading shape of the inputs: [n] for ``rdf1``
+        [num_channels, num_bins] and ``rdf2`` [n, num_channels, num_bins], or 0-d for two single
+        RDFs without ``channel_weights`` ([1] with them).
 
+    Raises
+    ------
+    AssertionError
+        If the channel counts differ or any distance is NaN.
     """
 
     if not torch.is_tensor(rdf1):
@@ -664,38 +1114,84 @@ def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None, return_num
 
 
 def earth_movers_distance_torch(pdf1: torch.tensor, pdf2: torch.tensor):
-    """
-    earth mover's distance between two PDFs
-    not normalized or aggregated
+    """1-D earth mover's distance between histograms along the last dimension.
+
+    Returns ``sum(|cumsum(pdf1) - cumsum(pdf2)|)`` over the last dimension, without normalising the
+    inputs and without a bin-width factor.
+
     Parameters
     ----------
-    pdf1 : torch.tensor(n,i)
-    pdf2 : torch.tensor(n,i)
+    pdf1 : torch.Tensor
+        [..., num_bins] histograms.
+    pdf2 : torch.Tensor
+        [..., num_bins] histograms, broadcastable with ``pdf1``.
 
     Returns
     -------
-    emd: torch.tensor(n)
+    emd : torch.Tensor
+        [...] distances.
     """
 
     return torch.sum(torch.abs(torch.cumsum(pdf1, dim=-1) - torch.cumsum(pdf2, dim=-1)), dim=-1)
 
 
 def earth_movers_distance_np(pdf1: np.ndarray, pdf2: np.ndarray):
-    """
-    earth mover's distance between two PDFs
-    not normalized or aggregated
+    """NumPy version of `earth_movers_distance_torch`.
+
+    Returns ``sum(|cumsum(pdf1) - cumsum(pdf2)|)`` over the last axis, without normalising the
+    inputs and without a bin-width factor.
+
     Parameters
     ----------
-    pdf1 : np.array(n,i)
-    pdf2 : np.array(n,i)
+    pdf1 : np.ndarray
+        [..., num_bins] histograms.
+    pdf2 : np.ndarray
+        [..., num_bins] histograms, broadcastable with ``pdf1``.
 
     Returns
     -------
-    emd: np.array(n)
+    emd : np.ndarray
+        [...] distances.
     """
     return np.sum(np.abs(np.cumsum(pdf1, axis=-1) - np.cumsum(pdf2, axis=-1)), axis=-1)
 
 def rdf_radial_graph(rdfs, device, d_cut, bins, chunk_size: int = 4):
+    """Neighbour lists of RDFs within an RDF-distance cutoff.
+
+    ``rdfs`` is moved to ``device`` and, for chunks of query rows, the distance to every RDF is
+    computed as in `compute_rdf_distance` without channel weights (per-channel unit-sum
+    normalisation, earth mover's distance times ``bins[1] - bins[0]``, mean over the channels
+    active in either RDF). The neighbours of row i are the RDFs at distance strictly below
+    ``d_cut``, excluding i itself. When an exception is classified as out-of-memory by
+    `is_cuda_oom`, the chunk size is reduced by one (to at least 1), ``torch.cuda.synchronize`` and
+    ``torch.cuda.empty_cache`` are called and the chunk is retried; other exceptions propagate. A tqdm progress bar is always shown.
+
+    Parameters
+    ----------
+    rdfs : torch.Tensor
+        [N, num_channels, num_bins] RDFs.
+    device : torch.device or str
+        Device on which the distances are computed.
+    d_cut : float
+        Neighbour cutoff, in the units of ``bins``.
+    bins : torch.Tensor
+        Uniformly spaced radial grid; only ``bins[1] - bins[0]`` is used.
+    chunk_size : int
+        Initial number of query rows per chunk.
+
+    Returns
+    -------
+    neighbor_lists : list of torch.LongTensor
+        N CPU tensors of neighbour indices, in row order.
+    neighbor_dists : list of torch.Tensor
+        N CPU tensors of the matching distances.
+
+    Notes
+    -----
+    The retry has no attempt limit: an out-of-memory error that recurs at chunk size 1 is retried
+    indefinitely. A chunk that fails after some of its rows were appended appends those rows again
+    on retry.
+    """
     rdfs_gpu = rdfs.to(device)
     rdf_norm = rdfs_gpu / (rdfs_gpu.sum(dim=-1, keepdim=True) + 1e-10)
     cdfs = torch.cumsum(rdf_norm, dim=-1)

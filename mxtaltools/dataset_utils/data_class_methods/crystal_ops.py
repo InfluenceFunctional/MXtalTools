@@ -1,3 +1,11 @@
+"""Crystal-parameter operations for molecular crystal data objects.
+
+Defines :class:`MolCrystalOps`, the mixin that gives ``MolCrystalData`` (and its
+collated batches) its cell-parameter methods: symmetry and molecule attribute
+setup, box analysis, random sampling, the latent <-> cell-parameter transforms,
+standardization, cleaning and validation, canonicalization, spglib cell
+standardization, plotting and CIF output. Also defines :func:`spglib_hall_number`.
+"""
 import functools
 from typing import Optional, Union, Iterable
 
@@ -20,7 +28,8 @@ from mxtaltools.constants.space_group_info import (SYM_OPS, LATTICE_TYPE, NORMAL
                                                    CONTINUOUS_DIMS)
 from mxtaltools.crystal_building.random_crystal_sampling import sample_aunit_lengths, sample_cell_angles, \
     sample_aunit_orientations, sample_aunit_centroids
-from mxtaltools.crystal_building.utils import parameterize_crystal_batch, canonicalize_aunit_order, canonicalize_rotvec
+from mxtaltools.crystal_building.utils import parameterize_crystal_batch, canonicalize_aunit_order, canonicalize_rotvec, \
+    unit_layout, UNIT_MAP_KEY, unit_cell_z
 from mxtaltools.crystal_search.crystal_opt_utils import gradient_descent_optimization
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.utils import get_mol_embedding_for_proxy, enforce_1d_bound
@@ -38,6 +47,25 @@ def spglib_hall_number(sg_ind: int) -> int:
     The spglib Hall number whose operators are exactly SYM_OPS[sg_ind].
     spglib standardizes to the first Hall number of each space group unless told otherwise; for the groups
     with two ITA origin choices that is a different origin from SYM_OPS.
+
+    Operator sets are compared with rotations rounded to integers and translations
+    taken modulo 1 and rounded to 4 decimals. Results are cached per ``sg_ind``.
+
+    Parameters
+    ----------
+    sg_ind : int
+        Space group number (1-230), a key of ``SYM_OPS``.
+
+    Returns
+    -------
+    int
+        The first spglib Hall number of that space group whose operator set
+        equals that of ``SYM_OPS[sg_ind]``.
+
+    Raises
+    ------
+    ValueError
+        If no Hall setting of the space group has the operators of ``SYM_OPS[sg_ind]``.
     """
     import spglib
     ops = np.asarray(SYM_OPS[sg_ind], dtype=np.float64)
@@ -58,13 +86,274 @@ def _spglib_hall_numbers():
     return halls
 
 
+#: Row tensors [num_graphs, >= z_prime, ...] holding one entry per asymmetric-unit slot along
+#: dimension 1 (written by ``MolCrystalSteps.find_molecules`` and ``parameterize_pose``, and
+#: ``MolCrystalChem.features``' packed fingerprints); ``canonicalize_zp_aunits`` moves their
+#: entries with the slots.
+_UNIT_ROW_KEYS = ('aunit_op', 'unit_radius', 'unit_mass', 'unit_volume', 'unit_fingerprint')
+#: Row-level lists whose entries are per-unit lists (length ``z_prime``, or None), written by
+#: ``MolCrystalChem.sanitize`` / ``features``; ``canonicalize_zp_aunits`` reorders them with the slots.
+_UNIT_LIST_KEYS = ('unit_smiles',)
+#: Row-level lists whose entries are [2, E] arrays of row-local atom indices; renumbered when
+#: ``canonicalize_zp_aunits`` moves atoms.
+_ATOM_INDEX_LIST_KEYS = ('file_bonds', 'mol_bonds')
+#: Per-molecule scalars the list constructor (``set_mol_attrs``) sums over the units: one value per molecule, 0-dim
+#: as ``MolData`` stores them or [1] as rows taken out of a collated batch carry them (audit #7).
+_ROW_SUM_KEYS = ('num_atoms', 'radius', 'mass', 'mol_volume')
+
+
+def _canonical_unit_order(batch) -> torch.Tensor:
+    """The slot order ``canonicalize_aunit_order`` sorts each crystal's asymmetric units into.
+
+    The same sort key and the same ``argsort`` call on the same tensors: used slots by the
+    norm of their fractional centroid, unused slots (index >= ``z_prime``) by the norm of
+    (1, 1, 1). The two therefore agree slot for slot; ``tests/test_zp_canonical_order.py``
+    pins it.
+
+    Parameters
+    ----------
+    batch : MolCrystalData batch
+        Reads ``num_graphs``, ``max_z_prime``, ``z_prime``, ``device`` and
+        ``aunit_centroid``. Not modified.
+
+    Returns
+    -------
+    torch.Tensor
+        [num_graphs, max_z_prime] long. Entry ``[i, j]`` is the slot whose unit moves into
+        slot ``j``.
+    """
+    n, k = batch.num_graphs, batch.max_z_prime
+    per_aunit_centroids = batch.aunit_centroid.reshape(n, k, 3)
+    idx = torch.arange(k, device=batch.device)[None, ...]
+    mask = (idx >= batch.z_prime[..., None])[..., None].expand(-1, -1, 3)
+    centroids_for_sort = torch.where(mask, torch.ones_like(per_aunit_centroids), per_aunit_centroids)
+    return centroids_for_sort.norm(dim=2).argsort(dim=1)
+
+
+def _unit_block_moves(batch) -> dict:
+    """New values of the attributes laid out unit by unit, for the canonical unit order.
+
+    A crystal moves when ``z_prime > 1`` and its used slots change order. Its units are
+    read from its unit map (``crystal_building.utils.unit_layout``: ``unit_ind``, or
+    ``z_prime`` equal contiguous blocks without one; equal contiguous blocks of
+    ``num_atoms // z_prime`` atoms at this stage), block ``k`` posed by slot ``k`` (the
+    layout ``split_to_zp1_batch`` reads); new block ``j`` is the old block of the unit that
+    moves into slot ``j`` (``_canonical_unit_order``). Atoms of other crystals keep their
+    places.
+
+    Parameters
+    ----------
+    batch : MolCrystalData batch
+        Reads ``aunit_centroid``, ``z_prime``, ``max_z_prime``, ``ptr``, ``num_atoms``,
+        ``unit_ind``, the bookkeeping ``_slice_dict`` and the attributes listed under
+        Returns. Not modified.
+
+    Returns
+    -------
+    dict
+        ``{key: new value}``, new objects, empty when no crystal moves. Otherwise it holds:
+
+        - ``unit_ind`` when stored: gathered with its atoms and relabelled to the new slot
+          order (block ``j`` labelled ``j``), so it still says which unit each atom is;
+          returned long whatever the stored integer dtype;
+        - every tensor whose first dimension is the atom count and that is sliced by
+          ``ptr`` (``pos``, ``z`` and ``x`` always), gathered; except ``mol_ind``, which
+          numbers the units by position and so already labels the new blocks;
+        - every row-level list (length ``num_graphs``) whose entries are lists or tuples
+          of their row's atom count, reordered on the moving crystals;
+        - ``file_bonds`` and ``mol_bonds`` (``_ATOM_INDEX_LIST_KEYS``), renumbered on the
+          moving crystals, and tensors under a key containing ``'index'`` or ``'face'``
+          (batch atom indices, as ``MXtalBase.__inc__`` offsets them), renumbered;
+        - the per-slot row tensors of ``_UNIT_ROW_KEYS``, with their first ``z_prime``
+          entries along dimension 1 reordered on the moving crystals, and the per-unit
+          lists of ``_UNIT_LIST_KEYS``, reordered the same way;
+        - every ragged per-unit tensor (the ``UNIT`` level of ``MXtalBase``'s level
+          contract: one entry per unit, its slice entry the unit pointer of ``z_prime``,
+          or its key registered ``UNIT``), its moving crystals' units reordered the same
+          way (since stage 3, 2026-10-23).
+
+    Raises
+    ------
+    ValueError
+        If a moving crystal's units cannot be read (``unit_layout``: without a map, an atom
+        count not divisible by its ``z_prime``; with one, a map that is not ``z_prime``
+        equal contiguous blocks in unit order), or one of its used slots sorts behind an
+        unused one (a centroid norm at or above sqrt(3), the unused slots' sort key), or a
+        ``_UNIT_ROW_KEYS`` tensor is not [num_graphs, w] with ``w`` at least every moving
+        crystal's ``z_prime``. Crystals that do not move are not checked.
+    """
+    order = _canonical_unit_order(batch)
+    B, k = batch.num_graphs, batch.max_z_prime
+    device = order.device
+    zp = batch.z_prime.reshape(B).long().to(device)
+    slot = torch.arange(k, device=device)
+    used = slot[None, :] < zp[:, None]
+    moved = (zp > 1) & ((order != slot[None, :]) & used).any(dim=1)
+    if not bool(moved.any()):
+        return {}
+
+    ptr = batch.ptr.long().to(device)
+    counts = ptr[1:] - ptr[:-1]
+    behind = moved & ((order >= zp[:, None]) & used).any(dim=1)
+    if bool(behind.any()):
+        raise ValueError(f"canonicalize_zp_aunits: crystals {torch.nonzero(behind).flatten().tolist()} have a used "
+                         f"asymmetric-unit slot sorting behind an unused one (fractional centroid norm >= sqrt(3)); "
+                         f"their units cannot be put in canonical order")
+    moved_rows = torch.nonzero(moved).flatten().tolist()
+    # the units of the moving crystals, from the unit map (the one reader; equal contiguous blocks at this stage);
+    # a crystal whose atoms are not z_prime equal blocks (or whose map is not) is refused, naming it
+    layout = unit_layout(batch, 'canonicalize_zp_aunits', rows=moved_rows)
+    stale = moved & (layout.counts.to(device) != counts)
+    if bool(stale.any()):   # the atoms are moved by ptr, the unit sizes come from num_atoms: they must agree
+        raise ValueError(f"canonicalize_zp_aunits: crystals {torch.nonzero(stale).flatten().tolist()} have a "
+                         f"num_atoms that differs from their atom count (ptr)")
+
+    # atom permutation: new atom a takes old atom perm[a]
+    N = int(ptr[-1])
+    atom_row = torch.repeat_interleave(torch.arange(B, device=device), counts)
+    start = ptr[:-1][atom_row]
+    per_unit = torch.where(moved, layout.atoms_per_unit.to(device), torch.ones_like(counts))[atom_row]
+    local = torch.arange(N, device=device) - start
+    unit = torch.div(local, per_unit, rounding_mode='floor')
+    source = start + order[atom_row, unit.clamp(max=k - 1)] * per_unit + (local - unit * per_unit)
+    perm = torch.where(moved[atom_row], source, torch.arange(N, device=device))
+    inverse = torch.empty_like(perm)
+    inverse[perm] = torch.arange(N, device=device)
+
+    slices = batch.__dict__.get('_slice_dict') or {}
+    ptr_cpu = ptr.cpu()
+    perm_cpu, inverse_cpu = perm.cpu(), inverse.cpu()
+    counts_list = counts.tolist()
+    # ragged per-unit values (the UNIT level): new unit j of a moving crystal takes its old unit order[j]
+    from mxtaltools.dataset_utils.data_classes import KEY_LEVELS, UNIT, _entry_pointer   # (it imports this module)
+    zp_cpu = zp.cpu().clamp(min=0)
+    unit_ptr = torch.cat([zp_cpu.new_zeros(1), zp_cpu.cumsum(0)])
+    U = int(unit_ptr[-1])
+    unit_src = torch.arange(U)
+    order_cpu = order.cpu()
+    for b in moved_rows:
+        n, s = int(zp_cpu[b]), int(unit_ptr[b])
+        unit_src[s:s + n] = s + order_cpu[b, :n]
+
+    def per_unit(key, value):
+        if value.dim() == 0 or value.shape[0] != U or (value.shape[0] == N and key in slices and
+                                                        torch.equal(slices[key].cpu(), ptr_cpu)):
+            return False
+        if KEY_LEVELS.get(key) == UNIT:
+            return True
+        entry = _entry_pointer(batch, key, value, slices.get(key), B)
+        return entry is not None and torch.equal(entry, unit_ptr)
+
+    out = {}
+    if UNIT_MAP_KEY in batch._store:
+        # the unit map moves with its atom blocks and is relabelled to the new slot order: block j now holds the unit
+        # that moved into slot j (old label order[j]), so it is labelled j (inv_order[order[j]] = j)
+        old = batch._store[UNIT_MAP_KEY]
+        gathered = old[perm.to(old.device)]
+        inv_order = torch.argsort(order, dim=1).to(old.device)
+        row = atom_row.to(old.device)
+        # long, as the map is defined (a stored int32 map comes out long; unit_layout refused a non-integer one)
+        gathered = gathered.long()
+        relabelled = inv_order[row, gathered.clamp(min=0, max=k - 1)]
+        out[UNIT_MAP_KEY] = torch.where(moved.to(old.device)[row], relabelled, gathered)
+    for key, value in batch._store.items():
+        if key in ('mol_ind', 'batch', 'ptr', UNIT_MAP_KEY):
+            continue
+        if torch.is_tensor(value):
+            if key in _UNIT_ROW_KEYS:
+                out[key] = _gather_unit_columns(key, value, order, zp, moved)
+            elif 'index' in key or 'face' in key:
+                out[key] = inverse.to(value.device)[value]
+            elif value.dim() > 0 and value.shape[0] == N and (
+                    key in ('pos', 'z', 'x') or (key in slices and torch.equal(slices[key].cpu(), ptr_cpu))):
+                out[key] = value[perm.to(value.device)]
+            elif per_unit(key, value):
+                out[key] = value[unit_src.to(value.device)]
+        elif isinstance(value, list) and len(value) == B:
+            if key in _UNIT_LIST_KEYS:
+                reordered = list(value)
+                for b in moved_rows:
+                    if value[b] is None:
+                        continue
+                    n = int(zp[b])
+                    if len(value[b]) < n:
+                        raise ValueError(f"canonicalize_zp_aunits: per-unit list {key!r} of crystal {b} has "
+                                         f"{len(value[b])} entries for z_prime {n}")
+                    slots = order[b, :n].tolist()
+                    reordered[b] = type(value[b])([value[b][j] for j in slots] + list(value[b][n:]))
+                out[key] = reordered
+            elif key in _ATOM_INDEX_LIST_KEYS:
+                renumbered = list(value)
+                for b in moved_rows:
+                    bonds = value[b]
+                    if bonds is None:
+                        continue
+                    s = int(ptr_cpu[b])
+                    local_inverse = inverse_cpu[s:s + counts_list[b]] - s  # old row-local index -> new
+                    if torch.is_tensor(bonds):
+                        renumbered[b] = local_inverse.to(bonds.device)[bonds.long()].to(bonds.dtype)
+                    else:
+                        bonds = np.asarray(bonds)
+                        renumbered[b] = local_inverse.numpy()[bonds].astype(bonds.dtype)
+                out[key] = renumbered
+            elif all(isinstance(v, (list, tuple)) and len(v) == counts_list[b] for b, v in enumerate(value)):
+                reordered = list(value)
+                for b in moved_rows:
+                    s = int(ptr_cpu[b])
+                    reordered[b] = type(value[b])(value[b][i] for i in (perm_cpu[s:s + counts_list[b]] - s).tolist())
+                out[key] = reordered
+    return out
+
+
+def _gather_unit_columns(key, value, order, zp, moved) -> torch.Tensor:
+    """``value`` [num_graphs, w, ...] with entry ``j < z_prime`` of each moving crystal taken from entry ``order[i, j]``.
+
+    Entries at or beyond a crystal's ``z_prime``, and every entry of a crystal that does
+    not move, keep their values. Raises ValueError (see ``_unit_block_moves``) on a tensor
+    that is not [num_graphs, w, ...] with ``w`` at least every moving crystal's ``z_prime``.
+    """
+    B, k = order.shape
+    if value.dim() < 2 or value.shape[0] != B or value.shape[1] < int(zp[moved].max()):
+        raise ValueError(f"canonicalize_zp_aunits: per-slot row tensor {key!r} has shape {tuple(value.shape)}; "
+                         f"expected [{B}, >= {int(zp[moved].max())}, ...]")
+    w = value.shape[1]
+    m = min(k, w)
+    cols = torch.arange(w, device=order.device)
+    index = cols[None, :].expand(B, w).clone()
+    take = moved[:, None] & (cols[None, :m] < zp[:, None])
+    index[:, :m] = torch.where(take, order[:, :m], index[:, :m])
+    index = index.reshape((B, w) + (1,) * (value.dim() - 2)).expand(value.shape)
+    return torch.gather(value, 1, index.to(value.device))
+
+
 # noinspection PyAttributeOutsideInit
 
 
 class MolCrystalOps:
+    """Cell-parameter methods mixed into ``MolCrystalData``.
+
+    Methods work on a single crystal or on a collated batch (``self.is_batch``);
+    several are batch-only and say so. They use these attributes of ``self``:
+
+    - ``cell_lengths`` : [num_graphs, 3], a, b, c in Angstrom.
+    - ``cell_angles`` : [num_graphs, 3], alpha, beta, gamma in radians.
+    - ``aunit_centroid`` : [num_graphs, 3 * max_z_prime], fractional (unit-cell)
+      coordinates of each asymmetric unit's centroid, one 3-block per unit.
+    - ``aunit_orientation`` : [num_graphs, 3 * max_z_prime], one rotation vector
+      (axis times angle in radians) per asymmetric unit.
+    - ``aunit_handedness`` : [num_graphs, max_z_prime], +1 or -1 per unit.
+    - ``sg_ind``, ``sym_mult``, ``z_prime``, ``max_z_prime``, ``symmetry_operators``,
+      and molecule attributes such as ``radius``, ``mol_volume`` and ``mass``.
+
+    The full cell-parameter vector (``full_cell_parameters``) is
+    ``[cell_lengths | cell_angles | aunit_centroid | aunit_orientation]``, width
+    ``6 + 6 * max_z_prime``. The latent vector (``latent_transform``) has the same
+    width and block order, with each entry rescaled so that its modelled range
+    maps onto [-1, 1].
+    """
 
     def assign_aunit_centroid(self, values, eps=1e-4):
-        """never allow this to touch exactly 1"""
+        """Return ``values`` clipped to [0, 1 - eps], so a centroid never touches exactly 1; ``self`` is not modified."""
         return values.clip(min=0, max=1 - eps)
 
     def set_symmetry_attrs(self,
@@ -73,6 +362,34 @@ class MolCrystalOps:
                            symmetry_operators: Optional[list] = None,
                            z_prime: Optional[Union[int, torch.tensor]] = None,
                            ):
+        """Assign the symmetry attributes of ``self`` in place.
+
+        Sets ``sg_ind`` (long tensor on ``self.device``), ``symmetry_operators``
+        (a numpy array, so batches do not stack it), ``nonstandard_symmetry``,
+        ``sym_mult`` ([1] long, the number of symmetry operators) and ``z_prime``.
+
+        Parameters
+        ----------
+        nonstandard_symmetry : bool
+            If True, ``symmetry_operators`` must be given and is used as-is.
+        sg_ind : int or torch.Tensor
+            Space group number.
+        symmetry_operators : numpy.ndarray, optional
+            Stack of symmetry operators. For standard symmetry it defaults to
+            ``np.stack(SYM_OPS[int(sg_ind)])``.
+        z_prime : int or torch.Tensor, optional
+            Number of molecules in the asymmetric unit; defaults to a [1] tensor of ones.
+            A python (or numpy) int is stored [1], the default's shape, so a row given an int
+            collates beside a row given none (since 2026-10-22; it was stored 0-dim, and
+            collation failed, audit #7). A tensor keeps its shape.
+
+        Raises
+        ------
+        RuntimeError
+            If ``nonstandard_symmetry`` is True and ``symmetry_operators`` is None.
+        AssertionError
+            If ``symmetry_operators`` is given and is not a numpy array.
+        """
         if not torch.is_tensor(sg_ind):
             self.sg_ind = torch.tensor(sg_ind, dtype=torch.long, device=self.device)
         else:
@@ -100,20 +417,101 @@ class MolCrystalOps:
         if z_prime is not None:
             if torch.is_tensor(z_prime):
                 self.z_prime = z_prime.long().to(self.device)
-            else:
-                self.z_prime = torch.tensor(z_prime, dtype=torch.long, device=self.device)
+            else:  # a number becomes [1], the default's shape: a 0-dim value does not collate beside it (audit #7)
+                z_prime = torch.tensor(z_prime, dtype=torch.long, device=self.device)
+                self.z_prime = z_prime.reshape(1) if z_prime.ndim == 0 else z_prime
         else:  # fall back / assume Z'=1 if not stated
             self.z_prime = torch.ones(1, dtype=torch.long, device=self.device)
 
     def set_mol_attrs(self, molecule):
+        """Copy the attributes of ``molecule`` onto ``self`` in place.
+
+        Parameters
+        ----------
+        molecule : list of MolData, or MolData (single or collated)
+            - list (one molecule per asymmetric-unit copy, Z' > 1): the dicts are
+              merged key by key. ``identifier`` takes the first molecule's
+              identifier (its first element if that is a list of strings, else
+              ``'null'``); other strings are joined with ``"|"``; ints and floats are summed;
+              0-dim tensors are summed; the row scalars ``num_atoms``, ``radius``, ``mass``
+              and ``mol_volume`` are summed when each molecule's is one value, 0-dim or
+              [1] as rows taken out of a collated batch carry them, and stored 0-dim,
+              ``MolData``'s shape, whatever the inputs' shapes (before 2026-10-22 [1]-shaped
+              ones were concatenated, audit #7; until the stage-2 review the sum took
+              molecule 0's shape), and refused (ValueError) otherwise; 'index' / 'face'
+              tensors (atom indices: ``edge_index``, ``tree_*_index``) are concatenated
+              along their last axis with molecule ``k``'s values offset by the atoms of
+              molecules ``0 .. k - 1``, as collation offsets them (since stage 3,
+              2026-10-23; they were concatenated on dim 0 without an offset, audit #7);
+              other tensors are concatenated along dim 0 (a [1, F] per-molecule tensor
+              becomes [Z', F], one entry per unit, which collates as a per-unit value).
+              Values of any other type are not copied. Every molecule must hold the same
+              keys (the unit map aside), else ValueError (a key a later molecule lacked
+              raised KeyError; one only later molecules held was dropped). The unit map
+              ``unit_ind`` is written: molecule ``k``'s atoms are unit ``k`` (a listed
+              molecule carrying a map of more than one unit is refused).
+            - batch: dicts and ``torch.nn.Module`` values are skipped; strings and
+              lists of strings are copied together with the source batch's
+              collation metadata; other non-tensor values are converted to tensors
+              (long for a python int, float32 otherwise). 0-dim tensors are set
+              directly; an 'index' / 'face' tensor, or any tensor whose source slice entry
+              describes it and is neither the source's atom pointer (for a value of the node
+              count) nor ``arange`` (for one of the graph count) -- a ``UNIT`` or ``EDGE``
+              value of the level contract, whatever its total coincides with -- is set with
+              the source's slice and increment entries (since stage 3, 2026-10-23; the
+              coincident totals since its review); length-``num_graphs`` values
+              are attached with ``add_graph_attr``, length-``num_nodes`` values with
+              ``add_node_attr`` (``batch`` is set directly), and anything else is set
+              directly. No unit map is written (a batch without ``unit_ind`` has the
+              equal-block layout).
+            - single molecule and ``self`` not a batch: every attribute is copied, and a
+              source without a unit map gets one: zeros for a molecule (one molecule, one
+              unit) or a Z'=1 crystal row; for a ``MolCrystalData`` row whose ``z_prime`` is
+              above 1 (an older file), its ``z_prime`` equal contiguous blocks, the layout
+              every reader gives it (since the stage-2 review, 2026-10-23; it was given one
+              unit, and then refused); none for a row whose units cannot be read
+              (``z_prime < 1``, atoms not divisible), which the readers refuse as before.
+              A single molecule given to a batch ``self`` copies nothing.
+        """
         # copy out the data
         if isinstance(molecule, list):  # Z'>1 comes with Z' molecules
             mol_dicts = [mol.to_dict() for mol in molecule]
+            for k, d in enumerate(mol_dicts):
+                u = d.get(UNIT_MAP_KEY)
+                if torch.is_tensor(u) and u.numel() and bool((u != 0).any()):
+                    raise ValueError(f'set_mol_attrs: molecule {k} of the list carries a unit map (unit_ind) of '
+                                     f'{int(u.max()) + 1} units; each listed molecule is one unit')
+            # one key set: a key some molecules lack cannot be merged (it raised KeyError, or was dropped when only
+            # later molecules held it; stage 3, 2026-10-23). The unit map is exempt: it is written below.
+            keys0 = set(mol_dicts[0]) - {UNIT_MAP_KEY}
+            for k, d in enumerate(mol_dicts[1:], start=1):
+                differ = sorted(keys0 ^ (set(d) - {UNIT_MAP_KEY}))
+                if differ:
+                    raise ValueError(f'set_mol_attrs: molecule {k} of the list holds other attributes than molecule 0 '
+                                     f'({differ[:8]}); the list constructor merges only keys every molecule holds')
+            # atom offsets of the molecules in the merged graph, for the index keys (collation's own rule:
+            # MXtalBase.__inc__ offsets 'index' / 'face' keys by the atom count)
+            atom_counts = [len(d['z']) if torch.is_tensor(d.get('z')) else
+                           len(d['pos']) if torch.is_tensor(d.get('pos')) else int(mol.num_nodes)
+                           for d, mol in zip(mol_dicts, molecule)]
+            atom_offsets = [sum(atom_counts[:k]) for k in range(len(atom_counts))]
 
             for key in mol_dicts[0].keys():
+                if key == UNIT_MAP_KEY:
+                    continue    # written below: molecule k -> unit k
                 vals = [d[key] for d in mol_dicts]
 
-                if key == 'identifier':
+                if ('index' in key or 'face' in key) and 'batch' not in key and torch.is_tensor(vals[0]):
+                    # atom indices: concatenated along the last axis, molecule k's offset by the atoms before it
+                    # (as collation does; audit #7: they were concatenated on dim 0 without an offset)
+                    if not all(torch.is_tensor(v) and v.ndim >= 1 and v.ndim == vals[0].ndim and
+                               v.shape[:-1] == vals[0].shape[:-1] for v in vals):
+                        shapes = [tuple(v.shape) if torch.is_tensor(v) else type(v).__name__ for v in vals]
+                        raise ValueError(f'set_mol_attrs: index key {key!r} holds shapes {shapes}; the molecules\' '
+                                         f'atom indices merge only along their last axis')
+                    setattr(self, key, torch.cat([v + off for v, off in zip(vals, atom_offsets)], dim=-1))
+
+                elif key == 'identifier':
                     if isinstance(vals[0], str):
                         setattr(self, key, vals[0])
                     elif isinstance(vals[0][0], str):
@@ -128,10 +526,23 @@ class MolCrystalOps:
                     setattr(self, key, sum(vals))
 
                 elif torch.is_tensor(vals[0]):
-                    if vals[0].ndim == 0:  # scalar tensor → graphwise
+                    if key in _ROW_SUM_KEYS:  # one value per molecule, 0-dim or [1]: summed (audit #7)
+                        shapes = [tuple(v.shape) if torch.is_tensor(v) else type(v).__name__ for v in vals]
+                        if not all(torch.is_tensor(v) and v.numel() == 1 for v in vals):
+                            raise ValueError(f'set_mol_attrs: {key!r} must be one value per listed molecule to be '
+                                             f'summed over the units, got shapes {shapes}')
+                        # stored 0-dim, MolData's shape, whatever the inputs' shapes and order: a row built from
+                        # collated ([1]) molecules then collates beside a default row
+                        setattr(self, key, torch.stack([v.reshape(()) for v in vals]).sum())
+                    elif vals[0].ndim == 0:  # scalar tensor → graphwise
                         setattr(self, key, torch.stack(vals).sum())
                     else:  # nodewise tensor → concat
                         setattr(self, key, torch.cat(vals, dim=0))
+            z0 = mol_dicts[0].get('z')
+            if torch.is_tensor(z0) and all(torch.is_tensor(d.get('z')) for d in mol_dicts):
+                sizes = torch.tensor([len(d['z']) for d in mol_dicts], dtype=torch.long, device=z0.device)
+                self[UNIT_MAP_KEY] = torch.arange(len(mol_dicts), dtype=torch.long,
+                                                  device=z0.device).repeat_interleave(sizes)
         elif molecule.is_batch:
             mol_dict = molecule.to_dict()
             n_graphs, n_nodes = molecule.num_graphs, molecule.num_nodes
@@ -142,6 +553,46 @@ class MolCrystalOps:
             # here for the same reason slice_dict/inc_dict above are hoisted out of the
             # loop. inc_dict is zeros[n_graphs] either way, so the node path reuses it.
             node_slice_dict = self.node_slice_dict(nodes_per_graph, molecule.device)
+            from mxtaltools.dataset_utils.data_classes import _entry_pointer     # (data_classes imports this module)
+            source_slices = getattr(molecule, '_slice_dict', None) or {}
+            source_atom_ptr = []        # the source's atom pointer, host long, read once on first need
+
+            def atom_ptr():
+                if not source_atom_ptr:
+                    # the entry its own bookkeeping records for its atoms (collation and the helpers write it on the
+                    # host), else its ptr (one host read on a device batch)
+                    zs = source_slices.get('z')
+                    if torch.is_tensor(zs) and zs.device.type == 'cpu' and torch.is_tensor(mol_dict.get('z')) and \
+                            _entry_pointer(molecule, 'z', mol_dict['z'], zs, n_graphs) is not None:
+                        source_atom_ptr.append(zs.long())
+                    else:
+                        source_atom_ptr.append(molecule._ptr_cpu())
+                return source_atom_ptr[0]
+
+            def ragged_in_source(key, value):
+                """Whether the source batch records ``value`` at a ragged level (``UNIT`` / ``EDGE`` of the level
+                contract): its slice entry describes it and is not the atom pointer (for a value of the atom count)
+                or ``arange`` (for one of the row count), or it is an 'index' / 'face' key. As
+                ``MXtalBase._level_plan``, an entry held on a device is not read for a value of the atom or row
+                count (since the stage-3 review, 2026-10-23: a per-edge value whose total equalled the atom count
+                was given the atom pointer)."""
+                slices = source_slices.get(key)
+                if not torch.is_tensor(slices):
+                    return False
+                index_key = molecule.__cat_dim__(key, value) == -1
+                if not index_key and len(value) in (n_graphs, n_nodes) and slices.device.type != 'cpu':
+                    return False
+                pointer = _entry_pointer(molecule, key, value, slices, n_graphs)
+                if pointer is None:
+                    return False
+                if index_key:
+                    return True
+                if len(value) == n_graphs and torch.equal(pointer, torch.arange(n_graphs + 1)):
+                    return False
+                if len(value) == n_nodes and torch.equal(pointer, atom_ptr()):
+                    return False
+                return True
+
             for key, value in mol_dict.items():
                 if isinstance(value, dict) or isinstance(value, torch.nn.Module):
                     continue
@@ -169,6 +620,14 @@ class MolCrystalOps:
 
                 if len(value.size()) == 0:  # batch variables
                     setattr(self, key, value)
+                elif key not in ('batch', 'ptr') and ragged_in_source(key, value):
+                    # a ragged value (an 'index' key, a per-unit or per-edge value): copied with the source batch's
+                    # own bookkeeping, the level contract's record of it (since stage 3, 2026-10-23; an index tensor
+                    # of a 2-graph batch was given a per-row entry by its length, and other lengths none; since its
+                    # review, also a ragged value whose total equals the atom or row count)
+                    setattr(self, key, value)
+                    self._slice_dict[key] = source_slices[key]
+                    self._inc_dict[key] = molecule._inc_dict.get(key)
                 elif len(value) == n_graphs:
                     self.add_graph_attr(value, key, slice_dict=slice_dict, inc_dict=inc_dict)
                 elif len(value) == n_nodes:
@@ -183,8 +642,38 @@ class MolCrystalOps:
             mol_dict = molecule.to_dict()
             for key, value in mol_dict.items():
                 setattr(self, key, value)
+            z = mol_dict.get('z')
+            if UNIT_MAP_KEY not in mol_dict and torch.is_tensor(z):
+                from mxtaltools.dataset_utils.data_classes import MolCrystalData   # (it imports this module)
+                # a crystal row's own z_prime says how many units it holds; a molecule's is not read (a molecule is
+                # one unit; GFN writes z_prime onto molecule batches when it draws a Z', audit #2)
+                zp = mol_dict.get('z_prime') if isinstance(molecule, MolCrystalData) else None
+                zp = torch.as_tensor(zp).reshape(-1) if zp is not None else None
+                if zp is None or (zp.numel() == 1 and int(zp[0]) == 1):  # one molecule (or a Z'=1 row), one unit
+                    self[UNIT_MAP_KEY] = torch.zeros(len(z), dtype=torch.long, device=z.device)
+                elif zp.numel() == 1 and int(zp[0]) > 1 and len(z) % int(zp[0]) == 0:
+                    # a map-less Z'>1 crystal row (an older file): the layout every reader gives it, z_prime equal
+                    # contiguous blocks, written out; not one unit (since the stage-2 review, 2026-10-23)
+                    n, k = len(z), int(zp[0])
+                    self[UNIT_MAP_KEY] = torch.arange(k, dtype=torch.long, device=z.device).repeat_interleave(n // k)
+                # otherwise (z_prime < 1, atoms not divisible, several values) no map: the readers refuse the row
+                # exactly as they refuse it without one
 
     def box_analysis(self):
+        """Recompute the box-derived attributes of ``self`` in place from ``cell_lengths`` and ``cell_angles``.
+
+        Assigns ``T_fc`` [num_graphs, 3, 3] (fractional -> Cartesian), ``T_cf``
+        [num_graphs, 3, 3] (Cartesian -> fractional), ``cell_volume`` [num_graphs]
+        (absolute volume, Angstrom^3), ``packing_coeff`` = ``mol_volume * sym_mult /
+        cell_volume`` and ``density`` = ``mass * sym_mult / cell_volume * 1.66054``
+        (g/cm^3 from Daltons per Angstrom^3).
+
+        Raises
+        ------
+        ValueError
+            If ``mol_volume`` or ``mass`` is None. ``T_fc``, ``T_cf`` and
+            ``cell_volume`` have already been assigned when this is raised.
+        """
         self.T_fc, self.T_cf, self.cell_volume = (
             batch_compute_fractional_transform(self.cell_lengths,
                                                self.cell_angles))
@@ -209,7 +698,21 @@ class MolCrystalOps:
 
     def sample_random_cell_lengths(self, target_packing_coeff: Optional = None):
         """
-        NOTE depends on cell angles, so must do those first if resampling both
+        Sample random cell lengths and assign them to ``self.cell_lengths`` in place.
+
+        NOTE depends on cell angles, so must do those first if resampling both.
+
+        Asymmetric-unit lengths are drawn by ``sample_aunit_lengths`` from the
+        current ``cell_angles`` and ``mol_volume`` and converted to unit-cell
+        lengths with ``scale_aunit_lengths_to_unit_cell``. A single crystal is
+        collated into a one-graph batch for the draw.
+
+        Parameters
+        ----------
+        target_packing_coeff : float or torch.Tensor, optional
+            Forwarded to ``sample_aunit_lengths``. When None, packing coefficients
+            are drawn from a normal distribution (mean 0.6226, std 0.0447)
+            clipped to [0.4, 1.0].
         """
         if self.is_batch:
             aunit_lengths = sample_aunit_lengths(self.num_graphs,
@@ -226,12 +729,14 @@ class MolCrystalOps:
         self.cell_lengths = self.scale_aunit_lengths_to_unit_cell(aunit_lengths)
 
     def sample_random_cell_angles(self):
+        """Assign ``self.cell_angles`` in place: [num_graphs, 3] (or [1, 3]) radians from a fixed multivariate normal centred at pi/2, unclipped."""
         if self.is_batch:
             self.cell_angles = sample_cell_angles(self.num_graphs).to(self.device)
         else:
             self.cell_angles = sample_cell_angles(1).to(self.device)
 
     def sample_random_aunit_orientations(self):
+        """Assign ``self.aunit_orientation`` in place: [num_graphs, 3 * max_z_prime] random rotation vectors (uniform axis direction, normally distributed angle about pi) with non-negative z components."""
         if self.is_batch:
             self.aunit_orientation = sample_aunit_orientations(
                 self.num_graphs, z_prime=self.max_z_prime).to(self.device)
@@ -240,6 +745,7 @@ class MolCrystalOps:
                 1, z_prime=self.max_z_prime).to(self.device)
 
     def sample_random_aunit_centroids(self):
+        """Assign ``self.aunit_centroid`` in place: [num_graphs, 3 * max_z_prime] uniform positions in each space group's asymmetric-unit box, as unit-cell fractional coordinates clipped to [0, 1 - 1e-4]."""
         if self.is_batch:
             aunit_centroid = self.assign_aunit_centroid(sample_aunit_centroids(self.num_graphs,
                                                                                z_prime=self.max_z_prime
@@ -252,6 +758,7 @@ class MolCrystalOps:
         self.aunit_centroid = self.scale_centroid_to_unit_cell(aunit_centroid)
 
     def sample_random_aunit_handedness(self):
+        """Assign ``self.aunit_handedness`` in place: [num_graphs, max_z_prime] random values in {-1, +1}, created on the default torch device rather than ``self.device``."""
         # randomize the handedness parameter for the asymmetric unit, including for Zp>12
         self.aunit_handedness = torch.randint(0, 2, (self.num_graphs, self.max_z_prime)) * 2 - 1
 
@@ -260,6 +767,22 @@ class MolCrystalOps:
                                          seed: Optional[int] = None,
                                          cleaning_mode: Optional[str] = 'hard'
                                          ):
+        """Resample all cell parameters of ``self`` in place.
+
+        Samples cell angles, then cell lengths, aunit orientations and aunit
+        centroids; resamples ``aunit_handedness`` only if any ``z_prime > 1``
+        (otherwise the existing handedness is kept); then calls
+        ``clean_cell_parameters(mode=cleaning_mode)`` and ``box_analysis``.
+
+        Parameters
+        ----------
+        target_packing_coeff : float or torch.Tensor, optional
+            Forwarded to ``sample_random_cell_lengths``.
+        seed : int, optional
+            If given, passed to ``torch.manual_seed`` (the global torch RNG) before sampling.
+        cleaning_mode : str
+            ``'hard'`` or ``'soft'``, forwarded to ``clean_cell_parameters``.
+        """
         if seed is not None:  # todo this seeding method is wrong
             torch.manual_seed(seed)
         self.sample_random_cell_angles()  # must do this one before cell lengths !!!
@@ -276,8 +799,28 @@ class MolCrystalOps:
                                                  seed: Optional[int] = None,
                                                  ):
         """
-        Sample random crystal parameters that are automatically standardized
-        Repeat random box params until valid
+        Sample random crystal parameters whose box has zero cell-reduction penalty, in place.
+
+        Batch only. Repeatedly resamples cell angles and lengths for the whole
+        batch, applies ``enforce_crystal_system``, and stores each row's most
+        recent box for which ``compute_cell_reduction_penalty`` is exactly 0. The loop
+        has no attempt limit: it returns only once every row has produced a
+        zero-penalty box. Then assigns the kept ``cell_lengths`` and
+        ``cell_angles`` (crystal system re-enforced), samples aunit orientations
+        and centroids, resamples ``aunit_handedness`` if any ``z_prime > 1``, and
+        calls ``box_analysis``. ``clean_cell_parameters`` is not called.
+
+        Parameters
+        ----------
+        target_packing_coeff : float or torch.Tensor, optional
+            Forwarded to ``sample_random_cell_lengths``.
+        seed : int, optional
+            If given, passed to ``torch.manual_seed`` once before sampling.
+
+        Raises
+        ------
+        AssertionError
+            If ``self`` is not a batch.
         """
         if seed is not None:
             torch.manual_seed(seed)
@@ -325,10 +868,43 @@ class MolCrystalOps:
         # just enough to include these values (None: unchanged). A hop kick passes the unclipped latents of the
         # crystals it kicks, so a parent lying outside the box stays representable.
         """
-        Transform from latent space to physical crystal parameters
-        :param override_mode:
-        :param latents:
-        :return:
+        Transform from latent space to physical crystal parameters, assigned to ``self`` in place.
+
+        The latents are first clamped: every entry to [-1, 1], except the three
+        length entries (floor -0.99), the polar-angle and rotation-magnitude
+        entries of every asymmetric unit's orientation block (floor -0.99), and
+        latent entries 0 and 1 (the a and b length entries, ceiling 1 - 1e-4).
+        With ``widen_to``, these bounds are widened per row and entry just enough
+        to include its values.
+        The clamped latents go through ``inv_latent_transform`` and
+        ``set_cell_parameters``, which assigns ``cell_lengths``, ``cell_angles``,
+        ``aunit_centroid`` and ``aunit_orientation`` and always runs
+        ``box_analysis`` once. Unless skipped, ``enforce_crystal_system`` then
+        overwrites ``cell_lengths`` and ``cell_angles``, and ``box_analysis`` runs
+        again. Returns None.
+
+        Parameters
+        ----------
+        latents : torch.Tensor
+            [num_graphs, 6 + 6 * max_z_prime] latent vectors in the
+            ``latent_transform`` layout. Not modified.
+        skip_box_analysis : bool
+            Skip the ``box_analysis`` call after crystal-system enforcement. The
+            call inside ``set_cell_parameters`` still runs, so ``box_analysis``'s
+            ValueError on missing ``mol_volume``/``mass`` is still raised, and the
+            box attributes describe the cell before crystal-system enforcement.
+        skip_enforce_crystal_system : bool
+            Skip ``enforce_crystal_system``.
+        widen_to : torch.Tensor, optional
+            ``[num_graphs, 6 + 6 * max_z_prime]`` values in the latent layout,
+            converted to float32 on ``self.device``. Per
+            row and entry, the clamp bounds above are widened just enough to
+            include these values: the lower bound becomes the smaller of the
+            default floor and the value, the upper bound the larger of the default
+            ceiling and the value. Default None: the bounds are unchanged.
+            ``log_noise_latent_parameters(keep_start_representable=True)`` passes
+            the unclipped latents of the crystals it displaces, so a crystal lying
+            outside the default bounds stays representable.
         """
 
         min_vals = -torch.ones(latents.shape[-1], dtype=torch.float32, device=self.device)
@@ -391,7 +967,26 @@ class MolCrystalOps:
         model was trained toward delta functions the prior does not contain).
         The caller knows crystal-vs-toy (energy_function.is_crystal); this batch
         does not, so it is a parameter.
-        :return:
+
+        This method MUTATES ``self`` before transforming: ``canonicalize_zp_aunits``
+        always reassigns ``aunit_centroid``, ``aunit_orientation`` and
+        ``aunit_handedness`` (asymmetric units reordered by distance of their
+        fractional centroid from the origin) and, on Z' > 1 rows whose order
+        changes, moves each unit's atom block (``pos``, ``z``, ``x`` and the other
+        per-atom attributes, bond lists and per-unit tensors) with its slot; with
+        ``gauge_fix_free_axes=True`` ``canonicalize_free_axes`` may reassign
+        ``aunit_centroid``.
+
+        Parameters
+        ----------
+        gauge_fix_free_axes : bool
+            Call ``canonicalize_free_axes`` before transforming.
+
+        Returns
+        -------
+        torch.Tensor
+            [num_graphs, 6 + 6 * max_z_prime] latents from ``latent_transform``,
+            clipped to [-1, 1].
         """
         self.canonicalize_zp_aunits()  # latent space is always in the canonical ordering
         # Gauge-fix the free centroid axes to the same canonical value the projected cell
@@ -404,6 +999,34 @@ class MolCrystalOps:
         return self.latent_transform(cell_params=self.full_cell_parameters()).clip(min=-1, max=1)
 
     def latent_transform(self, cell_params):
+        """Map cell parameters to latent coordinates, without clipping.
+
+        Reads ``sg_ind``, ``radius``, ``z_prime`` and ``max_z_prime``; builds and
+        caches ``self.asym_unit_lut`` if missing. With ``auv`` the space group's
+        asymmetric-unit extent (``ASYM_UNITS``) and
+        ``r_eff = radius / z_prime ** (2/3)``:
+
+        - lengths: ``cell_lengths * auv / (2 r_eff)`` is mapped log-linearly so that
+          [0.075, 3] (a, b) and [0.1, 4] (c) span [-1, 1];
+        - angles: [0.2 pi, 0.8 pi] radians is mapped linearly onto [-1, 1];
+        - centroids: ``aunit_centroid / auv`` on [0, 1] is mapped onto [-1, 1];
+        - orientations: each rotation vector is converted to spherical
+          (theta, phi, r) and theta [0, pi/2], phi [-pi, pi], r [0, 2 pi] are mapped
+          onto [-1, 1] (``sph_rotvec2lat``).
+
+        Values outside these ranges map outside [-1, 1].
+
+        Parameters
+        ----------
+        cell_params : torch.Tensor
+            [num_graphs, 6 + 6 * max_z_prime] in the ``full_cell_parameters`` layout.
+
+        Returns
+        -------
+        torch.Tensor
+            [num_graphs, 6 + 6 * max_z_prime] latents, blocks
+            [lengths | angles | centroids | orientations].
+        """
         if not hasattr(self, 'asym_unit_lut'):
             self.build_asym_unit_tensor()
 
@@ -454,6 +1077,23 @@ class MolCrystalOps:
         return latents
 
     def inv_latent_transform(self, latents):
+        """Map latent coordinates back to cell parameters; the inverse of ``latent_transform``.
+
+        Applies no clamping; builds and caches ``self.asym_unit_lut`` if missing
+        and otherwise leaves ``self`` unmodified.
+
+        Parameters
+        ----------
+        latents : torch.Tensor
+            [num_graphs, 6 + 6 * max_z_prime] latents.
+
+        Returns
+        -------
+        torch.Tensor
+            [num_graphs, 6 + 6 * max_z_prime] cell parameters in the
+            ``full_cell_parameters`` layout: lengths (Angstrom), angles (radians),
+            fractional centroids and rotation vectors.
+        """
         if not hasattr(self, 'asym_unit_lut'):
             self.build_asym_unit_tensor()
 
@@ -499,6 +1139,10 @@ class MolCrystalOps:
         return torch.cat([cell_lengths, cell_angles, cell_centroids, aunit_orientations], dim=1)
 
     def latent_distmat(self):
+        """Return the [num_graphs, num_graphs] pairwise ``crystal_parameter_distmat`` distances of ``latent_params(gauge_fix_free_axes=False)``, with a zero diagonal.
+
+        ``latent_params`` still reassigns the aunit attributes through ``canonicalize_zp_aunits``.
+        """
         # gauge-FREE: distances on gauge-fixed latents collapse the free-axis
         # separation on toy routes (and mutate the batch). Crystal rows are
         # already canonical, so identical there. (P1 2026-08-24)
@@ -507,10 +1151,12 @@ class MolCrystalOps:
 
     def sample_reduced_box_vectors(self, target_packing_coeff: Optional[float] = None):
         """
-        Sample box vectors in niggil-reduced basis from a random prior.
-        Optionally target a particular packing coefficient.
-        :param target_packing_coeff:
-        :return:
+        Disabled: always fails with ``AssertionError`` ("Reduced box sampling is deprecated").
+
+        Parameters
+        ----------
+        target_packing_coeff : float, optional
+            Unused.
         """
         assert False, "Reduced box sampling is deprecated - must be re-implemented with our new reduction methods"
 
@@ -544,10 +1190,33 @@ class MolCrystalOps:
                                             seed: Optional[int] = None,
                                             ):
         """
-        Sample random crystal parameters
-        build the resulting crystals and check their vdW overlaps
-        If they are sufficiently small, retain that sample
-        Repeat until convergence
+        Sample random crystal parameters, build the resulting crystals and check their vdW overlaps,
+        keeping each crystal's best sample; the result is assigned to ``self`` in place.
+
+        Each attempt calls ``sample_random_crystal_parameters`` and scores the
+        batch with ``build_and_analyze(cutoff=3)``'s ``scaled_lj``. Each row keeps
+        the ``zp1_cell_parameters`` of its lowest-``scaled_lj`` attempt; the loop
+        stops when every row has had an attempt with ``scaled_lj < tolerance`` or
+        after ``max_attempts`` attempts. Rows that never meet the tolerance keep
+        their best attempt; a row whose score never drops below the initial 1e7
+        (e.g. NaN) keeps all-zero parameters. The kept parameters are assigned
+        with ``set_cell_parameters`` (which runs ``box_analysis``).
+        ``build_and_analyze`` also assigns ``lj``, ``es_pot`` and ``scaled_lj`` on
+        ``self``. Rows are copied from ``zp1_cell_parameters`` (12 columns) into a
+        tensor of ``full_cell_parameters`` width, so this only works when
+        ``max_z_prime == 1``.
+
+        Parameters
+        ----------
+        tolerance : float
+            ``scaled_lj`` threshold below which a row counts as found.
+        target_packing_coeff : float or torch.Tensor, optional
+            Forwarded to ``sample_random_crystal_parameters``.
+        max_attempts : int
+            Maximum number of sampling attempts.
+        seed : int, optional
+            Forwarded to ``sample_random_crystal_parameters``, which reseeds the
+            global torch RNG with it on every attempt.
         """
         good_params_tensor = torch.zeros_like(self.full_cell_parameters())
         found_params_flags = torch.zeros(self.num_graphs, dtype=torch.bool)
@@ -574,8 +1243,9 @@ class MolCrystalOps:
 
     def denorm_by_radius(self, arr):
         """
-        arr *= mol_radius
-        assumes arr shape [n, m]
+        Return ``arr * radius`` row-wise (``arr *= mol_radius``); ``self`` is not modified.
+
+        assumes arr shape [n, m]: [num_graphs, m] for a batch, [1, m] for a single crystal.
         """
         if self.is_batch:
             return arr * self.radius[:, None]
@@ -584,8 +1254,9 @@ class MolCrystalOps:
 
     def norm_by_radius(self, arr):
         """
-        arr /= mol_radius
-        assumes arr shape [n, m]
+        Return ``arr / radius`` row-wise (arr /= mol_radius); ``self`` is not modified.
+
+        assumes arr shape [n, m]: [num_graphs, m] for a batch, [1, m] for a single crystal.
         """
         if self.is_batch:
             return arr / self.radius[:, None]
@@ -595,9 +1266,26 @@ class MolCrystalOps:
     def build_asym_unit_dict(self,
                              force_all_sgs: Optional[bool] = False
                              ):  # todo add capability to only do this for the necessary keys
-        """  # todo unify this throughout this file
+        """
+        Return a copy of ``ASYM_UNITS`` (keys are space-group numbers as strings)
+        in which the relevant entries are converted to float tensors on ``self.device``.
+
         NOTE this function is extremely slow
         Best used during batch operations
+
+        Entries not converted remain python lists; ``self`` is not modified.
+
+        Parameters
+        ----------
+        force_all_sgs : bool, optional
+            Convert every entry. Otherwise only the space groups present in
+            ``self.sg_ind`` are converted.
+
+        Returns
+        -------
+        dict
+            Space-group string -> [3] asymmetric-unit extent along a, b, c
+            (fraction of the unit cell).
         """
         asym_unit_dict = ASYM_UNITS.copy()
         if force_all_sgs:
@@ -610,6 +1298,7 @@ class MolCrystalOps:
         return asym_unit_dict
 
     def build_asym_unit_tensor(self):
+        """Assign ``self.asym_unit_lut``: a [231, 3] float32 table of ``ASYM_UNITS`` extents indexed by space-group number (row 0 is zeros)."""
         max_sg = 230
 
         asym_unit_by_sg = torch.zeros(
@@ -628,6 +1317,7 @@ class MolCrystalOps:
         self.asym_unit_lut = asym_unit_by_sg
 
     def build_sym_mult_tensor(self):
+        """Assign ``self.sym_mult_lut``: a [231] long table of the number of ``SYM_OPS`` operators per space-group number (row 0 is zero)."""
         sym_mult_by_sg = torch.zeros(231, dtype=torch.long, device=self.device)
 
         for sg, sym_ops in SYM_OPS.items():
@@ -639,6 +1329,12 @@ class MolCrystalOps:
         """
         scale unit cell lengths to the asymmetric unit, according to the canonical
         asymmetric unit shape within the unit cell.
+
+        Returns ``cell_lengths * auv`` per row, with ``auv`` the space group's
+        ``ASYM_UNITS`` extent, as a new [num_graphs, 3] tensor. For a batch,
+        ``self.asym_unit_dict`` is built with ``build_asym_unit_dict`` and cached
+        on ``self`` if it is missing; the cache is not refreshed if ``sg_ind``
+        later changes.
         """
         if self.is_batch:
             if not hasattr(self, 'asym_unit_dict'):
@@ -650,18 +1346,22 @@ class MolCrystalOps:
 
     def scale_aunit_lengths_to_unit_cell(self, aunit_lengths):
         """
-        input asymmetric unit lengths
-        rescale these for the specific ranges according to each space group
-        only space groups in asym_unit_dict will work - not all have been manually encoded
-        this approach will not work for asymmetric units which are not neat parallelpipeds
+        Convert asymmetric-unit lengths to unit-cell lengths, ``aunit_lengths / auv`` per row.
+
+        ``auv`` is the space group's ``ASYM_UNITS`` extent; space groups without a
+        hand-encoded entry use [1, 1, 1] (the whole cell).
+        this approach will not work for asymmetric units which are not neat parallelpipeds.
+        For a batch, ``self.asym_unit_dict`` is built and cached if missing.
+
         Parameters
         ----------
-        asym_unit_dict
-        mol_position
-        sg_inds
+        aunit_lengths : torch.Tensor
+            [num_graphs, 3] asymmetric-unit lengths (Angstrom).
 
         Returns
         -------
+        torch.Tensor
+            [num_graphs, 3] unit-cell lengths.
         """
         if self.is_batch:
             if not hasattr(self, 'asym_unit_dict'):
@@ -672,18 +1372,21 @@ class MolCrystalOps:
 
     def scale_centroid_to_aunit(self):
         """
-        input fractional coordinates are scaled on 0-max
-        rescale these for the specific ranges according to each space group
-        only space groups in asym_unit_dict will work - not all have been manually encoded
-        this approach will not work for asymmetric units which are not neat parallelpipeds
-        Parameters
-        ----------
-        asym_unit_dict
-        mol_position
-        sg_inds
+        Return ``self.aunit_centroid`` expressed as a fraction of the asymmetric-unit box.
+
+        Divides each 3-block of ``aunit_centroid`` (unit-cell fractional
+        coordinates, on [0, auv]) by the space group's ``ASYM_UNITS`` extent
+        ``auv``, giving values on [0, 1] for centroids inside the box. Space
+        groups without a hand-encoded entry use [1, 1, 1].
+        this approach will not work for asymmetric units which are not neat parallelpipeds.
+        For a batch, ``self.asym_unit_dict`` is built and cached if missing; for a
+        single crystal the divisor has width 3, so broadcasting only works when
+        ``max_z_prime == 1``.
 
         Returns
         -------
+        torch.Tensor
+            [num_graphs, 3 * max_z_prime] new tensor; ``aunit_centroid`` is not modified.
         """
 
         if self.is_batch:
@@ -697,18 +1400,25 @@ class MolCrystalOps:
 
     def scale_centroid_to_unit_cell(self, normed_centroid):
         """
-        input fractional coordinates are scaled on 0-1
-        rescale these for the specific ranges according to each space group
-        only space groups in asym_unit_dict will work - not all have been manually encoded
-        this approach will not work for asymmetric units which are not neat parallelpipeds
+        Convert asymmetric-unit-fraction centroids to unit-cell fractional coordinates.
+
+        Multiplies each 3-block by the space group's ``ASYM_UNITS`` extent ``auv``
+        (space groups without a hand-encoded entry use [1, 1, 1]) and clips the
+        result to [0, 1 - 1e-4] with ``assign_aunit_centroid``.
+        this approach will not work for asymmetric units which are not neat parallelpipeds.
+        For a batch, ``self.asym_unit_dict`` is built and cached if missing;
+        otherwise ``self`` is not modified.
+
         Parameters
         ----------
-        asym_unit_dict
-        mol_position
-        sg_inds
+        normed_centroid : torch.Tensor
+            [num_graphs, 3 * max_z_prime] centroids scaled on [0, 1] within the
+            asymmetric-unit box.
 
         Returns
         -------
+        torch.Tensor
+            [num_graphs, 3 * max_z_prime] fractional centroids.
         """
         if self.is_batch:
             if not hasattr(self, 'asym_unit_dict'):
@@ -722,6 +1432,20 @@ class MolCrystalOps:
                     self.max_z_prime))
 
     def noise_cell_parameters(self, noise_level: float):
+        """Add Gaussian noise to the standardized Z'=1 cell parameters and assign the result to ``self`` in place.
+
+        Noise of standard deviation ``noise_level`` is added to
+        ``zp1_std_cell_parameters()``; the result is destandardized, assigned with
+        ``set_cell_parameters(skip_box_analysis=True)``, cleaned with
+        ``clean_cell_parameters(mode='hard')`` and followed by ``box_analysis``.
+        The 12-column parameters match ``set_cell_parameters`` only when
+        ``max_z_prime == 1``.
+
+        Parameters
+        ----------
+        noise_level : float
+            Standard deviation of the noise, in standardized units.
+        """
         # standardize
         std_cell_params = self.zp1_std_cell_parameters()
         # noise
@@ -736,6 +1460,18 @@ class MolCrystalOps:
         self.box_analysis()
 
     def noise_latent_parameters(self, noise_level: float):
+        """Add Gaussian noise in latent space and assign the result to ``self`` in place.
+
+        Takes ``latent_params(gauge_fix_free_axes=False)``, adds noise of standard
+        deviation ``noise_level`` to every entry, and applies
+        ``latent_to_cell_params`` (which clamps, enforces the crystal system and
+        runs ``box_analysis``).
+
+        Parameters
+        ----------
+        noise_level : float
+            Standard deviation of the noise, in latent units.
+        """
         # gauge-FREE: the default MUTATES the batch (canonicalize_free_axes
         # writes aunit_centroid) and noising must start from the batch's ACTUAL
         # latents. Crystal rows are already canonical (SDE-held), so this is
@@ -746,6 +1482,39 @@ class MolCrystalOps:
 
     def log_noise_latent_parameters(self, log_min: float, log_max: float, eps = 1e-6,
                                     keep_start_representable: bool = False):
+        """Displace each crystal's latent vector by a random step with a log-uniform length, and assign the result in place.
+
+        For each row of ``latent_params(gauge_fix_free_axes=False)``, draws a
+        uniformly random unit direction in latent space and a step length
+        ``10 ** u`` with ``u`` uniform on [log_min, log_max], adds the step, clips
+        to [-1 + eps, 1 - eps], then applies ``latent_to_cell_params`` and
+        ``clean_cell_parameters(mode='hard')``. The draws come from the global
+        torch random generator.
+
+        Parameters
+        ----------
+        log_min, log_max : float
+            Base-10 log bounds of the step length, in latent units.
+        eps : float
+            Margin kept from the latent bounds when clipping.
+        keep_start_representable : bool
+            Default False (the behaviour above). True: the step is added to the UNCLIPPED latents
+            (``latent_transform`` of ``full_cell_parameters()`` after ``canonicalize_zp_aunits``, without the
+            [-1, 1] clip of ``latent_params``), and the clip above and the clamp in ``latent_to_cell_params`` are
+            widened per entry to include the starting value: the displaced latents are clamped to
+            [min(start, -1 + eps), max(start, 1 - eps)] and passed on with ``widen_to=start``. A crystal lying
+            outside the latent box (e.g. a long reduced-cell axis) is then displaced from itself rather than from its
+            clipped projection, a different crystal. ``clean_cell_parameters(mode='hard')`` still applies its own
+            bounds, which are not widened: its cell-angle, centroid and rotation-magnitude bounds lie on or inside
+            the latent box, so a value in those entries that is still outside the box after the displacement is
+            clamped onto them. A row whose starting latents lie inside every clip and decode bound gets the same
+            result as with False (same random draws).
+
+        Returns
+        -------
+        torch.Tensor
+            [num_graphs] the step length drawn for each row (before clipping), in latent units.
+        """
         # keep_start_representable (default False = unchanged): the step is added to the UNCLIPPED latents and every
         # clip and clamp bound is widened per entry to include the starting value, so a crystal outside the latent box
         # (e.g. a long reduced-cell axis) is kicked from itself, not from its clipped projection (a different crystal).
@@ -772,9 +1541,18 @@ class MolCrystalOps:
 
     def zp1_std_cell_parameters(self):
         """
-        Return standardized zp=1 cell parameters
+        Return standardized zp=1 cell parameters (first asymmetric unit only)
         write custom logic for zp>1 crystals
-        :return:
+
+        Concatenates ``standardize_cell_lengths``, ``standardize_cell_angles`` and
+        the first 3 columns of ``standardize_aunit_position`` and
+        ``standardize_aunit_orientation``. ``self`` is not modified (a batch may
+        cache ``asym_unit_dict``).
+
+        Returns
+        -------
+        torch.Tensor
+            [num_graphs, 12] standardized parameters.
         """
         standardized_aunit_lengths = self.standardize_cell_lengths()
         standardized_cell_angles = self.standardize_cell_angles()
@@ -787,6 +1565,21 @@ class MolCrystalOps:
                           standardized_orientation[:, :3]], dim=1)
 
     def destandardize_zp1_cell_parameters(self, std_cell_params):
+        """Invert ``zp1_std_cell_parameters``.
+
+        Parameters
+        ----------
+        std_cell_params : torch.Tensor
+            [num_graphs, 12] standardized lengths, angles, centroid and orientation.
+
+        Returns
+        -------
+        torch.Tensor
+            [num_graphs, 12] cell lengths (Angstrom), angles (radians), fractional
+            centroid (clipped to [0, 1 - 1e-4]) and rotation vector. ``self`` is not
+            modified (a batch may cache ``asym_unit_dict``). The centroid step only
+            broadcasts when ``max_z_prime == 1``.
+        """
         (std_aunit_lengths,
          std_cell_angles,
          std_aunit_positions,
@@ -802,6 +1595,7 @@ class MolCrystalOps:
         ], dim=1)
 
     def crystal_system(self):
+        """Return the ``LATTICE_TYPE`` name ('triclinic', 'monoclinic', ...) of ``sg_ind``: a list with one per crystal for a batch, a string for a single crystal."""
         if self.is_batch:
             return [LATTICE_TYPE[int(ind)] for ind in self.sg_ind]
         else:
@@ -809,7 +1603,26 @@ class MolCrystalOps:
 
     def validate_cell_params(self, check_crystal_system: bool = True):
         """
+        Assert that the cell parameters are in range and, optionally, match the crystal system.
+
         checking crystal system slightly slower, can optionally skip
+
+        Parameters
+        ----------
+        check_crystal_system : bool
+            Also run ``validate_crystal_system`` (batch only).
+
+        Returns
+        -------
+        bool
+            True; a failed check raises instead.
+
+        Raises
+        ------
+        AssertionError
+            From ``validate_cell_params_ranges`` or ``validate_crystal_system``.
+        RuntimeError
+            From ``validate_crystal_system`` for an unrecognised lattice type.
         """
         self.validate_cell_params_ranges()
         if check_crystal_system:
@@ -817,6 +1630,20 @@ class MolCrystalOps:
         return True
 
     def validate_cell_params_ranges(self, eps=1e-4):
+        """Assert physical ranges on the cell parameters of ``self``; returns None.
+
+        Checks ``0 <= aunit_centroid <= 1 - eps``, ``cell_lengths > 0``,
+        ``0 < cell_angles < pi``, the norm of each ``aunit_orientation`` row in
+        [0, 2 pi], and the last column of ``aunit_orientation`` non-negative. The
+        norm is taken over the whole row and the sign check reads only the last
+        column, so for ``max_z_prime > 1`` these two checks span all asymmetric
+        units together and only the last unit's z component respectively.
+
+        Raises
+        ------
+        AssertionError
+            On the first failed check.
+        """
         # assert valid ranges
         assert torch.all(self.aunit_centroid >= 0), "Aunit centroids must be greater than 0"
         assert torch.all(self.aunit_centroid <= 1 - eps), "Aunit centroids must be less than 0.999"
@@ -830,6 +1657,31 @@ class MolCrystalOps:
         assert torch.all(self.aunit_orientation[:, -1] >= 0), "Cell orientation rotvec z component must be positive"
 
     def validate_crystal_system(self, atol=1e-3):  # todo cleanup/parallelize
+        """Assert, crystal by crystal, that the cell matches the ``LATTICE_TYPE`` of its space group.
+
+        Batch only. Monoclinic requires alpha = gamma = pi/2; orthorhombic all
+        angles pi/2; tetragonal all angles pi/2 and a = b; cubic all angles pi/2
+        and a = b = c (all exact comparisons). Hexagonal requires, within ``atol``,
+        a = b, alpha = beta = pi/2, gamma = 2 pi/3, and c different from a.
+        Triclinic is not checked.
+
+        Parameters
+        ----------
+        atol : float
+            Absolute tolerance for the hexagonal checks only.
+
+        Returns
+        -------
+        bool
+            True; a failed check raises instead.
+
+        Raises
+        ------
+        AssertionError
+            On a failed check, or if ``self`` is not a batch.
+        RuntimeError
+            For a lattice type not listed above.
+        """
         lattices = self.crystal_system()
         # enforce agreement with crystal system
         if self.is_batch:
@@ -869,6 +1721,42 @@ class MolCrystalOps:
         return True
 
     def reparameterize_unit_cell(self,enforce_right_handedness: bool = False):
+        """Recover asymmetric-unit parameters from the built unit cell.
+
+        Requires ``unit_cell_pos``, ``unit_cell_batch``, ``T_cf``, ``z``, ``batch``,
+        ``sym_mult`` and ``num_atoms`` (e.g. after ``mol2ucell``). For each crystal,
+        ``parameterize_crystal_batch`` picks the canonical copy of the molecule in
+        the unit cell (from heavy-atom centroids) and extracts its fractional
+        centroid, rotation vector and handedness. For ``max_z_prime == 1`` it runs
+        on ``self`` and overwrites ``self.pos`` with the chosen copies' Cartesian
+        coordinates; for ``max_z_prime > 1`` it runs on ``split_to_zp1_batch()``
+        and the per-unit results are padded out to ``max_z_prime`` slots (padded
+        centroid and orientation slots are 0, padded handedness is 0). No other
+        attribute of ``self`` is assigned.
+
+        Parameters
+        ----------
+        enforce_right_handedness : bool
+            Forwarded to ``parameterize_crystal_batch``; when True every returned
+            handedness is +1.
+
+        Returns
+        -------
+        aunit_centroid : torch.Tensor
+            [num_graphs, 3 * max_z_prime] fractional centroids.
+        aunit_orientation : torch.Tensor
+            [num_graphs, 3 * max_z_prime] rotation vectors.
+        handedness : torch.Tensor
+            Long, +1 or -1 (0 for a degenerate principal-axis basis, and in padded
+            slots): [num_graphs] when ``max_z_prime == 1``,
+            [num_graphs, max_z_prime] otherwise.
+        is_well_defined : list of bool or torch.Tensor
+            Per crystal: a python list when ``max_z_prime == 1``, a [num_graphs]
+            bool tensor (all units well defined) otherwise.
+        pos : torch.Tensor
+            [total_atoms, 3] Cartesian coordinates of the chosen asymmetric units,
+            crystal by crystal.
+        """
         if self.max_z_prime > 1:
             zp1_batch = self.split_to_zp1_batch()
             (aunit_centroid, aunit_orientation,
@@ -967,8 +1855,9 @@ class MolCrystalOps:
 
     def get_fd_params(self, is_chiral: Optional[torch.Tensor] = None, normalizer_table: dict = NORMALIZER_OPS):
         """
-        Reduce this batch's aunit_{centroid,orientation,handedness} to a canonical
-        representative under the Euclidean normalizer N_E(G). Assumes one sg_ind
+        Reduce this batch's aunit_{centroid,orientation} to a canonical
+        representative under the Euclidean normalizer N_E(G); aunit_handedness is
+        used to build the candidates but is not returned. Assumes one sg_ind
         for the whole batch, matching the rest of the pipeline's calling convention.
 
         Algorithm: candidate 0 is the batch's current aunit params (assumed
@@ -982,18 +1871,43 @@ class MolCrystalOps:
         box by actually rebuilding it and calling the existing
         pose_aunit -> build_unit_cell -> reparameterize_unit_cell pipeline (reuses
         identify_canonical_asymmetric_unit exactly as-is, rather than re-deriving
-        G's fold-back symbolically), then canonicalize across all box-landing
-        candidates by the same "distance from origin" tie-break
-        identify_canonical_asymmetric_unit / canonicalize_aunit_order already use.
+        G's fold-back symbolically), then choose among the valid candidates
+        lexicographically: smallest centroid x, then y, then z, then orientation
+        x, y, z, each compared with a 1e-6 tolerance; a tie surviving every
+        dimension takes the first candidate. Candidates whose fold-back is not
+        well defined are excluded.
 
-        is_chiral : (N,) bool, True where the molecule is not superimposable on
+        Only the first asymmetric unit (columns :3) is used. ``self`` is not
+        modified; the fold-back runs on clones. Requires ``T_fc``/``T_cf`` (from
+        ``box_analysis``) and ``aunit_handedness``.
+
+        Parameters
+        ----------
+        is_chiral : torch.Tensor, optional
+            [num_graphs] bool, True where the molecule is not superimposable on
             its mirror image. Not computed here -- pull from wherever your
             featurization already flags this (RDKit CIP/stereocenter perception
-            on the SMILES, most likely), don't want to silently default this to
-            one value or the other.
+            on the SMILES, most likely). When None, every improper coset
+            representative (det(W) < 0) is rejected for every crystal, i.e. all
+            molecules are treated as chiral.
+        normalizer_table : dict
+            Space-group string -> list of (W, w) coset representatives (3x3
+            fractional rotation part, 3-vector translation). Defaults to
+            ``NORMALIZER_OPS``.
 
-        returns: C[best, idx], O[best, idx] -- the canonicalized aunit centroid
-            and orientation, (N, 3) each.
+        Returns
+        -------
+        centroid : torch.Tensor
+            [num_graphs, 3] canonicalized aunit centroid, fractional (C[best, idx]).
+        orientation : torch.Tensor
+            [num_graphs, 3] canonicalized aunit rotation vector (O[best, idx]).
+
+        Raises
+        ------
+        AssertionError
+            If the batch has more than one ``sg_ind``.
+        NotImplementedError
+            If ``normalizer_table`` has no coset representatives for the space group.
         """
         sg_ind = int(self.sg_ind[0])
         assert torch.all(self.sg_ind == sg_ind), \
@@ -1086,11 +2000,19 @@ class MolCrystalOps:
         """
         In-place counterpart to get_fd_params: overwrites this batch's
         aunit_centroid and aunit_orientation with their canonical N_E(G)
-        fundamental-domain representatives.
+        fundamental-domain representatives, each [num_graphs, 3].
+
+        ``aunit_handedness``, the box attributes and ``pos`` are not updated.
+
+        Parameters
+        ----------
+        is_chiral : torch.Tensor, optional
+            Forwarded to ``get_fd_params``.
         """
         self.aunit_centroid, self.aunit_orientation = self.get_fd_params(is_chiral)
 
     def split_cell_params(self):
+        """Return ``full_cell_parameters()`` split into (cell_lengths [num_graphs, 3], cell_angles [num_graphs, 3], aunit centroids [num_graphs, 3 * max_z_prime], aunit orientations [num_graphs, 3 * max_z_prime])."""
         cell_lengths, cell_angles, aunit_positions, aunit_orientations = torch.split(self.full_cell_parameters(),
                                                                                      [3, 3, 3 * self.max_z_prime,
                                                                                       3 * self.max_z_prime], dim=1)
@@ -1102,8 +2024,51 @@ class MolCrystalOps:
                               length_pad: float = 3.0,
                               constrain_z: bool = False,
                               ):
-        """  # todo align with latent transforms - otherwise we can get severe roundtrip errors. Lengths and interior angles
-        force cell parameters into physical ranges
+        """
+        force cell parameters into physical ranges, in place.
+
+        In order, reassigns on ``self``:
+
+        - ``cell_lengths``: floored at ``length_pad`` ('hard': clip; 'soft':
+          softplus-shifted lower bound slightly above ``length_pad``);
+        - ``cell_angles``: bounded to pi/2 +/- (pi/2) * ``angle_pad``
+          (``enforce_1d_bound``: hardtanh for 'hard', tanh for 'soft');
+        - ``aunit_centroid``: bounded to [0, 1] in asymmetric-unit-box units, then
+          converted back to fractional coordinates and clipped to [0, 1 - 1e-4];
+        - ``aunit_orientation``: if ``constrain_z``, each unit's z component is
+          bounded to [0, 2 pi]; then each unit's rotation-vector norm is bounded to
+          pi +/- 0.999 pi, keeping its direction;
+        - ``cell_lengths`` and ``cell_angles`` again, via ``enforce_crystal_system``;
+
+        and finally calls ``box_analysis``.
+
+        Parameters
+        ----------
+        mode : str
+            ``'hard'`` or ``'soft'``; any other value raises ValueError in
+            ``enforce_1d_bound``.
+        canonicalize_orientations : bool
+            Must be False when ``constrain_z`` is True. The branch it enables
+            re-concatenates the per-unit orientation blocks unchanged, so it does
+            not change ``aunit_orientation``.
+        angle_pad : float
+            Fraction of pi/2 allowed on either side of pi/2.
+        length_pad : float
+            Minimum cell length (Angstrom).
+        constrain_z : bool
+            Bound each unit's rotation-vector z component to [0, 2 pi].
+
+        Raises
+        ------
+        AssertionError
+            If both ``constrain_z`` and ``canonicalize_orientations`` are True.
+
+        Notes
+        -----
+        The length floor is independent of the length range used by
+        ``latent_transform``. The centroid bound, [0, 1] in asymmetric-unit-box
+        units, is the latent centroid range, and at the default ``angle_pad=0.6``
+        the angle bound [0.2 pi, 0.8 pi] equals the latent angle range.
         """
 
         # cell lengths have to be positive nonzero
@@ -1167,6 +2132,7 @@ class MolCrystalOps:
         self.box_analysis()
 
     def enforce_niggli_box(self, mode, apply_plane_shift: bool = False):
+        """Disabled: always fails with ``AssertionError``; ``mode`` and ``apply_plane_shift`` are unused."""
 
         assert False, "This needs to be reimplemented with our new reduction workflow"
         # # enforce the scaling factor b/c and a/b in the range [0, 1]
@@ -1204,15 +2170,19 @@ class MolCrystalOps:
         #                                             mode='shift')
 
     def aunit_volume(self):
+        """Return ``cell_volume / sym_mult`` (Angstrom^3 per symmetry copy); requires ``box_analysis`` to have run."""
         return self.cell_volume / self.sym_mult
 
     def zp1_cell_parameters(self):
         """
         return the zp=1 total cell parameter tensor
         for zp>1 crystals use custom logic
+
         Returns
         -------
-
+        torch.Tensor
+            [num_graphs, 12]: ``cell_lengths``, ``cell_angles`` and the first
+            asymmetric unit's ``aunit_centroid`` and ``aunit_orientation`` columns.
         """
         return torch.cat([self.cell_lengths,
                           self.cell_angles,
@@ -1220,6 +2190,7 @@ class MolCrystalOps:
                           self.aunit_orientation[:, :3]], dim=1)
 
     def full_cell_parameters(self):
+        """Return a new [num_graphs, 6 + 6 * max_z_prime] tensor ``[cell_lengths | cell_angles | aunit_centroid | aunit_orientation]``."""
         return torch.cat([self.cell_lengths,
                           self.cell_angles,
                           self.aunit_centroid,
@@ -1233,6 +2204,16 @@ class MolCrystalOps:
         3. standardize by stats
         mean = [1.0563, 0.7978, 1.7570]
         std = [0.6001, 0.5115, 0.7147]
+
+        The per-axis stats are averaged: all three axes use the single mean
+        (mean of the three means) and single std (mean of the three stds).
+        ``radius`` is used without Z' scaling.
+
+        Returns
+        -------
+        torch.Tensor
+            [num_graphs, 3] standardized lengths; ``self`` is not modified (a
+            batch may cache ``asym_unit_dict``).
         """
         aunit_lengths = self.scale_lengths_to_aunit()
         normed_aunit_lengths = self.norm_by_radius(aunit_lengths)
@@ -1251,6 +2232,18 @@ class MolCrystalOps:
         3. convert to unit cell basis
         mean = [1.0563, 0.7978, 1.7570]
         std = [0.6001, 0.5115, 0.7147]
+
+        Uses the same averaged mean and std as ``standardize_cell_lengths``.
+
+        Parameters
+        ----------
+        std_aunit_lengths : torch.Tensor
+            [num_graphs, 3] standardized lengths.
+
+        Returns
+        -------
+        torch.Tensor
+            [num_graphs, 3] unit-cell lengths (Angstrom).
         """
         # flatten stats across length dimensions
         mean = torch.tensor([1.0563, 0.7978, 1.7570], dtype=torch.float32, device=self.device)
@@ -1263,6 +2256,8 @@ class MolCrystalOps:
 
     def standardize_cell_angles(self):
         """
+        Return ``(cell_angles - mean) / std`` per axis, [num_graphs, 3] (angles in radians).
+
         Using triclinic CSD stats
         mean = [1.5656, 1.5728, 1.5579]
         std = [0.2339, 0.2075, 0.2598]
@@ -1273,6 +2268,8 @@ class MolCrystalOps:
 
     def destandardize_cell_angles(self, std_cell_angles):
         """
+        Return ``std_cell_angles * std + mean`` per axis, [num_graphs, 3] radians; the inverse of ``standardize_cell_angles``.
+
         Using triclinic CSD stats
         mean = [1.5656, 1.5728, 1.5579]
         std = [0.2339, 0.2075, 0.2598]
@@ -1283,6 +2280,9 @@ class MolCrystalOps:
 
     def standardize_aunit_position(self):
         """
+        Return ``(scale_centroid_to_aunit() - 0.5) / 0.289``, [num_graphs, 3 * max_z_prime].
+
+        Treats asymmetric-unit-box coordinates as a
         uniform distribution on 0-1
         mean = 0.5
         std = 0.289
@@ -1293,6 +2293,9 @@ class MolCrystalOps:
 
     def destandardize_aunit_position(self, std_aunit_position):
         """
+        Return ``scale_centroid_to_unit_cell(std_aunit_position * 0.289 + 0.5)``: fractional centroids clipped to [0, 1 - 1e-4].
+
+        Inverse of ``standardize_aunit_position``, which assumes a
         uniform distribution on 0-1
         mean = 0.5
         std = 0.289
@@ -1303,19 +2306,25 @@ class MolCrystalOps:
 
     def standardize_aunit_orientation(self):
         """
-        num_graphs = 100000
-        random_vectors = torch.randn(size=(num_graphs, 3))
-
-        # set norms uniformly between 0-2pi
-        norms = random_vectors.norm(dim=1)
-        applied_norms = (torch.rand(num_graphs) * 2 * torch.pi).clip(min=0.05)  # cannot be exactly zero
-        random_vectors = random_vectors / norms[:, None] * applied_norms[:, None]
-
-        random_vectors = canonicalize_rotvec(random_vectors)
-        std = random_vectors.std(0)
-        mean = random_vectors.mean(0)
+        Return ``(aunit_orientation[:, :3] - [0, 0, pi/2]) / [2.08, 2.08, 1.38]``, [num_graphs, 3] (first asymmetric unit only).
 
         functional only on zp=1 crystals. write custom logic for zp>1
+
+        Notes
+        -----
+        Recorded derivation of the stats::
+
+            num_graphs = 100000
+            random_vectors = torch.randn(size=(num_graphs, 3))
+
+            # set norms uniformly between 0-2pi
+            norms = random_vectors.norm(dim=1)
+            applied_norms = (torch.rand(num_graphs) * 2 * torch.pi).clip(min=0.05)  # cannot be exactly zero
+            random_vectors = random_vectors / norms[:, None] * applied_norms[:, None]
+
+            random_vectors = canonicalize_rotvec(random_vectors)
+            std = random_vectors.std(0)
+            mean = random_vectors.mean(0)
         """
         orientation_stds = torch.tensor([[2.08, 2.08, 1.38]], dtype=torch.float32, device=self.device)
         orientation_means = torch.tensor([[0, 0, torch.pi / 2]], dtype=torch.float32, device=self.device)
@@ -1324,18 +2333,33 @@ class MolCrystalOps:
     def destandardize_aunit_orientation(self, std_aunit_orientation):
         # destandardize aunit orientation
         """
-        num_graphs = 100000
-        random_vectors = torch.randn(size=(num_graphs, 3))
+        Return ``std_aunit_orientation * [2.08, 2.08, 1.38] + [0, 0, pi/2]``; the inverse of ``standardize_aunit_orientation``.
 
-        # set norms uniformly between 0-2pi
-        norms = random_vectors.norm(dim=1)
-        applied_norms = (torch.rand(num_graphs) * 2 * torch.pi).clip(min=0.05)  # cannot be exactly zero
-        random_vectors = random_vectors / norms[:, None] * applied_norms[:, None]
+        Parameters
+        ----------
+        std_aunit_orientation : torch.Tensor
+            [num_graphs, 3] standardized rotation vectors.
 
-        random_vectors = canonicalize_rotvec(random_vectors)
-        std = random_vectors.std(0)
-        mean = random_vectors.mean(0)
+        Returns
+        -------
+        torch.Tensor
+            [num_graphs, 3] rotation vectors.
 
+        Notes
+        -----
+        Recorded derivation of the stats::
+
+            num_graphs = 100000
+            random_vectors = torch.randn(size=(num_graphs, 3))
+
+            # set norms uniformly between 0-2pi
+            norms = random_vectors.norm(dim=1)
+            applied_norms = (torch.rand(num_graphs) * 2 * torch.pi).clip(min=0.05)  # cannot be exactly zero
+            random_vectors = random_vectors / norms[:, None] * applied_norms[:, None]
+
+            random_vectors = canonicalize_rotvec(random_vectors)
+            std = random_vectors.std(0)
+            mean = random_vectors.mean(0)
         """
         orientation_stds = torch.tensor([[2.08, 2.08, 1.38]], dtype=torch.float32, device=self.device)
         orientation_means = torch.tensor([[0, 0, torch.pi / 2]], dtype=torch.float32, device=self.device)
@@ -1476,6 +2500,40 @@ class MolCrystalOps:
                                   max_y_quantile: Optional[float] = None,
                                   overwrite_yaxis_title: Optional[str] = None,
                                   ):
+        """Scatter plot of energy against ``packing_coeff`` with violin marginals (plotly).
+
+        The energy is ``log_rescale_positive`` of ``self.lj`` (set by
+        ``build_and_analyze``) unless overridden. Points are coloured by
+        ``color_flag`` if given, else by space group, Z', or 2D point density.
+
+        Parameters
+        ----------
+        renderer : str, optional
+            Passed to ``fig.show``.
+        show : bool
+            Show the figure.
+        return_fig : bool
+            Return the figure; otherwise return None.
+        split_by_sg : bool
+            Colour by space group (takes precedence over ``split_by_zp``).
+        split_by_zp : bool
+            Colour by Z'.
+        override_energy : torch.Tensor or str, optional
+            Energy tensor, or the name of an attribute of ``self`` to use as energy.
+        color_flag : torch.Tensor, optional
+            Per-crystal values used as a discrete colour key.
+        show_colorbar : bool
+            Show the colour bar.
+        max_y_quantile : float, optional
+            Upper y-axis limit as this quantile of the energies; otherwise
+            ``min(10, max + 5% of range)``.
+        overwrite_yaxis_title : str, optional
+            y-axis title; defaults to 'Energy per Atom /Arb Units'.
+
+        Returns
+        -------
+        plotly.graph_objects.Figure or None
+        """
 
         if override_energy is None:
             energy = (log_rescale_positive(self.lj)).cpu().detach()
@@ -1611,6 +2669,47 @@ class MolCrystalOps:
                                bw_factor: float = 0.05,
                                override_energy: Optional[torch.Tensor] = None,
                                gauge_fix_free_axes: bool = True, ):
+        """Plot one-sided violin (KDE) distributions of every cell parameter (plotly), one subplot per parameter.
+
+        Batch only: for a single crystal it prints a message and returns None.
+        ``space='latent'`` goes through ``latent_params``, which reassigns the
+        aunit attributes of ``self`` (see ``latent_params``).
+
+        Parameters
+        ----------
+        space : str
+            ``'real'`` (``full_cell_parameters``), ``'latent'`` (``latent_params``)
+            or ``'standard'`` (``zp1_std_cell_parameters``, 12 columns).
+        renderer : str, optional
+            Passed to ``fig.show``.
+        quantiles : iterable of float, optional
+            For each q, adds the subset of samples with energy below the q-quantile
+            (energy is ``self.lj`` unless ``override_energy`` is given).
+        ref_dist : torch.Tensor, optional
+            Reference samples, same column count, plotted first.
+        aux_dists : list, optional
+            Additional sample arrays to overlay.
+        show : bool
+            Show the figure.
+        return_fig : bool
+            Return the figure; otherwise return None.
+        split_by_sg : bool
+            Add one distribution per space group.
+        split_by_zp : bool
+            Add one distribution per Z'.
+        n_kde : int
+            Number of KDE evaluation points per violin.
+        bw_factor : float
+            KDE bandwidth factor.
+        override_energy : torch.Tensor, optional
+            Energies used for ``quantiles`` instead of ``self.lj``.
+        gauge_fix_free_axes : bool
+            Forwarded to ``latent_params`` when ``space='latent'``.
+
+        Returns
+        -------
+        plotly.graph_objects.Figure or None
+        """
         if not self.is_batch:
             print("Cell statistics only works for a batch of crystal data objects")
             return None
@@ -1682,13 +2781,32 @@ class MolCrystalOps:
                              nbins=25,
                              colorbar=False,
                              ref_dist=None,
+                             axis_range=None,
+                             min_span=None,
                              ):
-
+        """axis_range: (lo, hi) used for EVERY dimension's bins and axes -- pass (-1, 1) in latent space.
+        min_span: without axis_range, widen any dimension whose data span is smaller than this, centred on
+        its data. Both exist because a near-delta dimension otherwise gets binned over float noise, which
+        draws as stripes rather than as a narrow distribution."""
         labels = self._build_feature_labels(space=space)
         samples = self._get_samples(space)
         if torch.is_tensor(samples):
             samples = samples.detach().cpu().numpy()
         N, D = samples.shape
+
+        # per-dimension (lo, hi) for binning and axes
+        spans = []
+        for d in range(D):
+            if axis_range is not None:
+                lo, hi = float(axis_range[0]), float(axis_range[1])
+            else:
+                lo, hi = float(np.nanmin(samples[:, d])), float(np.nanmax(samples[:, d]))
+                if min_span is not None and (hi - lo) < min_span:
+                    mid = 0.5 * (lo + hi)
+                    lo, hi = mid - min_span / 2, mid + min_span / 2
+                elif hi <= lo:  # a true delta with no min_span: give it a visible, arbitrary width
+                    lo, hi = lo - 0.5, hi + 0.5
+            spans.append((lo, hi))
 
         # Create D×D subplots (upper triangle empty)
         fig = make_subplots(
@@ -1707,6 +2825,8 @@ class MolCrystalOps:
                 y = samples[:, i]
 
                 if mode == 'contour':
+                    xlo, xhi = spans[j]
+                    ylo, yhi = spans[i]
                     trace = go.Histogram2dContour(
                         x=x, y=y,
                         ncontours=32,
@@ -1714,8 +2834,9 @@ class MolCrystalOps:
                         showscale=colorbar and (i == D - 1 and j == 0),
                         contours=dict(coloring='fill', showlines=False, start=0, end=None, size=None),
                         line=dict(smoothing=0.85, width=0),
-                        nbinsx=nbins,
-                        nbinsy=nbins,
+                        xbins=dict(start=xlo, end=xhi, size=(xhi - xlo) / nbins),
+                        ybins=dict(start=ylo, end=yhi, size=(yhi - ylo) / nbins),
+                        autobinx=False, autobiny=False,
                     )
 
                 elif mode == 'heatmap':
@@ -1737,6 +2858,13 @@ class MolCrystalOps:
         for i in range(D):
             fig.update_xaxes(title_text=labels[i], row=D, col=i + 1)
             fig.update_yaxes(title_text=labels[i], row=i + 1, col=1)
+        # axes match the bins, so a narrow distribution sits in a full frame rather than filling it
+        for i in range(D):
+            for j in range(D):
+                if j >= i:
+                    continue
+                fig.update_xaxes(range=list(spans[j]), row=i + 1, col=j + 1)
+                fig.update_yaxes(range=list(spans[i]), row=i + 1, col=j + 1)
         fig.update_layout(
             paper_bgcolor='rgba(0,0,0,0)',
             plot_bgcolor='rgba(0,0,0,0)',
@@ -1804,6 +2932,23 @@ class MolCrystalOps:
     def set_cell_parameters(self,
                             cell_parameters,
                             skip_box_analysis: bool = False):
+        """Assign ``cell_lengths``, ``cell_angles``, ``aunit_centroid`` and ``aunit_orientation`` of ``self`` in place.
+
+        The attributes are slices (views) of ``cell_parameters``; no cleaning or
+        crystal-system enforcement is applied.
+
+        Parameters
+        ----------
+        cell_parameters : torch.Tensor
+            [num_graphs, 6 + 6 * max_z_prime] in the ``full_cell_parameters`` layout.
+        skip_box_analysis : bool
+            Skip the ``box_analysis`` call that otherwise follows.
+
+        Raises
+        ------
+        AssertionError
+            If the second dimension is not ``6 + 6 * max_z_prime``.
+        """
         assert cell_parameters.shape[1] == 6 + self.max_z_prime * 6, (
             f"For crystal batch with max z_prime={self.max_z_prime},"
             f"require {6 + self.max_z_prime * 6} cell params.")
@@ -1819,6 +2964,30 @@ class MolCrystalOps:
     def do_embedding(self,
                      embedding_type: str,
                      encoder: Optional = None):
+        """Return a per-crystal feature vector: a molecule embedding concatenated with ``zp1_std_cell_parameters()``.
+
+        Batch only. The embedding is computed on a clone of ``self`` by
+        ``get_mol_embedding_for_proxy``.
+
+        Parameters
+        ----------
+        embedding_type : str
+            Forwarded to ``get_mol_embedding_for_proxy`` (e.g. ``'autoencoder'``,
+            ``'principal_axes'``, ``'principal_moments'``).
+        encoder : optional
+            Forwarded to ``get_mol_embedding_for_proxy``; used by the
+            ``'autoencoder'`` type.
+
+        Returns
+        -------
+        torch.Tensor
+            [num_graphs, embedding_dim + 12].
+
+        Raises
+        ------
+        AssertionError
+            If ``self`` is not a batch.
+        """
         if self.is_batch:
             embedding = get_mol_embedding_for_proxy(self.clone(),
                                                     embedding_type,
@@ -1833,6 +3002,30 @@ class MolCrystalOps:
                                     mol_orientation: Optional[str] = 'standardized',
                                     return_record: Optional[bool] = False,
                                     **opt_kwargs):
+        """Locally optimize the cell parameters of a copy of ``self`` with ``gradient_descent_optimization``.
+
+        ``self`` is not modified: a clone (a collated one-graph batch for a single
+        crystal) has its molecules re-oriented with ``orient_molecule(mode=mol_orientation,
+        target_handedness=self.aunit_handedness)`` and is optimized starting from
+        its ``full_cell_parameters()``.
+
+        Parameters
+        ----------
+        mol_orientation : str
+            ``mode`` forwarded to ``orient_molecule``.
+        return_record : bool
+            Also return the optimization records.
+        **opt_kwargs
+            Forwarded to ``gradient_descent_optimization``; must include its
+            required ``optimizer_func``.
+
+        Returns
+        -------
+        list or (list, dict)
+            The optimized crystals as a list of single data objects (as returned
+            by ``gradient_descent_optimization``, which may drop rows), and the
+            records dict when ``return_record`` is True.
+        """
         if self.is_batch:
             batch_to_optim = self.clone().to(self.device)
         else:
@@ -1872,6 +3065,27 @@ class MolCrystalOps:
         return out
 
     def reset_sg_info(self, sg_ind):
+        """Change the space group of ``self`` in place, with standard symmetry operators.
+
+        Assigns ``sg_ind``, ``nonstandard_symmetry`` (False), ``symmetry_operators``
+        (from ``SYM_OPS``: a list of arrays, one per crystal, for a batch; one
+        array for a single crystal) and ``sym_mult``. For a batch, ``sg_ind``,
+        ``nonstandard_symmetry`` and ``sym_mult`` are attached with
+        ``add_graph_attr`` and ``self.sym_mult_lut`` is built if missing. Cell
+        parameters, ``z_prime`` and the box attributes (``packing_coeff``,
+        ``density``, ...) are not recomputed.
+
+        Parameters
+        ----------
+        sg_ind : int, list of int, or torch.Tensor
+            An int is applied to every crystal; a list or tensor gives one space
+            group per crystal.
+
+        Raises
+        ------
+        TypeError
+            For any other type.
+        """
         if isinstance(sg_ind, int):
             sg_ind_tensor = torch.ones_like(self.sg_ind, device=self.device) * sg_ind
         elif isinstance(sg_ind, list):
@@ -1916,6 +3130,10 @@ class MolCrystalOps:
         the shared +1 eigenspace of G. Derived from cctbx's structure seminvariants
         (CONTINUOUS_DIMS, modulus-0 entries), which agrees 230/230 with the direct
         derivation from SYM_OPS -- see gfn docs/findings.md F-008.
+
+        An axis is marked free when any vector listed for the space group in
+        ``CONTINUOUS_DIMS`` has a nonzero component along it. The table is
+        assigned to ``self.free_axis_lut`` and returned.
         """
         free_by_sg = torch.zeros(231, 3, dtype=torch.bool, device=self.device)
         for k, vecs in CONTINUOUS_DIMS.items():
@@ -1940,11 +3158,13 @@ class MolCrystalOps:
 
         CONVENTION: put the centroid at the CENTRE of its aunit box along each free
         axis (frac = auv_d / 2), which is latent 0. Deliberately not 0:
+
           * latent 0 is already the canonical value the projected cell angles take, so
             the whole dead-row mechanism needs no second constant and `_dead_values`
             stays all-zeros;
-          * frac 0 is the box FACE, and for the 26 space groups whose free axis is also
-            auv == 1 the face is a wrap seam -- pinning a coordinate exactly on the seam
+          * frac 0 is the box FACE, and for the 52 space groups whose free axes all have
+            auv == 1 (26 with a hand-encoded ASYM_UNITS entry, 26 on the default
+            [1, 1, 1]) the face is a wrap seam -- pinning a coordinate exactly on the seam
             is asking for trouble that the box centre simply does not have.
 
         Z' > 1 IS DELIBERATELY NOT HANDLED. The free translation is ONE GLOBAL shift
@@ -1954,8 +3174,20 @@ class MolCrystalOps:
         axis. Those offsets are physical. The common shift then pushes other units out
         of [0, auv_d], and re-wrapping a SINGLE unit by auv_d is only a symmetry when
         auv_d == 1 (a true lattice vector), which holds for 26 of the 42 free-axis
-        groups and not the rest. That is a real open question, not a detail, so this
+        groups that have a hand-encoded ASYM_UNITS entry, and not the rest (the
+        other 26 free-axis groups use the default auv = [1, 1, 1]). That is a real
+        open question, not a detail, so this
         returns untouched at Z' > 1 rather than guessing. sg 9 Z'=2 is the test case.
+
+        Builds and caches ``self.free_axis_lut`` and ``self.asym_unit_lut`` if
+        missing. When it acts, it assigns ``self.aunit_centroid`` ([num_graphs, 3])
+        with every free-axis coordinate set to ``auv_d / 2`` and the others unchanged.
+
+        Returns
+        -------
+        bool
+            False (nothing changed) if ``max_z_prime > 1``, any ``z_prime > 1``, or
+            no crystal in the batch has a free axis; True after assigning.
         """
         if int(self.max_z_prime) > 1 or bool(torch.any(self.z_prime > 1)):
             return False
@@ -1976,13 +3208,57 @@ class MolCrystalOps:
         return True
 
     def canonicalize_zp_aunits(self):
-        if self.is_batch:
-            self.aunit_centroid, self.aunit_orientation, self.aunit_handedness = canonicalize_aunit_order(self)
-        else:
-            self.aunit_centroid, self.aunit_orientation, self.aunit_handedness = canonicalize_aunit_order(
-                collate_data_list([self], max_z_prime=self.max_z_prime))
+        """Reorder each crystal's asymmetric units into canonical order, in place; atoms move with their slots.
+
+        Uses ``canonicalize_aunit_order``: units are sorted by ascending norm of
+        their fractional centroid. Slots beyond a crystal's ``z_prime`` sort last
+        and are filled with centroid 0.5 and orientation pi/2 in every component.
+        Reassigns ``aunit_centroid``, ``aunit_orientation`` and ``aunit_handedness``
+        with new tensors. A single crystal is collated into a one-graph batch first.
+
+        The atoms move with their pose slots (``_unit_block_moves``), so a crystal whose
+        units hold different conformers is the same crystal before and after. On a
+        crystal with ``z_prime > 1`` whose used slots change order, atom block ``j``
+        (of ``z_prime`` contiguous blocks of ``num_atoms // z_prime`` atoms, the layout
+        ``split_to_zp1_batch`` reads) becomes the old block of the unit that moves into
+        slot ``j``. Reassigned with new objects when any crystal moves: the unit map
+        ``unit_ind`` when stored, moved with its atoms and relabelled to the new slot order;
+        every per-atom tensor sliced by ``ptr`` (``pos``, ``z``, ``x``, ...) except ``mol_ind``, which
+        numbers units by position; row-level lists of per-atom lists; ``file_bonds``,
+        ``mol_bonds`` and ``'index'``/``'face'`` tensors, renumbered; the per-slot
+        row tensors ``aunit_op``, ``unit_radius``, ``unit_mass``, ``unit_volume`` and
+        ``unit_fingerprint``; and the per-unit lists ``unit_smiles``.
+        Crystals with ``z_prime <= 1`` and crystals whose order does not change keep
+        their atoms in place; when ``max_z_prime == 1`` no atom attribute is touched.
+        Unit-cell attributes (``unit_cell_pos``, ``unit_cell_batch``,
+        ``unit_cell_mol_ind``) are not reordered: they still hold the same crystal,
+        with the units in the old order.
+
+        Raises
+        ------
+        ValueError
+            From ``_unit_block_moves``: a moving crystal whose units cannot be read
+            (``unit_layout``; e.g. an atom count not divisible by ``z_prime``, or a unit
+            map of unequal units), or with a used slot sorting behind an unused one
+            (fractional centroid norm >= sqrt(3)), or a per-slot row tensor narrower than
+            a moving crystal's ``z_prime``.
+        """
+        batch = self if self.is_batch else collate_data_list([self], max_z_prime=self.max_z_prime)
+        moves = _unit_block_moves(batch) if batch.max_z_prime > 1 else {}
+        self.aunit_centroid, self.aunit_orientation, self.aunit_handedness = canonicalize_aunit_order(batch)
+        for key, value in moves.items():
+            self[key] = value[0] if (isinstance(value, list) and not self.is_batch) else value
 
     def canonicalize_orientation(self):
+        """Map every asymmetric unit's rotation vector to its equivalent with non-negative z, in place.
+
+        A rotation vector ``v`` with ``v_z < 0`` becomes
+        ``-(v / |v|) * (2 pi - |v|)`` (``canonicalize_rotvec``), which describes the
+        same rotation. Assigns ``self.aunit_orientation`` ([num_graphs,
+        3 * max_z_prime]). ``canonicalize_rotvec`` writes in place into the
+        reshaped input, so the previous tensor is also modified when the reshape
+        is a view.
+        """
         flat_rotvecs = self.aunit_orientation.reshape(self.num_graphs * self.max_z_prime, 3)
         fixed_flat_rotvecs = canonicalize_rotvec(flat_rotvecs)
         fixed_rotvecs = fixed_flat_rotvecs.reshape(self.num_graphs, self.max_z_prime * 3)
@@ -1999,6 +3275,42 @@ class MolCrystalOps:
         Triclinic (sg 1, 2): the output is spglib's Niggli cell, all angles acute or all obtuse. The reduction penalty uses
         a beta/gamma-obtuse convention instead (sym_utils.tri_niggli_reduction_penalty), so all-acute outputs score > 0 and
         fail the confirm_transform penalty check until (a, b, c) -> (a, -b, -c) is applied.
+
+        Batch only. Calls ``self.mol2ucell()`` first, which reassigns ``pos``,
+        ``unit_cell_pos``, ``unit_cell_batch`` and ``unit_cell_mol_ind`` on
+        ``self``; requires ``T_cf`` from ``box_analysis``. The cell parameters are
+        converted with ``.numpy()`` without ``.cpu()``/``.detach()``, so they must be
+        CPU tensors that do not require grad. The result is a clone of ``self`` with
+        the standard cell's ``cell_lengths``/``cell_angles`` (box re-analysed),
+        unit-cell positions transformed as ``x_s = P x + p``, aunit parameters and
+        ``pos`` from ``reparameterize_unit_cell`` (then re-posed with
+        ``pose_aunit``), ``is_well_defined``, standard ``symmetry_operators`` and
+        ``nonstandard_symmetry`` set False.
+
+        Parameters
+        ----------
+        confirm_transform : bool
+            Also compare RDFs of ``self`` and the result and compute the result's
+            ``compute_cell_reduction_penalty``; a crystal succeeds when both are
+            below 1e-3. The number of failures is printed.
+        enforce_right_handedness : bool
+            Forwarded to ``reparameterize_unit_cell``.
+        symprec : float
+            spglib distance tolerance (Angstrom).
+
+        Returns
+        -------
+        MolCrystalData batch, or (MolCrystalData batch, torch.Tensor)
+            The standardized batch, plus a [num_graphs] bool success mask when
+            ``confirm_transform`` is True.
+
+        Raises
+        ------
+        ValueError
+            If spglib finds no symmetry, a different space group, or a transform
+            with determinant other than 1 for any crystal.
+        AssertionError
+            If ``self`` is not a batch.
         """
         assert self.is_batch, "Cell standardization currently only implemented for batch objects"
         import spglib
@@ -2023,7 +3335,9 @@ class MolCrystalOps:
             positions = fractional_transform(self.unit_cell_pos[self.unit_cell_batch == ind],
                                              self.T_cf[ind]).cpu().detach().numpy()
 
-            numbers = self.z[self.batch == ind].repeat(self.sym_mult[ind]).cpu().detach().numpy()
+            # the unit cell's layout: each unit tiled sym_mult times, unit by unit
+            numbers = unit_cell_z(self.z[self.batch == ind], self.z_prime.reshape(-1)[ind],
+                                  self.sym_mult[ind]).cpu().detach().numpy()
 
             "spglib symmetry, standardized in the SYM_OPS setting"
             cell = (lattice, positions, numbers)
@@ -2120,8 +3434,24 @@ class MolCrystalOps:
         mode='asymmetric unit' (default) writes space group number, H-M symbol,
         the symmetry operator loop and the asymmetric unit -- so the file can be
         read back into this object.  Every other mode goes to the ASE writer,
-        which expands to P1 and records NO space group; 'unit cell' is what the
+        which writes the atoms that mode selects in a P1 cell and records NO
+        space group; 'unit cell' is what the
         visualisation and COMPACK callers pass and is unchanged.
+
+        Parameters
+        ----------
+        inds : iterable of int or torch.Tensor
+            Batch indices of the crystals to write.
+        path : str or pathlib.Path
+            Output prefix; files are named ``{path}_{ind}.cif``.
+        mode : str
+            ``'asymmetric unit'``, or a mode of ``ase_mol_from_crystaldata``
+            (``'unit cell'`` needs ``unit_cell_pos``, e.g. from ``mol2ucell``).
+
+        Returns
+        -------
+        list of pathlib.Path or None
+            The written paths in ``'asymmetric unit'`` mode; None otherwise.
         """
         if mode == 'asymmetric unit':
             from mxtaltools.common.cif_io import write_asymmetric_unit_cif

@@ -1,0 +1,2 @@
+# The table digest is pinned; never convert line endings on checkout.
+*.json -text

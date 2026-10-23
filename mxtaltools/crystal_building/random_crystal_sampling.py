@@ -1,6 +1,12 @@
 """
-utilities for the sampling of random crystals according to some underlying statistics
-based on analysis in parameterize_crystal_distribution.py
+Utilities for sampling random crystal parameters according to fixed prior statistics.
+
+The statistics are based on the analysis in
+``mxtaltools/dataset_utils/analysis/parameterize_crystal_distribution.py`` and
+are held in module-level constants: ``angles_means``, ``angles_cov``,
+``norm_std``, ``normed_aunit_length_log_means``,
+``normed_aunit_length_log_covs``, ``packing_coeff_mean`` and
+``packing_coeff_std``. Angles are in radians throughout.
 """
 from typing import Optional
 
@@ -36,8 +42,21 @@ packing_coeff_std = 0.0447
 
 def sample_cell_angles(num_samples):
     """
-    returns angles[n, 3], [alpha, beta, gamma]
-    normally distributed according to the statistics in the triclinic CSD crystals
+    Sample cell angles from a multivariate normal prior.
+
+    The mean is ``angles_means`` (pi / 2 for each angle) and the covariance
+    ``angles_cov``, from the statistics of triclinic CSD crystals. No
+    clipping is applied.
+
+    Parameters
+    ----------
+    num_samples : int
+        Number of rows.
+
+    Returns
+    -------
+    torch.Tensor
+        [num_samples, 3] angles (alpha, beta, gamma) in radians.
     """
     angles_prior = MultivariateNormal(angles_means, angles_cov)
     return angles_prior.sample((num_samples,))
@@ -45,20 +64,53 @@ def sample_cell_angles(num_samples):
 
 def sample_aunit_centroids(num_samples, z_prime: int=1):
     """
-    returns aunit_centroids[n, 3], [x, y, z]
-    uniformly distributed on [0,1]
+    Sample asymmetric-unit centroids uniformly on [0, 1).
 
-    Can also be done by sampling the cdf of a standard normal
-    meaning it can be converted into a std normal type distribution
-    by the inverse operation
+    Parameters
+    ----------
+    num_samples : int
+        Number of rows.
+    z_prime : int, optional
+        Number of centroid triples per row. Default 1.
+
+    Returns
+    -------
+    torch.Tensor
+        [num_samples, 3 * z_prime] from ``torch.rand``; each consecutive
+        triple is one (x, y, z) centroid.
+
+    Notes
+    -----
+    The same distribution results from applying the standard normal CDF to
+    standard normal samples, so the inverse CDF converts these values to
+    standard normal ones.
     """
     return torch.rand((num_samples, 3 * z_prime))
 
 
 def sample_aunit_orientations(num_samples, z_prime: int=1):
     """
-    returns aunit_orientations[n, 3], [u, v, w]
-    of vectors with random lengths and directions
+    Sample rotation vectors with random axes and normally distributed angles.
+
+    For each of the ``z_prime`` slots the axis is a normalized standard
+    normal 3-vector, and the length is drawn from N(pi, norm_std) and
+    clipped to [-0.99 * 2 pi, 0.99 * 2 pi]. The z component of the scaled
+    vector is then replaced by its absolute value. A negative length draw
+    reverses the axis, so the returned norm is the absolute value of the
+    draw.
+
+    Parameters
+    ----------
+    num_samples : int
+        Number of rows.
+    z_prime : int, optional
+        Number of rotation vectors per row. Default 1.
+
+    Returns
+    -------
+    torch.Tensor
+        [num_samples, 3 * z_prime]; each consecutive triple is one rotation
+        vector (norm = rotation angle in radians) with non-negative z.
     """
     # random directions
     rvs = []
@@ -82,10 +134,29 @@ def sample_aunit_orientations(num_samples, z_prime: int=1):
 
 def std_normal_to_aunit_orientations(vectors):
     """
-    generate randomly distributed random rotation vectors
-    from a standard normal distribution
+    Map standard-normal 3-vectors to rotation vectors with positive z.
 
-    Identical to sample_aunit_orientations but with the z axis uniquely mapped
+    The z column is replaced by ``2 pi * Phi(z)`` (Phi the standard normal
+    CDF), giving ``w = (x, y, 2 pi Phi(z))``. The output keeps the direction
+    of ``w`` and sets its length to ``tanh((|w| - pi) / pi) * pi + pi``
+    (``enforce_1d_bound`` in soft mode), which lies in (0, 2 pi).
+
+    Parameters
+    ----------
+    vectors : torch.Tensor
+        [n, 3]; only the first three columns are read.
+
+    Returns
+    -------
+    torch.Tensor
+        [n, 3] rotation vectors (norm = rotation angle in radians).
+
+    Notes
+    -----
+    Unlike :func:`sample_aunit_orientations`, the length is a function of
+    the input vector's own length rather than an independent draw, and z is
+    made positive by the CDF map rather than by an absolute value. Inverted
+    by :func:`aunit_orientations_to_std_normal`.
     """
     # z direction must be positive - convert from std normal to uniform on 0-2pi
     # this is not ideal, as Z is std normal distributed on positive, but it works and is unique
@@ -103,7 +174,22 @@ def std_normal_to_aunit_orientations(vectors):
 
 def aunit_orientations_to_std_normal(rotvecs):
     """
-    inverts the above std_normal to aunit orientations
+    Invert :func:`std_normal_to_aunit_orientations`.
+
+    The norm is clamped to [1e-5, 2 pi - 1e-5] and mapped back with
+    ``undo_1d_bound`` (soft mode, span and center pi). The z component of the
+    rescaled vector is divided by 2 pi, clamped to [1e-3, 1 - 1e-3] and
+    passed through the standard normal inverse CDF.
+
+    Parameters
+    ----------
+    rotvecs : torch.Tensor
+        [n, 3] rotation vectors.
+
+    Returns
+    -------
+    torch.Tensor
+        [n, 3] vectors in the standard-normal basis.
     """
     eps = 1e-5
     recovered_norms = rotvecs.norm(dim=1).clip(min=eps, max=torch.pi*2-eps)
@@ -129,12 +215,46 @@ def sample_aunit_lengths(num_samples,
                          clip_packing_max: float = 1.0,
                          eps: Optional[float] = 1e-5):
     """
-    returns unit cell lengths[n, 3], [a, b, c]
+    Sample asymmetric-unit lengths for given cell angles and molecular volumes.
 
-    we first sample normed aunit lengths on a cube with unit volume
-    then, for a target packing coefficient & given cell angles, convert these to
-    asymmetric unit lengths, and then to unit cell lengths
+    Normed lengths are first sampled with unit product (a unit-volume cube
+    before the angle factor): log-normal draws with log-mean
+    ``normed_aunit_length_log_means`` and log-covariance
+    ``normed_aunit_length_log_covs + eps * I``, divided by their geometric
+    mean. Each row is then scaled by
+    ``(mol_volumes / (packing_coeff * |f|)) ** (1 / 3)`` with
+    ``f = cell_vol_angle_factor(cell_angles)``, so that the parallelepiped
+    with these lengths and ``cell_angles`` has volume
+    ``mol_volumes / packing_coeff``. Conversion to unit-cell lengths is left
+    to the caller.
 
+    Parameters
+    ----------
+    num_samples : int
+        Number of rows.
+    cell_angles : torch.Tensor
+        [num_samples, 3] cell angles in radians.
+    mol_volumes : torch.Tensor
+        [num_samples] molecular volumes; the output lengths are in the length
+        unit whose cube is the unit of ``mol_volumes``.
+    target_packing_coeff : float or torch.Tensor, optional
+        Packing coefficient. A float is broadcast to all rows; a tensor with
+        ``len > 1`` is multiplied by ``ones(num_samples)``; a tensor with
+        ``len == 1`` is used as is (a 0-d tensor raises ``TypeError`` at
+        ``len``). Any other non-None type fails an ``assert``. If None
+        (default), coefficients are drawn from
+        N(packing_coeff_mean, packing_coeff_std) and clipped to
+        [clip_packing_min, clip_packing_max].
+    clip_packing_min, clip_packing_max : float, optional
+        Clip range for sampled packing coefficients. Defaults 0.4 and 1.0.
+    eps : float, optional
+        Diagonal jitter added to the log-length covariance. Default 1e-5.
+
+    Returns
+    -------
+    torch.Tensor
+        [num_samples, 3] asymmetric-unit lengths, on the device of
+        ``mol_volumes``.
     """
     normed_aunit_lengths_prior = MultivariateNormal(normed_aunit_length_log_means,
                                                     normed_aunit_length_log_covs + torch.eye(3) * eps)
@@ -175,8 +295,48 @@ def sample_reduced_box_vectors(num_graphs,
                                asym_unit_dict=None,
                                target_packing_coeff: Optional[float] = None):
     """
-    Sample type-1 (acute) niggli reduced box parameter from a random prior
-    Currently the main conditions are satisfied, not the symmetry breaking special conditions
+    Sample type-I (acute) Niggli-reduced box parameters from a random prior.
+
+    Draws [num_graphs, 6] standard normal values and maps them with
+    :func:`randn_to_niggli_box_vectors`. Without ``target_packing_coeff``
+    the sampled cells satisfy the main Niggli conditions (a < b < c, 0 < cos(alpha) < b / (2c),
+    0 < cos(beta) < a / (2c), 0 < cos(gamma) < a / (2b)), not the
+    symmetry-breaking special conditions.
+
+    Parameters
+    ----------
+    num_graphs : int
+        Number of rows.
+    mol_radii : torch.Tensor
+        [num_graphs] molecular radii; set the length scale and the device.
+    mol_volumes : torch.Tensor
+        [num_graphs] molecular volumes; used only with
+        ``target_packing_coeff``.
+    sg_inds : iterable
+        [num_graphs] space-group numbers, looked up as ``str(int(ind))``.
+    sym_mult : torch.Tensor
+        [num_graphs] symmetry multiplicities; used only with
+        ``target_packing_coeff``.
+    asym_unit_dict : dict, optional
+        Space-group number as a string -> tensor [3] of asymmetric-unit axis
+        fractions. If None, built from ``ASYM_UNITS`` with values converted
+        to tensors on the device of ``mol_radii``.
+    target_packing_coeff : float, optional
+        If given, each row's three lengths are scaled by
+        ``(mol_volumes * sym_mult / V / target_packing_coeff) ** (1 / 3)``,
+        V being the sampled cell volume, and c is then clipped below at
+        ``0.1 * 2 * mol_radii * asym_unit_dict[sg][2]``. The sampler's own
+        lower bound on c is ``0.1 * 2 * mol_radii / asym_unit_dict[sg][2]``.
+        The clip can move the packing coefficient off the target and break
+        the cosine bounds on alpha and beta.
+
+    Returns
+    -------
+    cell_lengths : torch.Tensor
+        [num_graphs, 3] (a, b, c), in the length unit of ``mol_radii``.
+    cell_angles : torch.Tensor
+        [num_graphs, 3] (alpha, beta, gamma) in radians, each in
+        (pi / 3, pi / 2).
     """
     if asym_unit_dict is None:
         asym_unit_dict = ASYM_UNITS.copy()
@@ -206,6 +366,40 @@ def sample_reduced_box_vectors(num_graphs,
 
 def randn_to_niggli_box_vectors(asym_unit_dict, mol_radii, rands,
                                 sg_inds):  # TODO this could be written more efficiently
+    """
+    Map standard-normal draws to type-I (acute) Niggli-reduced box parameters.
+
+    With ``r = rands`` and ``auv_c = asym_unit_dict[str(int(sg))][2]``:
+
+    - c: the asymmetric-unit c length in units of ``2 * mol_radii`` is
+      ``exp(log(0.1) + (log(4) - log(0.1)) * sigmoid(0.24 + 0.3618 * r[:, 2]))``,
+      which lies in (0.1, 4); ``c`` is that value / ``auv_c`` * ``2 * mol_radii``.
+    - ``b = (0.1 + 0.9 * sigmoid(r[:, 1] + 1)) * c`` and
+      ``a = (0.1 + 0.9 * sigmoid(r[:, 0] + 1)) * b``, so a < b < c.
+    - ``cos(alpha) = sigmoid(2 r[:, 3]) * b / (2c)``,
+      ``cos(beta) = sigmoid(2 r[:, 4]) * a / (2c)``,
+      ``cos(gamma) = sigmoid(2 r[:, 5]) * a / (2b)``; each angle is the
+      arccos, in radians, and lies in (pi / 3, pi / 2).
+
+    Parameters
+    ----------
+    asym_unit_dict : dict
+        Space-group number as a string -> tensor [3] of asymmetric-unit axis
+        fractions. Values must be tensors; they are combined with
+        ``torch.stack``.
+    mol_radii : torch.Tensor
+        [n] molecular radii.
+    rands : torch.Tensor
+        [n, 6] standard-normal draws.
+    sg_inds : iterable
+        [n] space-group numbers.
+
+    Returns
+    -------
+    tuple of torch.Tensor
+        ``(a, alpha, b, beta, c, gamma)`` in that interleaved order, each
+        [n]; lengths in the unit of ``mol_radii``, angles in radians.
+    """
     # lognormal distribution parameters for the asymmetric unit c-vector length in molecule diameter units
     log_mean = 0.24
     log_std = 0.3618
@@ -248,7 +442,34 @@ def randn_to_niggli_box_vectors(asym_unit_dict, mol_radii, rands,
 
 def niggli_box_vectors_to_randn(asym_unit_dict, mol_radii, a, b, c, al, be, ga, sg_inds):
     """
-    inverts the nigglifying function back to a standardized tensor
+    Map box parameters back to the standard-normal basis of :func:`randn_to_niggli_box_vectors`.
+
+    a, b and the angles use the inverses of the forward maps, with the
+    ratios a / b and b / c clamped to [0.1 + 1e-3, 1 - 1e-3] and the scaled
+    cosines clamped to [1e-3, 1 - 1e-3]. For c, the log asymmetric-unit
+    length (in units of ``2 * mol_radii``) is clamped to
+    [log(0.1 + 1e-4), log(8 - 1e-4)] and inverted over the range
+    (log(0.1), log(8)), whereas the forward map uses (log(0.1), log(4)); the
+    c component therefore does not round-trip.
+
+    Parameters
+    ----------
+    asym_unit_dict : dict
+        As in :func:`randn_to_niggli_box_vectors`.
+    mol_radii : torch.Tensor
+        [n] molecular radii.
+    a, b, c : torch.Tensor
+        [n] cell lengths, in the unit of ``mol_radii``.
+    al, be, ga : torch.Tensor
+        [n] cell angles in radians.
+    sg_inds : iterable
+        [n] space-group numbers.
+
+    Returns
+    -------
+    tuple of torch.Tensor
+        ``(a_std, al_std, b_std, be_std, c_std, ga_std)``, each [n], in the
+        interleaved order of the forward function's outputs.
     """
     # recover c
     log_mean = 0.24
@@ -289,9 +510,15 @@ def niggli_box_vectors_to_randn(asym_unit_dict, mol_radii, a, b, c, al, be, ga, 
 
 
 def sigmoid_shift(x, x_min, x_max):
+    """Return ``x_min + (x_max - x_min) * sigmoid(x)``, in (x_min, x_max)."""
     return x_min + (x_max - x_min) * torch.sigmoid(x)
 
 def inverse_sigmoid_shift(x, x_min, x_max):
+    """
+    Inverse of :func:`sigmoid_shift`: ``logit((x - x_min) / (x_max - x_min))``.
+
+    No clamping is applied; ``x`` at or outside the bounds gives inf or nan.
+    """
     return siginv((x - x_min) / (x_max - x_min))
 
     """

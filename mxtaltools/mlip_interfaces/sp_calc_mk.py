@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """
-Script: single_point.py
-Description:
-  This script performs a single-point calculation on an input XYZ file.
-  It reads configuration options from a YAML file—including cell parameters,
-  periodic boundary conditions, and MACE calculator settings.
-  The script computes the energy and forces for the structure and saves
-  the output structure to an XYZ file.
-Usage:
-  python single_point.py <input_file.xyz> config_file="config.yaml"
+Ad-hoc driver for `SPMaceCalculator` on one embedded molecule.
+
+Run as a script, it embeds a hard-coded SMILES with hydrogens (`embed_mol`),
+takes its coordinates and atomic numbers (`extract_mol_info`), builds an
+`SPMaceCalculator` on ``'cuda'``, and calls `lattice_energy_calculation` with
+that molecule as both the unit-cell contents (one molecule per cell) and the
+gas-phase reference, in a cubic cell (all angles 90 degrees) whose edge length
+takes 10 evenly spaced values from 5 to 20. The returned
+(gas-phase energy, lattice energy) tuples are collected in a local list. It takes
+no command-line arguments and writes no files; the only file it reads is the
+model file loaded by `SPMaceCalculator`.
+
+Importing the module sets ``PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`` in
+the process environment.
 """
 
 import os

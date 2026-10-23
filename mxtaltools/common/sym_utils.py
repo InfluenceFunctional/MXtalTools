@@ -1,3 +1,21 @@
+"""Space-group lookup tables and per-crystal-system cell-reduction penalties.
+
+``init_sym_info`` bundles the space-group tables of ``mxtaltools.constants.space_group_info``;
+``cell_reduction_penalty`` dispatches the per-system penalty functions below on space-group number.
+
+Importing this module reads two environment variables:
+
+- ``MXT_NIGGLI_TRICLINIC``: if set, to any value, the import raises ``RuntimeError``.
+- ``MXT_LEGACY_TRICLINIC_WALLS``: must be ``'0'`` or ``'1'`` (unset reads as ``'0'``); any other value raises
+  ``ValueError``.
+  The module constant ``LEGACY_TRICLINIC_WALLS`` (bool) is True only for ``'1'``. In that case the import prints a
+  warning to stderr and emits a ``UserWarning``, and ``cell_reduction_penalty`` scores space groups 1 and 2 with
+  ``legacy_tri_reduction_penalty`` instead of ``tri_niggli_reduction_penalty``.
+
+``MONO_CLASS`` is a ``torch.long`` tensor [231] holding the monoclinic setting class of space groups 3-15
+(``MONO_GLIDE`` = 0, ``MONO_CENTRED`` = 1, ``MONO_FREE`` = 2) and -1 for every other index; see
+``mono_reduction_penalty``.
+"""
 import os
 import sys
 import warnings
@@ -9,10 +27,27 @@ from mxtaltools.constants.space_group_info import SYM_OPS, POINT_GROUPS, LATTICE
 
 def make_lattice_code_lookup(lattice_type):
     """
-    Build lookup tensor for crystallographic space-group indices.
+    Build a lookup tensor from space-group number to integer lattice code.
 
-    sg_ind is expected to be in [1, 230].
-    Index 0 is unused and marked invalid.
+    Parameters
+    ----------
+    lattice_type : dict or sequence of str
+        Lattice-system name per space group. A dict maps space-group number to name, and a key of 0 is skipped. A
+        sequence of length 231 is indexed by space-group number (entry 0 is skipped); a sequence of length 230 holds
+        space group 1 at index 0. Names are lower-cased and must be keys of
+        ``mxtaltools.constants.space_group_info.LATTICE_TO_CODE``.
+
+    Returns
+    -------
+    lattice_code : torch.Tensor
+        ``torch.long`` tensor [231] on CPU. Entry ``sg`` is ``LATTICE_TO_CODE[name]`` for space group ``sg`` in 1-230;
+        entry 0 is -1.
+
+    Raises
+    ------
+    ValueError
+        If a sequence has a length other than 230 or 231, a space-group number is outside 0-230, a name is not a key
+        of ``LATTICE_TO_CODE``, or any of space groups 1-230 has no entry.
     """
 
     lattice_code = torch.full((231,), -1, dtype=torch.long)
@@ -55,11 +90,21 @@ def make_lattice_code_lookup(lattice_type):
     return lattice_code
 def init_sym_info():
     """
-    Initialize dict containing symmetry info for crystals with standard settings and general positions.
+    Collect the symmetry tables for crystals with standard settings and general positions.
 
     Returns
     -------
     sym_info : dict
+        Keys, each table keyed by space-group number:
+
+        - ``'sym_ops'``: ``SYM_OPS``, a list of [4, 4] numpy affine symmetry operators per space group.
+        - ``'point_groups'``: ``POINT_GROUPS``, point-group symbol per space group.
+        - ``'lattice_type'``: ``LATTICE_TYPE``, lattice-system name per space group.
+        - ``'lattice_code'``: ``make_lattice_code_lookup(LATTICE_TYPE)``, a ``torch.long`` tensor [231].
+        - ``'space_groups'``: ``SPACE_GROUPS``, space-group symbol per space group.
+
+        All values except ``'lattice_code'`` are the module-level objects of
+        ``mxtaltools.constants.space_group_info`` themselves, not copies.
     """
     sym_ops = SYM_OPS
     point_groups = POINT_GROUPS
@@ -79,6 +124,8 @@ def init_sym_info():
     return sym_info
 
 def bounding_penalty(x, lower, upper, margin: float = 0.0):
+    """Elementwise quadratic walls ``relu(x - (upper - margin))**2 + relu((lower + margin) - x)**2``: zero for x in
+    [lower + margin, upper - margin]. lower and upper may be scalars or tensors broadcastable against x."""
     return (torch.relu(x - (upper - margin)) ** 2) + (torch.relu((lower + margin) - x) ** 2)
 
 
@@ -100,8 +147,12 @@ if LEGACY_TRICLINIC_WALLS:
 
 def legacy_tri_reduction_penalty(cell_lengths, cell_angles, margin):
     """The pre-Niggli triclinic walls (default until mxtaltools 9e179673), used only with MXT_LEGACY_TRICLINIC_WALLS=1:
-    a <= b <= c, the three pairwise |cos| bounds, and relu(ab cos gamma + ac cos beta + bc cos alpha - margin)^2. They leave
-    1-6 zero-penalty cells per lattice and penalise every all-acute Niggli cell."""
+    a <= b <= c, the three pairwise ``|cos|`` bounds, and relu(ab cos gamma + ac cos beta + bc cos alpha - margin)^2. They leave
+    1-6 zero-penalty cells per lattice and penalise every all-acute Niggli cell.
+    The ``|cos|`` bounds are ``|cos alpha| <= b/2c``, ``|cos beta| <= a/2c``, ``|cos gamma| <= a/2b`` (bounds clamped
+    below at 1e-6). margin tightens the ordering and ``|cos|`` walls and loosens the last term, which is zero up to a sum
+    of +margin.
+    cell_lengths and cell_angles are [n, 3], angles in radians; returns [n]."""
     eps = 1e-6
     bc_error = F.relu(cell_lengths[:, 1] / cell_lengths[:, 2] - (1 - margin)) ** 2  # c>b
     ab_error = F.relu(cell_lengths[:, 0] / cell_lengths[:, 1] - (1 - margin)) ** 2  # # b>a
@@ -123,7 +174,9 @@ def legacy_tri_reduction_penalty(cell_lengths, cell_angles, margin):
 def tri_niggli_reduction_penalty(cell_lengths, cell_angles, margin):
     """Triclinic Niggli main conditions (boundary tie-breaks omitted) in a beta/gamma-obtuse sign convention, with
     A = a^2, B = b^2, xi = 2 b.c, eta = 2 a.c, zeta = 2 a.b:
-      a <= b <= c;  |xi| <= B, |eta| <= A, |zeta| <= A;  eta <= 0 and zeta <= 0 (xi either sign);  |a + b + c| >= c.
+
+      a <= b <= c;  ``|xi| <= B``, ``|eta| <= A``, ``|zeta| <= A``;  eta <= 0 and zeta <= 0 (xi either sign);  ``|a + b + c| >= c``.
+
     Zero on exactly one cell per lattice up to measure-zero ties; there alpha is in [60, 120] deg, beta and gamma in [90, 120].
     SIGN CONVENTION -- NOT Niggli's / spglib's / ASE's. Niggli takes xi, eta, zeta all > 0 (all-acute) or all <= 0. The two
     agree on all-obtuse cells; an all-acute Niggli cell (a, b, c) maps to this one by the basis change (a, -b, -c), which keeps
@@ -131,7 +184,8 @@ def tri_niggli_reduction_penalty(cell_lengths, cell_angles, margin):
     (x, -y, -z). Chosen for generated cells: the zero set is one connected region and alpha crosses 90 deg without a jump
     (beta or gamma crossing 90 still flips the cell). Cells from compute_standard_cell, ase_interface.get_niggli_cell or any
     other Niggli reduction need that flip before they score 0.
-    margin shrinks the order, pairwise and three-vector walls; the sign walls take no margin."""
+    margin shrinks the order, pairwise and three-vector walls; the sign walls take no margin.
+    cell_lengths and cell_angles are [..., 3], angles in radians, lengths clamped below at 1e-6; returns [...]."""
     eps = 1e-6
     a, b, c = cell_lengths.clamp(min=eps).unbind(dim=-1)
     alpha, beta, gamma = cell_angles.unbind(dim=-1)
@@ -168,10 +222,14 @@ def mono_reduction_penalty(cell_lengths, cell_angles, sg, margin):
     """Monoclinic (sg 3-15) reduction walls: one fundamental domain per setting class, so each lattice has exactly one
     zero-penalty cell among the cells sharing its SYM_OPS operator list; that cell is spglib's standard cell
     (checked empirically, spglib 2.7.0).
+
+    ::
+
       class    sg                 basis changes   walls
       GLIDE    7, 13, 14          r even          W1 cos(beta) <= 0;  W2  c|cos(beta)| <= a;  W3  a|cos(beta)| <= c/2
       CENTRED  5, 8, 9, 12, 15    q even          W1;                 W2' a|cos(beta)| <= c;  W3' c|cos(beta)| <= a/2
       FREE     3, 4, 6, 10, 11    any             W1;                 a <= c;                 W3' c|cos(beta)| <= a/2
+
     plus alpha = gamma = 90 deg. Max beta in the zero set: 135 deg (GLIDE, CENTRED), 120 deg (FREE).
     margin = 0: the zero set is the closed domain (2 cells with identical a, c, beta on a wall).
     margin > 0: cos(beta) in [lower + margin, -margin] and FREE a/c <= 1 - margin; a lattice whose domain cell lies in
@@ -181,7 +239,9 @@ def mono_reduction_penalty(cell_lengths, cell_angles, sg, margin):
     The FREE ordering term is unbounded (up to ~3.5e3 in the sg 10 latent box, where the cos(beta) terms stay below 0.66)
     and overflows float32 above a/c ~ 1.84e19.
     a and c are clamped at 1e-6: below that dE/da = 0, and the penalty can be lower than the previous walls
-    (cos(beta) in [-a/c, 0] for every sg)."""
+    (cos(beta) in [-a/c, 0] for every sg).
+    cell_lengths and cell_angles are [n, 3], angles in radians (b is unused); sg is [n] space-group numbers of any
+    integer or float dtype; returns [n]. Space groups 0-230 outside 3-15 give NaN."""
     eps = 1e-6
     a, b, c = cell_lengths.unbind(dim=1)
     al, be, ga = cell_angles.unbind(dim=1)
@@ -208,6 +268,8 @@ def mono_reduction_penalty(cell_lengths, cell_angles, sg, margin):
 
 
 def ortho_reduction_penalty(cell_lengths, cell_angles, margin):
+    """Orthorhombic metric only: sum over alpha, beta, gamma of (angle - pi/2)**2, angles in radians. No length or
+    reduction term; cell_lengths and margin are unused. cell_angles is [n, 3]; returns [n]."""
     # crystal system enforcement
     alpha_error = (cell_angles[:, 0] - torch.pi / 2) ** 2
     beta_error = (cell_angles[:, 1] - torch.pi / 2) ** 2
@@ -221,6 +283,8 @@ def ortho_reduction_penalty(cell_lengths, cell_angles, margin):
 
 
 def tetra_reduction_penalty(cell_lengths, cell_angles, margin):
+    """Tetragonal metric only: (a - b)**2 plus (angle - pi/2)**2 for each of alpha, beta, gamma (radians). No reduction
+    term; margin is unused. cell_lengths and cell_angles are [n, 3]; returns [n]."""
     a, b, c = cell_lengths.unbind(dim=-1)
 
     # reduction term
@@ -239,6 +303,9 @@ def tetra_reduction_penalty(cell_lengths, cell_angles, margin):
 
 
 def trig_reduction_penalty(cell_lengths, cell_angles, margin):
+    """Hexagonal-axes metric: (a - b)**2 + (alpha - pi/2)**2 + (beta - pi/2)**2 + (gamma - 2 pi/3)**2, angles in
+    radians. No reduction term; margin is unused. cell_lengths and cell_angles are [n, 3]; returns [n]. The same
+    expression as hex_reduction_penalty."""
     a, b, c = cell_lengths.unbind(dim=-1)
     al, be, ga = cell_angles.unbind(dim=-1)
 
@@ -257,6 +324,8 @@ def trig_reduction_penalty(cell_lengths, cell_angles, margin):
 
 
 def hex_reduction_penalty(cell_lengths, cell_angles, margin):
+    """Hexagonal metric: (a - b)**2 + (alpha - pi/2)**2 + (beta - pi/2)**2 + (gamma - 2 pi/3)**2, angles in radians.
+    No reduction term; margin is unused. cell_lengths and cell_angles are [n, 3]; returns [n]."""
     a, b, c = cell_lengths.unbind(dim=-1)
     al, be, ga = cell_angles.unbind(dim=-1)
 
@@ -270,6 +339,9 @@ def hex_reduction_penalty(cell_lengths, cell_angles, margin):
 
 
 def rhombo_reduction_penalty(cell_lengths, cell_angles, margin):
+    """Rhombohedral-axes metric: (a - b)**2 + (b - c)**2 + (alpha - beta)**2 + (beta - gamma)**2, angles in radians.
+    No reduction term; margin is unused. cell_lengths and cell_angles are [n, 3]; returns [n].
+    cell_reduction_penalty does not call this function (it scores space groups 143-167 with trig_reduction_penalty)."""
     a, b, c = cell_lengths.unbind(dim=1)
     al, be, ga = cell_angles.unbind(dim=1)
 
@@ -282,6 +354,8 @@ def rhombo_reduction_penalty(cell_lengths, cell_angles, margin):
 
 
 def cube_reduction_penalty(cell_lengths, cell_angles, margin):
+    """Cubic metric: (a - b)**2 + (b - c)**2 plus (angle - pi/2)**2 for each of alpha, beta, gamma (radians). No
+    reduction term; margin is unused. cell_lengths and cell_angles are [n, 3]; returns [n]."""
     a, b, c = cell_lengths.unbind(dim=-1)
     al, be, ga = cell_angles.unbind(dim=-1)
     # no reduction terms
@@ -300,6 +374,9 @@ def cube_reduction_penalty(cell_lengths, cell_angles, margin):
 
 
 def niggli_reduction_penalty(cell_lengths, cell_angles, **kwargs):
+    """Sum of the pairwise dot products of the cell vectors, a.b + a.c + b.c = ab cos(gamma) + ac cos(beta) +
+    bc cos(alpha). Positive for every all-acute cell. cell_lengths and cell_angles are [n, 3], angles in radians;
+    returns [n]. Extra keyword arguments are accepted and ignored."""
     #a, b, c, al, be, ga = self.zp1_cell_parameters()[:, :6].split(1, dim=1)
     a,b,c = cell_lengths.split(1, dim=1)
     al, be, ga = cell_angles.split(1, dim=1)
@@ -315,6 +392,43 @@ def niggli_reduction_penalty(cell_lengths, cell_angles, **kwargs):
 
 
 def cell_reduction_penalty(cell_angles, cell_lengths, sg, margin: float = 0.1):
+    """
+    Per-crystal cell-reduction and crystal-system penalty, dispatched on space-group number.
+
+    Parameters
+    ----------
+    cell_angles : torch.Tensor
+        [num_crystals, 3] cell angles (alpha, beta, gamma) in radians. Angles come before lengths here, the reverse of
+        the per-system penalty functions.
+    cell_lengths : torch.Tensor
+        [num_crystals, 3] cell lengths (a, b, c).
+    sg : torch.Tensor
+        [num_crystals] space-group numbers.
+    margin : float, optional
+        Forwarded to every per-system function; only the triclinic and monoclinic walls use it (see
+        ``tri_niggli_reduction_penalty``, ``legacy_tri_reduction_penalty`` and ``mono_reduction_penalty``).
+        Default 0.1.
+
+    Returns
+    -------
+    E : torch.Tensor
+        [num_crystals] penalty; a new tensor on ``cell_lengths.device`` with the dtype of ``cell_lengths`` if that is a
+        floating dtype, else float32. Rows whose ``sg`` falls in none of the ranges below (e.g. outside 1-230) are 0.
+
+    Notes
+    -----
+    Space-group ranges and the function applied to each:
+
+    - 1-2: ``tri_niggli_reduction_penalty``, or ``legacy_tri_reduction_penalty`` when ``LEGACY_TRICLINIC_WALLS``
+      is True.
+    - 3-15: ``mono_reduction_penalty``, which also receives ``sg``.
+    - 16-74: ``ortho_reduction_penalty``; 75-142: ``tetra_reduction_penalty``; 143-167: ``trig_reduction_penalty``;
+      168-194: ``hex_reduction_penalty``; 195-230: ``cube_reduction_penalty``.
+
+    The orthorhombic and higher penalties enforce the crystal-system metric only and contain no reduction term.
+    Length-equality terms are squared differences in the units of ``cell_lengths``; angle terms are in squared
+    radians.
+    """
     masks = {'triclinic': (sg == 1) | (sg == 2),
              'monoclinic': (sg >= 3) & (sg <= 15),
              'orthorhombic': (sg >= 16) & (sg <= 74),

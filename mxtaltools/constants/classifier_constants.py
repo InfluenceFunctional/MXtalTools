@@ -1,3 +1,38 @@
+"""Class-label lists and lookup tables for nicotinamide and urea polymorph classification.
+
+nic_class_names : list[str]
+    Ten nicotinamide class labels, Roman-numeral forms plus ``'Melt'``, in
+    the order ``['V', 'VII', 'VIII', 'I', 'II', 'III', 'IV', 'IX', 'VI', 'Melt']``.
+nic_ordered_class_names : list[str]
+    The same ten labels in numeral order, ``'I'`` to ``'IX'``, then ``'Melt'``.
+urea_class_names : list[str]
+    Seven urea class labels, ``['A', 'B', 'C', 'I', 'III', 'IV', 'Melt']``.
+urea_ordered_class_names : list[str]
+    Same contents and order as ``urea_class_names``.
+defect_names : list[str]
+    ``['Bulk', 'Surface']``.
+identifier2form : dict[str, int]
+    Structure identifier to integer form label. Nicotinamide identifiers
+    (``'NICOAM07'`` ... ``'NICOAM18'``, ``'NIC_Melt'``) map to 1-10 and urea
+    identifiers (``'ureaA'`` ... ``'ureaIV'``, ``'UREA_Melt'``) map to 1-7;
+    each value is the 1-based position of a label in
+    ``nic_ordered_class_names`` or ``urea_ordered_class_names``, with the
+    melt entries at 10 and 7.
+form2index : dict[int, int]
+    Position of a label in ``nic_class_names`` (0-9) to the position of the
+    same label in ``nic_ordered_class_names``.
+index2form : dict[int, int]
+    Inverse of ``form2index``.
+type2num : dict[str, int]
+    Atom-type label (``'Ca1'``, ``'Ca2'``, ``'Ca'``, ``'C'``, ``'Nb'``, ``'N'``,
+    ``'N1'``, ``'N2'``, ``'O'``, ``'Hn'``, ``'H4'``, ``'Ha'``, ``'H'``) to atomic
+    number: 6 for the C labels, 7 for the N labels, 8 for ``'O'`` and 1 for
+    the H labels.
+num2atomicnum : dict[int, int]
+    Integer atom-type index 1-10 (commented as nicotinamide types in the
+    source) to atomic number: 1, 2 and 8 to 1; 4, 5, 9 and 10 to 6; 6 and 7
+    to 7; 3 to 8. Keys are not inserted in ascending order.
+"""
 nic_class_names = ['V', 'VII', 'VIII', 'I', 'II', 'III', 'IV', 'IX', 'VI', 'Melt']
 nic_ordered_class_names = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'Melt']
 urea_class_names = ['A', 'B', 'C', 'I', 'III', 'IV', 'Melt']

@@ -5,15 +5,17 @@ the symmetry operator list, and the ASYMMETRIC UNIT -- not a P1 expansion.
 
 Why this exists.  The incumbent writer (`common.ase_interface.ase_write_cif`)
 hands a bare `ase.Atoms` to `ase.io.write`, which emits P1 with **no space group
-at all**: `ase_interface.py:154` does build an `ase.spacegroup.crystal` with the
-right group, but that call is on the `return_crystal` branch, which the writer
-path never takes.  Everything symmetry-related is therefore lost on write --
+at all**: `ase_interface.ase_mol_from_crystaldata` does build an
+`ase.spacegroup.crystal` with the right group, but that call is on the
+`return_crystal` branch, which the writer path never takes.  Everything
+symmetry-related is therefore lost on write --
 `sg_ind`, `symmetry_operators`, `z_prime`, every `aunit_*` parameter,
 `identifier` -- so a written file cannot be read back into the object that wrote
 it.  See `docs/design/cif_reader_design.md` §8.
 
-Deliberately depends on nothing but numpy/torch and the package's own symmetry
-tables.  ASE's CIF reader has a defect this writer must not feed: at
+Depends only on numpy/torch, the package's own symmetry tables, and
+`ase.data.chemical_symbols` for element symbols; it does not use ASE's CIF
+reader or writer.  ASE's CIF reader has a defect this writer must not feed: at
 `ase/io/cif.py:378` it takes `_symmetry_Int_Tables_number` and never consults the
 H-M symbol when no symop loop is present, so a file claiming IT number 1 with a
 non-P1 symbol reads back as P1, silently.  We always write the symop loop.
@@ -35,7 +37,11 @@ _AXES = ('x', 'y', 'z')
 
 
 def _fmt_translation(t: float) -> str:
-    """Render a fractional translation as an exact CIF fraction ('1/2', '-1/3')."""
+    """Render a fractional translation as a signed CIF term ('+1/2', '-1/3', '+1').
+
+    Returns '' when ``abs(t) < 1e-8``, and a signed 6-decimal float when no fraction
+    with denominator <= 12 matches ``t`` within 1e-6.
+    """
     if abs(t) < 1e-8:
         return ''
     frac = Fraction(float(t)).limit_denominator(12)
@@ -51,6 +57,31 @@ def sym_op_to_xyz(op) -> str:
     `op` is [[R | t], [0 0 0 1]] acting on fractional coordinates, matching the
     layout of `constants.space_group_info.SYM_OPS`.
 
+    Each of the first three rows becomes one term; terms are joined by commas with
+    no spaces.  Rotation coefficients within 1e-8 of zero are dropped, those within
+    1e-8 of +/-1 are written as ``+x`` / ``-x``, and any other coefficient as a
+    signed fraction with denominator <= 12 (``+1/2*x``).  The translation follows,
+    formatted by ``_fmt_translation`` (``+1/2``, a signed integer, or a signed
+    6-decimal float).  A leading ``+`` is stripped and an empty term is written
+    as ``0``.
+
+    Parameters
+    ----------
+    op : array_like
+        [4, 4] affine operator; converted with ``np.asarray(op, dtype=float)``.
+
+    Returns
+    -------
+    str
+        Three comma-joined terms, e.g. ``'-x+1/2,y+1/2,-z'``.
+
+    Raises
+    ------
+    ValueError
+        If ``op`` does not have shape (4, 4).
+
+    Examples
+    --------
     >>> sym_op_to_xyz(np.eye(4))
     'x,y,z'
     """
@@ -79,12 +110,14 @@ def sym_op_to_xyz(op) -> str:
 
 
 def _as_float(value) -> float:
+    """First element of a tensor (detached, moved to CPU), or ``float(value)`` otherwise."""
     if torch.is_tensor(value):
         return float(value.detach().cpu().reshape(-1)[0])
     return float(value)
 
 
 def _element_symbols(z: Sequence[int]) -> list:
+    """Element symbols for atomic numbers ``z``, from ``ase.data.chemical_symbols``."""
     from ase.data import chemical_symbols          # ase is already a hard dependency
     return [chemical_symbols[int(zi)] for zi in z]
 
@@ -94,8 +127,9 @@ def _operators_for(crystal, cell_index: int, sg_ind: int, single: bool) -> list:
 
     `MolCrystalData` stores `symmetry_operators` -- the CIF's actual operators
     when it came from a file, or the `SYM_OPS[sg_ind]` fallback the constructor
-    supplies when it did not (`crystal_ops.py:50-62`).  The unit-cell builder
-    applies *those* (`crystal_building/utils.py:677`), not the standard table.
+    supplies when it did not (`set_symmetry_attrs` in `crystal_ops.py`).  The
+    unit-cell builder applies *those* (`aunit2ucell` in `crystal_building/utils.py`),
+    not the standard table.
 
     So the writer must emit them too.  Substituting the standard table would be a
     silent wrong answer for a large fraction of real structures: measured over 400
@@ -105,6 +139,12 @@ def _operators_for(crystal, cell_index: int, sg_ind: int, single: bool) -> list:
     `1/2-x,1/2+y,1/2-z` filed under IT number 14, i.e. P2_1/n written as P2_1/c).
     For that 19.2 % the emitted operators would not correspond to the coordinates,
     and the file would still read back as a valid crystal.
+
+    Returns ``SYM_OPS[sg_ind]`` when ``crystal.symmetry_operators`` is None;
+    otherwise the stored operators (element ``cell_index`` for a batched crystal),
+    as a list of [4, 4] float arrays, a lone [4, 4] operator being promoted to a
+    list of one.  Raises ValueError if they are not shaped (n_ops, 4, 4), or if
+    ``sym_mult`` is present and differs from their count.
     """
     stored = crystal.symmetry_operators
     if stored is None:
@@ -134,6 +174,31 @@ def operators_are_standard(crystal, index: int = 0) -> bool:
 
     Informational: a False here is normal (37.5 % of the CSD) and is NOT an error.
     It only means the file must carry its own operator list, which it always does.
+
+    The operators compared are the ones :func:`cif_block_from_crystal` writes (the
+    stored ``symmetry_operators``, or ``SYM_OPS[sg_ind]`` when none are stored).
+    True when the counts match and each operator matches the standard operator at
+    the same position under ``np.allclose`` with ``atol=1e-6`` and the default
+    ``rtol``.
+
+    Parameters
+    ----------
+    crystal : MolCrystalData
+        Single (``crystal.batch is None``) or batched crystal.
+    index : int
+        Crystal index within a batch; ignored for a single crystal.
+
+    Returns
+    -------
+    bool
+
+    Raises
+    ------
+    ValueError
+        If the stored operators are not shaped (n_ops, 4, 4), or their count
+        differs from ``sym_mult``.
+    KeyError
+        If ``sg_ind`` is not a key of ``SYM_OPS``.
     """
     single = crystal.batch is None
     sg_ind = int(_as_float(crystal.sg_ind if single else crystal.sg_ind[index]))
@@ -151,20 +216,50 @@ def cif_block_from_crystal(crystal,
 
     Parameters
     ----------
-    crystal : MolCrystalData (batched or single)
-    index : which crystal in the batch
-    block_name : the `data_` block name
-    identifier : written as `_chemical_name_common`; defaults to the crystal's own
+    crystal : MolCrystalData
+        Batched or single (``crystal.batch is None``) crystal.
+    index : int
+        Which crystal in the batch; ignored for a single crystal.
+    block_name : str
+        The ``data_`` block name.  The value ``'crystal'`` (the default) is
+        replaced by the identifier, giving ``data_<identifier>``.
+    identifier : str, optional
+        Written as ``_chemical_name_common``.  Defaults to ``str()`` of the
+        crystal's own ``identifier`` (for a list or tuple, element ``index`` of a
+        batched crystal if present, else element 0), or to ``block_name`` when the
+        crystal's identifier is None.
 
     Returns
     -------
-    str : a complete CIF data block, newline terminated.
+    str
+        A complete CIF data block, newline terminated.
+
+    Raises
+    ------
+    KeyError
+        If ``sg_ind`` is not a key of ``SYM_OPS``.
+    ValueError
+        If the stored ``symmetry_operators`` are not shaped (n_ops, 4, 4), or
+        their count differs from ``sym_mult``.
 
     Notes
     -----
     Positions are taken from `pos` -- the POSED ASYMMETRIC UNIT -- and converted
     to fractional coordinates with `T_cf`.  No symmetry expansion is performed;
     the operator loop is what reconstitutes the cell.
+
+    The block holds ``_chemical_name_common``; the first three ``cell_lengths``
+    and the first three ``cell_angles`` (read as radians, written in degrees);
+    ``_cell_formula_units_Z`` = ``round(n_ops * z_prime)``, with ``z_prime``
+    taken as 1 when None; the space group number and ``SPACE_GROUPS[sg_ind]``
+    symbol under both the ``_space_group_*`` and ``_symmetry_*`` tag names; the
+    operator loop, ids from 1, from :func:`sym_op_to_xyz` applied to the stored
+    ``symmetry_operators`` (``SYM_OPS[sg_ind]`` when none are stored); and an
+    atom-site loop with labels
+    ``<symbol><count>`` numbered per element, fractional coordinates computed in
+    float32 and written to 6 decimals without wrapping into [0, 1), and occupancy
+    1.000.  For a batched crystal the atoms are the contiguous node range from the
+    first to the last node with ``crystal.batch == index``.
     """
     single = crystal.batch is None
     if single:
@@ -263,6 +358,31 @@ def write_asymmetric_unit_cif(crystal,
     Returns the list of paths written.  Mirrors `ase_write_cif`'s naming
     (`{path}_{ind}.cif`) so callers can switch modes without changing how they
     locate the output.
+
+    Parameters
+    ----------
+    crystal : MolCrystalData
+        Batched or single crystal.
+    inds : sequence of int or torch.Tensor
+        Crystal indices.  Each is passed as ``index`` to
+        :func:`cif_block_from_crystal` with the default ``block_name``, so each
+        data block is named after the crystal's identifier, not the file.  For a
+        single crystal every index writes the same block.
+    path : str or pathlib.Path
+        Output prefix; crystal ``ind`` is written as UTF-8 to ``{path}_{ind}.cif``,
+        overwriting any existing file.
+
+    Returns
+    -------
+    list of pathlib.Path
+        The written paths, in the order of ``inds``.
+
+    Raises
+    ------
+    KeyError
+        As raised by :func:`cif_block_from_crystal`.
+    ValueError
+        As raised by :func:`cif_block_from_crystal`.
     """
     written = []
     for ind in (inds.tolist() if torch.is_tensor(inds) else list(inds)):

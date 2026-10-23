@@ -1,3 +1,5 @@
+"""Conversion of crystal data batches to ASE ``Atoms`` objects, CIF writing through ASE, and
+ASE Niggli reduction of a structure's cell."""
 import numpy as np
 import torch
 from ase import Atoms
@@ -13,20 +15,27 @@ def data_batch_to_ase_mols_list(crystaldata_batch,
                                 specific_inds=None,
                                 show_mols: bool = False, **kwargs):
     """
-    Helper function for converting Crystaldata batches into lists of ase objects.
+    Convert several structures of a crystal data batch into ASE ``Atoms`` objects.
 
     Parameters
     ----------
-    crystaldata_batch :
-        batch of Crystaldata objects
-    max_ind : int
-        Maximum batch ind to include in the list
-    show_mols : bool
-        whether to visualize the list of mol objects
+    crystaldata_batch : MolCrystalData, single or collated
+        Structures to convert. ``num_graphs`` is read if present; otherwise 1 is assumed.
+    max_ind : int, optional
+        When ``specific_inds`` is None, graphs ``0`` to ``min(max_ind, num_graphs) - 1`` are
+        converted. Default ``np.inf`` (all graphs).
+    specific_inds : iterable of int, optional
+        Batch indices to convert, in the given order; takes precedence over ``max_ind``.
+    show_mols : bool, optional
+        If True, the list is opened with ``ase.visualize.view``. Default False.
+    **kwargs
+        Forwarded to :func:`ase_mol_from_crystaldata`.
 
     Returns
     -------
-    list of ase mol objects
+    list
+        One :func:`ase_mol_from_crystaldata` result per index: an ``ase.Atoms``, or a tuple if
+        ``return_crystal=True`` is forwarded.
     """
     if hasattr(crystaldata_batch, 'num_graphs'):
         num_graphs = crystaldata_batch.num_graphs
@@ -51,33 +60,57 @@ def ase_mol_from_crystaldata(crystal_batch,
                              return_crystal: bool = False,
                              highlight_mol_ind: bool=False):
     """
-    Extract an atomic structure from a Crystaldata object according to its batch index, and convert it into an ase mol object.
-    Several options for visualization of crystals.
+    Extract one structure from a crystal data batch as an ASE ``Atoms`` object.
+
+    The batch is cloned, moved to CPU and detached first; the input is not modified. The atoms
+    of graph ``index`` are selected through ``crystal_batch.batch`` (all atoms if ``batch`` is
+    None) and then filtered according to ``mode``. The cell is ``T_fc[index].T`` (rows are the
+    lattice vectors; ``T_fc[0]`` is used if ``index`` is None or out of range), or no cell if
+    ``T_fc`` is None. Periodic boundary flags are not set.
 
     Parameters
     ----------
-    crystal_batch : Crystaldata object
+    crystal_batch : MolCrystalData, single or collated
+        Reads ``batch``, ``z``, ``pos`` and ``T_fc`` and, depending on the options,
+        ``aux_ind``, ``mol_ind``, ``ptr``, ``num_atoms``, ``sym_mult``, ``unit_cell_pos``,
+        ``unit_cell_batch`` and ``sg_ind``.
     index : int, optional
-        Batch index of Crystaldata object to extract. Default is None.
+        Batch index of the structure. Required when ``crystal_batch.batch`` is not None.
     highlight_canonical_conformer : bool, optional
-        Whether to give the canonical conformer a different atom type for color comparison.
-    mode : 'conformer', 'unit cell', 'inside cell', 'convolve with', 'distance', or None (default None)
-        Assuming the input Crystaldata is a molecule cluster larger than a single unit cell, we have several options to pare down to the desired visualization.
-        'conformer' : only the 'canonical conformer'
-        'unit cell' : all molecules with centroids inside the unit cell
-        'inside cell' : all atoms inside the unit cell
-        'convolve with' : all atoms within convolution range of the canonical conformer
-        'distance' : all atoms within a certain distance of the canonical conformer
-        None : show all atoms in the crystal
-    cutoff : float, optional
-        Distance fed to the 'distance' exclusion level option
-    return_crystal : bool, optional
-        Whether to return an ase mol for the crystal. Does not always work properly. Ase does not understand our crystals correctly.
+        If True, atomic numbers are replaced by ``aux_ind + 6`` (so ``aux_ind`` 0, 1, 2 appear
+        as C, N, O). Default False.
+    mode : str or None, optional
+        Atom selection within graph ``index``, for an input that is a molecule cluster larger
+        than a single unit cell:
 
+        - ``'conformer'``: atoms with ``aux_ind == 0``.
+        - ``'unit cell'``: the rows of ``unit_cell_pos`` with ``unit_cell_batch == index``;
+          atomic numbers are the asymmetric unit's (the ``num_atoms[index]`` entries of ``z``
+          starting at ``ptr[index]`` on a row; the graph's ``aux_ind == 0`` atoms on a cluster),
+          each of the crystal's ``z_prime`` units tiled ``sym_mult[index]`` times, unit by unit
+          (``crystal_building.utils.unit_cell_z``, the unit cell's layout).
+        - ``'inside cell'``: atoms whose fractional coordinates,
+          ``inv(T_fc[index]) @ pos``, all lie strictly between 0 and 1.
+        - ``'convolve with'``: atoms with ``aux_ind < 2``.
+        - ``'distance'``: atoms closer to the centroid of the ``aux_ind == 0`` atoms than the
+          largest centroid distance within that group plus ``cutoff``.
+        - None or any other value: all atoms of the graph.
+
+        Default None.
+    cutoff : float, optional
+        Extra distance for ``mode='distance'``, in the units of ``pos``. Default 4.
+    return_crystal : bool, optional
+        If True, also returns ``ase.spacegroup.crystal(symbols=mol, cell=cell, setting=1,
+        spacegroup=int(sg_ind[index]))`` built from the extracted atoms. Does not always work
+        properly; ASE does not understand these crystals correctly. Default False.
+    highlight_mol_ind : bool, optional
+        If True and ``highlight_canonical_conformer`` is False, atomic numbers are replaced by
+        ``mol_ind + 6``. Default False.
 
     Returns
     -------
-    ase mol object
+    ase.Atoms or tuple of ase.Atoms
+        The extracted structure, or ``(mol, crystal)`` if ``return_crystal`` is True.
     """
     crystal_batch = crystal_batch.clone().cpu().detach()
     if crystal_batch.batch is not None:  # more than one crystal in the datafile
@@ -129,9 +162,16 @@ def ase_mol_from_crystaldata(crystal_batch,
     elif highlight_mol_ind:
         numbers = crystal_batch.mol_ind[atom_inds].cpu().detach().numpy() + 6
     elif mode == 'unit cell':
-        start = crystal_batch.ptr[index]
-        stop = start + crystal_batch.num_atoms[index]
-        numbers = crystal_batch.z[start:stop].repeat(crystal_batch.sym_mult[index]).cpu().detach().numpy()
+        from mxtaltools.crystal_building.utils import unit_cell_z   # the unit cell's layout, unit by unit
+        aux = getattr(crystal_batch, 'aux_ind', None)
+        if aux is not None:   # a cluster: each unit's molecule 0 (aux_ind 0), unit by unit, is the asymmetric unit
+            in_graph = (crystal_batch.batch == index) if crystal_batch.batch is not None else torch.ones_like(aux, dtype=torch.bool)
+            aunit_z = crystal_batch.z[in_graph & (aux == 0)]
+        else:                 # a row: its own atoms
+            start = crystal_batch.ptr[index]
+            aunit_z = crystal_batch.z[start:start + crystal_batch.num_atoms[index]]
+        numbers = unit_cell_z(aunit_z, crystal_batch.z_prime.reshape(-1)[index],
+                              crystal_batch.sym_mult[index]).cpu().detach().numpy()
     else:
         numbers = crystal_batch.z[atom_inds].cpu().detach().numpy()
 
@@ -160,7 +200,27 @@ def ase_mol_from_crystaldata(crystal_batch,
 def get_niggli_cell(crystal_batch, index, radians: bool=False):
     """ASE's Niggli cell parameters: all angles acute or all obtuse. For all-acute cells this is NOT the triclinic
     convention of sym_utils.tri_niggli_reduction_penalty (beta, gamma obtuse), which needs (a, b, c) -> (a, -b, -c):
-    beta -> 180 - beta, gamma -> 180 - gamma. Lengths are the same in both."""
+    beta -> 180 - beta, gamma -> 180 - gamma. Lengths are the same in both.
+
+    The structure from :func:`ase_mol_from_crystaldata` (all atoms of graph ``index``, cell
+    ``T_fc[index].T``) is written to ``temp.cif`` in the current working directory, read back
+    with ``ase.io.read``, reduced in place with ``ase.build.niggli_reduce`` and converted with
+    ``ase.geometry.cell_to_cellpar``. ``temp.cif`` is left on disk.
+
+    Parameters
+    ----------
+    crystal_batch : MolCrystalData, single or collated
+        Source of the structure and its ``T_fc``.
+    index : int
+        Batch index of the structure.
+    radians : bool, optional
+        If True, angles are returned in radians; otherwise in degrees. Default False.
+
+    Returns
+    -------
+    numpy.ndarray
+        [6] ``(a, b, c, alpha, beta, gamma)``; lengths in the units of ``T_fc``.
+    """
 
     mol = ase_mol_from_crystaldata(crystal_batch, index=index)
     #mol.info['spacegroup'] = Spacegroup(int(original_cluster_batch.sg_ind[ind]), setting=1)
@@ -171,6 +231,24 @@ def get_niggli_cell(crystal_batch, index, radians: bool=False):
 
 
 def ase_write_cif(batch, inds, path, mode):
+    """
+    Write selected structures of a batch to CIF files with ASE.
+
+    For each ``ind``, the structure from ``ase_mol_from_crystaldata(batch, ind, mode=mode)`` is
+    written to ``f'{path}_{ind}.cif'``, and the first ``data_image0`` in that file is replaced by
+    ``data_{path}_{ind}``.
+
+    Parameters
+    ----------
+    batch : MolCrystalData, single or collated
+        Source structures.
+    inds : iterable of int
+        Batch indices to write.
+    path : str
+        File-path prefix; also used in the CIF data block name.
+    mode : str or None
+        Atom selection passed to :func:`ase_mol_from_crystaldata`.
+    """
     for ind in inds:
         mol = ase_mol_from_crystaldata(batch, ind, mode=mode)
         cif_path = f"{path}_{ind}.cif"

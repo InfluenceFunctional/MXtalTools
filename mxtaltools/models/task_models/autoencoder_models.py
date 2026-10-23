@@ -1,3 +1,5 @@
+"""Mo3ENet, a molecular point-cloud autoencoder with scalar and Cartesian-vector channels,
+and its encoder, MLP decoder and graph decoder modules."""
 import torch
 from torch import nn as nn
 import torch.nn.functional as F
@@ -12,6 +14,44 @@ from mxtaltools.reporting.ae_reporting import swarm_vs_tgt_fig
 
 # noinspection PyAttributeOutsideInit
 class Mo3ENet(BaseGraphModel):
+    """Molecular point-cloud autoencoder (Mo3ENet).
+
+    :class:`Mo3ENetEncoder` maps a batch of molecules to a vector encoding
+    [num_graphs, 3, bottleneck_dim]. A :class:`Scalarizer` derives scalars
+    [num_graphs, bottleneck_dim] from it, and the decoder (:class:`Mo3ENetDecoder` for
+    ``decoder_type == 'mlp'``, :class:`Mo3ENetGraphDecoder` for ``'gnn'``) maps both to
+    ``num_decoder_nodes`` points per graph, each with a position, ``num_atom_types`` type
+    logits and a weight logit (see :meth:`decode`).
+
+    Parameters
+    ----------
+    seed : int
+        Passed to ``torch.manual_seed`` at construction, to the encoder and to the MLP
+        decoder.
+    config : Namespace
+        Reads ``bottleneck_dim``, ``decoder.num_nodes``, ``decoder.model_type``
+        (``'mlp'`` when absent) and ``encoder.graph.cutoff``; the ``encoder`` and
+        ``decoder`` sections are passed to the submodules.
+    num_atom_types : int
+        Number of type classes; ``output_depth = num_atom_types + 4``.
+    atom_embedding_vector : torch.Tensor
+        Registered as a buffer. :meth:`check_embedding_quality` indexes it by atomic
+        number to obtain type class indices.
+    radial_normalization : float
+        Input positions are divided by it before encoding and decoded positions are
+        multiplied by it. Stored as a float32 buffer.
+    protons_in_input : bool
+        Stored as a bool buffer; not read in this module.
+
+    Notes
+    -----
+    Further buffers: ``inferring_protons`` (False; not read in this module) and
+    ``convolution_cutoff = config.encoder.graph.cutoff / radial_normalization``, passed to
+    the encoder as ``override_cutoff``.
+
+    Construction calls ``torch.manual_seed(seed)``, which reseeds torch's global random
+    number generator. An unknown ``decoder.model_type`` raises AssertionError.
+    """
     def __init__(self,
                  seed,
                  config,
@@ -69,6 +109,30 @@ class Mo3ENet(BaseGraphModel):
                 return_latent: bool = False,
                 return_dists: bool = False,
                 **kwargs):
+        """Encode and decode a batch of molecules.
+
+        Calls :meth:`encode` (with its centering check; ``mol_batch.pos`` is divided in
+        place by ``radial_normalization``) and then :meth:`decode`, printing a message
+        when the encoding or the decoding contains NaN.
+
+        Parameters
+        ----------
+        mol_batch : MolData
+            Molecules to encode; modified in place as above.
+        return_latent : bool, optional
+            Also return the encoding. Default False.
+        return_dists : bool, optional
+            Not used. Default False.
+        ``**kwargs``
+            Accepted and not used.
+
+        Returns
+        -------
+        torch.Tensor or tuple
+            ``decoding`` [num_graphs * num_decoder_nodes, output_depth] (see
+            :meth:`decode`); with ``return_latent``, ``(decoding, encoding)`` where
+            ``encoding`` is [num_graphs, 3, bottleneck_dim].
+        """
         encoding = self.encode(mol_batch)
         if torch.sum(torch.isnan(encoding)) != 0:
             print("NaN values in encoding")
@@ -83,6 +147,29 @@ class Mo3ENet(BaseGraphModel):
     def encode(self,
                mol_batch,
                override_centering: bool = False):
+        """Encode a batch of molecules into vector encodings.
+
+        Divides ``mol_batch.pos`` in place by ``radial_normalization`` (the caller's batch
+        is modified), then runs :class:`Mo3ENetEncoder` and returns its vector output.
+
+        Parameters
+        ----------
+        mol_batch : MolData
+            Molecules; ``z``, ``pos``, ``batch``, ``ptr`` and ``num_graphs`` are read.
+        override_centering : bool, optional
+            Skip the centering check. Default False.
+
+        Returns
+        -------
+        torch.Tensor
+            [num_graphs, 3, bottleneck_dim] vector encoding.
+
+        Raises
+        ------
+        AssertionError
+            Unless ``override_centering``, when the norm of the mean position over all
+            nodes of the batch (not per graph) is not below 1e-3.
+        """
         # normalize radii
         if not override_centering:
             assert torch.linalg.norm(mol_batch.pos.mean(0)) < 1e-3, "Encoder trained only for centered molecules!"
@@ -92,7 +179,30 @@ class Mo3ENet(BaseGraphModel):
         return encoding
 
     def decode(self, encoding):
-        """encoding nx3xk"""
+        """Decode vector encodings into per-graph point swarms.
+
+        The decoder receives the :class:`Scalarizer` output [num_graphs, bottleneck_dim]
+        as scalars and ``encoding`` as vectors. A message is printed when the scalarized
+        encoding contains NaN.
+
+        Parameters
+        ----------
+        encoding : torch.Tensor
+            [num_graphs, 3, bottleneck_dim] vector encoding.
+
+        Returns
+        -------
+        torch.Tensor
+            [num_graphs * num_decoder_nodes, output_depth], rows grouped by graph:
+            columns 0:3 are positions multiplied by ``radial_normalization``, columns
+            ``3:3 + num_atom_types`` are type logits and the last column is a weight logit
+            (see :func:`~mxtaltools.models.autoencoder_utils.decoding2mol_batch`).
+
+        Raises
+        ------
+        AssertionError
+            If ``decoder_type`` is neither ``'mlp'`` nor ``'gnn'``.
+        """
         s = self.scalarizer(encoding)
         if torch.sum(torch.isnan(s)) > 0:
             print("NaN values in scalarized encoding")
@@ -121,6 +231,7 @@ class Mo3ENet(BaseGraphModel):
         return decoding
 
     def compile_self(self, dynamic=True, fullgraph=False):
+        """Replace ``encoder``, ``decoder`` and ``scalarizer`` with ``torch.compile`` wrappers, forwarding ``dynamic`` and ``fullgraph``."""
         self.encoder = torch.compile(self.encoder, dynamic=dynamic, fullgraph=fullgraph)
         self.decoder = torch.compile(self.decoder, dynamic=dynamic, fullgraph=fullgraph)
         self.scalarizer = torch.compile(self.scalarizer, dynamic=dynamic, fullgraph=fullgraph)
@@ -133,6 +244,50 @@ class Mo3ENet(BaseGraphModel):
                                 num_atom_types=5,
                                 visualize=False,
                                 ):
+        """Compute the reconstruction loss and matched-point distances for a batch.
+
+        Encodes a clone of ``mol_batch`` (with the centering check of :meth:`encode`) and
+        decodes it, then sets ``mol_batch.x`` in place to
+        ``atom_embedding_vector[mol_batch.z].flatten()`` (type class indices).
+        :func:`~mxtaltools.models.autoencoder_utils.decoding2mol_batch` builds the decoded
+        swarm and sets ``mol_batch.aux_ind`` in place,
+        :func:`~mxtaltools.models.autoencoder_utils.ae_reconstruction_loss` gives the
+        reconstruction loss, and :func:`~mxtaltools.models.autoencoder_utils.batch_rmsd`,
+        called with its own default cutoff, threshold and ``type_distance_scaling`` (not
+        this method's ``type_distance_scaling``), gives the matched distances.
+
+        Parameters
+        ----------
+        mol_batch : MolData
+            Molecules; ``x`` and ``aux_ind`` are overwritten in place, the other tensor
+            attributes are replaced by detached tensors with the same values (see
+            :func:`~mxtaltools.models.autoencoder_utils.init_decoded_data`), and the
+            values of ``pos`` are not changed.
+        sigma : float, optional
+            Gaussian width for the reconstruction loss. Default 0.35.
+        type_distance_scaling : float, optional
+            Type-channel scaling for the reconstruction loss. Default 2.
+        node_weight_temperature : float, optional
+            Softmax temperature of the decoded weight logits. Default 1.
+        num_atom_types : int, optional
+            Number of type classes for the one-hot encodings, independent of the model's
+            ``num_classes``. Default 5.
+        visualize : bool, optional
+            If True, show
+            :func:`~mxtaltools.reporting.ae_reporting.swarm_vs_tgt_fig` for every graph
+            (atom types ``[1, 6, 7, 8, 9]``) with ``renderer='browser'``. Default False.
+
+        Returns
+        -------
+        graph_reconstruction_loss : torch.Tensor
+            [num_graphs] per-graph reconstruction loss.
+        rmsd : torch.Tensor
+            [num_graphs] per-graph mean matched joint-space distance from
+            :func:`~mxtaltools.models.autoencoder_utils.batch_rmsd`; NaN for graphs with
+            an unmatched atom.
+        complete_graph_bools : torch.Tensor
+            [num_graphs] bool, True when every atom of the graph is matched.
+        """
         encoding = self.encode(mol_batch.clone())
         decoding = self.decode(encoding)
 
@@ -172,6 +327,23 @@ class Mo3ENet(BaseGraphModel):
 
 
 class Mo3ENetDecoder(nn.Module):
+    """MLP decoder of :class:`Mo3ENet`: a :class:`vectorMLP` from the scalar and vector bottleneck to per-node outputs.
+
+    Parameters
+    ----------
+    seed : int
+        Passed to :class:`vectorMLP`.
+    config : Namespace
+        Reads ``fc.num_layers``, ``fc.hidden_dim``, ``fc.norm``, ``fc.dropout``,
+        ``fc.vector_norm``, ``activation`` and ``ramp_depth``.
+    bottleneck_dim : int
+        Width of the input scalars and channel count of the input vectors.
+    output_depth : int
+        Per-node output width including the 3 position columns; the scalar output has
+        ``(output_depth - 3) * num_nodes`` columns.
+    num_nodes : int
+        Nodes per graph; the channel count of the vector output.
+    """
     def __init__(self, seed, config, bottleneck_dim, output_depth, num_nodes):
         super(Mo3ENetDecoder, self).__init__()
         self.model = vectorMLP(
@@ -190,10 +362,34 @@ class Mo3ENetDecoder(nn.Module):
         )
 
     def forward(self, x, v):
+        """Return ``(scalars, vectors)``, [num_graphs, (output_depth - 3) * num_nodes] and [num_graphs, 3, num_nodes], from ``x`` [num_graphs, bottleneck_dim] and ``v`` [num_graphs, 3, bottleneck_dim]."""
         return self.model(x, v)
 
 
 class Mo3ENetGraphDecoder(nn.Module):
+    """Graph decoder of :class:`Mo3ENet`: expands each bottleneck into ``num_nodes`` nodes on a fully connected graph and runs a :class:`VectorGNN`.
+
+    Bias-free linear layers map the scalar bottleneck to ``hidden_dim`` scalar features
+    per node (``s_to_nodes``), and the vector bottleneck to ``hidden_dim`` vector channels
+    per node (``v_to_nodes``) and to one direction per node (``v_to_pos``). The
+    :class:`VectorGNN` has ``config.fc.num_layers`` convolutions with one MLP layer each,
+    node width ``hidden_dim``, message width ``hidden_dim // 4``, a 32-function Gaussian
+    radial embedding with cutoff 2, ``'gelu'`` activation, no atom-type embedding, scalar
+    output width ``output_depth - 3`` and one vector output channel. ``config.fc.norm`` and
+    ``config.fc.vector_norm`` are passed with a ``'graph '`` prefix (None stays None).
+
+    Parameters
+    ----------
+    config : Namespace
+        Reads ``fc.hidden_dim``, ``fc.num_layers``, ``fc.norm``, ``fc.vector_norm`` and
+        ``fc.dropout``.
+    bottleneck_dim : int
+        Width of the input scalars and channel count of the input vectors.
+    output_depth : int
+        Per-node output width including the 3 position columns.
+    num_nodes : int
+        Nodes per graph.
+    """
     def __init__(self, config, bottleneck_dim, output_depth, num_nodes):
         super(Mo3ENetGraphDecoder, self).__init__()
         self.num_nodes = num_nodes
@@ -225,6 +421,28 @@ class Mo3ENetGraphDecoder(nn.Module):
         self.v_to_pos = nn.Linear(bottleneck_dim, num_nodes, bias=False)
 
     def forward(self, x, v):
+        """Decode bottlenecks into per-node scalar and vector outputs.
+
+        Node ``m`` of graph ``g`` is row ``g * num_nodes + m``. Its input position to the
+        :class:`VectorGNN` is ``d / (0.1 + norm(d))``, where ``d`` is its ``v_to_pos``
+        direction, so every input position has norm below 1; the returned vectors are
+        separate outputs of the :class:`VectorGNN`. Edges join every ordered pair of
+        distinct nodes within each graph and are passed to the :class:`VectorGNN` as
+        ``{'edge_index': ...}``.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            [num_graphs, bottleneck_dim] scalar bottleneck.
+        v : torch.Tensor
+            [num_graphs, 3, bottleneck_dim] vector bottleneck.
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            ``(scalars, vectors)`` from the :class:`VectorGNN`,
+            [num_graphs * num_nodes, output_depth - 3] and [num_graphs * num_nodes, 3, 1].
+        """
         eps = 1e-1
         num_graphs = len(x)
 
@@ -371,6 +589,23 @@ print(((rpos-posr).abs()/rpos.abs()).mean())
 
 
 class Mo3ENetEncoder(nn.Module):
+    """Encoder of :class:`Mo3ENet`: a :class:`VectorMoleculeGraphModel` on atomic numbers and positions.
+
+    Node inputs are the atomic number ``z`` plus the norm of each position
+    (``concat_pos_to_node_dim=True``); there are no molecule-level features.
+
+    Parameters
+    ----------
+    seed : int
+        Passed to :class:`VectorMoleculeGraphModel`.
+    config : Namespace
+        ``activation``, ``fc`` and ``graph`` are passed as ``activation``, ``fc_config``
+        and ``graph_config``.
+    bottleneck_dim : int
+        Output width of both the scalar and the vector track.
+    override_cutoff : float or torch.Tensor, optional
+        Graph cutoff used instead of ``config.graph.cutoff``. Default None.
+    """
     def __init__(self, seed, config, bottleneck_dim, override_cutoff=None):
         super(Mo3ENetEncoder, self).__init__()
         self.model = VectorMoleculeGraphModel(
@@ -387,6 +622,7 @@ class Mo3ENetEncoder(nn.Module):
         )
 
     def forward(self, mol_batch):
+        """Return ``(x_out, v_out)``, [num_graphs, bottleneck_dim] and [num_graphs, 3, bottleneck_dim], for ``mol_batch`` (``z``, ``pos``, ``batch``, ``ptr`` and ``num_graphs`` are read; any radial graph is built inside the model from ``pos``)."""
         return self.model(mol_batch.z,
                           mol_batch.pos,
                           mol_batch.batch,

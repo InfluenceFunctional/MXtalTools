@@ -1,3 +1,32 @@
+"""UMA (fairchem) energy evaluation for MXtalTools molecule and crystal batches.
+
+Crystal path: :func:`compute_crystal_uma_on_mxt_batch` converts a crystal batch into
+a collated fairchem ``AtomicData`` batch of full unit cells, attaches an externally
+built neighbour list when the predictor asks for one, and returns one energy per
+graph from a predictor made by :func:`init_uma_crystal_predictor`. Molecule path:
+:func:`compute_molecule_uma_on_mxt_batch` evaluates isolated, non-periodic molecules.
+Both substitute NaN for a batch whose prediction crashed (see
+:func:`safe_predict_uma`). Per-phase timings and crash counts accumulate in
+module-level counters that :func:`drain_uma_phase_timing` reports and resets.
+
+Environment variables, read once at import:
+
+``MXT_VECTORISED_ATOMICDATA``
+    ``'0'`` sets :data:`USE_VECTORISED_ATOMICDATA` to False, so the crystal path
+    builds one ``AtomicData`` per graph (:func:`batch_to_fairchem_atomicdata`) and
+    collates them, instead of calling :func:`batch_to_fairchem_batch`. Any other
+    value, or unset, leaves it True.
+``MXT_UMA_EXTERNAL_GRAPH``
+    ``'0'`` sets :data:`USE_UMA_EXTERNAL_GRAPH` to False; that flag is the default
+    for ``external_graph_gen`` in :func:`crystal_inference_settings`. Any other
+    value, or unset, leaves it True.
+``MXT_UMA_GRAPH_TIMER``
+    Any value other than ``'0'`` calls :func:`install_uma_graph_timer` at import.
+    Unset means off.
+
+Importing the module also calls ``torch.serialization.add_safe_globals([slice])``.
+"""
+
 import os
 import time
 from typing import Optional
@@ -11,6 +40,7 @@ from fairchem.core.units.mlip_unit.api.inference import InferenceSettings
 import torch
 
 from mxtaltools.common.utils import is_cuda_oom
+from mxtaltools.crystal_building.utils import unit_cell_gather_index, unit_cell_z
 import torch.serialization
 
 torch.serialization.add_safe_globals([slice])  # necessary for UMA loading on torch 2.6
@@ -131,6 +161,11 @@ def install_uma_graph_timer() -> bool:
     Wrap fairchem's generate_graph so the on-device neighbour build can be separated
     from the rest of the forward. Returns whether anything was actually wrapped.
 
+    Each wrapper calls the original and then, whether or not it raised, synchronises
+    CUDA (when ``torch.cuda.is_available()``), adds the elapsed seconds to
+    ``_PHASE_SECONDS['graph']`` and increments ``_GRAPH_CALLS``; both are reported
+    and reset by :func:`drain_uma_phase_timing`.
+
     OFF BY DEFAULT: production never calls this, so the shipping path takes no extra
     wrapper. Call it from a profiling harness.
 
@@ -142,8 +177,16 @@ def install_uma_graph_timer() -> bool:
     "graph construction is free". Both namespaces are patched, and the return value
     reports whether a binding was found at all rather than assuming one was.
 
-    Idempotent: a second call is a no-op, so a harness that re-enters cannot stack
-    wrappers and multiply-count the same call.
+    Idempotent once installed: after a call that wrapped at least one binding, later
+    calls return True without wrapping again, so a harness that re-enters cannot stack
+    wrappers and multiply-count the same call. A call that wrapped nothing leaves the
+    timer uninstalled, and the next call tries again.
+
+    Returns
+    -------
+    bool
+        True if a ``generate_graph`` binding was wrapped by this call or an earlier
+        one; False if neither module imports or neither exposes ``generate_graph``.
     """
     global _install_done
     if _install_done:
@@ -200,8 +243,49 @@ if os.environ.get('MXT_UMA_GRAPH_TIMER', '0') != '0':
 
 
 def drain_uma_phase_timing():
-    """Pop the accumulated per-phase seconds. {} when nothing was timed, so a stage
-    that never calls uma logs nothing rather than zeros."""
+    """Pop the accumulated per-phase seconds and counters, resetting them.
+
+    Returns {} when no :func:`compute_crystal_uma_on_mxt_batch` call has returned
+    from :func:`safe_predict_uma` since the last drain (``_PHASE_CALLS == 0``), so a
+    stage that never calls uma logs nothing rather than zeros. In that case nothing
+    is reset, so seconds or crash counts accumulated meanwhile carry into the next
+    non-empty drain.
+
+    Returns
+    -------
+    dict
+        Keys, all prefixed ``energy/``:
+
+        - ``uma_guard_s``, ``uma_build_s``, ``uma_forward_s``, ``uma_ext_graph_s``:
+          ``time.perf_counter`` seconds spent in the density guard, the fairchem
+          batch build, :func:`safe_predict_uma`, and the external neighbour-list
+          build.
+        - ``uma_calls``: crystal calls that returned from :func:`safe_predict_uma`.
+        - ``uma_host_frac`` = (guard + build) / total and ``uma_forward_frac`` =
+          forward / total, where total is the sum of the four phases above;
+          present only when total > 0.
+        - ``uma_flag_vectorised``: ``int(USE_VECTORISED_ATOMICDATA)`` at drain
+          time.
+        - ``uma_flag_external_graph``: external-graph builds divided by
+          ``uma_calls``.
+        - ``uma_edges_max``, ``uma_edges_mean``: maximum and mean edge count over
+          the external-graph builds since the last drain; present only when at
+          least one build recorded edges.
+        - ``uma_graph_s``, ``uma_graph_calls``, ``uma_forward_ex_graph_s`` and,
+          when forward > 0, ``uma_graph_frac_of_forward``: fairchem's internal
+          graph build, which runs inside the forward and is excluded from total;
+          present only when the :func:`install_uma_graph_timer` wrapper fired.
+        - ``uma_crash_calls``, ``uma_crash_rows``: :func:`safe_predict_uma` calls
+          counted as crashed (including one that then raised at the
+          consecutive-crash bound), and rows filled with NaN by
+          ``_crashed_energy``; always present, including as 0.
+
+    Notes
+    -----
+    ``_CONSECUTIVE_CRASHES`` is not reset, so the crash streak checked by
+    :func:`safe_predict_uma` spans drains. :func:`compute_molecule_uma_on_mxt_batch`
+    can increment the crash counters but never ``_PHASE_CALLS``.
+    """
     global _PHASE_CALLS, _GRAPH_CALLS, _EXT_GRAPH_CALLS, _CRASH_CALLS, _CRASH_ROWS
     global _EDGES_MAX, _EDGES_SUM, _EDGES_CALLS
     if not _PHASE_CALLS:
@@ -261,7 +345,9 @@ def drain_uma_phase_timing():
 
 def safe_predict_uma(predictor, uma_batch, retries: int = 1):
     """
-    (out, crashed). OOM is re-raised so the caller's batch-size controller sees it;
+    Call ``predictor.predict(uma_batch)`` with retries, returning (out, crashed).
+
+    OOM is re-raised so the caller's batch-size controller sees it;
     any OTHER RuntimeError is retried and then reported as a crash.
 
     WHAT THE RETRY IS AND IS NOT FOR, because it is easy to overrate. It helps
@@ -285,14 +371,57 @@ def safe_predict_uma(predictor, uma_batch, retries: int = 1):
     caller's handler. Tolerate a blip; refuse to limp.
 
     The caller substitutes NaN, not zero, for a crashed batch -- see _crashed_energy.
+
+    Parameters
+    ----------
+    predictor : fairchem predict unit
+        Object whose ``predict`` method is called with ``uma_batch``.
+    uma_batch : AtomicData
+        Collated fairchem batch.
+    retries : int, default 1
+        Attempts after the first; at most ``retries + 1`` calls are made.
+
+    Returns
+    -------
+    out : object or None
+        The return value of ``predictor.predict`` on success (callers in this
+        module read ``out['energy']``); None on a crash.
+    crashed : bool
+        False on success; True when every attempt raised a non-OOM RuntimeError,
+        or the recovery after one raised.
+
+    Raises
+    ------
+    RuntimeError
+        Re-raised unchanged when :func:`mxtaltools.common.utils.is_cuda_oom`
+        classifies it as OOM. Also raised, chained from the last error, when a crash
+        brings the consecutive-crash count to ``MAX_CONSECUTIVE_CRASHES``: with the
+        default of 3, the third consecutive crashed call raises instead of returning.
+
+    Notes
+    -----
+    Where ``torch.cuda.is_available()``, as at the other synchronize calls in this
+    module, ``torch.cuda.synchronize()`` is called before and after ``predict`` inside
+    the try block, and each failed attempt prints the error, then calls
+    ``torch.cuda.synchronize()`` and ``torch.cuda.empty_cache()``; if either raises
+    RuntimeError the remaining attempts are skipped. A process without CUDA
+    (``CUDA_VISIBLE_DEVICES=-1``) makes none of these calls, and a failed attempt
+    goes straight to the next. A success resets ``_CONSECUTIVE_CRASHES`` to 0; a
+    crash increments it and ``_CRASH_CALLS``. OOM and exceptions that are not
+    RuntimeError propagate without touching any counter.
     """
     global _CRASH_CALLS, _CONSECUTIVE_CRASHES
     last_error = None
+    # unguarded, a CPU-only process raised "No CUDA GPUs are available" here on every
+    # call, which the handler below counted as a crash: NaN energies, then the tripwire
+    cuda = torch.cuda.is_available()
     for attempt in range(retries + 1):
         try:
-            torch.cuda.synchronize()  # flush prior kernels
+            if cuda:
+                torch.cuda.synchronize()  # flush prior kernels
             out = predictor.predict(uma_batch)  # this launches UMA kernels
-            torch.cuda.synchronize()  # force errors to surface *here*
+            if cuda:
+                torch.cuda.synchronize()  # force errors to surface *here*
             _CONSECUTIVE_CRASHES = 0            # a success clears the streak
             return out, False  # False = no failure
 
@@ -302,6 +431,8 @@ def safe_predict_uma(predictor, uma_batch, retries: int = 1):
             last_error = e
             print(f"UMA error (attempt {attempt + 1} of {retries + 1})")
             print(str(e))
+            if not cuda:
+                continue
             try:
                 # reset the cuda context fully. Guarded: on a sticky fault these
                 # raise too, and that secondary error would mask the real one.
@@ -324,6 +455,9 @@ def safe_predict_uma(predictor, uma_batch, retries: int = 1):
 
 def _crashed_energy(batch):
     """
+    Return float32 NaN [num_graphs] on ``batch.device`` and add ``batch.num_graphs``
+    to ``_CRASH_ROWS``.
+
     NaN, deliberately, and never zero.
 
     The substituted value must be UNUSABLE BY CONSTRUCTION rather than merely wrong.
@@ -349,6 +483,52 @@ def batch_to_ase_ucell_list(
         pbc,
         force_rebuild: bool = False,
 ):
+    """
+    Convert each crystal in ``batch`` to an ``ase.Atoms`` holding its full unit cell.
+
+    Parameters
+    ----------
+    batch : crystal batch
+        Reads ``unit_cell_pos``, ``unit_cell_batch``, ``z``, ``batch``, ``pos``,
+        ``sym_mult``, ``cell_lengths``, ``cell_angles`` and ``num_graphs``, plus
+        ``z_prime`` or ``aux_ind`` depending on the case below.
+    std_orientation : bool
+        Passed to ``pose_aunit`` when the unit cell is built here.
+    pbc : bool
+        Passed to ``Atoms.set_pbc`` for every structure.
+    force_rebuild : bool, default False
+        Build the unit cell even when ``batch.unit_cell_pos`` is already set.
+
+    Returns
+    -------
+    list of ase.Atoms
+        One per graph, in graph order. Positions are
+        ``unit_cell_pos[unit_cell_batch == i]``; atomic numbers are graph i's
+        asymmetric-unit ``z``, each of its ``z_prime[i]`` units tiled ``sym_mult[i]``
+        times, unit by unit (the unit cell's layout); the cell is
+        ``Cell.fromcellpar`` of ``cell_lengths`` and ``cell_angles``, the angles
+        converted from radians to degrees. Values are detached and copied to
+        CPU numpy arrays.
+
+    Raises
+    ------
+    AssertionError
+        If ``batch.pos`` contains NaN.
+
+    Notes
+    -----
+    The asymmetric-unit atomic numbers are chosen by case:
+
+    1. ``unit_cell_pos`` is None or ``force_rebuild``: the unit cell is built in
+       place on ``batch`` (``pose_aunit`` then ``build_unit_cell``; when
+       ``z_prime.amax() > 1``, on ``split_to_zp1_batch()`` and joined back with
+       ``join_zp1_ucell_batch``), and all of ``batch.z`` is used.
+    2. otherwise, if ``batch.aux_ind`` is not None: the atoms with ``aux_ind == 0``.
+    3. otherwise all of ``batch.z``.
+
+    If ``Cell.fromcellpar`` raises AssertionError, the cell is rebuilt from the same
+    lengths with all three angles set to 90 degrees; positions are left unchanged.
+    """
     data_list = []
     if batch.unit_cell_pos is None or force_rebuild:
         if batch.z_prime.amax() > 1:
@@ -376,9 +556,11 @@ def batch_to_ase_ucell_list(
     cpupos = batch.unit_cell_pos.cpu().detach().numpy()
     cpuubatch = batch.unit_cell_batch.cpu().detach().numpy()
     cpusymmult = batch.sym_mult.cpu().detach().numpy()
+    cpuzp = batch.z_prime.reshape(-1).cpu().numpy()
     for ind in range(batch.num_graphs):
         pos = cpupos[cpuubatch == ind]
-        z = np.tile(cpuz[cpubatch == ind], cpusymmult[ind])
+        # each unit tiled sym_mult times, unit by unit (the unit cell's layout; at Z'=1 the whole z tiled)
+        z = np.tile(cpuz[cpubatch == ind].reshape(int(cpuzp[ind]), -1), (1, int(cpusymmult[ind]))).reshape(-1)
         atoms = Atoms(
             numbers=z,
             positions=pos,
@@ -398,7 +580,15 @@ def batch_to_ase_ucell_list(
 
 
 def _predictor_wants_external_graph(predictor) -> bool:
-    """The predictor's OWN setting, not the module flag: a predictor built with
+    """Whether :func:`compute_crystal_uma_on_mxt_batch` should call
+    :func:`attach_external_graph` for this predictor.
+
+    Returns ``bool(predictor.inference_settings.external_graph_gen)``, and False when
+    ``predictor`` (including None) has no ``inference_settings`` attribute or the
+    settings have no ``external_graph_gen``. :data:`USE_UMA_EXTERNAL_GRAPH` is not
+    read.
+
+    The predictor's OWN setting, not the module flag: a predictor built with
     external_graph_gen=False runs otf_graph and must not be handed edges it will
     ignore, and one built True asserts if they are missing. The predictor is the
     single source of truth so the two cannot disagree."""
@@ -418,6 +608,14 @@ def attach_external_graph(uma_batch, cutoff: float, pbc: bool):
     Fill edge_index / cell_offsets / nedges on a collated fairchem batch, replacing
     the model's internal otf_graph (see USE_UMA_EXTERNAL_GRAPH for why).
 
+    Modifies ``uma_batch`` in place and returns None. Edges come from
+    :func:`mxtaltools.mlip_interfaces.pbc_neighbours.batched_pbc_neighbour_list`
+    called on ``uma_batch.pos.detach()``, ``uma_batch.batch`` and
+    ``uma_batch.cell.detach()``, so the edge list carries no gradient. The builder's
+    per-node edge cap (``MXT_EDGE_CAP_FACTOR`` in ``pbc_neighbours``, off when unset)
+    is not disabled here; when that variable is set above 0, each source atom keeps
+    at most ``edge_cap_k(cutoff)`` of these edges as well.
+
     CONVENTION MAPPING, pinned by tests/test_uma_external_graph.py against fairchem's
     own generate_graph. Our batched_pbc_neighbour_list emits (i, j, S) meaning
     displacement = pos[j] + S @ cell - pos[i]. fairchem's eSCNMD external branch
@@ -434,6 +632,22 @@ def attach_external_graph(uma_batch, cutoff: float, pbc: bool):
     atoms); ours drops only the true self-pair (i == j, S == 0). Two atoms at
     bitwise-identical positions is a degenerate configuration whose energy is junk
     either way.
+
+    Parameters
+    ----------
+    uma_batch : AtomicData
+        Collated batch. Reads ``pos`` [n_tot, 3], ``batch`` [n_tot], ``cell``
+        [num_graphs, 3, 3] (one lattice vector per row) and ``natoms`` (for
+        num_graphs). Assigns ``edge_index`` [2, num_edges] (row 0 source, row 1
+        target, global atom indices), ``cell_offsets`` [num_edges, 3] float32 and
+        ``nedges`` [num_graphs] long. When ``uma_batch.__slices__`` is not None, its
+        ``edge_index`` and ``cell_offsets`` entries are replaced by the cumulative
+        per-graph edge counts.
+    cutoff : float
+        Neighbour cutoff radius, in the length units of ``pos``.
+    pbc : bool
+        Forwarded to the builder; False builds zero-shift edges only (no periodic
+        images).
     """
     from mxtaltools.mlip_interfaces.pbc_neighbours import batched_pbc_neighbour_list
 
@@ -464,7 +678,64 @@ def compute_crystal_uma_on_mxt_batch(batch,
                                      pbc: bool = True,
                                      max_cp: float = 2.0,
                                      force_rebuild: bool = False):
-    "UMA sometimes fails on ultra-dense cells, so we'll manually prevent that. These are obviously terrible cells anyway."
+    """
+    UMA energy of every crystal in ``batch``, one value per graph.
+
+    Four phases, each timed into the counters :func:`drain_uma_phase_timing` reports:
+
+    1. guard -- UMA sometimes fails on ultra-dense cells, so we'll manually prevent
+       that. These are obviously terrible cells anyway. While any
+       ``batch.packing_coeff`` exceeds ``max_cp``, 2 is added to all three
+       ``cell_lengths`` of each offending graph (in place) and
+       ``batch.box_analysis()`` recomputes ``T_fc``, ``T_cf``, ``cell_volume``,
+       ``packing_coeff`` and ``density``. The loop has no iteration bound.
+    2. build -- :func:`batch_to_fairchem_batch` when
+       :data:`USE_VECTORISED_ATOMICDATA`, else :func:`batch_to_fairchem_atomicdata`
+       collated by ``atomicdata_list_to_batch``; both use task ``'omc'``.
+    3. ext_graph -- only when :func:`_predictor_wants_external_graph` is True:
+       :func:`attach_external_graph` with the predictor backbone's ``cutoff`` and
+       ``pbc``, followed by a CUDA synchronise when CUDA is available; the edge count
+       is recorded.
+    4. forward -- :func:`safe_predict_uma`.
+
+    Parameters
+    ----------
+    batch : crystal batch
+        Modified in place: the guard can change ``cell_lengths`` and the box
+        quantities, and the unit cell is built on it when ``unit_cell_pos`` is None
+        or ``force_rebuild`` (see :func:`batch_to_fairchem_batch`). An existing
+        ``unit_cell_pos`` is not rebuilt after the guard enlarges a cell unless
+        ``force_rebuild`` is True.
+    std_orientation : bool, default True
+        Passed to ``pose_aunit`` when the unit cell is built.
+    predictor : fairchem predict unit
+        Required despite the None default: ``predictor.predict`` is called without
+        a None check.
+    pbc : bool, default True
+        Periodicity flag written for every graph, and passed to the external
+        neighbour-list build.
+    max_cp : float, default 2.0
+        Packing-coefficient threshold for the guard.
+    force_rebuild : bool, default False
+        Build the unit cell even when ``batch.unit_cell_pos`` is already set.
+
+    Returns
+    -------
+    torch.Tensor
+        ``out['energy']`` as returned by the predictor, with no unit conversion
+        here (``compute_lattice_uma`` treats it as eV). On a crash, float32 NaN
+        [num_graphs] on ``batch.device``.
+
+    Raises
+    ------
+    RuntimeError
+        From :func:`safe_predict_uma` (OOM, or the consecutive-crash bound) or,
+        when :data:`USE_VECTORISED_ATOMICDATA`, from :func:`batch_to_fairchem_batch`
+        (unit-cell atom-count mismatch).
+    ValueError
+        From ``batch.box_analysis()`` inside the guard when ``mol_volume`` or
+        ``mass`` is None.
+    """
     global _PHASE_CALLS
     _t = time.perf_counter()
     while sum(batch.packing_coeff > max_cp) > 0:
@@ -562,27 +833,6 @@ def _resolve_aunit_z(batch, std_orientation, force_rebuild):
     return batch.z, batch.batch
 
 
-def _tiled_gather_index(batch_ind, sym_mult, num_graphs):
-    """
-    Index that reproduces `z[batch_ind == i].repeat(sym_mult[i])` for every graph,
-    concatenated -- i.e. per graph, the aunit's atoms TILED sym_mult times.
-
-    Tiled, not repeat_interleaved: `Tensor.repeat(k)` on a 1-D tensor gives
-    [a,b,c,a,b,c], and unit_cell_pos is laid out image-major to match. Getting this
-    backwards would pair every position with the wrong element and still produce a
-    perfectly well-formed batch, so it is asserted in the tests rather than trusted.
-    """
-    n = torch.bincount(batch_ind, minlength=num_graphs)          # aunit atoms per graph
-    m = sym_mult.to(n.dtype)
-    out_n = n * m                                                # ucell atoms per graph
-    src_off = torch.cumsum(n, 0) - n                             # start of graph i in z
-    dst_off = torch.cumsum(out_n, 0) - out_n                     # start of graph i in output
-    total = int(out_n.sum())
-    pos_in_graph = torch.arange(total, device=n.device) - torch.repeat_interleave(dst_off, out_n)
-    within = pos_in_graph % torch.repeat_interleave(n, out_n)    # the tile
-    return torch.repeat_interleave(src_off, out_n) + within, out_n
-
-
 def batch_to_fairchem_batch(batch, std_orientation, pbc=True, force_rebuild=False,
                             task_name='omc'):
     """
@@ -600,12 +850,51 @@ def batch_to_fairchem_batch(batch, std_orientation, pbc=True, force_rebuild=Fals
     enforced, not asserted -- see verify_fairchem_batch_equivalence and
     tests/test_uma_atomicdata_vectorisation.py, which check it against the list path
     over Z'=1 and Z'>1, supercell and unit-cell batches, and ragged sym_mult.
+
+    Parameters
+    ----------
+    batch : crystal batch
+        Reads ``unit_cell_pos``, ``T_fc``, ``sym_mult``, ``num_graphs``, ``device``
+        and the atomic numbers chosen by ``_resolve_aunit_z``, which builds the unit
+        cell in place on ``batch`` when ``unit_cell_pos`` is None or
+        ``force_rebuild``. ``unit_cell_batch`` is not read: the per-atom graph index
+        is rebuilt from per-graph counts, so ``unit_cell_pos`` rows are taken to be
+        contiguous per graph and in graph order.
+    std_orientation : bool
+        Passed to ``pose_aunit`` when the unit cell is built here.
+    pbc : bool, default True
+        Value of every entry of the ``pbc`` field.
+    force_rebuild : bool, default False
+        Build the unit cell even when ``batch.unit_cell_pos`` is already set.
+    task_name : str, default 'omc'
+        Stored in ``dataset`` for every graph.
+
+    Returns
+    -------
+    AtomicData
+        ``pos`` = ``batch.unit_cell_pos`` [n_tot, 3]; ``atomic_numbers`` [n_tot],
+        each graph's aunit ``z`` in the unit cell's layout, each unit tiled
+        ``sym_mult`` times, unit by unit
+        (``crystal_building.utils.unit_cell_gather_index``; at Z'=1 the aunit tiled
+        ``sym_mult`` times); ``cell`` =
+        ``batch.T_fc.transpose(1, 2)`` [num_graphs, 3, 3]; ``pbc`` [num_graphs, 3]
+        bool; ``natoms`` [num_graphs] and ``batch`` [n_tot] long; empty
+        ``edge_index`` [2, 0] and ``cell_offsets`` [0, 3]; zero ``nedges``,
+        ``charge``, ``spin`` [num_graphs] and ``fixed``, ``tags`` [n_tot];
+        ``sid`` = num_graphs empty strings; collation bookkeeping from
+        ``_assign_collation_bookkeeping``.
+
+    Raises
+    ------
+    RuntimeError
+        If ``unit_cell_pos`` has a different row count from the sum over graphs of
+        aunit atoms times ``sym_mult``.
     """
     device = batch.device
     z, batch_ind = _resolve_aunit_z(batch, std_orientation, force_rebuild)
     num_graphs = batch.num_graphs
 
-    gather, out_n = _tiled_gather_index(batch_ind, batch.sym_mult, num_graphs)
+    gather, out_n = unit_cell_gather_index(batch_ind, batch.z_prime, batch.sym_mult, num_graphs)
     atomic_numbers = z[gather]
     pos = batch.unit_cell_pos
     n_tot = pos.shape[0]
@@ -704,6 +993,22 @@ def verify_fairchem_batch_equivalence(batch, std_orientation, pbc=True,
     rather than a rounding difference. Note it must run on a batch whose unit cell
     is ALREADY built, because case 1 mutates `batch` -- calling it on a fresh batch
     would have the first path build the cell and the second see a different case.
+
+    The list path (:func:`batch_to_fairchem_atomicdata` collated by
+    ``atomicdata_list_to_batch``) runs first, then :func:`batch_to_fairchem_batch`;
+    all arguments are passed to both. Only the fields in
+    ``_ATOMICDATA_COMPARE_FIELDS`` are compared, so ``sid`` and ``dataset`` are not.
+
+    Returns
+    -------
+    AtomicData
+        The batch built by :func:`batch_to_fairchem_batch`.
+
+    Raises
+    ------
+    AssertionError
+        Raised explicitly (not by ``assert``) when, for a compared field, exactly one
+        path gives None, or shapes, dtypes or any element differ.
     """
     ref = atomicdata_list_to_batch(
         batch_to_fairchem_atomicdata(batch, std_orientation, pbc, force_rebuild, task_name))
@@ -729,6 +1034,21 @@ def batch_to_fairchem_atomicdata(batch, std_orientation, pbc=True, force_rebuild
     LIST PATH -- one AtomicData per crystal. Retained as the reference the
     vectorised builder is checked against (and as the fallback), not because
     anything should call it in a hot loop.
+
+    Atomic numbers follow the same three cases as ``_resolve_aunit_z``, including
+    building the unit cell in place on ``batch`` when ``unit_cell_pos`` is None or
+    ``force_rebuild``. Arguments are as for :func:`batch_to_fairchem_batch`.
+
+    Returns
+    -------
+    list of AtomicData
+        One per graph i, in graph order: ``pos`` =
+        ``unit_cell_pos[unit_cell_batch == i]``; ``atomic_numbers`` = graph i's
+        aunit ``z``, each of its ``z_prime[i]`` units tiled ``sym_mult[i]`` times,
+        unit by unit (``unit_cell_z``); ``cell`` = ``T_fc[i].T`` [1, 3, 3];
+        ``pbc`` [1, 3] bool; ``natoms`` [1]; empty ``edge_index`` [2, 0] and
+        ``cell_offsets`` [0, 3]; zero ``nedges``, ``charge``, ``spin`` [1] and
+        ``fixed``, ``tags`` per atom; ``sid=None``; ``dataset=task_name``.
     """
     device = batch.device
     data_list = []
@@ -760,7 +1080,7 @@ def batch_to_fairchem_atomicdata(batch, std_orientation, pbc=True, force_rebuild
     sym_mult = batch.sym_mult
     for ind in range(batch.num_graphs):
         pos = ucell_pos[ucell_batch == ind]
-        sample_z = z[batch_ind == ind].repeat(sym_mult[ind])
+        sample_z = unit_cell_z(z[batch_ind == ind], batch.z_prime[ind], sym_mult[ind])
         atomic_data = AtomicData(
             pos=pos,
             atomic_numbers=sample_z,
@@ -787,6 +1107,38 @@ def batch_to_fairchem_atomicdata(batch, std_orientation, pbc=True, force_rebuild
 
 def compute_molecule_uma_on_mxt_batch(batch,
                                       predictor: Optional = None):
+    """
+    UMA energy of each molecule in ``batch`` as an isolated, non-periodic structure.
+
+    For each graph i, builds ``ase.Atoms`` from ``batch.pos[batch.batch == i]`` and
+    ``batch.z[batch.batch == i]`` (detached, copied to CPU) with pbc False, converts
+    it with ``AtomicData.from_ase(atoms, task_name='omol')``, collates the list with
+    ``atomicdata_list_to_batch`` and evaluates it with :func:`safe_predict_uma`.
+    Every atom of each graph is used. ``batch`` is not modified. This function does
+    not update ``_PHASE_CALLS`` or the guard/build/forward/ext_graph seconds (the
+    :func:`install_uma_graph_timer` wrapper, when installed, still times any
+    ``generate_graph`` call made inside the forward); a crash updates the crash
+    counters.
+
+    Parameters
+    ----------
+    batch : molecule batch
+        Reads ``pos``, ``z``, ``batch`` and ``num_graphs``, and ``device`` on a crash.
+    predictor : fairchem predict unit
+        Required despite the None default: ``predictor.predict`` is called without
+        a None check.
+
+    Returns
+    -------
+    torch.Tensor
+        ``out['energy']`` as returned by the predictor, with no unit conversion
+        here; on a crash, float32 NaN [num_graphs] on ``batch.device``.
+
+    Raises
+    ------
+    RuntimeError
+        From :func:`safe_predict_uma` (OOM, or the consecutive-crash bound).
+    """
     data_list = []
 
     for ind in range(batch.num_graphs):  # todo a Z'>1 fix for this
@@ -817,14 +1169,19 @@ def crystal_inference_settings(activation_checkpointing: bool = True,
                                edge_chunk_size: Optional[int] = None,
                                external_graph_gen: Optional[bool] = None):
     """
+    Build a new fairchem InferenceSettings for crystal energy prediction.
+
     Our own InferenceSettings, rather than the 'default' preset mutated in place.
+    Every call returns a fresh ``InferenceSettings(tf32=True, merge_mole=False,
+    internal_graph_gen_version=2, ...)`` carrying the four arguments below.
 
     WHY NOT MUTATE THE PRESET. fairchem's NAME_TO_INFERENCE_SETTING holds module-level
     SINGLETON instances, and guess_inference_settings returns the object, not a copy.
     Setting .tf32 on it therefore reconfigured 'default' for the whole process --
     including any other predictor built later. Constructing our own removes that
-    action at a distance. That is the only unconditional change here; the defaults
-    below reproduce the previous behaviour exactly.
+    action at a distance. Apart from external_graph_gen, whose default is
+    USE_UMA_EXTERNAL_GRAPH (True unless MXT_UMA_EXTERNAL_GRAPH=0), the defaults
+    below reproduce the previous behaviour.
 
     ACTIVATION CHECKPOINTING DEFAULTS TO TRUE, and the reason is subtler than it
     looks. fairchem's _run_inference does
@@ -859,6 +1216,24 @@ def crystal_inference_settings(activation_checkpointing: bool = True,
     merge_mole is NOT exposed: it asserts natoms.numel() == 1 and assumes fixed
     composition/charge/spin, which a batch of different crystals violates. That is
     why the 'turbo' preset cannot be adopted wholesale despite its other flags.
+
+    Parameters
+    ----------
+    activation_checkpointing : bool, default True
+        Passed through.
+    compile : bool, default False
+        Passed through.
+    edge_chunk_size : int or None, default None
+        Passed through.
+    external_graph_gen : bool or None, default None
+        None resolves to :data:`USE_UMA_EXTERNAL_GRAPH` when this function is called.
+        True means the caller supplies the neighbour list
+        (:func:`attach_external_graph`); False means the model builds it internally.
+
+    Returns
+    -------
+    InferenceSettings
+        A new instance on every call.
     """
     if external_graph_gen is None:
         # resolved at CALL time, not def time, so a test or harness that flips the
@@ -883,6 +1258,42 @@ def init_uma_crystal_predictor(model_path, device, inference_settings=None,
                                edge_chunk_size: Optional[int] = None,
                                activation_checkpointing: bool = True):
     """
+    Load a UMA predict unit configured for energy-only crystal inference.
+
+    Parameters
+    ----------
+    model_path : str or path-like
+        Checkpoint passed to fairchem's ``pretrained_mlip.load_predict_unit``.
+    device : str or torch.device
+        Passed to ``load_predict_unit``.
+    inference_settings : InferenceSettings or None, default None
+        Used as given when not None, in which case ``compile``, ``edge_chunk_size``
+        and ``activation_checkpointing`` are ignored. When None, built by
+        :func:`crystal_inference_settings` from those three arguments, so
+        ``external_graph_gen`` takes that function's default,
+        :data:`USE_UMA_EXTERNAL_GRAPH`.
+    compile : bool, default False
+        Forwarded to :func:`crystal_inference_settings`; see Notes.
+    edge_chunk_size : int or None, default None
+        Forwarded to :func:`crystal_inference_settings`; see Notes.
+    activation_checkpointing : bool, default True
+        Forwarded to :func:`crystal_inference_settings`, which describes when it
+        matters.
+
+    Returns
+    -------
+    predict unit
+        Loaded with backbone overrides ``direct_forces=False``,
+        ``regress_forces=False`` and ``regress_stress=False``. The ``omc_forces`` and
+        ``omc_stress`` entries are popped from ``predictor.tasks``, and
+        ``predictor.dataset_to_tasks['omc'].pop(1)`` is applied twice, removing the
+        entries originally at positions 1 and 2 without checking their names.
+        :func:`compute_crystal_uma_on_mxt_batch` attaches an external neighbour list
+        when its ``inference_settings.external_graph_gen`` attribute is truthy (see
+        :func:`_predictor_wants_external_graph`).
+
+    Notes
+    -----
     COMPILING THE MLIP -- when it pays, and what has to be true first.
 
     The obvious objection is that torch.compile specialises on shapes and a crystal
@@ -936,6 +1347,8 @@ def init_uma_crystal_predictor(model_path, device, inference_settings=None,
 
 
 def _build_uma_crystal_predictor(model_path, device, inference_settings):
+    """Load the predict unit and strip the omc force/stress tasks, as described in
+    :func:`init_uma_crystal_predictor`'s Returns."""
     predictor = pretrained_mlip.load_predict_unit(
         model_path,
         inference_settings=inference_settings,
@@ -961,6 +1374,26 @@ def _build_uma_crystal_predictor(model_path, device, inference_settings):
 
 
 def init_uma_mol_predictor(model_path):
+    """
+    Load a UMA predict unit on CUDA, reduced to the ``omol_energy`` task.
+
+    Loads ``model_path`` with ``inference_settings='default'``, the backbone
+    override ``direct_forces=True`` and ``device="cuda"`` (fixed; there is no device
+    argument). Then sets ``predictor.inference_mode.compile = False`` and
+    ``predictor.inference_mode.tf32 = True``, replaces ``predictor.tasks`` with
+    ``{'omol_energy': ...}``, and keeps only the ``dataset_to_tasks['omol']`` entries
+    whose ``name`` contains ``'energy'``.
+
+    Parameters
+    ----------
+    model_path : str or path-like
+        Checkpoint passed to fairchem's ``pretrained_mlip.load_predict_unit``.
+
+    Returns
+    -------
+    predict unit
+        The loaded and reduced predictor.
+    """
     predictor = pretrained_mlip.load_predict_unit(
         model_path,
         inference_settings='default',

@@ -1,3 +1,6 @@
+"""RDKit-based construction of single-molecule conformers from SMILES: embedding, optional
+skeleton paring and random torsions about rotatable bonds, clash relief by short MMFF
+minimization, and Gasteiger partial charges."""
 import os
 import pickle
 
@@ -22,6 +25,49 @@ def smiles2conformer(allow_methyl_rotations,
                      protonate,
                      scramble_dihedrals,
                      smiles):
+    """
+    Build one 3D conformer from a SMILES string with RDKit.
+
+    Steps: :func:`embed_mol`; if ``pare_to_size`` is not None, :func:`get_rotatable_edges` and
+    :func:`pare_molecule_skeleton` (with ``deprotonate=not protonate``), which re-embeds a pared
+    molecule; if ``scramble_dihedrals``, :func:`scramble_dihedral_angles` followed by
+    :func:`minimal_minimization`; if ``minimize``, a full ``AllChem.MMFFOptimizeMolecule``;
+    finally partial charges.
+
+    Parameters
+    ----------
+    allow_methyl_rotations : bool
+        Passed to :func:`scramble_dihedral_angles` as ``allow_simple_hydrogen_rotations``.
+    compute_partial_charges : bool
+        If True, charges come from :func:`get_partial_charges`; otherwise they are zeros.
+    max_pare_iters : int
+        Maximum number of fragment removals in :func:`pare_molecule_skeleton`.
+    minimize : bool
+        If True, ``AllChem.MMFFOptimizeMolecule`` is run on the final molecule and the
+        positions are re-read.
+    pare_to_size : int or None
+        Maximum number of heavy atoms (atomic number > 1); None disables paring.
+    protonate : bool
+        If True, explicit hydrogens are added; otherwise hydrogens are removed.
+    scramble_dihedrals : bool
+        Enables the torsion-scrambling branch; see Notes.
+    smiles : str
+        Input SMILES.
+
+    Returns
+    -------
+    tuple or None
+        ``(charges, pos, z)``, or None if SMILES parsing, embedding, paring or clash relief
+        fails. ``charges`` is a float64 numpy array [num_atoms] when computed, otherwise a
+        float32 torch tensor of zeros [num_atoms]; ``pos`` is a numpy array [num_atoms, 3] of
+        RDKit conformer coordinates (Angstrom); ``z`` is an integer numpy array [num_atoms] of
+        atomic numbers.
+
+    Notes
+    -----
+    The ``scramble_dihedrals`` branch unpacks the three values returned by
+    :func:`scramble_dihedral_angles` into two names, so it raises ``ValueError`` when reached.
+    """
     # todo add catch errors when adding or removing Hs
     mol = embed_mol(smiles, protonate)
     if not mol:  # failed embed
@@ -85,6 +131,45 @@ def smiles2conformer(allow_methyl_rotations,
 
 def pare_molecule_skeleton(conf, mask_rotate, max_pare_iters, mol, pare_to_size, pos, z,
                            deprotonate: bool = False):
+    """
+    Remove rotatable-bond fragments until at most ``pare_to_size`` heavy atoms remain, then re-embed.
+
+    While the number of heavy atoms (``z > 1``) exceeds ``pare_to_size``, rows of
+    ``mask_rotate`` remain, and fewer than ``max_pare_iters`` removals have been made, one row
+    (fragment) is drawn with probability proportional to ``exp(-number of heavy atoms in the
+    fragment)`` using the global numpy RNG, and its atoms are removed. The removed atoms are
+    then deleted from a copy of ``mol``; hydrogens are removed and re-added (and removed again
+    if ``deprotonate``), and the molecule is re-embedded with ``AllChem.EmbedMolecule``.
+
+    Parameters
+    ----------
+    conf : rdkit.Chem.Conformer
+        Returned unchanged only if the re-embedded molecule has no conformer.
+    mask_rotate : numpy.ndarray
+        Bool [num_rotatable_bonds, num_atoms] from :func:`get_rotatable_edges`.
+    max_pare_iters : int
+        Maximum number of fragment removals.
+    mol : rdkit.Chem.Mol
+        Source molecule; not modified.
+    pare_to_size : int
+        Target maximum number of heavy atoms.
+    pos : numpy.ndarray
+        [num_atoms, 3]; only its length affects the result.
+    z : numpy.ndarray
+        [num_atoms] atomic numbers.
+    deprotonate : bool, optional
+        If True, hydrogens are removed after being re-added. Default False.
+
+    Returns
+    -------
+    mol : rdkit.Chem.Mol
+        The pared, re-embedded molecule.
+    conf : rdkit.Chem.Conformer
+        Its conformer, or the input ``conf`` if it has none.
+    flag : bool
+        True if the heavy-atom target was not reached or the re-embedded molecule has no
+        conformer.
+    """
     # use rotatable bonds as fragmentation sites to pare the molecule down to an acceptable size
     mol_num_atoms = len(pos)
     atoms_kept = np.arange(mol_num_atoms)
@@ -134,6 +219,31 @@ def pare_molecule_skeleton(conf, mask_rotate, max_pare_iters, mol, pare_to_size,
 
 
 def get_rotatable_edges(G, edge_index):
+    """
+    Find rotatable bonds and, for each, the atoms on the side that a torsion moves.
+
+    ``edge_index`` must list each bond as consecutive directed pairs ``(u, v), (v, u)``; only
+    ``u`` matching the second atom of the following edge is asserted. For each bond, the bond is removed from an undirected copy of ``G``; if this
+    disconnects the graph and the smaller component has more than one atom, the bond is
+    rotatable and that component's atoms are assigned to whichever of its two directed edges
+    has its second atom in the component.
+
+    Parameters
+    ----------
+    G : networkx.DiGraph
+        Directed molecular graph with node ids ``0`` to ``num_atoms - 1`` and one edge per
+        column of ``edge_index``, as returned by :func:`extract_mol_info`.
+    edge_index : torch.Tensor
+        [2, num_edges] directed edges on CPU.
+
+    Returns
+    -------
+    mask_edges : numpy.ndarray
+        Bool [num_edges]; True for the directed edge that carries a rotating fragment.
+    mask_rotate : numpy.ndarray
+        Bool [num_rotatable_bonds, num_atoms]; row k marks the atoms moved about the k-th True
+        entry of ``mask_edges``.
+    """
     to_rotate = []
     edges = edge_index.T.numpy()
     for i in range(0, edges.shape[0], 2):
@@ -170,6 +280,34 @@ def apply_torsions(pos,
                    mask_rotate,
                    torsion_updates,
                    as_numpy=False):
+    """
+    Rotate groups of atoms about bond axes by given angles.
+
+    Edges are processed in order. For each edge ``k`` with a nonzero ``torsion_updates[k]``,
+    with ``(u, v) = edge_index[k]`` (asserted: ``mask_rotate[k, u]`` False and
+    ``mask_rotate[k, v]`` True), the atoms in ``mask_rotate[k]`` are rotated about the axis
+    through ``pos[v]`` along ``pos[u] - pos[v]`` by ``torsion_updates[k]`` radians, using a
+    ``scipy`` rotation vector.
+
+    Parameters
+    ----------
+    pos : numpy.ndarray or torch.Tensor
+        [num_atoms, 3] positions. A numpy array is modified in place; a tensor is converted
+        with ``.cpu().numpy()``, which shares memory with a CPU tensor.
+    edge_index : torch.Tensor
+        [num_rotatable_bonds, 2] rotatable edges, one per row.
+    mask_rotate : numpy.ndarray
+        Bool [num_rotatable_bonds, num_atoms] atoms moved about each edge.
+    torsion_updates : sequence of float
+        [num_rotatable_bonds] rotation angles in radians.
+    as_numpy : bool, optional
+        If True, the numpy array is returned; otherwise a float32 torch tensor. Default False.
+
+    Returns
+    -------
+    numpy.ndarray or torch.Tensor
+        [num_atoms, 3] updated positions.
+    """
     if type(pos) != np.ndarray: pos = pos.cpu().numpy()
     for idx_edge, e in enumerate(edge_index.cpu().numpy()):
         if torsion_updates[idx_edge] == 0:
@@ -194,6 +332,41 @@ def minimal_minimization(mol, conf, pos, adjacency_matrix,
                          iters_per_cycle: int = 10,
                          max_num_iters: int = 10,
                          cutoff: float = 1.2):
+    """
+    Run short MMFF minimizations until no non-bonded atom pair is within ``cutoff``.
+
+    Non-bonded pairs are those with ``adjacency_matrix`` False; self-pairs are included with
+    their distance set to 2. While the smallest non-bonded distance is not greater than
+    ``cutoff`` and fewer than ``max_num_iters`` cycles have run,
+    ``AllChem.MMFFOptimizeMolecule(mol, maxIters=iters_per_cycle)`` is called and the
+    positions are re-read from ``conf``.
+
+    Parameters
+    ----------
+    mol : rdkit.Chem.Mol
+        Minimized in place.
+    conf : rdkit.Chem.Conformer
+        Conformer of ``mol`` from which positions are re-read.
+    pos : numpy.ndarray
+        [num_atoms, 3] initial positions (Angstrom).
+    adjacency_matrix : numpy.ndarray
+        Bool [num_atoms, num_atoms] bond adjacency.
+    iters_per_cycle : int, optional
+        MMFF iterations per cycle. Default 10.
+    max_num_iters : int, optional
+        Maximum number of cycles. Default 10.
+    cutoff : float, optional
+        Minimum allowed non-bonded distance (Angstrom). Default 1.2.
+
+    Returns
+    -------
+    pos : numpy.ndarray
+        [num_atoms, 3] final positions.
+    converged : bool
+        Whether the smallest non-bonded distance exceeds ``cutoff``.
+    num_min_iters : int
+        Number of minimization cycles run.
+    """
     num_min_iters = 0
     d1 = cdist(pos, pos) + np.eye(len(pos)) * 2
     nonbonded_dists = d1.flatten()[~adjacency_matrix.flatten()]
@@ -212,6 +385,39 @@ def minimal_minimization(mol, conf, pos, adjacency_matrix,
 def extract_mol_info(mol,
                      conf,
                      do_adjacency_analysis: bool = True):
+    """
+    Read coordinates, atomic numbers and, optionally, bond connectivity from an RDKit molecule.
+
+    Parameters
+    ----------
+    mol : rdkit.Chem.Mol
+        Molecule providing atoms and bonds.
+    conf : rdkit.Chem.Conformer
+        Conformer of ``mol`` providing the coordinates.
+    do_adjacency_analysis : bool, optional
+        If True, the bond graph is also built and returned. Default True.
+
+    Returns
+    -------
+    pos : numpy.ndarray
+        [num_atoms, 3] float64 coordinates from ``conf.GetPositions()`` (Angstrom).
+    z : numpy.ndarray
+        [num_atoms] integer atomic numbers.
+    edge_index : torch.Tensor
+        Only if ``do_adjacency_analysis``. int64 [2, 2 * num_bonds]; each bond appears as
+        consecutive columns ``(start, end), (end, start)``.
+    adjacency_matrix : numpy.ndarray
+        Only if ``do_adjacency_analysis``. Symmetric bool [num_atoms, num_atoms].
+    G : networkx.DiGraph
+        Only if ``do_adjacency_analysis``. Directed graph of ``edge_index`` from
+        ``torch_geometric.utils.to_networkx``, without node or edge attributes.
+
+    Raises
+    ------
+    KeyError
+        If ``do_adjacency_analysis`` and a bond is not single, double, triple or aromatic
+        (the module-level ``bonds`` map).
+    """
     pos = conf.GetPositions()
     z = np.asarray([atom.GetAtomicNum() for atom in mol.GetAtoms()])
     if do_adjacency_analysis:
@@ -233,6 +439,24 @@ def extract_mol_info(mol,
 
 
 def embed_mol(smile, protonate):
+    """
+    Parse a SMILES string and embed one 3D conformer with RDKit.
+
+    Parameters
+    ----------
+    smile : str
+        Input SMILES.
+    protonate : bool
+        If True, explicit hydrogens are added before embedding; otherwise hydrogens are
+        removed.
+
+    Returns
+    -------
+    rdkit.Chem.Mol or bool
+        The molecule after ``AllChem.EmbedMolecule``, or False if the SMILES does not parse.
+        The embedding return code is not checked; a failed embedding leaves the molecule
+        without a conformer.
+    """
     mol = Chem.MolFromSmiles(smile)
     if not mol:
         return False
@@ -250,6 +474,36 @@ def generate_random_conformers_from_smiles(smile: str,
                                            allow_simple_hydrogen_rotations: bool = False,
                                            do_partial_charges: bool = False,
                                            ):
+    """
+    Embed a SMILES string and scramble its torsions; see Notes for the current behavior.
+
+    Parameters
+    ----------
+    smile : str
+        Input SMILES.
+    protonate : bool, optional
+        Passed to :func:`embed_mol`. Default True.
+    max_rotamers_per_samples : int, optional
+        Not used. Default 10.
+    allow_simple_hydrogen_rotations : bool, optional
+        Passed to :func:`scramble_dihedral_angles` in its ``edge_index`` position (see Notes).
+        Default False.
+    do_partial_charges : bool, optional
+        If True, charges from :func:`get_partial_charges`; otherwise zeros like ``z``.
+        Default False.
+
+    Returns
+    -------
+    tuple
+        ``(False, False, False, False)`` if parsing or embedding fails. The success path
+        would return the five values ``(pos, z, mask_rotate, mask_edges, charges)``.
+
+    Notes
+    -----
+    The call to :func:`scramble_dihedral_angles` passes arguments in an order that does not
+    match that function's signature and unpacks four names from its three return values, so
+    the function raises for any SMILES that embeds successfully.
+    """
     mol = embed_mol(smile, protonate)
     if not mol:  # embedding failed
         return False, False, False, False
@@ -284,7 +538,46 @@ def scramble_dihedral_angles(allow_simple_hydrogen_rotations,
                              mol,
                              pos,
                              z):
-    """Adjust conformational DoF"""
+    """
+    Apply uniform random torsions about rotatable bonds and write the result to the conformer.
+
+    When ``allow_simple_hydrogen_rotations`` is False, rotations whose moved atoms, as sorted
+    atomic numbers, are [1, 1, 1, 6], [1, 1, 6], [1, 6], [1, 1, 7], [1, 7] or [1, 8] (methyl,
+    amino or hydroxyl groups) are classed as trivial; otherwise every rotation is classed as
+    non-trivial. Torsions are applied only if at least one rotation is trivial, i.e. only when
+    ``allow_simple_hydrogen_rotations`` is False and such a rotation exists; then every
+    rotatable bond, trivial ones included, receives an angle drawn uniformly from
+    [-pi, pi) with the global numpy RNG, via :func:`apply_torsions`, and the new positions are
+    set on ``conf``.
+
+    Parameters
+    ----------
+    allow_simple_hydrogen_rotations : bool
+        See above.
+    conf : rdkit.Chem.Conformer
+        Conformer of ``mol``; its atom positions are overwritten when torsions are applied.
+    edge_index : torch.Tensor
+        [2, num_edges] directed edges.
+    mask_rotate : numpy.ndarray
+        Bool [num_rotatable_bonds, num_atoms] from :func:`get_rotatable_edges`.
+    mask_edges : numpy.ndarray
+        Bool [num_edges] from :func:`get_rotatable_edges`.
+    mol : rdkit.Chem.Mol
+        Molecule whose atom count sets the positions written to ``conf``.
+    pos : numpy.ndarray
+        [num_atoms, 3]; modified in place when torsions are applied.
+    z : numpy.ndarray
+        [num_atoms] atomic numbers.
+
+    Returns
+    -------
+    pos : numpy.ndarray
+        [num_atoms, 3] positions (the input array, updated if torsions were applied).
+    mol : rdkit.Chem.Mol
+        The input molecule.
+    conf : rdkit.Chem.Conformer
+        The input conformer.
+    """
     "restrict trivial rotations"
     if not allow_simple_hydrogen_rotations:
         nontrivial_rotations = []
@@ -322,6 +615,29 @@ def scramble_dihedral_angles(allow_simple_hydrogen_rotations,
 
 
 def generate_random_conformers_from_smiles_list(smiles, dump_path, chunk_ind):
+    """
+    Build and pickle a dataset of random conformers for a list of SMILES; see Notes for the current behavior.
+
+    Each SMILES is passed to :func:`generate_random_conformers_from_smiles` (``protonate=True``,
+    ``max_rotamers_per_samples=10``, ``allow_simple_hydrogen_rotations=False``) and results
+    are collected into a dict with keys ``'coordinates'``, ``'atom_types'`` and ``'smiles'``,
+    which is pickled to ``os.path.join(dump_path, f'{chunk_ind}.pkl')``.
+
+    Parameters
+    ----------
+    smiles : iterable of str
+        Input SMILES.
+    dump_path : str
+        Output directory.
+    chunk_ind : int or str
+        Output file stem.
+
+    Notes
+    -----
+    For each SMILES, :func:`generate_random_conformers_from_smiles` either raises or returns
+    four values that are unpacked here into two names, so any SMILES raises; only an empty
+    ``smiles`` writes a file (with empty lists).
+    """
     dataset = {
         'coordinates': [],
         'atom_types': [],
@@ -346,5 +662,22 @@ def generate_random_conformers_from_smiles_list(smiles, dump_path, chunk_ind):
 
 
 def get_partial_charges(rd_mol):
+    """
+    Compute Gasteiger partial charges with RDKit.
+
+    ``AllChem.ComputeGasteigerCharges(rd_mol)`` sets the ``'_GasteigerCharge'`` property on
+    each atom of ``rd_mol`` (in place), which is then read back.
+
+    Parameters
+    ----------
+    rd_mol : rdkit.Chem.Mol
+        Molecule to charge.
+
+    Returns
+    -------
+    numpy.ndarray
+        float64 [num_atoms] charges, one per atom in ``rd_mol.GetAtoms()`` order (hydrogens
+        have entries only if they are explicit atoms).
+    """
     AllChem.ComputeGasteigerCharges(rd_mol)
     return np.array([float(atom.GetProp('_GasteigerCharge')) for atom in rd_mol.GetAtoms()])

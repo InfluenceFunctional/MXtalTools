@@ -33,7 +33,7 @@ _POLYMER_RE = re.compile(r'\)\s*n\b')
 
 
 def unwrap_components(frac: np.ndarray, edges, n_sites: int):
-    """Make every bonded pair contiguous, by BFS over the bond graph.
+    """Make each bonded molecule contiguous, by a depth-first walk over the bond graph.
 
     Some CIFs write each atom wrapped into [0,1) independently, which SPLITS a
     molecule that straddles a cell boundary. The deposited coordinates then look
@@ -45,9 +45,16 @@ def unwrap_components(frac: np.ndarray, edges, n_sites: int):
     outside the cell so the molecule stays whole. But that is a property of the
     exporter, not of CIF, so it must be checked rather than assumed.
 
-    Walks each connected component from an arbitrary root, placing every atom at
-    the periodic image NEAREST its already-placed neighbour. Returns the repaired
+    Walks each connected component from its lowest-index site, placing every atom
+    at the periodic image NEAREST the already-placed neighbour it was reached
+    from (each fractional difference rounded to the nearest integer, per axis).
+    Bonds that close a ring are not re-checked. Returns the repaired
     fractional coordinates and how many atoms moved.
+
+    `frac` is [n_sites, 3] fractional coordinates and is not modified; `edges`
+    is an iterable of (i, j) site-index pairs. Returns ``(out, moved)``: a new
+    [n_sites, 3] array and the int count of sites shifted by a nonzero integer
+    vector.
     """
     adj = [[] for _ in range(n_sites)]
     for a, b in edges:
@@ -83,6 +90,11 @@ class ComponentSet:
     union-find and then has no consumer, and `_geom_bond` is present in 100 % of
     sampled CSD files, so re-deriving it is one pass whenever something actually
     needs it.
+
+    `component_index` [n_sites] int component label per site; `n_components`
+    int; `source` is 'geom_bond' when derived from the bond loop and 'none' when
+    no decomposition was computed; `n_unwrapped` is the number of sites moved
+    to another periodic image by `unwrap_components` (0 by default).
     """
 
     __slots__ = ('component_index', 'n_components', 'source', 'n_unwrapped')
@@ -97,6 +109,7 @@ class ComponentSet:
         self.n_unwrapped = n_unwrapped
 
     def sizes(self) -> List[int]:
+        """Number of sites in each component, in component-index order."""
         return [int((self.component_index == k).sum()) for k in range(self.n_components)]
 
     def __repr__(self) -> str:
@@ -109,6 +122,11 @@ def union_find(n: int, edges) -> np.ndarray:
     Labels are assigned in order of first appearance, so the result is a
     deterministic function of the input ordering -- which matters, because
     downstream code indexes components positionally.
+
+    First appearance is by node index: the component containing node 0 is
+    labelled 0, the next component met when scanning nodes upward is 1, and so
+    on; the order of `edges` does not affect the labels. `edges` is an iterable
+    of (a, b) node-index pairs in ``[0, n)``. Returns an [n] int64 array.
     """
     parent = list(range(n))
 
@@ -141,17 +159,34 @@ def components_from_block(block: CifBlock,
     """Decompose the deposited set into components using `_geom_bond`.
 
     Refusals:
-      - polymer declared by the moiety formula -> `CifUnsupportedError('polymer')`
+
+      - polymer declared by the moiety formula (a `_chemical_formula_moiety`
+        containing ``)`` then optional whitespace then a word-final ``n``),
+        when `refuse_polymers` ->
+        `CifUnsupportedError(reason='polymer')`
       - a bond referring to a site label that does not exist -> `CifTopologyError`
-      - no bond loop at all -> `CifTopologyError`, because guessing connectivity
-        from distances is chemical perception and belongs to a chemistry backend,
-        not here
+        (checked for every bond row, including rows later dropped below)
+      - a bond loop with `_geom_bond_atom_site_label_1` but no ``_2`` ->
+        `CifTopologyError`
+      - no bond loop at all, when `require_bonds` -> `CifTopologyError`, because
+        guessing connectivity from distances is chemical perception and belongs
+        to a chemistry backend, not here
+
+    With `require_bonds` False and no bond loop, every site is put in component
+    0 (``n_components`` 1, or 0 for an empty site set) with ``source='none'``.
 
     Bonds carrying a non-`1_555` symmetry code are DROPPED, not followed: they
     connect to a symmetry image rather than to a site in the deposited set, so
     following them would merge components that are not connected within the set.
     Measured 0/3000 CSD files carry such a code, so this is protection for
-    non-CSD input rather than a live path.
+    non-CSD input rather than a live path. The comparison is a literal string
+    match after stripping whitespace, so any other value, including the CIF
+    placeholders '.' and '?', drops the bond; an absent symmetry column counts
+    as '1_555'.
+
+    Mutates `sites`: when `unwrap_components` moves any site, ``sites.frac`` is
+    replaced by the repaired array before returning. `identifier` is only used
+    in error messages.
     """
     moiety = block.get(_MOIETY)
     if refuse_polymers and moiety and _POLYMER_RE.search(moiety):

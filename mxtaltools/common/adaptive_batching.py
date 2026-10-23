@@ -41,21 +41,67 @@ def adaptive_batched_analysis(
         **kwargs,
 ):
     """
-    Run batch.analyze(analysis_name, assign_outputs=True, **kwargs) over the
-    full batch using adaptive mini-batches to handle GPU OOM gracefully.
+    Run ``analyze(analyses, assign_outputs=True, **kwargs)`` over a batch in chunks whose size adapts to CUDA
+    out-of-memory errors.
+
+    The batch is split into samples with ``batch.batch_to_list()``, which works on a clone, so ``batch`` itself is not
+    modified. Each chunk of samples is collated with ``collate_data_list``, moved to ``device``, analysed, moved to CPU
+    and split back into samples; the returned batch is collated from all analysed samples.
 
     Parameters
     ----------
-    batch           Any batch object with .batch_to_list() and .analyze().
-    analysis_name   Passed as the first argument to batch.analyze().
-    state           Mutable dict owned by the caller; used to carry batch_size
-                    across retries within a single call. Pass a fresh {} each
-                    call if you don't want persistence across calls.
-    **kwargs        Forwarded to batch.analyze() (e.g. predictor, temperature).
+    batch : collated data object
+        Provides ``batch_to_list()``. Its samples must collate with ``collate_data_list`` into objects providing
+        ``to()``, ``cpu()``, ``batch_to_list()`` and ``analyze()``.
+    analyses : list or str
+        Analysis names, passed as the first argument of ``analyze``; a str is wrapped in a one-element list.
+    state : dict
+        Caller-owned dict, mutated in place. ``state['batch_size']`` is reset to ``initial_batch_size`` at entry on
+        every call, so no chunk size carries over between calls; it is then updated as the chunk size grows or
+        shrinks, and its final value is left in ``state``.
+    initial_batch_size : int, optional
+        Chunk size at the start of the call. Default 1000.
+    max_batch_size : int, optional
+        Growth is applied only while the chunk size is at most this value, so the size can exceed it by one growth
+        step. Default 100_000.
+    grow_factor : float, optional
+        After each successful chunk, if no OOM has occurred during this call, the chunk size is at most
+        ``max_batch_size`` and is below the number of samples, it grows by ``max(int(batch_size * grow_factor), 1)``.
+        Default 0.01.
+    shrink_factor : float, optional
+        On a CUDA OOM the chunk size becomes ``max(int(batch_size * shrink_factor), 1)`` and the chunk is retried from
+        the same sample; the chunk size then no longer grows for the rest of the call. Default 0.65.
+    oom_sleep : float, optional
+        Seconds slept after an OOM, following ``gc.collect()``, ``torch.cuda.empty_cache()`` and
+        ``torch.cuda.synchronize()``. Default 0.1.
+    return_state : bool, optional
+        If True, also return ``state``. Default False.
+    device : str or torch.device, optional
+        Device each chunk is moved to before ``analyze``. Default ``'cuda'``.
+    show_tqdm : bool, optional
+        Show a tqdm progress bar over samples. Default False.
+    **kwargs
+        Forwarded to ``analyze``.
 
     Returns
     -------
-    Collated batch object with outputs assigned.
+    out_batch : collated data object
+        On CPU, samples in input order, with each analysis output attached as a graph attribute by
+        ``analyze(..., assign_outputs=True)``. Attributes that ``collate_data_list`` excludes by default (including
+        ``unit_cell_pos``) are not carried through.
+    state : dict
+        Only when ``return_state`` is True: the dict that was passed in.
+
+    Raises
+    ------
+    RuntimeError
+        On a CUDA OOM when the chunk size is already 1, chained from the original error. A ``RuntimeError`` or
+        ``ValueError`` that ``is_cuda_oom`` does not classify as OOM, and any other exception, propagates unchanged.
+
+    Warns
+    -----
+    RuntimeWarning
+        Once per process, if called while gradients are enabled.
     """
     # WARN, DO NOT SILENTLY FORCE no_grad. Overriding grad semantics inside a shared
     # helper is how a legitimate gradient path would start reading zero with nothing

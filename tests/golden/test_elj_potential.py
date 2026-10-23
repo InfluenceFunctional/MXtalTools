@@ -134,7 +134,9 @@ def test_supercell_size_is_converged_at_five(mini_by_id):
     """The canonical route pays for supercell_size=10; 5 is already converged.
 
     Not a golden value -- a claim about the cost of the default. If this starts
-    failing, the neighbour-list construction changed.
+    failing, the neighbour-list construction changed. Since 2026-10-18
+    get_cart_translations ignores supercell_size (its search is exact in any basis),
+    so this now only pins that the argument has no effect.
     """
     e5, _ = _analyze(mini_by_id, std_orientation=False, supercell_size=5)
     e10, _ = _analyze(mini_by_id, std_orientation=False, supercell_size=10)

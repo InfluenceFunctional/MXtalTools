@@ -1,6 +1,11 @@
 """
 Batched, on-device PBC neighbour lists for MLIP inputs.
 
+SCOPE. `batched_pbc_neighbour_list` is called by the MACE input builders in
+`AL_mace_utils`, in place of `mace.data.get_neighborhood`, and by
+`uma_utils.attach_external_graph`. This module is not a general crystal-indexing
+routine.
+
 WHY THIS EXISTS. MACE's `mace.data.get_neighborhood` is a matscipy/ASE cell-list in
 numpy, called ONCE PER CRYSTAL on the host, and every millisecond of it is time the
 GPU spends idle -- which on a usage-policed cluster is not merely slow, it is the
@@ -9,27 +14,48 @@ three-quarters and RISES as the rest of the build is optimised, so treat any pin
 percentage here as stale by construction and re-measure; `energy/mace_nl_frac_of_build`
 reports it per run.
 
-THE ALGORITHM, and why it is not a cell list. A cell list wins when N is large. Here
-a unit cell is ~10^2 atoms (acridine sg14 Z'=1 is 92), so exact all-pairs per lattice
-shift is both simpler and faster on a GPU, and -- more importantly -- it is EXACT.
-There is no neighbour cap to overflow, which is the failure mode that would otherwise
-be silent: `asymmetric_radius_graph`'s `max_num_neighbors=32` default would quietly
-drop edges in a dense organic crystal and yield a plausible wrong energy.
+THE ALGORITHMS, and why neither is a cell list. A cell list wins when N is large.
+Here a unit cell is ~10^2 atoms (acridine sg14 Z'=1 is 92), so exact search over an
+enumerated grid of lattice shifts is both simpler and faster on a GPU, and -- more
+importantly -- it is EXACT. Two kernels implement it:
 
-    for each integer lattice shift S in the enumerated grid:
+  * periodic calls first wrap positions into the cell, expand every atom into its
+    ghost images over the shift grid, and run ONE torch_cluster `radius` search
+    over the whole batch (`_pairs_by_radius_search`). Its `max_num_neighbors` is
+    checked against the returned counts and, on overflow, the search is repeated
+    with a larger cap; past the last cap it raises rather than return a
+    truncated list;
+  * when torch_cluster is not importable, and for every pbc=False call, the
+    all-pairs kernel below runs instead.
+
+Neither has a neighbour cap that can overflow silently, and that is the failure mode
+that matters: `asymmetric_radius_graph`'s `max_num_neighbors=32`
+default would quietly drop edges in a dense organic crystal and yield a plausible
+wrong energy. Two departures from exactness exist, and both are counted in
+`drain_neighbour_path_counts`: the MAX_SHIFT_RANGE clamp on the shift grid, and the
+opt-in per-node EDGE_CAP_FACTOR (0 = off, the default).
+
+::
+
+    for each integer lattice shift S in the enumerated grid:        (all-pairs)
         d_ij = |pos_j + S @ cell - pos_i|      (all i,j within each graph)
         keep d_ij < cutoff, dropping i==j only when S == 0
 
-WORK: sum_g n_g^2 * K. At 1000 crystals of 92 atoms with K=27 that is ~230M distance
-evaluations -- nothing for a GPU, done in K passes of ~100 MB each rather than one
-2.7 GB tensor.
+WORK (all-pairs): sum_g n_g^2 * K. At 1000 crystals of 92 atoms with K=27 that is
+~230M distance evaluations -- nothing for a GPU, done in K passes of ~100 MB each
+rather than one 2.7 GB tensor.
 
 THE SHIFT GRID IS THE PART THAT FAILS SILENTLY. Too small a range drops long edges
 and nothing raises; the energy just moves a little. The range per axis is
-ceil(cutoff / d_perp), where d_perp is the interplanar spacing V / |a_j x a_k| -- NOT
-cutoff / |a_i|, which is wrong for oblique cells and wrong in the unsafe direction
-(it under-counts exactly when the cell is most sheared). Pinned in the tests against
-matscipy on triclinic cells.
+ceil(cutoff / d_perp + spread), where d_perp is the interplanar spacing
+``V / |a_j x a_k|`` -- NOT ``cutoff / |a_i|``, which is wrong for oblique cells and wrong in
+the unsafe direction (it under-counts exactly when the cell is most sheared) -- and
+spread is the per-axis span of the fractional coordinates (see
+`lattice_shift_range`): fixed at 1 on the radius-search path, whose positions are
+wrapped, and measured by `fractional_spread` on the periodic all-pairs path. One
+grid serves the whole batch: the per-axis maximum over graphs, clamped at
+MAX_SHIFT_RANGE. Pinned in the tests against matscipy on
+triclinic cells.
 
 EDGE ORDER IS NOT PRESERVED, deliberately. matscipy emits in its own cell-list order;
 any other algorithm produces the same SET in a different sequence. MACE sums over
@@ -112,7 +138,34 @@ _SHIFT_CAP_CALLS = {'calls': 0, 'capped': 0, 'max_requested': 0}
 
 
 def drain_neighbour_path_counts():
-    """Pop the per-branch call counts. {} when the list was never built."""
+    """
+    Pop the neighbour-list counters as a metrics dict and reset them.
+
+    Returns
+    -------
+    dict
+        ``{}`` when no periodic (pbc=True) call of `batched_pbc_neighbour_list` has
+        run since the last drain. Nothing is reset in that case, so counts left by
+        pbc=False calls or by direct `lattice_shift_range` calls carry into the
+        next drain. Otherwise every counter is reset and the dict holds:
+
+        * ``energy/nl_radius_calls``, ``energy/nl_allpairs_calls``: periodic calls
+          that took the radius-search path and the all-pairs fallback;
+        * ``energy/nl_fastpath_frac``: radius calls / periodic calls;
+        * ``energy/nl_shift_capped_frac``: fraction of `lattice_shift_range` calls
+          in which MAX_SHIFT_RANGE bound (a fallback call invokes it twice);
+        * ``energy/nl_shift_max_requested``: the largest per-axis range the clamp
+          refused (0 if it never bound);
+        * ``energy/nl_max_degree``: the largest per-atom edge count seen, recorded
+          whether or not the edge cap is on;
+        * ``energy/nl_edges_per_call``: mean edges per edge-cap call, before
+          capping;
+        * ``energy/nl_edge_cap_frac``: fraction of edge-cap calls that discarded
+          edges;
+        * ``energy/nl_edge_cap_k``: the per-atom budget of the most recent call
+          (0 = off);
+        * ``energy/nl_edge_kept_frac``: edges kept / edges before capping.
+    """
     total = _PATH_CALLS['radius'] + _PATH_CALLS['allpairs']
     if not total:
         return {}
@@ -157,24 +210,44 @@ def lattice_shift_range(cells: torch.Tensor, cutoff: float,
     """
     Per-axis integer shift range needed to cover `cutoff`, for each graph.
 
-    cells: [G, 3, 3], ROW-vector lattice (row i is lattice vector a_i), matching what
-    get_neighborhood is handed (`T_fc.transpose(-2, -1)`).
-    frac_spread: [G, 3], per-axis span of the FRACTIONAL coordinates
-    (f_max - f_min). Omit ONLY if every atom is known to lie inside one cell.
+    Parameters
+    ----------
+    cells : torch.Tensor
+        [G, 3, 3] ROW-vector lattice (row i is lattice vector a_i), matching what
+        get_neighborhood is handed (`T_fc.transpose(-2, -1)`).
+    cutoff : float
+        Neighbour cutoff, in the length unit of `cells`.
+    frac_spread : torch.Tensor, optional
+        [G, 3] per-axis span of the FRACTIONAL coordinates (f_max - f_min). Omit
+        ONLY if every atom is known to lie inside one cell.
 
-    Returns [G, 3] non-negative ints: axis i needs shifts in [-n_i, +n_i].
+    Returns
+    -------
+    torch.Tensor
+        [G, 3] non-negative long: axis i needs shifts in [-n_i, +n_i], where
+        n_i = ceil(cutoff / d_perp_i + spread_i), clamped from above at
+        MAX_SHIFT_RANGE.
+
+    Notes
+    -----
+    Every call increments the module's shift-cap call counter; a call in which any
+    entry exceeds MAX_SHIFT_RANGE is also counted as capped and records the
+    largest requested value before clamping (reported by
+    `drain_neighbour_path_counts`). The cell face areas and the interplanar
+    spacings are clamped at 1e-12, so a degenerate cell yields a large range
+    (before the MAX_SHIFT_RANGE clamp) rather than zero.
 
     TWO TERMS, AND THE SECOND ONE IS NOT OPTIONAL HERE.
 
-    d_perp_i = V / |a_j x a_k| is the true interplanar spacing. Using cutoff/|a_i|
+    ``d_perp_i = V / |a_j x a_k|`` is the true interplanar spacing. Using ``cutoff/|a_i|``
     instead under-counts on sheared cells -- silently, by dropping long edges.
 
     The spread term is the one that actually bit. `ceil(cutoff / d_perp)` is the
     textbook range and it assumes every atom sits INSIDE the cell. `unit_cell_pos` is
     not wrapped: molecules straddle cell boundaries, so fractional coordinates span
     more than one cell width and a pair can need one more shell than the geometry
-    alone implies. For a pair to interact we need |df_k + S_k| * d_perp_k <= cutoff
-    with |df_k| <= spread_k, hence n_k = ceil(cutoff / d_perp_k + spread_k).
+    alone implies. For a pair to interact we need ``|df_k + S_k| * d_perp_k <= cutoff``
+    with ``|df_k| <= spread_k``, hence n_k = ceil(cutoff / d_perp_k + spread_k).
 
     Measured: on real CSD crystals this was 46 missing edges out of 2704 on one graph
     -- no error, no shape change, just a slightly wrong energy. It survived a 43-test
@@ -210,8 +283,28 @@ def lattice_shift_range(cells: torch.Tensor, cutoff: float,
 
 def fractional_spread(pos: torch.Tensor, batch_ind: torch.Tensor,
                       cells: torch.Tensor, num_graphs: int) -> torch.Tensor:
-    """Per-graph, per-axis span of fractional coordinates: [G, 3]. Row-vector
-    lattice, so f = r @ A^-1."""
+    """
+    Per-graph, per-axis span of fractional coordinates.
+
+    Row-vector lattice, so f = r @ A^-1.
+
+    Parameters
+    ----------
+    pos : torch.Tensor
+        [N, 3] Cartesian positions, graphs concatenated.
+    batch_ind : torch.Tensor
+        [N] graph index of each position.
+    cells : torch.Tensor
+        [G, 3, 3] row-vector lattice per graph.
+    num_graphs : int
+        Number of graphs G.
+
+    Returns
+    -------
+    torch.Tensor
+        [G, 3] f_max - f_min per axis, in the dtype of `pos`. Non-finite spans
+        (e.g. a graph with no atoms) are replaced by 0.
+    """
     inv = torch.linalg.inv(cells)                                  # [G,3,3]
     frac = torch.einsum('nd,ndk->nk', pos, inv[batch_ind])         # [N,3]
     big = torch.full((num_graphs, 3), -float('inf'), dtype=pos.dtype, device=pos.device)
@@ -257,6 +350,9 @@ def _pairs_by_radius_search(pos_w, batch_ind, cells, shifts, cutoff, num_graphs)
     """
     Ghost-image expansion + one radius search, or None if torch_cluster is absent.
 
+    Returns (i, j, S_w): the real atom, the parent atom of the neighbouring ghost
+    (both global indices), and that ghost's shift, valid for the WRAPPED positions.
+
     O(N*K) rather than the O(sum_g n_g^2 * K) of the all-pairs fallback: at 92 atoms
     and K=175 that is 16k ghosts per graph instead of 2.7M pair evaluations, ~92x
     less work, and it is why this path exists at all.
@@ -271,7 +367,7 @@ def _pairs_by_radius_search(pos_w, batch_ind, cells, shifts, cutoff, num_graphs)
     physical CSD cells and ~2710 on the degenerate cells a policy emits early in
     training, against a k*64 of 21952 and 118976 respectively. That cost the whole
     card -- 18 GiB on 384 physical graphs, 33 GiB on 128 degenerate ones, and an
-    outright OOM at 256 degenerate. The starting cap below covers both regimes with
+    outright OOM at 256 degenerate. The starting cap (RADIUS_CAP_START) covers both regimes with
     headroom; overflow escalates rather than failing, and only a cap beyond the old
     k*64 ceiling raises.
 
@@ -369,8 +465,19 @@ EDGE_CAP_FACTOR = float(os.environ.get('MXT_EDGE_CAP_FACTOR', '0'))
 def edge_cap_k(cutoff) -> int:
     """The per-node edge budget implied by the factor at this cutoff.
 
-    Returns 0 (meaning OFF) when the factor is unset, so the cap costs nothing
-    and changes nothing unless a run asks for it."""
+    Parameters
+    ----------
+    cutoff : float
+        Neighbour cutoff.
+
+    Returns
+    -------
+    int
+        ``max(1, int(EDGE_CAP_FACTOR * cutoff ** 3))``, or 0 (meaning OFF) when
+        EDGE_CAP_FACTOR <= 0, which it is when ``MXT_EDGE_CAP_FACTOR`` is unset at
+        import -- so the cap costs nothing and changes nothing unless a run asks
+        for it.
+    """
     if EDGE_CAP_FACTOR <= 0:
         return 0
     return max(1, int(EDGE_CAP_FACTOR * float(cutoff) ** 3))
@@ -427,17 +534,52 @@ def batched_pbc_neighbour_list(pos: torch.Tensor,
     """
     Neighbour lists for every graph at once, on `pos.device`.
 
-    pos        [N, 3]      unit-cell atom positions, graphs concatenated
-    batch_ind  [N]         graph id per atom, SORTED (PyG layout)
-    cells      [G, 3, 3]   row-vector lattice per graph
-    cutoff     float
-    pbc        bool        False = no periodic images; only the S == 0 block runs
+    Parameters
+    ----------
+    pos : torch.Tensor
+        [N, 3] Cartesian unit-cell atom positions, graphs concatenated. They need
+        not lie inside the cell.
+    batch_ind : torch.Tensor
+        [N] graph id per atom, SORTED (PyG layout).
+    cells : torch.Tensor
+        [G, 3, 3] row-vector lattice per graph.
+    cutoff : float
+        Neighbour cutoff, in the length unit of `pos`.
+    pbc : bool, default True
+        False = no periodic images; only the S == 0 block of the all-pairs kernel
+        runs. There is no per-axis setting.
 
-    Returns (edge_index [2, E] with GLOBAL atom indices, unit_shifts [E, 3] int,
-             graph_id [E]). Convention matches mace.data.get_neighborhood:
+    Returns
+    -------
+    edge_index : torch.Tensor
+        [2, E] long, GLOBAL atom indices (rows of `pos`).
+    unit_shifts : torch.Tensor
+        [E, 3] long integer lattice shift of each edge, valid for `pos` as given
+        (unwrapped).
+    graph_id : torch.Tensor
+        [E] graph index of each edge (``batch_ind`` of the source atom on the
+        radius-search path; long on the all-pairs path).
+
+    Raises
+    ------
+    RuntimeError
+        From the radius search, when an atom's neighbour count reaches the
+        escalation ceiling and the list would otherwise be truncated.
+
+    Notes
+    -----
+    Convention matches mace.data.get_neighborhood:
     edge (i, j, S) means the displacement is pos[j] - pos[i] + S @ cell, so the
-    condition is |pos[j] + S @ cell - pos[i]| < cutoff, and i == j is kept only when
+    condition is ``|pos[j] + S @ cell - pos[i]| < cutoff``, and i == j is kept only when
     S != 0 (a true self-edge across a boundary is a real interaction).
+
+    With pbc=True the radius-search path runs when torch_cluster imports and the
+    all-pairs kernel otherwise, and the call is counted under the path it took.
+    In a periodic call every graph is searched over ONE shift grid, the per-axis maximum of
+    `lattice_shift_range` over the batch, clamped at MAX_SHIFT_RANGE. Edges are
+    not guaranteed to be grouped by graph (the all-pairs kernel emits them
+    shift-major). When EDGE_CAP_FACTOR > 0, each source atom keeps only its
+    `edge_cap_k(cutoff)` shortest edges.
     """
     device = pos.device
     num_graphs = cells.shape[0]
@@ -520,12 +662,42 @@ def get_neighborhood_batched_numpy(positions, cutoff, pbc, cell):
     Exists for the equivalence tests: it lets the new path be compared against the
     reference one graph at a time, with the reference's own quirks reproduced --
 
-      * the non-periodic branch REWRITES `cell` in place and the caller uses the
-        RETURNED cell, so that side effect is preserved deliberately;
+      * the non-periodic branch REWRITES `cell` and the caller uses the RETURNED
+        cell, so that rewrite is preserved deliberately. Here it is applied to a
+        float copy: the caller's array is not modified, the returned cell carries
+        the rewrite;
       * `shifts = unit_shifts @ cell` uses the (possibly rewritten) cell.
 
     Production should call batched_pbc_neighbour_list directly on the whole batch;
     this wrapper throws away the batching that is the entire point.
+
+    Parameters
+    ----------
+    positions : array_like
+        [n, 3] Cartesian positions of one graph; converted to float64 on CPU.
+    cutoff : float
+        Neighbour cutoff, in the length unit of `positions`.
+    pbc : sequence of bool
+        Per-axis periodicity, length 3. Each non-periodic axis has its cell row
+        rewritten to ``(max|positions| + 1) * 5 * cutoff`` along that axis, and
+        only ``all(pbc)`` reaches the kernel: any non-periodic axis makes the
+        whole call non-periodic (S == 0 only), including the periodic axes of a
+        mixed setting.
+    cell : array_like
+        [3, 3] row-vector lattice. An all-zero cell is replaced by the identity.
+        The ``cell is None`` test runs after conversion to an array, so None is
+        not replaced.
+
+    Returns
+    -------
+    edge_index : np.ndarray
+        [2, E] integer local atom indices.
+    shifts : np.ndarray
+        [E, 3] float, ``unit_shifts @ cell`` with the returned cell.
+    unit_shifts : np.ndarray
+        [E, 3] integer lattice shifts, as float.
+    cell : np.ndarray
+        [3, 3] float cell after the non-periodic rewrite.
     """
     cell = np.array(cell, dtype=float)
     if cell is None or not cell.any():

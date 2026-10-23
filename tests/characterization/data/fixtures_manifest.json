@@ -1,0 +1,236 @@
+{
+ "what": "stage-0 characterization fixtures; see README.md",
+ "built_with": {
+  "torch": "2.8.0+cu128",
+  "numpy": "2.2.6",
+  "torch_geometric": "2.6.1",
+  "torch_scatter": "2.1.2+pt28cu128",
+  "torch_cluster": "1.6.3+pt28cu128",
+  "python": "3.11.9",
+  "platform": "Windows-10-10.0.26300-SP0",
+  "processor": "Intel64 Family 6 Model 198 Stepping 2, GenuineIntel",
+  "mxt_env": {}
+ },
+ "sources": {
+  "F1": "D:/crystal_datasets/csd_fd_v5",
+  "F1_data_sha256": "4f49701ecbd441b42c8eb64a5c5c0d6f001189f9aefed31da461c58a51410c7d",
+  "F3": "D:/crystal_datasets/ingest_csd_v1_r2/csd_v1-6080f8b8a11a/chunks"
+ },
+ "log": [
+  "F1 PYRAZB21: dataset row 247286, sg 14, 26 atoms, handedness 1, C1",
+  "F1 YIRLEU: dataset row 375343, sg 2, 28 atoms, handedness 1, C1",
+  "F1 OYIQIX: dataset row 229615, sg 9, 28 atoms, handedness 1, C1",
+  "F1 HIFQUJ: dataset row 119548, sg 14, 27 atoms, handedness 1, C1",
+  "F3 AHUMIZ: chunk_000022 row 35, sg 2, 46 atoms, handedness [1, -1], per-unit conformers differ by 2.467 A, centroid norms [0.783, 1.016]",
+  "F3 AFEVOA: chunk_000013 row 329, sg 14, 24 atoms, handedness [-1, 1], per-unit conformers differ by 1.101 A, centroid norms [0.852, 0.306]",
+  "F3b PYRAZB21: doubled to Z'=2, cell [25.889, 9.616, 7.733], handedness [-1.0, -1.0]",
+  "F3b HIFQUJ: doubled to Z'=2, cell [16.556, 8.472, 15.141], handedness [1.0, 1.0]",
+  "AUDIT phen_p1: sg 2, units [26] atoms; verify/v1 (b): phenacetin P-1; misses 1 pair at cutoff 10",
+  "AUDIT phen_p21c: sg 14, units [26] atoms; verify/v1 (b): phenacetin P21/c; misses 4 pairs at cutoff 6",
+  "AUDIT pyr_p21c: sg 14, units [12] atoms; verify/v1 (b, c): pyridone P21/c; misses 2 pairs at cutoff 10",
+  "AUDIT phen_probe1b: sg 14, units [26] atoms; builders/probe1b: phenacetin sg14; one H...H pair at 5.81 A missed at cutoff 6",
+  "AUDIT pyr_zp2: sg 14, units [12, 12] atoms; verify/v1 (c): the Z'=2 batch-mate of pyr_p21c",
+  "AUDIT two_eth_meth: sg 2, units [9, 5] atoms; analysis/probe_zp2_analysis P5: ethanol (9) + methane (5) split 7/7",
+  "AUDIT two_eth_prop: sg 2, units [9, 11] atoms; fix review 2026-10-22: ethanol (9) + propane (11) = 20, split 10/10; two_eth_meth's cell and slots with >= 3 non-collinear heavy atoms per unit, so each unit's frame (std_orientation) is defined, unlike methane's",
+  "AUDIT two_eth_ether: sg 2, units [9, 9] atoms; analysis/probe_zp2_analysis P4: ethanol + dimethyl ether, 4 of 36 MLIP elements wrong",
+  "AUDIT two_pyr_flb: sg 14, units [12, 12] atoms; builders/probe2 (a): pyridone + fluorobenzene, 8 of 96 MLIP elements wrong"
+ ],
+ "F1": [
+  {
+   "identifier": "PYRAZB21",
+   "sg": 14,
+   "atoms": 26,
+   "dataset": "D:/crystal_datasets/csd_fd_v5",
+   "dataset_row": 247286,
+   "mol_hash": "1eef15540241cd3d87648e01541d7c1c44cd25cb54cd5b16ad35f2f0d883bfcc",
+   "data_sha256": "4f49701ecbd441b42c8eb64a5c5c0d6f001189f9aefed31da461c58a51410c7d"
+  },
+  {
+   "identifier": "YIRLEU",
+   "sg": 2,
+   "atoms": 28,
+   "dataset": "D:/crystal_datasets/csd_fd_v5",
+   "dataset_row": 375343,
+   "mol_hash": "f6484828614703fe61ef6834951b85a47b83207ab3c3d61235b1c3f5e0de233b",
+   "data_sha256": "4f49701ecbd441b42c8eb64a5c5c0d6f001189f9aefed31da461c58a51410c7d"
+  },
+  {
+   "identifier": "OYIQIX",
+   "sg": 9,
+   "atoms": 28,
+   "dataset": "D:/crystal_datasets/csd_fd_v5",
+   "dataset_row": 229615,
+   "mol_hash": "343b33b43688641edd166587e878e4198571e2abc727be4b25430132a9da9107",
+   "data_sha256": "4f49701ecbd441b42c8eb64a5c5c0d6f001189f9aefed31da461c58a51410c7d"
+  },
+  {
+   "identifier": "HIFQUJ",
+   "sg": 14,
+   "atoms": 27,
+   "dataset": "D:/crystal_datasets/csd_fd_v5",
+   "dataset_row": 119548,
+   "mol_hash": "5797b413b222afed55995659e955df6ced41253fbc91133aec4f15b586f56b2b",
+   "data_sha256": "4f49701ecbd441b42c8eb64a5c5c0d6f001189f9aefed31da461c58a51410c7d"
+  }
+ ],
+ "F3": [
+  {
+   "identifier": "AHUMIZ",
+   "sg": 2,
+   "atoms": 46,
+   "store_chunk": "D:/crystal_datasets/ingest_csd_v1_r2/csd_v1-6080f8b8a11a/chunks\\chunk_000022",
+   "row": 35,
+   "rebuild_max_dev": 2.0679941956565295e-06,
+   "ops_equal_SYM_OPS": true,
+   "per_unit_conformer_max_internal_distance_difference": 2.4667968910892357
+  },
+  {
+   "identifier": "AFEVOA",
+   "sg": 14,
+   "atoms": 24,
+   "store_chunk": "D:/crystal_datasets/ingest_csd_v1_r2/csd_v1-6080f8b8a11a/chunks\\chunk_000013",
+   "row": 329,
+   "rebuild_max_dev": 2.7931431632952024e-06,
+   "ops_equal_SYM_OPS": true,
+   "per_unit_conformer_max_internal_distance_difference": 1.1014181523130633
+  }
+ ],
+ "F3b": [
+  {
+   "identifier": "PYRAZB21",
+   "parent": "PYRAZB21",
+   "how": "zp_doubling.double_zp1_crystal(reduce=True, origin=best, check=True)"
+  },
+  {
+   "identifier": "HIFQUJ",
+   "parent": "HIFQUJ",
+   "how": "zp_doubling.double_zp1_crystal(reduce=True, origin=best, check=True)"
+  }
+ ],
+ "AUDIT": {
+  "phen_p1": {
+   "sg": 2,
+   "units": [
+    {
+     "smiles": "CCOc1ccc(NC(C)=O)cc1",
+     "atoms": 26,
+     "how": "MolData.from_smiles(seed 0, compute_partial_charges=False), embedding 3 of the fresh-process sequence ['CCO', 'CCN', 'CCOc1ccc(NC(C)=O)cc1', 'O=c1cccc[nH]1', 'O=c1cccc[nH]1']"
+    }
+   ],
+   "source": "verify/v1 (b): phenacetin P-1; misses 1 pair at cutoff 10"
+  },
+  "phen_p21c": {
+   "sg": 14,
+   "units": [
+    {
+     "smiles": "CCOc1ccc(NC(C)=O)cc1",
+     "atoms": 26,
+     "how": "MolData.from_smiles(seed 0, compute_partial_charges=False), embedding 3 of the fresh-process sequence ['CCO', 'CCN', 'CCOc1ccc(NC(C)=O)cc1', 'O=c1cccc[nH]1', 'O=c1cccc[nH]1']"
+    }
+   ],
+   "source": "verify/v1 (b): phenacetin P21/c; misses 4 pairs at cutoff 6"
+  },
+  "pyr_p21c": {
+   "sg": 14,
+   "units": [
+    {
+     "smiles": "O=c1cccc[nH]1",
+     "atoms": 12,
+     "how": "MolData.from_smiles(seed 0, compute_partial_charges=False), embedding 4 of the fresh-process sequence ['CCO', 'CCN', 'CCOc1ccc(NC(C)=O)cc1', 'O=c1cccc[nH]1', 'O=c1cccc[nH]1']"
+    }
+   ],
+   "source": "verify/v1 (b, c): pyridone P21/c; misses 2 pairs at cutoff 10"
+  },
+  "phen_probe1b": {
+   "sg": 14,
+   "units": [
+    {
+     "smiles": "CCOc1ccc(NC(C)=O)cc1",
+     "atoms": 26,
+     "how": "MolData.from_smiles(seed 1, compute_partial_charges=True), embedding 1 of the fresh-process sequence ['CCOc1ccc(NC(C)=O)cc1']"
+    }
+   ],
+   "source": "builders/probe1b: phenacetin sg14; one H...H pair at 5.81 A missed at cutoff 6"
+  },
+  "pyr_zp2": {
+   "sg": 14,
+   "units": [
+    {
+     "smiles": "O=c1cccc[nH]1",
+     "atoms": 12,
+     "how": "MolData.from_smiles(seed 0, compute_partial_charges=False), embedding 4 of the fresh-process sequence ['CCO', 'CCN', 'CCOc1ccc(NC(C)=O)cc1', 'O=c1cccc[nH]1', 'O=c1cccc[nH]1']"
+    },
+    {
+     "smiles": "O=c1cccc[nH]1",
+     "atoms": 12,
+     "how": "MolData.from_smiles(seed 3, compute_partial_charges=False), embedding 5 of the fresh-process sequence ['CCO', 'CCN', 'CCOc1ccc(NC(C)=O)cc1', 'O=c1cccc[nH]1', 'O=c1cccc[nH]1']"
+    }
+   ],
+   "source": "verify/v1 (c): the Z'=2 batch-mate of pyr_p21c"
+  },
+  "two_eth_meth": {
+   "sg": 2,
+   "units": [
+    {
+     "smiles": "CCO",
+     "atoms": 9,
+     "how": "RDKit EmbedMolecule(randomSeed=3) + MMFFOptimizeMolecule"
+    },
+    {
+     "smiles": "C",
+     "atoms": 5,
+     "how": "RDKit EmbedMolecule(randomSeed=3) + MMFFOptimizeMolecule"
+    }
+   ],
+   "source": "analysis/probe_zp2_analysis P5: ethanol (9) + methane (5) split 7/7"
+  },
+  "two_eth_prop": {
+   "sg": 2,
+   "units": [
+    {
+     "smiles": "CCO",
+     "atoms": 9,
+     "how": "RDKit EmbedMolecule(randomSeed=3) + MMFFOptimizeMolecule"
+    },
+    {
+     "smiles": "CCC",
+     "atoms": 11,
+     "how": "RDKit EmbedMolecule(randomSeed=3) + MMFFOptimizeMolecule"
+    }
+   ],
+   "source": "fix review 2026-10-22: ethanol (9) + propane (11) = 20, split 10/10; two_eth_meth's cell and slots with >= 3 non-collinear heavy atoms per unit, so each unit's frame (std_orientation) is defined, unlike methane's"
+  },
+  "two_eth_ether": {
+   "sg": 2,
+   "units": [
+    {
+     "smiles": "CCO",
+     "atoms": 9,
+     "how": "RDKit EmbedMolecule(randomSeed=3) + MMFFOptimizeMolecule"
+    },
+    {
+     "smiles": "COC",
+     "atoms": 9,
+     "how": "RDKit EmbedMolecule(randomSeed=3) + MMFFOptimizeMolecule"
+    }
+   ],
+   "source": "analysis/probe_zp2_analysis P4: ethanol + dimethyl ether, 4 of 36 MLIP elements wrong"
+  },
+  "two_pyr_flb": {
+   "sg": 14,
+   "units": [
+    {
+     "smiles": "O=c1cccc[nH]1",
+     "atoms": 12,
+     "how": "MolData.from_smiles(seed 0, compute_partial_charges=True), embedding 1 of the fresh-process sequence ['O=c1cccc[nH]1', 'Fc1ccccc1']"
+    },
+    {
+     "smiles": "Fc1ccccc1",
+     "atoms": 12,
+     "how": "MolData.from_smiles(seed 0, compute_partial_charges=True), embedding 2 of the fresh-process sequence ['O=c1cccc[nH]1', 'Fc1ccccc1']"
+    }
+   ],
+   "source": "builders/probe2 (a): pyridone + fluorobenzene, 8 of 96 MLIP elements wrong"
+  }
+ }
+}

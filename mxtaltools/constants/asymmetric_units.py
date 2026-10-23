@@ -1,3 +1,27 @@
+"""Axis-aligned asymmetric-unit boxes per space group, in fractional coordinates.
+
+RAW_ASYM_UNITS is a literal and ASYM_UNITS is derived from it at import; the
+module imports nothing. Keys are the International Tables space-group number
+as a ``str``.
+
+Attributes
+----------
+RAW_ASYM_UNITS : dict[str, list]
+    Space-group number to ``[a_x, a_y, a_z]``, the upper corner of the box
+    [0, a_x] x [0, a_y] x [0, a_z] in fractional coordinates of the
+    conventional cell (the lower corner is the origin;
+    ``crystal_building.utils.find_coord_in_box_torch`` with its default
+    ``epsilon=0`` tests membership with both bounds inclusive). Only 123 groups have an entry: 1-98, 103-106,
+    109, 110, 112, 114-120, 122, 124, 126, 128, 130, 131, 133, 135, 137,
+    141 and 142. Values are drawn from {1, 0.5, 0.25, 0.125}, with 1 stored
+    as an ``int`` and the others as ``float``; '1' (P1) is [1, 1, 1].
+ASYM_UNITS : dict[str, list]
+    Shallow copy of RAW_ASYM_UNITS completed to every key '1' ... '230':
+    each space group without a RAW_ASYM_UNITS entry maps to [1, 1, 1], the
+    whole unit cell. Values for keys present in RAW_ASYM_UNITS are the same
+    list objects as there. The added keys follow the RAW_ASYM_UNITS keys in
+    insertion order, in ascending numeric order among themselves.
+"""
 RAW_ASYM_UNITS = {  # https://www.lpl.arizona.edu/PMRG/sites/lpl.arizona.edu.PMRG/files/ITC-Vol.A%20%282005%29%28ISBN%200792365909%29.pdf
     '1': [1, 1, 1],  # P1
     '2': [0.5, 1, 1],  # P-1

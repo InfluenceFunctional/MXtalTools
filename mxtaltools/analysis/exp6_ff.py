@@ -340,15 +340,12 @@ def shifted_force_coulomb(r: torch.Tensor, qi: torch.Tensor, qj: torch.Tensor, c
 
 
 def aunit_molecule_index(crystal_batch) -> torch.Tensor:
-    """[n_atoms] molecule index of each asymmetric-unit atom of a crystal batch, unique over the batch: crystal g's
-    atoms are ``z_prime[g]`` contiguous equal blocks."""
-    batch, ptr = crystal_batch.batch, crystal_batch.ptr
-    zp = crystal_batch.z_prime.long().reshape(-1)
-    n_atoms = (ptr[1:] - ptr[:-1])
-    per_mol = n_atoms // zp
-    local = torch.arange(len(batch), device=batch.device) - ptr[:-1][batch]
-    mol_offset = torch.cat([torch.zeros(1, dtype=torch.long, device=batch.device), torch.cumsum(zp, 0)[:-1]])
-    return mol_offset[batch] + local // per_mol[batch]
+    """[n_atoms] molecule index of each asymmetric-unit atom of a crystal batch, unique over the batch: the unit of
+    every atom from the batch's unit map (``crystal_building.utils.unit_layout``: ``unit_ptr[row] + unit_ind``, from
+    the stored ``unit_ind`` or, without one, ``z_prime[g]`` contiguous equal blocks; equal contiguous units at this
+    stage, so a crystal whose units cannot be read raises ValueError)."""
+    from mxtaltools.crystal_building.utils import unit_layout
+    return unit_layout(crystal_batch, 'exp6 atom typing').unit_batch.to(crystal_batch.batch.device)
 
 
 _CHARGE_CACHE = {}

@@ -25,6 +25,7 @@ _SYMBOLS = None
 
 
 def _symbol_table():
+    """Upper-cased element symbol -> atomic number from ``ase.data``, built once and cached."""
     global _SYMBOLS
     if _SYMBOLS is None:
         from ase.data import chemical_symbols
@@ -39,6 +40,13 @@ def element_from_symbol(raw: str, identifier: str = None) -> int:
     writes both `Fe3+` and `Fe`.  The leading alphabetic run is the element.
     Raises rather than defaulting to carbon -- a mis-typed element is precisely
     the silent wrong answer this reader exists to avoid.
+
+    Surrounding whitespace and quote characters are stripped first, the whole
+    leading alphabetic run is matched case-insensitively against
+    ``ase.data.chemical_symbols``, and 'D' maps to 1. ASE's placeholder symbol
+    'X' is in that table and maps to 0. `identifier` is only used
+    in error messages. Raises `CifParseError` when there is no leading letter or
+    the run is not a known symbol.
     """
     s = raw.strip().strip("'\"")
     alpha = ''
@@ -60,7 +68,14 @@ def element_from_symbol(raw: str, identifier: str = None) -> int:
 
 
 class SiteSet:
-    """The deposited set: parallel arrays, one entry per `_atom_site` row."""
+    """The deposited set: parallel arrays, one entry per `_atom_site` row.
+
+    `labels` list[str]; `z` [n] int64 atomic numbers; `frac` [n, 3] float64
+    fractional coordinates; `occupancy` [n] float64, all 1.0 when the tag is
+    absent; `has_occupancy` whether `_atom_site_occupancy` was present.
+    `components_from_block` replaces `frac` with a repaired copy when it
+    unwraps a split molecule.
+    """
 
     __slots__ = ('labels', 'z', 'frac', 'occupancy', 'has_occupancy')
 
@@ -72,10 +87,12 @@ class SiteSet:
         self.has_occupancy = has_occupancy      # was the tag actually present?
 
     def __len__(self) -> int:
+        """Number of sites."""
         return len(self.labels)
 
     @property
     def n_heavy(self) -> int:
+        """Number of sites with atomic number above 1."""
         return int((self.z > 1).sum())
 
     def __repr__(self) -> str:
@@ -84,17 +101,40 @@ class SiteSet:
 
 def sites_from_block(block: CifBlock,
                      identifier: str = None,
-                     max_atomic_number: Optional[int] = None) -> SiteSet:
+                     max_atomic_number: Optional[int] = None,
+                     *,
+                     refuse_partial_occupancy: bool = True) -> SiteSet:
     """Read the atom-site loop into a `SiteSet`.
 
+    The loop is the first one carrying `_atom_site_label`, else the first
+    carrying ``_atom_site_fract_x`` (then ``_y``, then ``_z``); that loop must
+    carry all three fractional tags. Labels are whitespace-stripped only
+    (``site<i>`` when the label tag is absent); atomic numbers come from
+    `_atom_site_type_symbol` via `element_from_symbol`, falling back to the
+    labels when that tag is absent. Coordinate and occupancy values have their
+    parenthesised standard uncertainty removed; a missing occupancy value is
+    read as 1.0. `identifier` is only used in error messages.
+
     Refusals, all named rather than silent:
+
       - no atom-site loop, or no fractional coordinates -> `CifMissingDataError`
+      - an empty atom-site loop -> `CifMissingDataError`
       - a site with a missing coordinate -> `CifMissingDataError` (NOT dropped:
         silently dropping a site changes the composition)
       - duplicate site labels -> `CifParseError`, since `_geom_bond` refers to
         sites BY LABEL and a duplicate makes the bond graph ambiguous
-      - partial occupancy -> `CifUnsupportedError(reason='partial-occupancy')`,
-        because this reader has no disorder model
+      - an unrecognised element symbol -> `CifParseError`
+      - partial occupancy (``abs(occ - 1) > 1e-3``) ->
+        `CifUnsupportedError(reason='partial-occupancy')`, because this reader
+        has no disorder model. With ``refuse_partial_occupancy=False`` the sites
+        are returned instead, occupancies as read, and the caller owns the
+        decision (`MolCrystalData.read` keeps such a row with a
+        ``partial_occupancy`` status)
+      - an atomic number above `max_atomic_number` (when not None) ->
+        `CifUnsupportedError(reason='atomic-number')`
+
+    A coordinate or occupancy value that is present but not numeric is passed
+    to ``float`` directly and raises a plain ValueError, not a `CifReadError`.
 
     Occupancy note: the CSD exporter strips `_atom_site_occupancy` entirely --
     measured 0/1000 files carry it -- so its ABSENCE means "not stated", never
@@ -154,7 +194,7 @@ def sites_from_block(block: CifBlock,
         occ = np.array([1.0 if is_missing(v) else float(strip_esd(v))
                         for v in loop.column(_OCC_TAG)], dtype=np.float64)
         partial = np.abs(occ - 1.0) > 1e-3
-        if partial.any():
+        if refuse_partial_occupancy and partial.any():
             bad = [labels[i] for i in np.where(partial)[0][:5]]
             raise CifUnsupportedError(
                 f'{int(partial.sum())} site(s) carry partial occupancy (e.g. {bad}); '

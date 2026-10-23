@@ -1,3 +1,24 @@
+"""
+MACE energies for batches of molecular crystals.
+
+`load_mace_model` loads a MACE model file. `compute_crystal_mace_on_mxt_batch`
+turns a crystal batch into MACE's collated input and returns one energy per graph.
+It uses one of three input builders, selected by module flags that are read from
+the environment at import and are on unless the variable is ``'0'``:
+
+* `batch_to_mace_input_dict` -- the collated input dict built on device with the
+  batched neighbour list, with no per-graph AtomicData (``MXT_GPU_MACE_BATCH``;
+  taken only when ``MXT_BATCHED_MACE_NEIGHBOURS`` is also on and pbc=True);
+* `batch_to_mace_atomicdata_hoisted` -- one AtomicData per graph with the
+  loop-invariant work done once per batch, on the batched neighbour list when
+  ``MXT_BATCHED_MACE_NEIGHBOURS`` is on and pbc=True
+  (``MXT_HOISTED_MACE_ATOMICDATA``);
+* `batch_to_mace_atomicdata` -- the per-graph reference builder on
+  ``mace.data.get_neighborhood``.
+
+`drain_mace_phase_timing` reports the per-phase wall time, the executed path and
+the crash counts accumulated in module state.
+"""
 from mace.tools.torch_geometric.dataloader import Collater
 
 import os
@@ -10,14 +31,48 @@ from mace.tools import to_one_hot, atomic_numbers_to_indices
 
 from mxtaltools.common.geometry_utils import fractional_transform
 from mxtaltools.common.utils import is_cuda_oom
-# SHARED ON PURPOSE: the tiling rule is the one piece of index maths both MLIP
-# builders must get identically right, and it is already pinned by
-# tests/test_uma_atomicdata_vectorisation.py::test_tiling_is_not_repeat_interleave.
-# A second copy here would be a second thing to get wrong.
-from mxtaltools.mlip_interfaces.uma_utils import _tiled_gather_index
+# SHARED ON PURPOSE: the unit-cell element layout is the one piece of index maths both
+# MLIP builders must get identically right. The Z'=1 tiling is pinned by
+# tests/test_uma_atomicdata_vectorisation.py::test_tiling_is_not_repeat_interleave, the
+# Z'>1 unit-by-unit layout against the geometric truth by tests/test_unit_cell_elements.py
+# and tests/characterization (audit #15). A second copy here would be a second thing to get wrong.
+from mxtaltools.crystal_building.utils import unit_cell_gather_index, unit_cell_z
 
 
 def load_mace_model(model_path, device, dtype):
+    """
+    Load a whole-model MACE file, optionally convert it to cuequivariance, and
+    put it in eval mode.
+
+    Parameters
+    ----------
+    model_path : str or path-like
+        File holding a pickled MACE model, loaded with ``torch.load``.
+    device : str or torch.device
+        ``map_location`` for the load and the device the model is moved to.
+    dtype : torch.dtype
+        dtype the model is cast to, before and after any conversion.
+
+    Returns
+    -------
+    torch.nn.Module
+        The model on `device` in `dtype`, in eval mode.
+
+    Notes
+    -----
+    Two process-wide side effects persist after return:
+
+    * ``torch.load`` is replaced by a wrapper that passes ``weights_only=False``
+      whenever the caller does not set it. The original is not restored, and each
+      call wraps the current ``torch.load`` again.
+    * ``torch.fx._symbolic_trace.is_fx_symbolic_tracing`` is set to
+      ``is_fx_tracing`` when the attribute is missing.
+
+    The model is converted with ``mace.cli.convert_e3nn_cueq.run`` (and a message
+    printed) when ``cuequivariance``, ``cuequivariance_torch`` and
+    ``cuequivariance_ops_torch`` all import and ``torch.cuda.is_available()`` is
+    True; that test does not look at `device`.
+    """
     import torch.fx._symbolic_trace as _st
     if not hasattr(_st, 'is_fx_symbolic_tracing'):
         _st.is_fx_symbolic_tracing = _st.is_fx_tracing
@@ -61,12 +116,58 @@ def mxt_crystal_to_mace_atomicdata(batch,
                                    mol_z,
                                    sym_mult,
                                    T_fc,
-                                   dtype, cutoff, z_table, ind, pbc):
+                                   dtype, cutoff, z_table, ind, pbc, *, z_prime):
+    """
+    MACE AtomicData for graph `ind` of a crystal batch, with the neighbour list from
+    ``mace.data.get_neighborhood`` on the host.
+
+    Parameters
+    ----------
+    batch : torch.Tensor
+        [num_aunit_atoms] graph index of each entry of `mol_z`.
+    unit_cell_batch : torch.Tensor
+        [num_ucell_atoms] graph index of each row of `unit_cell_pos`.
+    unit_cell_pos : torch.Tensor
+        [num_ucell_atoms, 3] Cartesian unit-cell positions.
+    mol_z : torch.Tensor
+        [num_aunit_atoms] atomic numbers of the asymmetric-unit atoms.
+    sym_mult : torch.Tensor
+        [num_graphs] number of symmetry images per unit cell.
+    T_fc : torch.Tensor
+        [num_graphs, 3, 3] fractional-to-Cartesian matrices; the lattice handed to
+        get_neighborhood is a host copy of ``T_fc[ind].T`` (row i = lattice vector
+        a_i), so `T_fc` is not written.
+    dtype : torch.dtype
+        dtype of the shifts, unit shifts, weights, zeroed targets and
+        ``total_spin``.
+    cutoff : float
+        Neighbour cutoff.
+    z_table : mace.tools.utils.AtomicNumberTable
+        Model element table for the one-hot node attributes.
+    ind : int
+        Graph to build.
+    pbc : bool
+        Periodicity applied to all three axes.
+    z_prime : torch.Tensor
+        [num_graphs] units per crystal (keyword only).
+
+    Returns
+    -------
+    mace.data.AtomicData
+        ``positions`` is graph `ind`'s slice of `unit_cell_pos` (not detached);
+        elements are that graph's `mol_z`, each of its ``z_prime[ind]`` units tiled
+        ``sym_mult[ind]`` times, unit by unit (``crystal_building.utils.unit_cell_z``), the
+        builder's ``[unit][image][atom]`` row layout; ``cell`` is the numpy
+        cell returned by get_neighborhood (the copied lattice, its rows rewritten
+        to get_neighborhood's vacuum box when `pbc` is False); ``shifts`` is
+        ``unit_shifts @ cell`` from get_neighborhood. ``head`` is 0, every weight
+        1, every target zero and ``total_spin`` 1.
+    """
     mask = batch == ind
     ucell_mask = unit_cell_batch == ind
     pos = unit_cell_pos[ucell_mask]
     cell = T_fc[ind].T
-    sample_z = mol_z[mask].repeat(sym_mult[ind])
+    sample_z = unit_cell_z(mol_z[mask], z_prime[ind], sym_mult[ind])
 
     # the cell is COPIED: on a CPU tensor this numpy array is otherwise a view of
     # T_fc, and get_neighborhood's non-periodic branch writes into it in place -- see
@@ -150,7 +251,42 @@ _EXEC_CALLS = {'gpu_batch': 0, 'batched_nl': 0}
 
 def drain_mace_phase_timing():
     """Pop the accumulated per-phase seconds. {} when nothing was timed, so a stage
-    that never calls mace (bwd/dataset MLE) logs nothing rather than zeros."""
+    that never calls mace (bwd/dataset MLE) logs nothing rather than zeros.
+
+    Returns
+    -------
+    dict
+        ``{}`` when no call of `compute_crystal_mace_on_mxt_batch` has got past
+        `safe_predict_mace` since the last drain; nothing is reset in that case.
+        Otherwise every counter in this module is reset,
+        `drain_neighbour_path_counts` is called (it resets the `pbc_neighbours`
+        counters only when it returns a non-empty dict), and the dict holds:
+
+        * ``energy/mace_{build,collate,xfer,forward,neighbours}_s``: wall seconds
+          per phase, summed over calls; ``neighbours`` is part of ``build``;
+        * ``energy/mace_calls``: calls in which `safe_predict_mace` returned,
+          including forwards that failed with a non-OOM RuntimeError;
+        * ``energy/mace_host_frac``, ``energy/mace_forward_frac``:
+          (build + collate) / total and forward / total, where total excludes
+          ``neighbours``; present only when total > 0;
+        * ``energy/mace_nl_frac_of_build``: neighbours / build; present only when
+          build > 0;
+        * ``energy/mace_flag_batched_nl``, ``energy/mace_flag_gpu_batch``: calls
+          that executed the batched neighbour list and the device-built input
+          dict, divided by ``energy/mace_calls``;
+        * ``energy/mace_flag_hoisted``: 1 or 0, the USE_HOISTED_MACE_ATOMICDATA
+          flag value itself;
+        * the keys returned by `drain_neighbour_path_counts`, if any;
+        * ``energy/mace_crash_calls``, ``energy/mace_crash_rows``: non-OOM forward
+          failures and the graphs whose energies were set to NaN (always present).
+
+    Notes
+    -----
+    Executed-path counts and the build, collate and transfer seconds are
+    accumulated before the forward; forward seconds and ``energy/mace_calls`` only
+    after `safe_predict_mace` returns. A call that raises (e.g. a re-raised CUDA
+    OOM) is therefore counted in the path numerators but not in the denominator.
+    """
     global _PHASE_CALLS, _CRASH_CALLS, _CRASH_ROWS
     if not _PHASE_CALLS:
         return {}
@@ -190,6 +326,61 @@ def drain_mace_phase_timing():
 
 def compute_crystal_mace_on_mxt_batch(batch, model,
                                       std_orientation=True, pbc: bool=True, force_rebuild: bool = False):
+    """
+    MACE energy of every crystal in a batch.
+
+    Parameters
+    ----------
+    batch : MolCrystalData
+        Collated crystal batch. Reads ``unit_cell_pos``, ``unit_cell_batch``,
+        ``T_fc``, ``T_cf``, ``num_graphs`` and ``device``, plus what the selected
+        builder reads (``z``, ``batch``, ``sym_mult``, ``aux_ind``, ``z_prime``).
+        When the unit cell is absent or `force_rebuild` is set, the builder poses
+        the asymmetric unit and builds the unit cell on `batch` IN PLACE.
+    model : torch.nn.Module
+        MACE model; ``model.r_max`` is the neighbour cutoff and
+        ``model.atomic_numbers`` the element table.
+    std_orientation : bool, default True
+        Passed to ``pose_aunit`` when the unit cell is built.
+    pbc : bool, default True
+        Periodic on all three axes when True. False always takes a per-graph
+        builder, because the device-built dict is periodic-only; the ``cell``
+        handed to the model is then get_neighborhood's vacuum box, and
+        ``batch.T_fc`` is not written.
+    force_rebuild : bool, default False
+        Rebuild the unit cell even if one is present.
+
+    Returns
+    -------
+    torch.Tensor
+        [num_graphs] ``output['energy']`` of the model, one value per unit cell,
+        in the model's energy units. When the forward raises a non-OOM
+        RuntimeError, a float32 tensor of NaN on ``batch.device`` instead.
+
+    Raises
+    ------
+    RuntimeError
+        A RuntimeError from the forward that ``is_cuda_oom`` classifies as CUDA
+        out-of-memory is re-raised (see `safe_predict_mace`). Builder errors and
+        non-RuntimeError exceptions from the forward propagate unchanged.
+
+    Notes
+    -----
+    Builder selection: `batch_to_mace_input_dict` when USE_GPU_MACE_BATCH,
+    USE_BATCHED_MACE_NEIGHBOURS and `pbc` all hold; otherwise
+    `batch_to_mace_atomicdata_hoisted` (when USE_HOISTED_MACE_ATOMICDATA) or
+    `batch_to_mace_atomicdata`, whose list is collated and moved to
+    ``batch.device``.
+
+    Before the forward, ``positions`` is replaced by ``unit_cell_pos`` mapped to
+    fractional coordinates with ``T_cf`` and back with ``T_fc``, and ``shifts``
+    by ``unit_shifts`` mapped through the ``T_fc`` of each edge's graph (taken
+    from its source atom), so both are differentiable in the cell matrices. The
+    forward runs with compute_force=False and compute_stress=False.
+
+    Adds per-phase wall time, executed-path counts and crash counts to module
+    state, read by `drain_mace_phase_timing`.
+    """
     global _PHASE_CALLS
     # the device-built dict needs the batched neighbour list -- a per-graph host
     # neighbour list would put back the loop it exists to remove
@@ -256,6 +447,38 @@ def compute_crystal_mace_on_mxt_batch(batch, model,
 
 
 def safe_predict_mace(model, input_data):
+    """
+    Run the MACE forward, turning non-OOM runtime failures into a flag.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        MACE model.
+    input_data : dict
+        Collated MACE input dict.
+
+    Returns
+    -------
+    output : dict or None
+        The model output (compute_force=False, compute_stress=False), or None on
+        failure.
+    crashed : bool
+        True when the forward raised a RuntimeError that `is_cuda_oom` does not
+        classify as out-of-memory; the error text is printed and the module crash
+        counter incremented.
+
+    Raises
+    ------
+    RuntimeError
+        A RuntimeError that `is_cuda_oom` classifies as out-of-memory is re-raised
+        unchanged. Exceptions that are not RuntimeError are not caught.
+
+    Notes
+    -----
+    When CUDA is available, ``torch.cuda.synchronize`` runs before and after the
+    forward. The failure branch calls ``torch.cuda.synchronize`` and
+    ``torch.cuda.empty_cache`` without checking CUDA availability.
+    """
     try:
         # RESTORED 2026-08-14, to match safe_predict_uma, which never lost them.
         #
@@ -402,8 +625,8 @@ def batch_to_mace_input_dict(batch, force_rebuild, model, std_orientation,
     """
     The collated MACE input dict, built directly on device.
 
-    WHAT IT REPLACES. The shipping path builds one AtomicData per crystal, then hands
-    the list to PyG's Collater. Measured at 128 graphs, once the neighbour list is on
+    WHAT IT REPLACES. The AtomicData list path builds one AtomicData per crystal, then
+    hands the list to PyG's Collater. Measured at 128 graphs, once the neighbour list is on
     the GPU the remainder is still ~27 ms of host work -- ~14 ms of it the Collater --
     with the card idle throughout. On a usage-policed cluster that idle time is the
     number jobs are cancelled on, so moving it is worth doing even at parity.
@@ -415,15 +638,67 @@ def batch_to_mace_input_dict(batch, force_rebuild, model, std_orientation,
     flagged when it left the Collater alone.
 
     HOW THE COLLATION RULES ARE REPRODUCED (mace.tools.torch_geometric.batch):
-      * keys matching (index|face) concatenate on dim -1 and are incremented by the
-        running node count -- edge_index only. batched_pbc_neighbour_list already
-        emits GLOBAL atom indices, so that increment is already applied;
+
+      * keys matching ``(index|face)`` concatenate on dim -1 and are incremented by
+        the running node count -- edge_index only. batched_pbc_neighbour_list
+        already emits GLOBAL atom indices, so that increment is already applied;
       * 0-dim tensors are unsqueezed and stacked, giving [num_graphs];
       * everything else concatenates on dim 0. cell is (3,3) per graph, so the
-        collated form is [3*num_graphs, 3], NOT [num_graphs, 3, 3].
+        collated form is ``[3*num_graphs, 3]``, NOT [num_graphs, 3, 3].
 
-    Bit-identical to the shipping path with the same neighbour list, enforced by
-    verify_mace_input_dict_equivalence rather than asserted.
+    Bit-identical to the collated batch_to_mace_atomicdata_hoisted output on the
+    same (batched) neighbour list, enforced by verify_mace_input_dict_equivalence
+    rather than asserted.
+
+    Parameters
+    ----------
+    batch : MolCrystalData
+        Collated crystal batch. Reads ``unit_cell_pos``, ``T_fc``, ``sym_mult``,
+        ``num_graphs``, ``z``, ``batch`` and ``aux_ind``. When the unit cell is
+        absent or `force_rebuild` is set, the unit cell is built on `batch` IN
+        PLACE first (see `_mace_resolve_aunit_z`).
+    force_rebuild : bool
+        Rebuild the unit cell even if one is present.
+    model : torch.nn.Module
+        MACE model; ``model.r_max`` is the cutoff and ``model.atomic_numbers`` the
+        element table.
+    std_orientation : bool
+        Passed to ``pose_aunit`` when the unit cell is built.
+    pbc : bool, default True
+        Must be True.
+
+    Returns
+    -------
+    dict of str to torch.Tensor
+        On the device of ``unit_cell_pos``, with G = num_graphs, N = unit-cell
+        atoms in the batch and E = edges, edges stably sorted by graph:
+
+        * ``edge_index`` [2, E] global atom indices; ``unit_shifts`` [E, 3] and
+          ``shifts`` [E, 3] (``unit_shifts @ cell`` from the detached cell), both
+          in the dtype of ``unit_cell_pos``;
+        * ``positions`` [N, 3]: ``batch.unit_cell_pos`` itself;
+        * ``cell`` ``[3*G, 3]``: the detached row-vector lattices, stacked;
+        * ``node_attrs`` [N, num_elements] one-hot, in the default dtype;
+        * ``batch`` [N] and ``ptr`` [G + 1];
+        * ``head`` [G] zeros (long) and ``pbc`` [G, 3] True;
+        * ``weight``, ``energy_weight``, ``forces_weight``, ``stress_weight``,
+          ``virials_weight``, ``charges_weight`` [G], ``dipole_weight`` [G, 3] and
+          ``polarizability_weight`` [G, 3, 3], all ones;
+        * zeroed targets ``energy``, ``elec_temp``, ``total_charge`` [G],
+          ``forces`` [N, 3], ``charges`` [N], ``dipole`` [G, 3], ``stress``,
+          ``virials`` and ``polarizability`` [G, 3, 3]; ``total_spin`` [G] ones.
+
+    Raises
+    ------
+    ValueError
+        When `pbc` is False, or when an atomic number is not in the model's
+        element table.
+    RuntimeError
+        When ``unit_cell_pos`` does not have ``sum(n_i * sym_mult_i)`` rows.
+
+    Notes
+    -----
+    Adds the neighbour-list wall time to the module's ``neighbours`` phase.
     """
     if not pbc:
         # the non-periodic branch REWRITES the cell in place inside get_neighborhood
@@ -440,7 +715,7 @@ def batch_to_mace_input_dict(batch, force_rebuild, model, std_orientation,
     cutoff = float(model.r_max)
     z_table = utils.AtomicNumberTable([int(zz) for zz in model.atomic_numbers])
 
-    gather, out_n = _tiled_gather_index(batch_ind, batch.sym_mult, num_graphs)
+    gather, out_n = unit_cell_gather_index(batch_ind, batch.z_prime, batch.sym_mult, num_graphs)
     sample_z_all = z[gather]
     pos_all = batch.unit_cell_pos
     n_tot = pos_all.shape[0]
@@ -534,11 +809,11 @@ def _split_batched_neighbours(e_i, e_s, e_g, cells_t, offsets_t, num_graphs, dty
     loop, and it has two costs that the neighbour-list kernel's own speedup does not
     pay for and does not show:
 
-      * the mask scans every edge once per graph, so the loop is O(G*E) -- superlinear
+      * the mask scans every edge once per graph, so the loop is ``O(G*E)`` -- superlinear
         in batch size at fixed atoms/graph. Measured on CPU at 128 graphs it cost MORE
         than the matscipy call it exists to replace, i.e. the batched path was a net
         loss there even with a free kernel;
-      * three .cpu() calls per graph, so 3*G device->host syncs. Each one drains the
+      * three .cpu() calls per graph, so ``3*G`` device->host syncs. Each one drains the
         queue, which is exactly the stall the batching was meant to remove.
 
     Sorting once by graph makes the per-graph edges contiguous, so the slices are
@@ -586,11 +861,13 @@ def batch_to_mace_atomicdata_hoisted(batch, force_rebuild, model, std_orientatio
     per-graph hoisted out of the loop.
 
     WHAT MOVES, and why these and not others. The build is dominated by the neighbour
-    list, with the Collater a distant second and everything else small. The neighbour
-    list cannot be batched BY THIS BUILDER -- every graph has its own cell, so every
-    graph needs its own matscipy call -- but everything around it can, and that is
-    what this function does. (batched_pbc_neighbour_list does batch it, on device;
-    see USE_BATCHED_MACE_NEIGHBOURS.)
+    list, with the Collater a distant second and everything else small. The matscipy
+    neighbour list cannot be batched -- every graph has its own cell, so every graph
+    needs its own matscipy call -- but everything around it can, and that is what
+    this function does. When USE_BATCHED_MACE_NEIGHBOURS is on and pbc=True (the
+    default), this builder does not call matscipy at all: it makes one
+    batched_pbc_neighbour_list call for the whole batch, on device, and slices it
+    per graph with _split_batched_neighbours.
 
     NO PINNED PERCENTAGES HERE ON PURPOSE. Hoisting shrinks the denominator without
     touching the neighbour list, so the neighbour list's SHARE rises every time this
@@ -599,29 +876,73 @@ def batch_to_mace_atomicdata_hoisted(batch, force_rebuild, model, std_orientatio
 
       * ONE host transfer for the whole batch instead of three per graph
         (positions, cell, atomic numbers). At 1000 graphs that is 3 syncs, not 3000.
-      * ONE tiled gather for the elements, via uma_utils._tiled_gather_index, which
-        reproduces `z[batch == i].repeat(sym_mult[i])` for every graph at once. TILED,
-        not repeat_interleaved -- unit_cell_pos is laid out image-major and getting
-        this backwards pairs every position with the wrong element while still
-        producing a perfectly well-formed batch.
+      * ONE gather for the elements, via crystal_building.utils.unit_cell_gather_index,
+        which follows the unit cell's layout for every graph at once: each unit TILED
+        sym_mult times, unit by unit (at Z'=1 `z[batch == i].repeat(sym_mult[i])`).
+        Tiled, not repeat_interleaved, and unit by unit, not the whole asymmetric unit
+        image by image: getting either wrong pairs positions with wrong elements while
+        still producing a perfectly well-formed batch.
       * ONE one-hot over the whole batch, sliced per graph.
-      * The ~14 CONSTANT per-graph tensors (weights, zeroed targets) built once and
-        shared, rather than reallocated per crystal.
+      * The CONSTANT per-graph tensors (head, pbc, weights, zeroed graph-level
+        targets) built once and shared -- nine tensors behind eighteen fields --
+        rather than reallocated per crystal.
 
-    Bit-identical to batch_to_mace_atomicdata by construction: same tensors, same
-    dtypes, same order. Enforced by verify_mace_atomicdata_equivalence and
-    tests/test_mace_atomicdata_vectorisation.py, not merely claimed.
+    On the matscipy neighbour list (USE_BATCHED_MACE_NEIGHBOURS off, or pbc=False),
+    bit-identical to batch_to_mace_atomicdata by construction: same tensors, same
+    dtypes, same order. On the batched list the edge ORDER differs, and the edge SET
+    matches when neither the shift clamp nor the edge cap in pbc_neighbours binds.
+    Enforced by verify_mace_atomicdata_equivalence (which pins the
+    matscipy list on both sides) and tests/test_mace_atomicdata_vectorisation.py,
+    not merely claimed.
 
     NOT YET HOISTED: the Collater call (10.4%). Building the collated Batch directly
     means reproducing PyG's _slice_dict/_inc_dict internals, which is a separate and
-    riskier change; this one is a pure loop-invariant hoist.
+    riskier change; this one is a pure loop-invariant hoist. batch_to_mace_input_dict
+    is that separate change.
+
+    Parameters
+    ----------
+    batch : MolCrystalData
+        Collated crystal batch. Reads ``unit_cell_pos``, ``T_fc``, ``sym_mult``,
+        ``num_graphs``, ``z``, ``batch`` and ``aux_ind``. When the unit cell is
+        absent or `force_rebuild` is set, the unit cell is built on `batch` IN
+        PLACE first (see `_mace_resolve_aunit_z`).
+    force_rebuild : bool
+        Rebuild the unit cell even if one is present.
+    model : torch.nn.Module
+        MACE model; ``model.r_max`` is the cutoff and ``model.atomic_numbers`` the
+        element table.
+    std_orientation : bool
+        Passed to ``pose_aunit`` when the unit cell is built.
+    pbc : bool, default True
+        Periodicity applied to all three axes of every graph.
+
+    Returns
+    -------
+    list of mace.data.AtomicData
+        One per graph, in graph order. ``positions`` are slices (views) of
+        ``batch.unit_cell_pos``, not detached; ``cell`` is the graph's detached
+        row-vector lattice as a numpy array, a slice of a host copy of
+        ``batch.T_fc`` transposed, so ``batch.T_fc`` is not written (on the
+        matscipy path it is the cell get_neighborhood returns, its rows rewritten
+        to get_neighborhood's vacuum box when `pbc` is False); ``shifts`` is
+        ``unit_shifts @ cell`` from that detached cell.
+
+    Raises
+    ------
+    RuntimeError
+        When ``unit_cell_pos`` does not have ``sum(n_i * sym_mult_i)`` rows.
+
+    Notes
+    -----
+    Adds the neighbour-list wall time to the module's ``neighbours`` phase.
     """
     z, batch_ind = _mace_resolve_aunit_z(batch, force_rebuild, std_orientation)
 
     cutoff = float(model.r_max)
     z_table = utils.AtomicNumberTable([int(zz) for zz in model.atomic_numbers])
 
-    gather, out_n = _tiled_gather_index(batch_ind, batch.sym_mult, batch.num_graphs)
+    gather, out_n = unit_cell_gather_index(batch_ind, batch.z_prime, batch.sym_mult, batch.num_graphs)
     sample_z_all = z[gather]
 
     pos_all = batch.unit_cell_pos
@@ -745,6 +1066,35 @@ def verify_mace_atomicdata_equivalence(batch, force_rebuild, model, std_orientat
     the batched list on (the default) the two would differ on edge ORDER alone and
     prove nothing. The batched list is verified separately -- edge sets in
     test_pbc_neighbours.py, energies in test_mace_gpu_real_batches.py.
+
+    Parameters
+    ----------
+    batch : MolCrystalData
+        Collated crystal batch with its unit cell already built.
+    force_rebuild : bool
+        Passed to both builders.
+    model : torch.nn.Module
+        MACE model.
+    std_orientation : bool
+        Passed to both builders.
+    pbc : bool, default True
+        Passed to both builders.
+
+    Returns
+    -------
+    bool
+        True when every field in _MACE_COMPARE_FIELDS matches (see
+        `mace_batch_differences`).
+
+    Raises
+    ------
+    AssertionError
+        Listing the fields that differ.
+
+    Notes
+    -----
+    USE_BATCHED_MACE_NEIGHBOURS is set to False in module globals for the two
+    builds and restored afterwards, also on error.
     """
     prev = globals()['USE_BATCHED_MACE_NEIGHBOURS']
     globals()['USE_BATCHED_MACE_NEIGHBOURS'] = False
@@ -766,7 +1116,8 @@ def verify_mace_atomicdata_equivalence(batch, force_rebuild, model, std_orientat
 def verify_mace_input_dict_equivalence(batch, force_rebuild, model, std_orientation,
                                        pbc: bool = True, atol: float = 0.0):
     """
-    The device-built input dict must match what the shipping path hands the model.
+    The device-built input dict must match what the collated AtomicData path hands
+    the model.
 
     COMPARED AGAINST THE BATCHED-NEIGHBOUR PATH, not the matscipy one, and that choice
     is the whole point: matscipy emits edges in its own cell-list order, so an
@@ -777,6 +1128,44 @@ def verify_mace_input_dict_equivalence(batch, force_rebuild, model, std_orientat
 
     Returns True or raises. atol defaults to EXACT: this is a construction change, so
     any difference is a bug, not a rounding artefact.
+
+    Parameters
+    ----------
+    batch : MolCrystalData
+        Collated crystal batch.
+    force_rebuild : bool
+        Passed to both builders.
+    model : torch.nn.Module
+        MACE model.
+    std_orientation : bool
+        Passed to both builders.
+    pbc : bool, default True
+        Passed to both builders; False makes `batch_to_mace_input_dict` raise
+        ValueError.
+    atol : float, default 0.0
+        0 requires ``torch.equal``; otherwise ``torch.allclose`` with rtol=0 on
+        float copies. Shape and dtype are always compared exactly.
+
+    Returns
+    -------
+    bool
+        True when every compared field matches.
+
+    Raises
+    ------
+    AssertionError
+        Listing the fields that differ.
+
+    Notes
+    -----
+    The reference is `batch_to_mace_atomicdata_hoisted` with
+    USE_BATCHED_MACE_NEIGHBOURS set to True in module globals for that build
+    (restored afterwards), collated, moved to ``batch.device`` and converted with
+    ``to_dict()``. It is built first, so if it builds the unit cell on `batch`,
+    the device-built call sees the built cell (with `force_rebuild` both calls
+    rebuild it). Fields present in one dict and
+    absent from the other are reported; fields where either side is not a tensor
+    are skipped.
     """
     prev = globals()['USE_BATCHED_MACE_NEIGHBOURS']
     globals()['USE_BATCHED_MACE_NEIGHBOURS'] = True
@@ -827,6 +1216,21 @@ def mace_batch_differences(ref, new, fields=None):
     way that looks right: not every collated field is a tensor -- PyG leaves some as
     PYTHON LISTS -- so `a.dtype` raises AttributeError instead of comparing. That was
     written twice and got caught twice; there is now one copy.
+
+    Parameters
+    ----------
+    ref, new : collated mace batch
+        Objects whose fields are read with ``getattr``.
+    fields : iterable of str, optional
+        Fields to compare; _MACE_COMPARE_FIELDS when omitted or empty.
+
+    Returns
+    -------
+    list of str
+        One entry per differing field: present on one side only, tensor vs
+        non-tensor, or for tensors a dtype, shape or value difference (exact
+        ``torch.equal``); for lists a length difference or the first differing
+        element.
     """
     bad = []
     for field in (fields or _MACE_COMPARE_FIELDS):
@@ -864,6 +1268,36 @@ def mace_batch_differences(ref, new, fields=None):
 
 
 def batch_to_mace_atomicdata(batch, force_rebuild, model, std_orientation, pbc: bool=True):
+    """
+    One MACE AtomicData per graph, each built on the host with
+    ``mace.data.get_neighborhood``; the reference builder.
+
+    Parameters
+    ----------
+    batch : MolCrystalData
+        Collated crystal batch. Reads ``unit_cell_pos``, ``unit_cell_batch``,
+        ``T_fc``, ``sym_mult``, ``num_graphs``, ``z``, ``batch`` and ``aux_ind``.
+        When ``unit_cell_pos`` is missing or None, or `force_rebuild` is set, the
+        asymmetric unit is posed and the unit cell built on `batch` IN PLACE (via
+        a Z'=1 split when ``z_prime.amax() > 1``).
+    force_rebuild : bool
+        Rebuild the unit cell even if one is present.
+    model : torch.nn.Module
+        MACE model; ``model.r_max`` is the cutoff and ``model.atomic_numbers`` the
+        element table.
+    std_orientation : bool
+        Passed to ``pose_aunit`` when the unit cell is built.
+    pbc : bool, default True
+        Periodicity applied to all three axes.
+
+    Returns
+    -------
+    list of mace.data.AtomicData
+        One per graph in graph order, from `mxt_crystal_to_mace_atomicdata`.
+        Elements come from ``z`` restricted to ``aux_ind == 0`` when the unit cell
+        was already present and ``aux_ind`` is not None, otherwise from all of
+        ``z``. The module flags are not consulted.
+    """
     do_rebuild = False
     if not hasattr(batch, 'unit_cell_pos'):
         do_rebuild = True
@@ -902,6 +1336,6 @@ def batch_to_mace_atomicdata(batch, force_rebuild, model, std_orientation, pbc: 
         mol_z,
         batch.sym_mult,
         batch.T_fc,
-        batch.unit_cell_pos.dtype, cutoff, z_table, ind, pbc=pbc)
+        batch.unit_cell_pos.dtype, cutoff, z_table, ind, pbc=pbc, z_prime=batch.z_prime.reshape(-1))
         for ind in range(batch.num_graphs)]
     return dataset

@@ -1,3 +1,10 @@
+"""Space-group reference module whose entire body is commented out.
+
+Importing it defines no names. The commented-out ``loadSpaceGroups`` builds a
+pandas DataFrame indexed 0-230, with columns ``system``, ``laue``, ``class``,
+``ce`` and ``SG`` giving each space group's crystal system, Laue class, point
+group, centering and Hermann-Mauguin symbol, and an ``'n/a'`` row at index 0.
+"""
 # # todo reload and write as dict OR deprecate, as I don't think we're using this anywhere
 
 # import numpy as np

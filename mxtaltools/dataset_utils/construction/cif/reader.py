@@ -17,6 +17,7 @@ import numpy as np
 
 from .errors import (CifMissingDataError, CifTopologyError, CifUnsupportedError,
                      CifZPrimeError)
+from .rhombohedral import reexpress_rhombohedral_axes
 from .sites import SiteSet, sites_from_block
 from .symmetry import SymmetryInfo, space_group_from_block
 from .tokenizer import CifBlock, as_float, as_int, parse_cif
@@ -34,22 +35,59 @@ class CifCrystal:
 
     Terms are the design's (§1.5) and are used strictly:
 
-    ``sites``       the DEPOSITED SET -- every `_atom_site` row as written. At
-                    Z' < 1 this is NOT the crystallographic asymmetric unit; the
-                    exporter has written a whole molecule on a special position.
-    ``components``  connected sub-graphs of the deposited set under `_geom_bond`.
-    ``z_prime``     an exact `Fraction`, `Z / len(symmetry operators)`. Kept exact
-                    rather than float so that 1/3 does not become 0.333...
-    ``cell_angles`` RADIANS, matching `MolCrystalData`. The file states degrees.
+    ``sites``
+        the DEPOSITED SET -- every `_atom_site` row as written. At
+        Z' < 1 this is NOT the crystallographic asymmetric unit; the
+        exporter has written a whole molecule on a special position.
+    ``components``
+        connected sub-graphs of the deposited set under `_geom_bond`.
+    ``z_prime``
+        an exact `Fraction`, `Z / len(symmetry operators)`. Kept exact
+        rather than float so that 1/3 does not become 0.333...
+    ``cell_angles``
+        RADIANS, matching `MolCrystalData`. The file states degrees.
+
+    The other attributes, as set by `read_cif_block`:
+
+    ``identifier``
+        the identifier passed in, else the block name, else
+        ``_chemical_name_common``.
+    ``symmetry``
+        the `SymmetryInfo` from `space_group_from_block`.
+    ``cell_lengths``
+        [3] float64 a, b, c as stated in the file's ``_cell_length_*`` tags
+        (CIF defines these in Angstrom); not converted.
+    ``z_value``
+        the integer ``_cell_formula_units_Z``.
+    ``block_name``
+        the ``data_`` block name.
+    ``source_path``
+        the ``source_path`` passed to `read_cif_block`; `read_cif` passes the
+        file path as a string, or None when reading text.
+    ``formula_moiety``
+        the raw ``_chemical_formula_moiety`` string, or None.
+    ``reexpression``
+        None, or the note from `rhombohedral.reexpress_rhombohedral_axes` when the
+        file put an R group on rhombohedral axes: every other attribute then
+        describes the crystal on hexagonal axes (obverse), with ``SYM_OPS[n]`` as
+        its operators and the file's Z times 3.
+
+    ``sites`` is a `SiteSet` and ``components`` a `ComponentSet`.  When a bond
+    loop is present, `components_from_block` may have shifted some sites'
+    fractional coordinates by whole lattice vectors (`unwrap_components`) so
+    each bonded component is contiguous.  When the file has no ``_geom_bond``
+    loop and bonds were not required, every site is in one component and
+    ``components.source == 'none'``; the decomposition is unknown.
+    ``cell_angles`` is a [3] float64 array (alpha, beta, gamma).
     """
 
     __slots__ = ('identifier', 'sites', 'symmetry', 'components',
                  'cell_lengths', 'cell_angles', 'z_value', 'z_prime', 'block_name',
-                 'source_path', 'formula_moiety')
+                 'source_path', 'formula_moiety', 'reexpression')
 
     def __init__(self, identifier, sites, symmetry, components,
                  cell_lengths, cell_angles, z_value, z_prime, block_name, source_path,
-                 formula_moiety=None):
+                 formula_moiety=None, reexpression=None):
         self.identifier = identifier
         self.sites = sites
         self.symmetry = symmetry
@@ -64,21 +102,31 @@ class CifCrystal:
         # and this is where the file declares species, stoichiometry and charge.
         # See composition.py.
         self.formula_moiety = formula_moiety
+        self.reexpression = reexpression
 
     @property
     def moieties(self):
         """Parsed `_chemical_formula_moiety`: species, stoichiometry, charge.
 
         Present in 100 % of a 400-entry CSD sample, multi-unit in 40 %. Nothing
-        in the reader consumes it yet; it is the input a cocrystal implementation
-        will need, and re-deriving it later would be redoing what the depositor
-        already stated.
+        in the reader consumes this parsed form yet (the raw string is used only
+        for the polymer check and a unit count); it is the input a cocrystal
+        implementation will need, and re-deriving it later would be redoing what
+        the depositor already stated.
+
+        Returns the list of `Moiety` records from
+        `composition.parse_formula_moiety`, computed on each access; an empty
+        list when ``formula_moiety`` is None or empty.
         """
         from .composition import parse_formula_moiety
         return parse_formula_moiety(self.formula_moiety)
 
     def component_formulas(self):
-        """Hill formula per component -- the bridge from geometry to species."""
+        """Hill formula per component -- the bridge from geometry to species.
+
+        A list of str in component-index order, from `composition.component_formulas`
+        over ``sites.z`` and ``components.component_index``.
+        """
         from .composition import component_formulas
         return component_formulas(self.sites.z, self.components.component_index)
 
@@ -89,6 +137,7 @@ class CifCrystal:
 
     @property
     def n_sites(self) -> int:
+        """Number of deposited sites, ``len(sites)``."""
         return len(self.sites)
 
     @property
@@ -108,6 +157,12 @@ class CifCrystal:
 
 
 def _cell_from_block(block: CifBlock, identifier: str):
+    """Cell lengths [3] (as stated) and angles [3] (degrees -> radians), float64.
+
+    Raises `CifMissingDataError` when a length or angle tag is absent or missing,
+    a length is <= 0, or an angle is outside the open interval (0, 180) degrees;
+    `CifParseError` when a value is not numeric.
+    """
     lengths = []
     for t in _CELL_LENGTH_TAGS:
         v = as_float(block.get(t), t, identifier)
@@ -138,13 +193,71 @@ def read_cif_block(block: CifBlock,
                    max_atomic_number: Optional[int] = 100,
                    require_integer_z_prime: bool = True,
                    require_bonds: bool = True) -> CifCrystal:
-    """Assemble one `CifCrystal` from one parsed data block."""
+    """Assemble one `CifCrystal` from one parsed data block.
+
+    Parameters
+    ----------
+    block : CifBlock
+        One data block from `parse_cif`.
+    identifier : str, optional
+        Crystal identifier, also used in error messages. When None or empty, the
+        block name is used, then ``_chemical_name_common``.
+    source_path : str, optional
+        Stored as ``CifCrystal.source_path``; nothing is read from it.
+    refuse_polymers : bool, default True
+        Forwarded to `components_from_block`: raise `CifUnsupportedError`
+        (reason ``'polymer'``) when the moiety formula declares a polymer.
+    max_atomic_number : int or None, default 100
+        Forwarded to `sites_from_block`: raise `CifUnsupportedError` (reason
+        ``'atomic-number'``) when any site's atomic number exceeds it. None
+        disables the check.
+    require_integer_z_prime : bool, default True
+        Raise `CifUnsupportedError` (reason ``'non-integer-zprime'``) when Z' is
+        not an integer.
+    require_bonds : bool, default True
+        Forwarded to `components_from_block`: raise `CifTopologyError` when the
+        block has no ``_geom_bond`` loop. When False and the loop is absent,
+        every site is put in one component with ``components.source == 'none'``.
+
+    Returns
+    -------
+    CifCrystal
+        With ``z_prime = Fraction(Z, symmetry.multiplicity)``. An R group filed on
+        rhombohedral axes is read from the block `reexpress_rhombohedral_axes`
+        returns (hexagonal axes, obverse), and its note is ``reexpression``.
+
+    Raises
+    ------
+    CifSymmetryError
+        From `space_group_from_block`.
+    CifInconsistentSymmetryError
+        From `reexpress_rhombohedral_axes` or `space_group_from_block`.
+    CifMissingDataError
+        A cell length or angle is absent or out of range, or from
+        `sites_from_block`.
+    CifZPrimeError
+        ``_cell_formula_units_Z`` is absent, missing, or not positive.
+    CifTopologyError
+        From `components_from_block`; or the decomposition is unknown
+        (``components.source == 'none'``) while Z' > 1 or the raw moiety formula
+        has more than one comma-separated unit.
+    CifUnsupportedError
+        See the parameters above; `sites_from_block` also raises it for partial
+        occupancy.
+    CifParseError
+        A cell, Z or IT-number value is not numeric, Z or the IT number is not
+        an integer, or from `sites_from_block`.
+    ValueError
+        From `sites_from_block`, when a coordinate or occupancy value is present
+        but not numeric (not a `CifReadError`).
+    """
     # The block name is the identity: `data_EFUNUP` for a CSD export, and this
     # package's writer emits `data_{identifier}` for the same reason.
     # `_chemical_name_common` is a DESCRIPTION ("cytosinium 4-nitrobenzoate
     # cytosine monohydrate") and makes a poor key, so it is only a fallback.
     ident = identifier or block.name or block.get('_chemical_name_common')
 
+    block, reexpression = reexpress_rhombohedral_axes(block, ident)
     symmetry = space_group_from_block(block, ident)
     sites = sites_from_block(block, ident, max_atomic_number=max_atomic_number)
     cell_lengths, cell_angles = _cell_from_block(block, ident)
@@ -192,7 +305,8 @@ def read_cif_block(block: CifBlock,
     return CifCrystal(ident, sites, symmetry, components,
                       cell_lengths, cell_angles, z_value, z_prime,
                       block.name, source_path,
-                      formula_moiety=block.get('_chemical_formula_moiety'))
+                      formula_moiety=block.get('_chemical_formula_moiety'),
+                      reexpression=reexpression)
 
 
 def read_cif(source: Union[str, Path],
@@ -206,22 +320,46 @@ def read_cif(source: Union[str, Path],
 
     Parameters
     ----------
-    source : path to a .cif, or the CIF text itself
-    refuse_polymers : raise on a moiety formula declaring a polymer
-    max_atomic_number : raise if any site exceeds it (None = no limit)
-    require_integer_z_prime : raise when a molecule sits on a special position
-    require_bonds : raise when the file has no `_geom_bond` loop. False reads the
+    source : str or pathlib.Path
+        Path to a .cif, or the CIF text itself. A `Path` is always read as a
+        file. A `str` is read as a file path only when it contains no newline
+        and, after stripping whitespace, ends in ``.cif`` (case-sensitive); any
+        other `str` is parsed as CIF text. Files are read as UTF-8 with
+        undecodable bytes dropped.
+    refuse_polymers : bool, default True
+        Raise on a moiety formula declaring a polymer.
+    max_atomic_number : int or None, default 100
+        Raise if any site exceeds it (None = no limit).
+    require_integer_z_prime : bool, default True
+        Raise when a molecule sits on a special position (Z' not an integer).
+    require_bonds : bool, default True
+        Raise when the file has no `_geom_bond` loop. False reads the
         deposited set with its component decomposition marked UNKNOWN
         (`components.source == 'none'`), never guessed from distances.
 
-    DEFAULTS REFUSE. Every flag above defaults to the strict setting: the caller
-    must explicitly ask to accept a polymer, a heavy element, or a non-integer Z'.
-    There is enough genuine nonsense in the CSD that a permissive default would
-    quietly admit structures no workflow here should treat as valid.
+    Returns
+    -------
+    list of CifCrystal
+        One per data block, from `read_cif_block` with no explicit identifier
+        (so the identifier falls back to the block name) and ``source_path``
+        set to the file path, or None for text input.
 
     Raises
     ------
-    CifReadError subclasses only. Every refusal is named; see `errors.py`.
+    CifReadError
+        A subclass, for every refusal of the content; every refusal is named,
+        see `errors.py`. The first block that fails aborts the whole read. A
+        file path that cannot be opened raises the `OSError` from
+        `Path.read_text` instead, and a non-numeric atom-site coordinate or
+        occupancy raises a plain `ValueError` (see `read_cif_block`).
+
+    Notes
+    -----
+    DEFAULTS REFUSE. Every flag above defaults to the strict setting: the caller
+    must explicitly ask to accept a polymer, a heavy element, a non-integer Z',
+    or a missing bond loop. There is enough genuine nonsense in the CSD that a
+    permissive default would quietly admit structures no workflow here should
+    treat as valid.
     """
     text, path = _load(source)
     blocks = parse_cif(text)
@@ -234,6 +372,7 @@ def read_cif(source: Union[str, Path],
 
 
 def _load(source):
+    """``(text, path)`` for `read_cif`: file contents and path, or ``(source, None)`` for text."""
     if isinstance(source, Path):
         return source.read_text(encoding='utf-8', errors='ignore'), str(source)
     if isinstance(source, str) and '\n' not in source and source.strip().endswith('.cif'):

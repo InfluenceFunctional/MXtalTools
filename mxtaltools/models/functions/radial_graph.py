@@ -1,3 +1,16 @@
+"""Radius-graph edge construction for batched point sets.
+
+``build_radial_graph`` returns edge indices either for a plain within-graph
+radius graph or, when per-node labels ``aux_ind`` are given, for the
+inside/outside split used on molecular clusters: intramolecular edges among
+the inside nodes, and intermolecular edges that end on inside nodes.
+``asymmetric_radius_graph`` builds the directed edges for the second case.
+
+The module-level name ``radius`` is ``torch_cluster.radius``: the
+``from torch_cluster import radius`` statement that follows the local
+``radius`` definition rebinds the name, so ``radius`` imported from this
+module is the torch_cluster function.
+"""
 from typing import Optional
 
 import torch
@@ -9,42 +22,40 @@ def radius(x: torch.Tensor, y: torch.Tensor, r: float,
            batch_y: Optional[torch.Tensor] = None,
            max_num_neighbors: int = 32,
            num_workers: int = 1) -> torch.Tensor:
-    r"""Finds for each element in :obj:`y` all points in :obj:`x` within
-    distance :obj:`r`.
+    r"""Find, for each point in `y`, the points in `x` within distance `r`.
 
-    Args:
-        x (Tensor): Node feature matrix
-            :math:`\mathbf{X} \in \mathbb{R}^{N \times F}`.
-        y (Tensor): Node feature matrix
-            :math:`\mathbf{Y} \in \mathbb{R}^{M \times F}`.
-        r (float): The radius.
-        batch_x (LongTensor, optional): Batch vector
-            :math:`\mathbf{b} \in {\{ 0, \ldots, B-1\}}^N`, which assigns each
-            node to a specific example. :obj:`batch_x` needs to be sorted.
-            (default: :obj:`None`)
-        batch_y (LongTensor, optional): Batch vector
-            :math:`\mathbf{b} \in {\{ 0, \ldots, B-1\}}^M`, which assigns each
-            node to a specific example. :obj:`batch_y` needs to be sorted.
-            (default: :obj:`None`)
-        max_num_neighbors (int, optional): The maximum number of neighbors to
-            return for each element in :obj:`y`.
-            If the number of actual neighbors is greater than
-            :obj:`max_num_neighbors`, returned neighbors are picked randomly.
-            (default: :obj:`32`)
-        num_workers (int): Number of workers to use for computation. Has no
-            effect in case :obj:`batch_x` or :obj:`batch_y` is not
-            :obj:`None`, or the input lies on the GPU. (default: :obj:`1`)
+    This definition is shadowed. The module later executes
+    ``from torch_cluster import radius``, which rebinds the module-level name
+    ``radius`` to ``torch_cluster.radius``; importing ``radius`` from this
+    module yields the torch_cluster function, not this one. If this body is
+    reached through another reference, it reshapes 1-D inputs to [N, 1],
+    makes both inputs contiguous and forwards every argument positionally to
+    the module-level ``radius`` (``torch_cluster.radius``).
 
-    .. code-block:: python
+    Parameters
+    ----------
+    x : torch.Tensor
+        [N, F] points searched over; a 1-D tensor is treated as [N, 1].
+    y : torch.Tensor
+        [M, F] query points; a 1-D tensor is treated as [M, 1].
+    r : float
+        Search radius, in the units of `x` and `y`.
+    batch_x : torch.Tensor, optional
+        [N] graph index of each point in `x`; must be sorted. None places all
+        points in one graph.
+    batch_y : torch.Tensor, optional
+        [M] graph index of each point in `y`; must be sorted. None places all
+        points in one graph.
+    max_num_neighbors : int, optional
+        Maximum number of points of `x` returned per point of `y`; when more
+        are in range, torch_cluster chooses which are kept. Default 32.
+    num_workers : int, optional
+        Worker count forwarded to torch_cluster. Default 1.
 
-        import torch
-        from torch_cluster import radius
-
-        x = torch.Tensor([[-1, -1], [-1, 1], [1, -1], [1, 1]])
-        batch_x = torch.tensor([0, 0, 0, 0])
-        y = torch.Tensor([[-1, 0], [1, 0]])
-        batch_y = torch.tensor([0, 0])
-        assign_index = radius(x, y, 1.5, batch_x, batch_y)
+    Returns
+    -------
+    torch.Tensor
+        [2, num_edges] long tensor; row 0 indexes `y`, row 1 indexes `x`.
     """
 
     x = x.view(-1, 1) if x.dim() == 1 else x
@@ -105,41 +116,60 @@ def asymmetric_radius_graph(x: torch.Tensor,
                             max_num_neighbors: int = 32,
                             flow: str = 'source_to_target',
                             num_workers: int = 1) -> torch.Tensor:
-    r"""Computes graph edges to all points within a given distance.
+    r"""Directed radius-graph edges from `convolve_inds` nodes to `inside_inds` nodes.
 
-    Args:
-        x (Tensor): Node feature matrix
-            :math:`\mathbf{X} \in \mathbb{R}^{N \times F}`.
-        r (float): The radius.
-        batch (LongTensor, optional): Batch vector
-            :math:`\mathbf{b} \in {\{ 0, \ldots, B-1\}}^N`, which assigns each
-            node to a specific example. :obj:`batch` needs to be sorted.
-            (default: :obj:`None`)
-        loop (bool, optional): If :obj:`True`, the graph will contain
-            self-loops. (default: :obj:`False`)
-        max_num_neighbors (int, optional): The maximum number of neighbors to
-            return for each element.
-            If the number of actual neighbors is greater than
-            :obj:`max_num_neighbors`, returned neighbors are picked randomly.
-            (default: :obj:`32`)
-        flow (string, optional): The flow direction when used in combination
-            with message passing (:obj:`"source_to_target"` or
-            :obj:`"target_to_source"`). (default: :obj:`"source_to_target"`)
-        num_workers (int): Number of workers to use for computation. Has no
-            effect in case :obj:`batch` is not :obj:`None`, or the input lies
-            on the GPU. (default: :obj:`1`)
-        inside_inds (Tensor): original indices for the nodes in the y subgraph
+    For each node in ``x[inside_inds]``, ``torch_cluster.radius`` finds the
+    nodes of ``x[convolve_inds]`` within distance `r` (restricted to the same
+    graph when `batch` is given); both ends are then mapped back to indices
+    into `x`.
 
-    :rtype: :class:`LongTensor`
+    Parameters
+    ----------
+    x : torch.Tensor
+        [num_nodes, F] node positions; distances are Euclidean over the last
+        dimension.
+    r : float
+        Radius, in the units of `x`.
+    inside_inds : torch.Tensor
+        Long indices into `x` of the query (target) nodes.
+    convolve_inds : torch.Tensor or None
+        Long indices into `x` of the candidate neighbour (source) nodes. None
+        uses every node, ``torch.arange(len(x))``.
+    batch : torch.Tensor or None
+        [num_nodes] graph index of each node; ``batch[inside_inds]`` and
+        ``batch[convolve_inds]`` must be sorted. None treats all nodes as one
+        graph.
+    loop : bool, optional
+        If False (default), edges whose two ends are the same node of `x` are
+        removed after the search.
+    max_num_neighbors : int, optional
+        Neighbour cap per query node passed to ``torch_cluster.radius``;
+        ``max_num_neighbors + 1`` is passed when `loop` is False. Default 32.
+    flow : {'source_to_target', 'target_to_source'}, optional
+        Row order of the output. Default 'source_to_target'.
+    num_workers : int, optional
+        Forwarded to ``torch_cluster.radius``. Default 1.
 
-    .. code-block:: python
+    Returns
+    -------
+    torch.Tensor
+        [2, num_edges] long tensor of indices into `x`. With
+        ``flow='source_to_target'`` row 0 holds the `convolve_inds` node
+        (source) and row 1 the `inside_inds` node (target);
+        ``'target_to_source'`` swaps the rows.
 
-        import torch
-        from torch_cluster import radius_graph
+    Raises
+    ------
+    AssertionError
+        If `flow` is not one of the two accepted strings.
 
-        x = torch.Tensor([[-1, -1], [-1, 1], [1, -1], [1, 1]])
-        batch = torch.tensor([0, 0, 0, 0])
-        edge_index = radius_graph(x, r=1.5, batch=batch, loop=False)
+    Notes
+    -----
+    Each (target, source) pair found gives one directed edge; when
+    `inside_inds` and `convolve_inds` are the same set, each pair appears in
+    both directions. The extra neighbour allowed when `loop` is False is only
+    removed again if it is a self-match, so a query node can keep up to
+    ``max_num_neighbors + 1`` edges.
     """
     if convolve_inds is None:  # indexes of items within x to convolve against y
         convolve_inds = torch.arange(len(x))
@@ -180,20 +210,78 @@ def build_radial_graph(pos: torch.FloatTensor,
                        aux_ind: torch.LongTensor=None,
                        mol_ind: torch.LongTensor=None,
                        ):
-    r"""
-    Construct edge indices over a radial graph.
-    Optionally, compute intra (within ref_mol_inds) and inter (between ref_mol_inds and outside inds) edges.
-    Args:
-        pos: node positions
-        batch: index of graph to which each node belongs
-        ptr: edges of batch
-        cutoff: maximum edge length
-        max_num_neighbors: maximum number of neighbors per node
-        aux_ind: optional auxiliary index for identifying "inside" and "outside" nodes
-        mol_ind: optional index for the identity of the molecule a given atom is inside, for when there are multiple molecules per asymmetric unit, or in a cluster of molecules
+    r"""Build radius-graph edge indices for a batch of point sets.
 
-    Returns:
-        dict: dictionary of edge information
+    Without `aux_ind`, returns a plain radius graph within each graph of
+    `batch`. With `aux_ind`, edges are built only towards the
+    ``aux_ind == 0`` ("inside") nodes: intramolecular edges among inside
+    nodes, and intermolecular edges from ``aux_ind == 1`` ("outside") nodes
+    and from inside nodes of other molecules. Nodes with ``aux_ind == 2``
+    appear in no edge.
+
+    Parameters
+    ----------
+    pos : torch.Tensor
+        [num_nodes, 3] node positions.
+    batch : torch.Tensor
+        [num_nodes] graph index of each node; must be sorted
+        (non-decreasing).
+    ptr : torch.Tensor
+        [num_graphs + 1] graph offsets. Only ``len(ptr) - 1`` (the number of
+        graphs) is used, and only when `aux_ind` is given.
+    cutoff : float
+        Edge radius, in the units of `pos`.
+    max_num_neighbors : int
+        Neighbour cap per query node, passed to the underlying radius search.
+    aux_ind : torch.Tensor, optional
+        [num_nodes] node label with values in {0, 1, 2}: 0 = inside,
+        1 = outside neighbour candidate, 2 = excluded. dtype int64, int32 or
+        bool.
+    mol_ind : torch.Tensor, optional
+        [num_nodes] molecule index of each node. Required when `aux_ind` is
+        given; ignored otherwise.
+
+    Returns
+    -------
+    dict
+        Without `aux_ind`: ``{'edge_index': [2, num_edges]}`` from
+        ``torch_geometric.nn.radius_graph`` (``flow='source_to_target'``, no
+        self-loops).
+
+        With `aux_ind`:
+
+        - ``'edge_index'``: [2, num_intra_edges] edges between inside nodes
+          with equal `mol_ind`, in both directions, without self-loops.
+        - ``'edge_index_inter'``: [2, num_inter_edges]; row 0 is the source
+          (an outside node, or an inside node of a different molecule) and
+          row 1 the inside target. Outside-to-inside pairs appear once;
+          pairs of inside nodes in different molecules appear in both
+          directions. Each inside node therefore has, exactly once as a
+          source (up to the neighbour cap), every ``aux_ind == 1`` node
+          within `cutoff` (whatever its `mol_ind`) and every
+          ``aux_ind == 0`` node within `cutoff` with a different `mol_ind`.
+        - ``'inside_inds'``: [num_inside] long indices of the
+          ``aux_ind == 0`` nodes.
+        - ``'outside_inds'``: [num_outside] long indices of the
+          ``aux_ind == 1`` nodes.
+        - ``'inside_batch'``: [num_inside] ``batch[inside_inds]``.
+        - ``'n_repeats'``: Python list of ``len(ptr) - 1`` ints, each graph's
+          total node count (all labels) integer-divided by its inside node
+          count.
+
+    Raises
+    ------
+    AssertionError
+        If `aux_ind` has another dtype or contains values outside {0, 1, 2}.
+    TypeError
+        If `aux_ind` is given and `mol_ind` is None; `mol_ind` is indexed
+        unconditionally on that path.
+
+    Notes
+    -----
+    With `aux_ind`, the inside-inside and outside-inside searches are two
+    separate ``asymmetric_radius_graph`` calls, each applying
+    `max_num_neighbors` on its own.
     """
     if aux_ind is not None:  # there is an 'inside' 'outside' distinction
         assert aux_ind.dtype in (torch.int64, torch.int32, torch.bool)

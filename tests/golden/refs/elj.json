@@ -25,7 +25,7 @@
   "device": "cpu",
   "dtype": "float32",
   "fixture": "mini_new_csd by identifier: ['NUSGEN','KEQQON','MOPJEG']",
-  "note": "the exact call GFN's reward makes (energies/molecular_crystal.py:492-495). supercell_size=10 is paid for but converged at 5 (<1.5e-5)",
+  "note": "the exact call GFN's reward makes (energies/molecular_crystal.py:492-495). supercell_size=10 was paid for but converged at 5 (<1.5e-5); since 2026-10-18 get_cart_translations ignores it",
   "rtol": 0.0001,
   "value": [
    -195.302490234375,

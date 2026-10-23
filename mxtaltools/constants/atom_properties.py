@@ -1,3 +1,33 @@
+"""Per-element property tables keyed by atomic number.
+
+Every table below except ``ATOMIC_NUMBERS`` is a ``dict`` whose ``int`` keys
+0 to 99 are inserted in ascending order; keys 1-99 are H to Es and key 0 is a
+placeholder entry, not an element. Because of that ordering
+``list(TABLE.values())[z]`` equals ``TABLE[z]``, and several modules build a
+lookup tensor that way and index it by atomic number
+(``tests/golden/test_atom_tables.py`` checks the ordering for ``ATOM_WEIGHTS``
+and ``VDW_RADII``).
+
+VDW_RADII : dict[int, float]
+    Van der Waals radius of each element in Angstrom (1.2 for H, 1.7 for C);
+    0.0 for key 0.
+ATOM_WEIGHTS : dict[int, float]
+    Atomic weight of each element (1.008 for H, 12.011 for C); 1.0 for key
+    0.
+ELECTRONEGATIVITY : dict[int, float]
+    Electronegativity of each element (2.2 for H, 3.98 for F). The integer ``-1`` marks key 0 and elements without a tabulated
+    value: He, Ne, Ar, Kr, Pm, Eu, Tb, Yb, Rn and Am to Es.
+PERIOD : dict[int, int]
+    Periodic-table period, 1 to 7; 0 for key 0.
+GROUP : dict[int, int]
+    Periodic-table group, 1 to 18, except that Ce to Lu (58-71) and Th to Es
+    (90-99) all take the value 19; 0 for key 0.
+ATOMIC_SYMBOLS : dict[int, str]
+    Element symbol (``'H'``, ``'He'``, ...); ``'null'`` for key 0.
+ATOMIC_NUMBERS : dict[str, int]
+    Inverse of ``ATOMIC_SYMBOLS``: element symbol to atomic number, including
+    ``'null'`` to 0.
+"""
 VDW_RADII = {
     0: 0.0, 1: 1.2, 2: 1.4, 3: 2.2, 4: 1.9, 5: 1.8, 6: 1.7, 7: 1.6, 8: 1.55, 9: 1.5, 10: 1.54, 11: 2.4, 12: 2.2, 13: 2.1, 14: 2.1, 15: 1.95, 16: 1.8, 17: 1.8, 18: 1.88, 19: 2.8, 20: 2.4, 21: 2.3, 22: 2.15, 23: 2.05, 24: 2.05, 25: 2.05,
     26: 2.05, 27: 2.0, 28: 2.0, 29: 2.0, 30: 2.1, 31: 2.1, 32: 2.1, 33: 2.05, 34: 1.9, 35: 1.9, 36: 2.02, 37: 2.9, 38: 2.55, 39: 2.4, 40: 2.3, 41: 2.15, 42: 2.1, 43: 2.05, 44: 2.05, 45: 2.0, 46: 2.05, 47: 2.1, 48: 2.2, 49: 2.2,

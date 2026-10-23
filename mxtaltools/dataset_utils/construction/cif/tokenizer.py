@@ -1,8 +1,10 @@
 """CIF 1.1 tokenizer: text -> data blocks of tags and loops.
 
-Deliberately LOSSLESS and chemistry-free.  It returns strings exactly as written;
-interpreting them (stripping estimated standard deviations, mapping `.`/`?` to
-missing, coercing to float) is the caller's job via the helpers at the bottom.
+Deliberately uninterpreting and chemistry-free.  It returns value strings as
+written, except that quote delimiters are removed and a `;` text field has its
+surrounding whitespace stripped; interpreting them (stripping estimated standard
+deviations, mapping `.`/`?` to missing, coercing to float) is the caller's job
+via the helpers at the bottom.
 Keeping those separate means a parse bug and an interpretation bug cannot be
 confused for each other.
 
@@ -22,7 +24,13 @@ MISSING = ('.', '?')
 
 
 class CifLoop:
-    """One `loop_`: an ordered tag list and the rows under it."""
+    """One `loop_`: an ordered tag list and the rows under it.
+
+    ``tags`` holds the tag names as written in the file (case preserved);
+    ``rows`` holds one list of raw value strings per row, in tag order (as built
+    by `parse_cif`, every row has ``len(tags)`` values).  ``len(loop)`` is the
+    number of rows, and ``tag in loop`` tests tag membership case-insensitively.
+    """
 
     __slots__ = ('tags', 'rows')
 
@@ -37,7 +45,10 @@ class CifLoop:
         return tag.lower() in [t.lower() for t in self.tags]
 
     def column(self, tag: str) -> List[str]:
-        """Every value under `tag`, in row order. Case-insensitive, as CIF requires."""
+        """Every value under `tag`, in row order. Case-insensitive, as CIF requires.
+
+        Raises `KeyError` if the loop has no such tag.
+        """
         lower = [t.lower() for t in self.tags]
         try:
             i = lower.index(tag.lower())
@@ -50,7 +61,12 @@ class CifLoop:
 
 
 class CifBlock:
-    """One `data_` block: scalar tag->value pairs plus its loops."""
+    """One `data_` block: scalar tag->value pairs plus its loops.
+
+    ``name`` is the text after ``data_`` as written; ``tags`` maps each scalar
+    tag, lower-cased, to its raw value string; ``loops`` lists the block's
+    `CifLoop` objects in file order.
+    """
 
     __slots__ = ('name', 'tags', 'loops')
 
@@ -60,12 +76,15 @@ class CifBlock:
         self.loops: List[CifLoop] = []
 
     def get(self, tag: str, default=None) -> Optional[str]:
-        """Scalar lookup, case-insensitive. Returns `default` if absent."""
+        """Scalar lookup, case-insensitive. Returns `default` if absent.
+
+        Loop columns are not searched; a present `.` or `?` is returned as-is.
+        """
         v = self.tags.get(tag.lower())
         return default if v is None else v
 
     def loop_with(self, tag: str) -> Optional[CifLoop]:
-        """The first loop carrying `tag`, or None."""
+        """The first loop, in file order, carrying `tag` (case-insensitive), or None."""
         for loop in self.loops:
             if tag in loop:
                 return loop
@@ -78,6 +97,10 @@ class CifBlock:
         spellings while this package's writer emits the current `_space_group_*`
         ones.  Callers must accept both, and knowing WHICH matched is sometimes
         diagnostic, so the tag is returned alongside the value.
+
+        Only scalar tags are searched, via `get`.  The returned tag is spelled as
+        passed in `tags`, not as in the file; a tag holding `.` or `?` counts as
+        present.  Returns (None, None) when none of `tags` is present.
         """
         for t in tags:
             v = self.get(t)
@@ -94,6 +117,16 @@ def _tokenize(text: str):
 
     Handles `;`-delimited text fields, which may contain anything including
     what look like tags, so they must be consumed before any other rule.
+
+    A text field opens on any line whose first non-blank character is ``;`` and
+    closes at the next such line; the rest of the closing line is not tokenized.
+    The field's lines are joined with newlines and stripped.  'data' yields the
+    text after ``data_``; 'loop' yields None.  Other tokens are classified after
+    `_split_line` has removed their quotes, so a quoted value that begins with
+    ``data_``, ``save_`` or ``_``, or is ``loop_`` (all case-insensitive), is
+    treated as a block header, a save frame, a tag or a loop, not as a value.  Raises `CifParseError` on an
+    unterminated text field, a ``save_`` token, or (via `_split_line`) an
+    unterminated quote.
     """
     lines = text.splitlines()
     i = 0
@@ -137,6 +170,10 @@ def _split_line(line: str) -> List[str]:
 
     A `#` only starts a comment outside quotes and at a token boundary -- inside a
     value it is legal, and CSD identifiers do contain odd characters.
+
+    A quote opens only at the start of a token and closes only when followed by
+    whitespace or the end of the line; the delimiters are not kept.  Raises
+    `CifParseError` on an unterminated quote.
     """
     out, buf, quote = [], [], None
     i = 0
@@ -168,10 +205,21 @@ def _split_line(line: str) -> List[str]:
 def parse_cif(text: str) -> List[CifBlock]:
     """Parse CIF text into its data blocks, in file order.
 
-    Raises `CifParseError` on a malformed loop (tags with no rows, or a row count
-    that is not a multiple of the tag count) rather than silently truncating --
-    a ragged loop that is quietly padded is how an atom site acquires the wrong
-    element.
+    Scalar tags are stored in `CifBlock.tags` under their lower-cased name (a
+    repeated tag keeps its last value).  A scalar tag followed directly by another
+    tag, ``loop_``, ``data_`` or the end of the text is not stored.  A loop's
+    header is every tag after ``loop_`` up to its first value; its values run
+    until the next tag, ``loop_`` or ``data_``.  A loop header followed directly
+    by ``loop_``, ``data_`` or the end of the text is kept as a `CifLoop` with no
+    rows.
+
+    Raises `CifParseError` on a malformed loop (a ``loop_`` with no tags, or a
+    value count that is not a multiple of the tag count) rather than silently
+    truncating -- a ragged loop that is quietly padded is how an atom site
+    acquires the wrong element.  Also raises `CifParseError` when a tag, value or
+    ``loop_`` precedes the first ``data_`` block, when a value has no preceding
+    tag, when no ``data_`` block is found, and on an unterminated quote or text
+    field or a ``save_`` frame.
     """
     blocks: List[CifBlock] = []
     block: Optional[CifBlock] = None
@@ -235,14 +283,18 @@ def parse_cif(text: str) -> List[CifBlock]:
 # --- interpretation helpers, kept separate from parsing ----------------------
 
 def is_missing(value: Optional[str]) -> bool:
-    """CIF spells missing as `.` (inapplicable) or `?` (unknown)."""
+    """CIF spells missing as `.` (inapplicable) or `?` (unknown).
+
+    True for None, or for a value that is `.` or `?` after stripping whitespace.
+    """
     return value is None or value.strip() in MISSING
 
 
 def strip_esd(value: str) -> str:
     """`'1.234(5)'` -> `'1.234'`. The parenthesised standard deviation is dropped.
 
-    Returned as a string so the caller decides int vs float.
+    Surrounding whitespace is stripped and everything from the first ``(`` onward
+    is removed.  Returned as a string so the caller decides int vs float.
     """
     v = value.strip()
     cut = v.find('(')
@@ -250,7 +302,12 @@ def strip_esd(value: str) -> str:
 
 
 def as_float(value: Optional[str], tag: str = '', identifier: str = None) -> Optional[float]:
-    """Parse a CIF numeric to float, or None if missing. Raises on garbage."""
+    """Parse a CIF numeric to float, or None if missing. Raises on garbage.
+
+    Missing means `is_missing`; otherwise the value is passed through `strip_esd`
+    and `float`.  A value `float` cannot read raises `CifParseError`; `tag` and
+    `identifier` are used only in that error.
+    """
     if is_missing(value):
         return None
     try:
@@ -264,7 +321,10 @@ def as_int(value: Optional[str], tag: str = '', identifier: str = None) -> Optio
 
     Accepts `'4'` and `'4.0'` -- CSD writes `_cell_formula_units_Z` both ways --
     but refuses a genuinely fractional value, which would mean the tag does not
-    hold what the caller thinks.
+    hold what the caller thinks.  Parsing is `as_float`; a result more than 1e-8
+    from an integer raises `CifParseError`, otherwise it is rounded to `int`.
+    A value that reads as NaN or infinity raises the ValueError or OverflowError
+    from `round` instead.
     """
     f = as_float(value, tag, identifier)
     if f is None:

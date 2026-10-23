@@ -1,3 +1,65 @@
+"""Literal lookup tables for the 230 crystallographic space groups.
+
+Every table is written out literally in this file; none is derived from
+another at import.
+A space group is identified by its International Tables number, 1-230.
+POINT_GROUPS, LATTICE_TYPE, SPACE_GROUPS and SYM_OPS are keyed by that number
+as an ``int``; CONTINUOUS_DIMS and NORMALIZER_OPS are keyed by it as a ``str``
+('1' ... '230').
+
+Attributes
+----------
+LATTICE_TO_CODE : dict[str, int]
+    Crystal-system name to integer code: 'triclinic' 0, 'monoclinic' 1,
+    'orthorhombic' 2, 'tetragonal' 3, 'hexagonal' 4, 'rhombohedral' 5,
+    'cubic' 6. 'rhombohedral' is never a value of LATTICE_TYPE.
+POINT_GROUPS : dict[int, str]
+    Space-group number to the Hermann-Mauguin symbol of its crystallographic
+    point group, e.g. ``POINT_GROUPS[14] == '2/m'``.
+LATTICE_TYPE : dict[int, str]
+    Space-group number to a lowercase crystal-system name, one of
+    'triclinic', 'monoclinic', 'orthorhombic', 'tetragonal', 'hexagonal',
+    'cubic'. The trigonal groups 143-167, including the rhombohedral R
+    groups, are labelled 'hexagonal'.
+SPACE_GROUPS : dict[int, str]
+    Space-group number to its short Hermann-Mauguin symbol written as plain
+    text, with screw-axis subscripts inline and overbars as a leading minus,
+    e.g. ``SPACE_GROUPS[2] == 'P-1'``, ``SPACE_GROUPS[14] == 'P21/c'``.
+SPACE_GROUP_NAMES : dict[str, int]
+    Exact inverse of SPACE_GROUPS: symbol to space-group number.
+SYM_OPS : dict[int, list of numpy.ndarray]
+    Space-group number to the general-position symmetry operators of the
+    conventional cell, one float64 array of shape
+    [4, 4] per operator. Each array is an augmented matrix acting on a
+    fractional column vector [x, y, z, 1]: the upper-left [3, 3] block is the
+    rotation part (entries -1, 0 or 1), the first three entries of the last
+    column are the translation, and the last row is [0, 0, 0, 1]. Centring
+    translations appear as separate operators, so ``len(SYM_OPS[sg])`` is the
+    number of general positions in the conventional cell (4 for C2, 192 for
+    Fm-3m). Monoclinic groups use the b-unique setting and rhombohedral
+    groups use hexagonal axes (9 operators for R3). The first operator of
+    every list is the identity. Translation components are not reduced
+    modulo 1: they take values in [0, 1.25], and thirds and sixths are
+    stored to 8 decimal places (e.g. 0.33333333).
+CONTINUOUS_DIMS : dict[str, list of list of int]
+    Space-group number to exactly three length-3 integer vectors in the
+    fractional basis. The leading non-zero vectors are unit axes along which
+    the origin can be shifted continuously; the remaining vectors are
+    [0, 0, 0] padding. '1' (P1) lists all three axes, 67 groups list one or
+    two axes, and the other 162 groups are all zeros.
+NORMALIZER_OPS : dict[str, list]
+    Space-group number to a list of Euclidean-normalizer coset
+    representatives, each a pair ``[W, w]`` of nested Python float lists:
+    ``W`` is the [3, 3] rotation part (entries -1, 0 or 1) and ``w`` the
+    length-3 translation, acting on fractional coordinates as
+    x' = W x + w. Translations lie in [0, 1). The identity element (identity
+    rotation, zero translation) and the continuous origin shifts (see
+    CONTINUOUS_DIMS) are not listed, and
+    '229' and '230' map to empty lists. The '198' entry is irregular: it
+    holds 15 pairs of which 8 are distinct, one of them the identity with
+    zero translation. The format is the one written by
+    ``mxtaltools/constants/generate_normalizers.py`` from cctbx.
+"""
 from itertools import product
 
 from numpy import array
