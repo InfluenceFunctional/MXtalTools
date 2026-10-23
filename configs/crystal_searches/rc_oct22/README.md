@@ -14,7 +14,7 @@ source is chosen at submission by how many of its chunks run**.
 | pubrc | PubChem | 3315-4734 | 284 | 553,570 | 5,535,700 | 2,050 |
 | all | | 0-4734 | 947 | 1,868,908 | 18,689,080 | 6,922 |
 
-*Task 5k + s runs seed s (0-4) of chunk k of its family: 2 random starts for every molecule of the chunk (2,000
+*Task (family's first index in the table) + 5k + s runs seed s (0-4) of chunk k of that family: 2 random starts for every molecule of the chunk (2,000
 molecules; the last chunk of each 20,000-molecule shard holds the remainder), so 4,000 relaxations at most, about 1.5 h
 on one core. Core-hours at 0.75 relaxations per second per core, measured on the dev box (one core, batch 50, 200
 relaxations of qm9rc chunk 0); the cluster's cores may be slower.*
@@ -105,8 +105,13 @@ a node failure or preemption.
    each at most 250 at once:
 
 ```bash
-cd /scratch/mk8347/projects/gfn_cond/MXtalTools && git pull && scontrol show config | grep -i MaxArraySize && cd configs/crystal_searches/rc_oct22 && J=$(sbatch --parsable --array=325 submit_rc_oct22.sbatch) && sbatch --dependency=afterok:$J --array=0-324,326-999%250 submit_rc_oct22.sbatch && sbatch --dependency=afterok:$J --export=ALL,TASK_OFFSET=1000 --array=0-429%250 submit_rc_oct22.sbatch && sbatch --dependency=afterok:$J --export=ALL,TASK_OFFSET=3315 --array=0-499%250 submit_rc_oct22.sbatch
+cd /scratch/mk8347/projects/gfn_cond/MXtalTools && git pull && scontrol show config | grep -i MaxArraySize && cd configs/crystal_searches/rc_oct22 && [ -z "$(squeue -h -u $USER -n rcoct22)" ] && [ -z "$(ls -A /scratch/mk8347/data/crystal_datasets/conditional/anchors/rc_oct22 2>/dev/null)" ] && J=$(sbatch --parsable --array=325 submit_rc_oct22.sbatch) && sbatch --kill-on-invalid-dep=yes --dependency=afterok:$J --array=0-324,326-999%250 submit_rc_oct22.sbatch && sbatch --kill-on-invalid-dep=yes --dependency=afterok:$J --export=ALL,TASK_OFFSET=1000 --array=0-429%250 submit_rc_oct22.sbatch && sbatch --kill-on-invalid-dep=yes --dependency=afterok:$J --export=ALL,TASK_OFFSET=3315 --array=0-499%250 submit_rc_oct22.sbatch
 ```
+
+   The two `[ -z ... ]` tests stop the line if any rcoct22 job is already queued or the output directory is not empty
+   (the first CPU revision reuses the run names and seeds of the never-submitted GPU revision for seed 0, and run_search
+   resumes an existing output without comparing its start count). A failed smoke cancels the three arrays
+   (`--kill-on-invalid-dep`).
 
    Any later range of a family's chunks is a further random sample of it; a range of tasks [a, b] runs as
    `--export=ALL,TASK_OFFSET=a --array=0-(b-a)`. Raise or lower `%250` to match how many cores the queue gives.
