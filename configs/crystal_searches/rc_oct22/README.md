@@ -85,7 +85,10 @@ slot of 100 batches, so a task holds at most 100 x 50 = 5,000 relaxations: hence
   model on a `DEVICE` line.
 - `check_battery.py`: every task's state from the progress files and the newest log of each task (matched by the
   `task=` the log prints), crystal counts, output size and throughput; standard library only (`python3 check_battery.py`
-  on the login node).
+  on the login node). `--rerun 0-1429,3315-3814` (the submitted ranges) adds the sbatch lines that resubmit only the
+  tasks in them that are not done, once no rcoct22 job is queued; resubmitted tasks resume from their progress files.
+  Installment 1 lost about 50 tasks to cluster faults (srun allocation timeouts while ~1,900 tasks started at once,
+  node failures), none to the code.
 
 Known behaviour, inherited from run_search: the molecules x starts list is shuffled with an unseeded generator, so a
 task that is stopped and resumed relaxes a different permutation for its remaining starts, and per-molecule start

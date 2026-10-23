@@ -47,6 +47,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--out-dir', type=Path, default=None, help="default: out_dir of tasks/0.yaml")
     ap.add_argument('--log-dir', type=Path, default=Path('/scratch/mk8347/logs'))
+    ap.add_argument('--rerun', default=None, metavar='RANGES',
+                    help="task ranges that were submitted, e.g. 0-1429,3315-3814: after the summary, print the sbatch "
+                         "lines that resubmit every task in them that is not done (refused while an rcoct22 job is "
+                         "queued: a pending or running task is not done yet)")
     args = ap.parse_args()
     header, *lines = (HERE / 'INDEX.tsv').read_text().splitlines()
     tasks = [dict(zip(header.split('\t'), line.split('\t'))) for line in lines]
@@ -99,6 +103,46 @@ def main():
         print(f"  task {i} ({tasks[i]['run_name']}): {s}")
     if len(bad) > 40:
         print(f'  ... {len(bad) - 40} more not done')
+    if args.rerun:
+        rerun_lines(args.rerun, state)
+
+
+def _ranges(xs):
+    """[0, 1, 2, 5, 7, 8] -> '0-2,5,7-8'"""
+    out, start = [], None
+    for i, x in enumerate(xs):
+        if start is None:
+            start = x
+        if i + 1 == len(xs) or xs[i + 1] != x + 1:
+            out.append(f'{start}-{x}' if x > start else f'{start}')
+            start = None
+    return ','.join(out)
+
+
+def rerun_lines(spec, state, array_max=1000, throttle=250):
+    """The sbatch lines that resubmit the not-done tasks of the submitted ranges, as arrays of indices below
+    array_max with a TASK_OFFSET each. Resubmitted tasks resume from their progress files."""
+    import os
+    import subprocess
+    q = subprocess.run(['squeue', '-h', '-u', os.environ.get('USER', ''), '-n', 'rcoct22'], capture_output=True,
+                       text=True)
+    if q.returncode != 0 or q.stdout.strip():
+        print('\nrerun: rcoct22 jobs are still queued or running (or squeue failed); run this again once they end')
+        return
+    want = set()
+    for part in spec.split(','):
+        a, _, b = part.partition('-')
+        want.update(range(int(a), int(b or a) + 1))
+    todo = sorted(i for i in want if i in state and state[i] != 'done')
+    if not todo:
+        print('\nrerun: every task in the submitted ranges is done')
+        return
+    print(f'\nrerun: {len(todo)} tasks of the submitted ranges are not done; from this directory:')
+    while todo:
+        off = todo[0]
+        block = [t - off for t in todo if t - off < array_max]
+        todo = [t for t in todo if t - off >= array_max]
+        print(f'sbatch --export=ALL,TASK_OFFSET={off} --array={_ranges(block)}%{throttle} submit_rc_oct22.sbatch')
 
 
 if __name__ == '__main__':
