@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --time=04:00:00
-#SBATCH --mem=3G
+#SBATCH --mem=4G
 #SBATCH --cpus-per-task=1
 #SBATCH --tasks-per-node=1
 #SBATCH --signal=USR1@600

@@ -79,7 +79,8 @@ slot of 100 batches, so a task holds at most 100 x 50 = 5,000 relaxations: hence
   `chunks.tsv` from the chunk files. It asserts distinct run names and seeds, seed slots no task can overrun, no local
   path, a chunk for every family (`--allow-missing` to override), and that a rewrite keeps every existing `INDEX.tsv`
   row (`--renumber` to override, only before anything is submitted): **an array index names a task**.
-- `submit_rc_oct22.sbatch`: CPU only (1 core, 3 GB, no GPU, `OMP_NUM_THREADS=1`); task = array index + `TASK_OFFSET`
+- `submit_rc_oct22.sbatch`: CPU only (1 core, 4 GB, no GPU, `OMP_NUM_THREADS=1`; 3 GB ran one task of installment 1 out of
+  memory at 3,950 of 4,000 relaxations, as outputs accumulate); task = array index + `TASK_OFFSET`
   (default 0), at most 250 at once per submitted array, 4 h walltime, `USR1` 10 min before the end. Resubmitting
   resumes; a finished task exits at once; a task whose molecule file is missing exits at once. Each log prints the CPU
   model on a `DEVICE` line.
