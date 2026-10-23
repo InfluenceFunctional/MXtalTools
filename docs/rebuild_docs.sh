@@ -1,5 +1,7 @@
 #!/bin/bash
-# Rebuild MXtalTools Sphinx documentation
+# Rebuild MXtalTools Sphinx documentation.
+# Needs torch and torch_geometric installed (CPU builds suffice); see
+# docs/requirements-torch.txt and docs/requirements.txt.
 set -e
 
 cd "$(dirname "$0")"

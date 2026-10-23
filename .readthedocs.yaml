@@ -10,12 +10,12 @@ build:
 
 python:
   install:
-    # Install the package (without torch/PyG — those are mocked in conf.py).
-    # This brings in all pure-Python deps (numpy, scipy, rdkit, etc.) so
-    # Sphinx can import the parts of mxtaltools that don't touch torch.
+    # CPU-only torch first, from the PyTorch index (the PyPI wheel pulls CUDA).
+    - requirements: docs/requirements-torch.txt
+    # The package and its pure-Python dependencies (numpy, scipy, rdkit, ase, ...).
     - method: pip
       path: .
-    # Sphinx and theme
+    # torch_geometric, Sphinx and the theme.
     - requirements: docs/requirements.txt
 
 sphinx:

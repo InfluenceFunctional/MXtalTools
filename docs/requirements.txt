@@ -1,5 +1,7 @@
-# Sphinx documentation build dependencies.
-# Pure-Python mxtaltools deps (numpy, scipy, etc.) are installed via
-# `pip install .` in .readthedocs.yaml, not listed here.
+# Documentation build dependencies. torch comes from requirements-torch.txt and
+# the package's own dependencies from `pip install .` (see .readthedocs.yaml).
+# PyG's compiled extensions and the optional backends are mocked by conf.py
+# when absent.
+torch_geometric
 sphinx>=7.1
 sphinx-rtd-theme>=2.0
