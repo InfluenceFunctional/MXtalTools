@@ -1,8 +1,7 @@
 #!/bin/bash
 #SBATCH --time=04:00:00
-#SBATCH --gres=gpu:1
-#SBATCH --mem=32G
-#SBATCH --cpus-per-task=4
+#SBATCH --mem=3G
+#SBATCH --cpus-per-task=1
 #SBATCH --tasks-per-node=1
 #SBATCH --signal=USR1@600
 #SBATCH --mail-user=mjakilgour@gmail.com
@@ -10,17 +9,17 @@
 #SBATCH --account=torch_pr_226_chemistry
 #SBATCH --job-name=rcoct22
 #SBATCH --output=/scratch/mk8347/logs/%x-%A_%a.out
-#SBATCH --array=0-946%16
+#SBATCH --array=0-999%250
 
-# rc_oct22: one array task = one row of INDEX.tsv = tasks/<task>.yaml (make_battery.py writes both, and the array
-# range above from the task count). A task runs its random starts for every molecule of one chunk file and
-# writes <out_dir>/<run_name>.pt. The run config is rendered into the output directory with the MXtalTools commit
-# stamped in. It stops between batches on SIGUSR1, 10 min before the walltime (python is exec'd as the container's
-# process, so the signal reaches it); resubmitting the same array resumes every task from its progress file, and a
-# finished task exits at once. A task whose molecule file is not on the cluster exits at once with an error.
-# Task = array index + TASK_OFFSET (default 0), so tasks above the cluster's MaxArraySize run as
-#   sbatch --export=ALL,TASK_OFFSET=1000 --array=0-<n>%16 submit_rc_oct22.sbatch     (tasks 1000..1000+n)
-# check_battery.py matches logs to tasks by the run name each log prints, not by the array index.
+# rc_oct22, CPU only: one array task = one row of INDEX.tsv = tasks/<task>.yaml (make_battery.py writes both, and the
+# array range above from the task count). A task runs its random starts (2) for every molecule of one chunk file on
+# one core, in batches of 50, and writes <out_dir>/<run_name>.pt. The run config is rendered into the output directory
+# with the MXtalTools commit stamped in. It stops between batches on SIGUSR1, 10 min before the walltime (python is
+# exec'd as the container's process, so the signal reaches it); resubmitting the same array resumes every task from
+# its progress file, and a finished task exits at once. A task whose molecule file is not on the cluster exits at once
+# with an error. Task = array index + TASK_OFFSET (default 0), so tasks above the cluster's MaxArraySize run as
+#   sbatch --export=ALL,TASK_OFFSET=1000 --array=0-<n>%250 submit_rc_oct22.sbatch     (tasks 1000..1000+n)
+# check_battery.py matches logs to tasks by the task each log prints, not by the array index.
 module purge
 
 IMAGE=/share/apps/images/cuda12.6.3-cudnn9.5.1-ubuntu22.04.5.sif
@@ -58,7 +57,7 @@ clear_dead_lease() {
 clear_dead_lease "${OUT}/${RUN}_owner.json"
 
 echo "JOB ${SLURM_ARRAY_JOB_ID}_${IDX} task=${TASK} run=${RUN} mol=${MOL} code=${COMMIT} start=$(date -Is)"
-srun singularity exec --nv \
+srun singularity exec \
     --overlay ${OVERLAY}:ro \
     --bind ${PROJECT_ROOT}:${PROJECT_ROOT} \
     --bind /scratch/mk8347/data:/scratch/mk8347/data \
@@ -67,13 +66,14 @@ srun singularity exec --nv \
     /bin/bash -c "
         source /ext3/env.sh
         export PYTHONPATH=${MXT_ROOT}:${PYLIBS}:\$PYTHONPATH
+        export CUDA_VISIBLE_DEVICES=-1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
         python - <<'PY' || exit 1
 import yaml
 cfg = yaml.safe_load(open('${CFG}'))
 cfg['mxt_commit'] = '${COMMIT}'
 yaml.safe_dump(cfg, open('${OUT}/${RUN}.yaml', 'w'))
 PY
-        nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+        echo \"DEVICE cpu: \$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)\"
         exec python -u ${MXT_ROOT}/mxtaltools/crystal_search/run_search.py --config ${OUT}/${RUN}.yaml"
 RC=$?
 echo "JOB ${SLURM_ARRAY_JOB_ID}_${IDX} task=${TASK} status=${RC} end=$(date -Is)"

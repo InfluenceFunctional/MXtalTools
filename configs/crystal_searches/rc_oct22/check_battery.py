@@ -35,7 +35,7 @@ def read_log(p):
     text = p.read_text(errors='replace')
     start = re.search(r' start=(\S+)', text)
     end = re.search(r'status=(\d+) end=(\S+)', text)
-    gpu = re.search(r'^(NVIDIA[^,\n]*)', text, re.M)
+    gpu = re.search(r'^DEVICE (.*)$', text, re.M)   # the job script prints the CPU model
     wall = None
     if start and end:
         wall = (datetime.fromisoformat(end.group(2)) - datetime.fromisoformat(start.group(1))).total_seconds()
@@ -92,8 +92,8 @@ def main():
     if walls:
         walls.sort()
         print(f'  finished tasks with a log: {len(walls)}; wall time median {walls[len(walls) // 2] / 60:.1f} min, '
-              f'longest {walls[-1] / 60:.1f} min; {work_relax / work_wall:.1f} relaxations per s pooled; '
-              f'GPUs {dict(gpus)}')
+              f'longest {walls[-1] / 60:.1f} min; {work_relax / work_wall:.2f} relaxations per s per task (one core), '
+              f'pooled; devices {dict(gpus)}')
     bad = [(i, s) for i, s in state.items() if s != 'done']
     for i, s in bad[:40]:
         print(f"  task {i} ({tasks[i]['run_name']}): {s}")

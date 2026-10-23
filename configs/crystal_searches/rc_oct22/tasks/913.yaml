@@ -1,9 +1,9 @@
-device: cuda
-mol_path: /scratch/mk8347/data/crystal_datasets/conditional/rc_oct22/mols/pubrc_mols_chunk250.pt
+device: cpu
+mol_path: /scratch/mk8347/data/crystal_datasets/conditional/rc_oct22/mols/zincrc_mols_chunk88.pt
 dataset_path: null
 target_path: null
 out_dir: /scratch/mk8347/data/crystal_datasets/conditional/anchors/rc_oct22
-run_name: pubrc_c250_0
+run_name: zincrc_c88_3
 target_identifier: null
 save_trajs: false
 uma_predictor_path: null
@@ -11,16 +11,16 @@ init_sample_method: random
 init_reduced: true
 force_restart_run: false
 mol_seed: 0
-opt_seed: 4125000000000
+opt_seed: 2108803000000
 sampling_mode: all
 mols_to_sample: 0
-num_samples: 10
+num_samples: 2
 sgs_to_search:
 - 2
 zp_to_search:
 - 1
-batch_size: 2000
-grow_batch_size: true
+batch_size: 50
+grow_batch_size: false
 init_target_cp: std
 opt:
 - optim_target: elj
@@ -49,4 +49,4 @@ opt:
   max_num_steps: 150
   target_packing_coeff: null
   centroid_boundary: wrap
-oom_ceiling: true
+oom_ceiling: false

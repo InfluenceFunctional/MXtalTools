@@ -13,9 +13,12 @@ Each family's list was shuffled before chunking, so any run of its chunks is a r
 each source in the searched set is chosen by how many of its chunks are submitted. Chunk sizes are read from
 chunks.tsv, which --scan writes from the chunk files themselves (on the dev box, before upload).
 
-What each array task runs (run_search.py, sampling_mode 'all'): STARTS[family] random starts for EVERY molecule of one
-chunk file. Tasks are ordered family by family, chunk by chunk, so a family is a contiguous index range and an
-installment is a set of index ranges. An array index names a task: once INDEX.tsv exists, a rewrite must keep every
+CPU ONLY. What each array task runs (run_search.py, sampling_mode 'all', device cpu, one core): STARTS_PER_TASK (2)
+random starts for EVERY molecule of one chunk file, in fixed batches of BATCH (50); each chunk is SEEDS (5) tasks with
+distinct seeds, so every molecule gets 10 starts in all, gathered over the seeds of its chunk. Small batches because
+the eLJ route writes out every crystal's image cluster (about 12,000 atoms on QM9-sized molecules): memory grows by
+about 16-20 MB per crystal in the batch over a 0.8 GB base. Tasks are ordered family by family, chunk by chunk, seed by
+seed, so a family is a contiguous index range and an installment is a set of index ranges. An array index names a task: once INDEX.tsv exists, a rewrite must keep every
 row it holds (checked; --renumber overrides, only before anything is submitted). Every family needs chunks unless
 --allow-missing names it. A later top-up (more seeds on the same chunks) has to be appended after the last row.
 
@@ -42,12 +45,14 @@ DATA = '/scratch/mk8347/data/crystal_datasets/conditional'
 MOL_PATH = DATA + '/rc_oct22/mols/{fam}_mols_chunk{k}.pt'
 OUT_DIR = DATA + '/anchors/rc_oct22'
 FAMILIES = ['qm9rc', 'csdrc', 'zincrc', 'gdbrc', 'pubrc']          # task order
-STARTS = {f: 10 for f in FAMILIES}                                  # random starts per molecule
+SEEDS = 5                       # tasks per chunk, each with its own seed
+STARTS_PER_TASK = 2             # random starts per molecule per task: 10 per molecule over the seeds
+BATCH = 50                      # crystals relaxed together on one core (fixed; no growth on CPU)
 FAMILY_SLOT = {f: i for i, f in enumerate(FAMILIES)}  # opt_seed: a family's task slots never meet another family's
 SEED_BASE = 100_000_000_000     # above every qm9_full_sep29 seed; a task's batches use opt_seed + 1e4 * batch_idx
-CONCURRENT = 16                 # array throttle: tasks running at once
+CONCURRENT = 250                # array throttle per submitted array: tasks running at once
 ARRAY_MAX = 1000                # Slurm's default MaxArraySize is 1001: tasks from 1000 on run with TASK_OFFSET
-RELAX_PER_S = 12.0              # measured on qm9_full_sep29 (job 18835847), job start to end; for the estimate only
+RELAX_PER_CORE_S = 0.75         # one core, dev box, batch 50, 200 relaxations of qm9rc chunk 0; for the estimate only
 
 
 def read_chunks():
@@ -99,13 +104,13 @@ def scan(mol_dir):
 def task_cfg(fam, k, s, n):
     cfg = yaml.safe_load(BASE.read_text())
     cfg.pop('mace_predictor_path', None)
-    cfg.update(device='cuda', mol_path=MOL_PATH.format(fam=fam, k=k), dataset_path=None, target_path=None,
+    cfg.update(device='cpu', mol_path=MOL_PATH.format(fam=fam, k=k), dataset_path=None, target_path=None,
                target_identifier=None, out_dir=OUT_DIR, run_name=f'{fam}_c{k}_{s}', save_trajs=False,
                uma_predictor_path=None, init_sample_method='random', init_reduced=True, init_target_cp='std',
                force_restart_run=False, mol_seed=0,
                opt_seed=SEED_BASE + (FAMILY_SLOT[fam] * 1_000_000 + 100 * k + s) * 1_000_000,
                sampling_mode='all', mols_to_sample=0, num_samples=n, sgs_to_search=[2],
-               zp_to_search=[1], batch_size=2000, grow_batch_size=True, oom_ceiling=True)
+               zp_to_search=[1], batch_size=BATCH, grow_batch_size=False, oom_ceiling=False)
     for st in cfg['opt']:
         assert st['centroid_boundary'] == 'wrap' and st['enforce_reduced'] is False
         st['optim_target'] = 'elj'
@@ -137,7 +142,7 @@ def main():
     chunks = read_chunks()
     missing = [f for f in FAMILIES if not chunks[f] and f not in args.allow_missing]
     assert not missing, f'families with no chunks: {missing} (a failed generation?); --allow-missing to proceed'
-    tasks = [(fam, k, 0, STARTS[fam]) for fam in FAMILIES for k in sorted(chunks[fam])]
+    tasks = [(fam, k, s, STARTS_PER_TASK) for fam in FAMILIES for k in sorted(chunks[fam]) for s in range(SEEDS)]
 
     rows = ['task\tfamily\tchunk\tseed\tmolecules\tstarts\trelaxations\trun_name\topt_seed\tmol_path']
     cfgs = []
@@ -165,8 +170,8 @@ def main():
     assert len({c['opt_seed'] for c in cfgs}) == len(cfgs), 'opt_seed collision'
     assert all(s < 100 for _, _, s, _ in tasks), 'a seed >= 100 would take the next chunk\'s opt_seed'
     assert all(100 * k + 99 < 1_000_000 for _, k, _, _ in tasks), 'a chunk number would take the next family\'s seeds'
-    # batch seeds step 1e4 inside a task's 1e6 slot: fewer than 100 batches even if OOM halving took the batch to 200
-    assert max(chunks[f][k] * n for f, k, _, n in tasks) <= 100 * 200, 'a task could run into the next opt_seed slot'
+    # batch seeds step 1e4 inside a task's 1e6 slot: a task may run at most 100 batches of BATCH
+    assert max(chunks[f][k] * n for f, k, _, n in tasks) <= 100 * BATCH, 'a task could run into the next opt_seed slot'
     for c in cfgs:
         for trail, v in _paths(c):
             # a drive letter, a backslash or a relative data path would resolve on the dev box and nowhere else
@@ -180,10 +185,11 @@ def main():
         if not idx:
             continue
         relax = sum(chunks[fam][k] * n for f, k, _, n in tasks if f == fam)
-        print(f"  {fam}: tasks {idx[0]}-{idx[-1]}, {len(chunks[fam])} chunks, {sum(chunks[fam].values()):,} molecules, "
-              f"{STARTS[fam]} starts each; {relax:,} relaxations, {relax / RELAX_PER_S / 3600:,.0f} GPU-hours at "
-              f"{RELAX_PER_S:g} per s")
-    print(f"  longest task {max(chunks[f][k] * n for f, k, _, n in tasks):,} relaxations")
+        print(f"  {fam}: tasks {idx[0]}-{idx[-1]}, {len(chunks[fam])} chunks x {SEEDS} seeds, "
+              f"{sum(chunks[fam].values()):,} molecules, {SEEDS * STARTS_PER_TASK} starts each; {relax:,} relaxations, "
+              f"{relax / RELAX_PER_CORE_S / 3600:,.0f} core-hours at {RELAX_PER_CORE_S:g} per s per core")
+    longest = max(chunks[f][k] * n for f, k, _, n in tasks)
+    print(f"  longest task {longest:,} relaxations, {longest / RELAX_PER_CORE_S / 3600:.1f} h at {RELAX_PER_CORE_S:g} per s")
 
 
 if __name__ == '__main__':

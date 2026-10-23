@@ -1,4 +1,4 @@
-device: cuda
+device: cpu
 mol_path: /scratch/mk8347/data/crystal_datasets/conditional/rc_oct22/mols/qm9rc_mols_chunk0.pt
 dataset_path: null
 target_path: null
@@ -14,13 +14,13 @@ mol_seed: 0
 opt_seed: 100000000000
 sampling_mode: all
 mols_to_sample: 0
-num_samples: 10
+num_samples: 2
 sgs_to_search:
 - 2
 zp_to_search:
 - 1
-batch_size: 2000
-grow_batch_size: true
+batch_size: 50
+grow_batch_size: false
 init_target_cp: std
 opt:
 - optim_target: elj
@@ -49,4 +49,4 @@ opt:
   max_num_steps: 150
   target_packing_coeff: null
   centroid_boundary: wrap
-oom_ceiling: true
+oom_ceiling: false
