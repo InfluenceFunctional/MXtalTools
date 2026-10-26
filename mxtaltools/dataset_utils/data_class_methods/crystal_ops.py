@@ -2039,6 +2039,9 @@ class MolCrystalOps:
           bounded to [0, 2 pi]; then each unit's rotation-vector norm is bounded to
           pi +/- 0.999 pi, keeping its direction;
         - ``cell_lengths`` and ``cell_angles`` again, via ``enforce_crystal_system``;
+        - ``aunit_orientation`` again if ``canonicalize_orientations``: each unit's
+          vector with z < 0 replaced by the same rotation on the +z half-space
+          (``canonicalize_rotvec``);
 
         and finally calls ``box_analysis``.
 
@@ -2048,9 +2051,8 @@ class MolCrystalOps:
             ``'hard'`` or ``'soft'``; any other value raises ValueError in
             ``enforce_1d_bound``.
         canonicalize_orientations : bool
-            Must be False when ``constrain_z`` is True. The branch it enables
-            re-concatenates the per-unit orientation blocks unchanged, so it does
-            not change ``aunit_orientation``.
+            Must be False when ``constrain_z`` is True. Moves each unit's rotation
+            vector to the +z half-space without changing the rotation.
         angle_pad : float
             Fraction of pi/2 allowed on either side of pi/2.
         length_pad : float
@@ -2124,8 +2126,8 @@ class MolCrystalOps:
         # enforce z component in the upper half-plane
         if canonicalize_orientations:  # converts the vector to its duplicate in the upper half-plane
             new_orientation = []
-            for zp in range(self.max_z_prime):
-                new_orientation.append(self.aunit_orientation[:, zp * 3:3 + zp * 3])
+            for zp in range(self.max_z_prime):  # clone: canonicalize_rotvec writes in place
+                new_orientation.append(canonicalize_rotvec(self.aunit_orientation[:, zp * 3:3 + zp * 3].clone()))
             self.aunit_orientation = torch.cat(new_orientation, dim=1)
 
         # update cell vectors

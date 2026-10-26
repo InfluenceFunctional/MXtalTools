@@ -251,14 +251,16 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
     Do a local optimization via gradient descent on a per-row loss.
 
     Each step clones ``init_crystal_batch`` (only its still-active rows), sets the current parameters with
-    ``set_cell_parameters``, cleans them with ``clean_cell_parameters(mode='hard', canonicalize_orientations=True)``,
+    ``set_cell_parameters``, cleans them with ``clean_cell_parameters(mode='hard', canonicalize_orientations=False)``,
     evaluates ``analyze`` on ``'lj'``, ``'elj'`` and the compute mapped from ``optim_target`` (plus
     ``'reduction_en'`` with ``enforce_reduced``), records parameters and outputs (``update_record``) and takes one
     optimizer step on the mean of the per-row loss (``loss_and_backprop``). The loop runs at most
     ``max_num_steps - 1`` steps; it stops earlier when every row has been retired by ``early_stop`` or, once at
     least ``min(max_num_steps, 50)`` steps have run, when ``check_convergence`` marks every row converged. For each
     row, the parameters recorded at its lowest-loss step are then set on a fresh clone of ``init_crystal_batch``
-    (``skip_box_analysis=False``, no cleaning) and re-analyzed under ``torch.no_grad`` with ``assign_outputs=True``.
+    (``skip_box_analysis=False``, no cleaning), its rotation vectors moved to the +z half-space (``canonicalize_aunit``
+    in wrap mode, ``canonicalize_orientation`` otherwise), and re-analyzed under ``torch.no_grad`` with
+    ``assign_outputs=True``.
 
     Parameters
     ----------
@@ -503,9 +505,11 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                         crystal_batch.set_cell_parameters(stacked,
                                                           skip_box_analysis=True)
 
+                    # no orientation fold here: folded each step, a recorded rotvec would jump where it crosses z = 0,
+                    # and check_convergence reads the record; the returned rows are folded once, below
                     crystal_batch.clean_cell_parameters(
                         mode='hard',
-                        canonicalize_orientations=True,
+                        canonicalize_orientations=False,
                     )  # box analysis included in here
                     if wrap:  # the centres bypass clean's asymmetric-unit clamp: raw parameter, wrapped into the cell
                         raw_centroid = stacked[:, 6:6 + 3 * crystal_batch.max_z_prime]
@@ -597,7 +601,9 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                                       skip_box_analysis=False)
     if wrap:  # recorded centres are unwrapped: wrap into the cell, then re-express inside the asymmetric unit
         crystal_batch.aunit_centroid = wrap_centroid(crystal_batch.aunit_centroid)
-        canonicalize_aunit(crystal_batch)
+        canonicalize_aunit(crystal_batch)  # also puts the rotvecs on the +z half-space
+    else:
+        crystal_batch.canonicalize_orientation()
     # no_grad: these are reported energies. With grad on, an MLIP energy assigned to each returned sample kept its
     # whole autograd graph alive (~1.5 GB of GPU memory per MACE Z'=2 acridine crystal) for as long as the sample
     # lived -- e.g. through the whole next opt stage in run_search, which collates this stage's outputs.
