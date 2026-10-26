@@ -174,25 +174,41 @@ def _collate(crystals):
                              exclude_keys=sorted(set.union(*keys) - set.intersection(*keys)))
 
 
+def _e0_sum_ev(numbers, model):
+    """The checkpoint's per-atom reference energies E0 summed over `numbers`, in float64 (eV; head 0, as our route)."""
+    table = [int(a) for a in model.atomic_numbers]
+    e0 = model.atomic_energies_fn.atomic_energies.detach().double().cpu()
+    e0 = e0[0] if e0.ndim == 2 else e0
+    return float(sum(float(e0[table.index(int(z))]) for z in numbers))
+
+
 def _stock_gas_energies(crystals, checkpoint_path):
     """Upstream's ASE calculator on each isolated molecule, averaged over a crystal's
-    Z' molecules; the atoms of a Z'>1 crystal are Z' equal contiguous blocks."""
+    Z' molecules; the atoms of a Z'>1 crystal are Z' equal contiguous blocks. Returned
+    as the interaction energy (stock total minus the checkpoint's E0 sum), which is
+    what our route returns. In float64, so the reference is exact for a checkpoint
+    whose E0s make a float32 total coarse (MACE-OFF24: ~5e-3 eV on one acridine
+    molecule); torch's default dtype, which the calculator sets, is restored after."""
     from ase import Atoms
     from mace.calculators import MACECalculator
-    calc = MACECalculator(model_paths=checkpoint_path, device='cpu',
-                          default_dtype='float32')
-    out = []
-    for c in crystals:
-        zp = int(c.z_prime.max())
-        n = c.z.shape[0] // zp
-        per_mol = []
-        for k in range(zp):
-            atoms = Atoms(numbers=c.z[k * n:(k + 1) * n].numpy(),
-                          positions=c.pos[k * n:(k + 1) * n].detach().numpy().astype(float),
-                          pbc=False)
-            atoms.calc = calc
-            per_mol.append(float(atoms.get_potential_energy()))
-        out.append(np.mean(per_mol))
+    prev = torch.get_default_dtype()
+    try:
+        calc = MACECalculator(model_paths=checkpoint_path, device='cpu',
+                              default_dtype='float64')
+        out = []
+        for c in crystals:
+            zp = int(c.z_prime.max())
+            n = c.z.shape[0] // zp
+            per_mol = []
+            for k in range(zp):
+                atoms = Atoms(numbers=c.z[k * n:(k + 1) * n].numpy(),
+                              positions=c.pos[k * n:(k + 1) * n].detach().numpy().astype(float),
+                              pbc=False)
+                atoms.calc = calc
+                per_mol.append(float(atoms.get_potential_energy()) - _e0_sum_ev(atoms.numbers, calc.models[0]))
+            out.append(np.mean(per_mol))
+    finally:
+        torch.set_default_dtype(prev)
     return torch.tensor(out, dtype=torch.float64)
 
 
