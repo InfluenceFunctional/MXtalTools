@@ -2149,6 +2149,23 @@ def extract_rotmat(target_position: torch.FloatTensor,
         assert False, "Target position must have at least 2 dimensions"
 
 
+def gather_rows(x: Tensor, index: Tensor) -> Tensor:
+    """``x[index]`` for a 1-D integer ``index`` along dim 0, through the op whose backward is reproducible on
+    ``x``'s device; the values are the same gather either way.
+
+    Where ``index`` repeats a row (the images of one atom, the neighbours of one atom, the atoms of one crystal), the
+    backward sums several gradients into it, and the order of that float32 sum sets its last bits. torch's
+    ``use_deterministic_algorithms`` documentation lists the backward of ``x[index]`` as nondeterministic on CPU and
+    that of ``index_select`` as nondeterministic on CUDA. On CPU (torch 2.8, measured 2026-10-26) ``x[index]``'s
+    backward adds with parallel atomics once the gathered tensor holds 32768 elements and more than one thread runs,
+    so a crystal's gradient changed from call to call and with its batch-mates, while its energy did not. Each device
+    therefore takes the other op (CUDA: not measured here).
+    """
+    if x.device.type == 'cpu':
+        return x.index_select(0, index)
+    return x[index]
+
+
 def apply_rotation_to_batch(elems, rotations, batch):
     """
     Apply per-graph rotation matrices to a batch of vectors.
@@ -2163,7 +2180,7 @@ def apply_rotation_to_batch(elems, rotations, batch):
     -------
     rotated : torch.FloatTensor(n, 3)
     """
-    return torch.einsum('nij, nj -> ni', rotations[batch], elems)
+    return torch.einsum('nij, nj -> ni', gather_rows(rotations, batch), elems)
 
 
 def rotmat2rotvec_stable(rotation_matrices: torch.Tensor) -> torch.Tensor:

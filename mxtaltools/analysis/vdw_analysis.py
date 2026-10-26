@@ -19,6 +19,7 @@ import torch
 import torch.nn.functional as F
 from torch_scatter import scatter
 
+from mxtaltools.common.geometry_utils import gather_rows
 from mxtaltools.models.functions.radial_graph import radius, build_radial_graph
 
 
@@ -365,8 +366,8 @@ def get_intermolecular_dists_dict(cluster_batch,
     dist_dict['graph_size'] = cluster_batch.num_atoms
     dist_dict['outside_batch'] = cluster_batch.batch
     dist_dict['intramolecular_dist'] = (
-        (cluster_batch.pos[edges_dict['edge_index'][0]] - cluster_batch.pos[
-            edges_dict['edge_index'][1]]).pow(2).sum(
+        (gather_rows(cluster_batch.pos, edges_dict['edge_index'][0]) - gather_rows(
+            cluster_batch.pos, edges_dict['edge_index'][1])).pow(2).sum(
             dim=-1).sqrt())
 
     dist_dict['intramolecular_dist_atoms'] = \
@@ -374,8 +375,8 @@ def get_intermolecular_dists_dict(cluster_batch,
          cluster_batch.z[edges_dict['edge_index'][1]].long()]
 
     dist_dict['intermolecular_dist'] = (
-        (cluster_batch.pos[edges_dict['edge_index_inter'][0]] - cluster_batch.pos[
-            edges_dict['edge_index_inter'][1]]).pow(2).sum(
+        (gather_rows(cluster_batch.pos, edges_dict['edge_index_inter'][0]) - gather_rows(
+            cluster_batch.pos, edges_dict['edge_index_inter'][1])).pow(2).sum(
             dim=-1).sqrt())
 
     dist_dict['intermolecular_dist_batch'] = cluster_batch.batch[edges_dict['edge_index_inter'][0]]

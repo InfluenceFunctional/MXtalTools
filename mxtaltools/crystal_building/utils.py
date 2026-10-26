@@ -10,7 +10,7 @@ from torch_scatter import scatter
 
 from mxtaltools.common.geometry_utils import compute_Ip_handedness, rotvec2rotmat, batch_molecule_principal_axes_torch, \
     extract_rotmat, apply_rotation_to_batch, rotmat2rotvec, \
-    fractional_transform, center_batch
+    fractional_transform, center_batch, gather_rows
 from mxtaltools.common.utils import block_repeat_interleave
 
 ###############################################################################
@@ -871,7 +871,7 @@ def _instantiate_cluster(atom_in_unit_cell_batch,
     cluster_batch = crystal_batch.clone()
     cluster_batch._store.pop(UNIT_MAP_KEY, None)    # the unit map is per row atom: a cluster carries none
     # init cluster with right number of duplicated unit cells
-    cluster_batch.pos = crystal_batch.unit_cell_pos[atom_in_unit_cell_batch]
+    cluster_batch.pos = gather_rows(crystal_batch.unit_cell_pos, atom_in_unit_cell_batch)
     # build cluster by translating all atoms manually
     cluster_batch.pos += atomwise_translation
     # pattern out atom properties
@@ -1226,7 +1226,7 @@ def get_cart_translations(cc_centroids,
         order = torch.argsort(g * span + l1, stable=True)
         g, mm = g[order] + start, mm[order]
         n = torch.einsum('tij,tj->ti', plan_c[g, 9:].reshape(-1, 3, 3), mm.to(torch.float64))
-        translations.append(torch.einsum('tij,tj->ti', T_fc64[g], n).to(dtype))
+        translations.append(torch.einsum('tij,tj->ti', gather_rows(T_fc64, g), n).to(dtype))
         counts.append(torch.zeros(stop - start, dtype=torch.long, device=device)
                       .index_add_(0, g - start, torch.ones_like(g)))
         start = stop
@@ -1734,14 +1734,14 @@ def aunit2ucell(mol_batch):
     # repeat each molecule Z times
     mol2ucell = torch.arange(len(sym_mult), device=sym_mult.device).repeat_interleave(sym_mult)
 
-    ucell_centroids_f = mol_batch.assign_aunit_centroid(mol_batch.aunit_centroid[mol2ucell])
+    ucell_centroids_f = mol_batch.assign_aunit_centroid(gather_rows(mol_batch.aunit_centroid, mol2ucell))
     fc_transform_list = mol_batch.T_fc
     cf_transform_list = mol_batch.T_cf
 
     # same, atomwise
     ucell_node2mol_node = block_repeat_interleave(mol_batch.num_atoms, sym_mult)
 
-    unit_cell_coords_c = aunit_coords_c[ucell_node2mol_node]
+    unit_cell_coords_c = gather_rows(aunit_coords_c, ucell_node2mol_node)
     unit_cell_batch = mol_batch.batch[ucell_node2mol_node]
 
     # assign which molecule each atom is in
@@ -1780,13 +1780,13 @@ def aunit2ucell(mol_batch):
                                      atom_types=mol_batch.z[ucell_node2mol_node])
 
     centered_coords_f = fractional_transform(centered_coords_c,
-                                             cf_transform_list[unit_cell_batch])
+                                             gather_rows(cf_transform_list, unit_cell_batch))
     rot_coords_f = torch.einsum('nj,nij->ni', (centered_coords_f, molwise_sym_ops[ucell_node2ucell_mol, :3, :3]))
 
     # translate rotated aunits to their correct position
     unit_cell_pos = torch.einsum('nij,nj->ni',
-                                 (fc_transform_list[unit_cell_batch],
-                                  rot_coords_f + centroids_f_in_cell[ucell_node2ucell_mol, :]))
+                                 (gather_rows(fc_transform_list, unit_cell_batch),
+                                  rot_coords_f + gather_rows(centroids_f_in_cell, ucell_node2ucell_mol)))
 
     return unit_cell_pos, unit_cell_batch, ucell_node2ucell_mol
 
@@ -1893,7 +1893,7 @@ def get_aunit_positions(mol_batch,
     pos = (apply_rotation_to_batch(mol_batch.pos,
                                    rotations_list,
                                    mol_batch.batch)
-           + fractional_transform(mol_batch.aunit_centroid[:, :3], mol_batch.T_fc)[mol_batch.batch])
+           + gather_rows(fractional_transform(mol_batch.aunit_centroid[:, :3], mol_batch.T_fc), mol_batch.batch))
 
     # # ensure embeddings rotate along with the aunit positions
     # this is a bit risky - leave it for now
