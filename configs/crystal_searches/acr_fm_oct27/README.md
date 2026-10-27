@@ -1,7 +1,7 @@
 # acr_fm_oct27: acridine P2_1/c Z'=1 landscapes under foundation models
 
 One coordinated campaign (`crystal_search/coordinator.py`) per energy model: MACE-OFF24 medium (`maceoff24m`), UMA-s 1.1 (`umas1p1`) and UMA-s 1.2 (`umas1p2`). The models, their files and the relaxation schedule are in `campaign.py`. Each campaign has three streams with acr_zp1_sep30's coordinator settings:
-- **seeded:** re-relaxes every distinct state of the earlier acridine landscapes under the model, plus ACRDIN04 and ACRDIN12. That is 51,690 states; `seed_pool.pt` comes from `build_seed_pool.py`.
+- **seeded:** re-relaxes every distinct state of the earlier acridine landscapes under the model, plus ACRDIN04 and ACRDIN12. That is 21,882 states: the premerge basins of the acr_newmodel prior rebuild (pool_acr_oct03) and the old prior's anchors, thinned to atomwise RDF leaders at 0.134. `seed_pool.pt` comes from `build_seed_pool.py`.
 - **random.**
 - **hops:** kicks of registry basins.
 
@@ -40,5 +40,5 @@ Jobs run 6 h; relaunch until `<ROOT>/<MODEL>/stats.md` shows STOP. Stop by hand 
 
 ## Built locally (dev box, CPU)
     python build_conformer.py mace|uma MODEL_PATH LABEL --write   # D:/crystal_datasets/acridine/acr_<LABEL>_conformer.pt
-    python build_seed_pool.py --write                              # seed_pool.pt
+    python build_seed_pool.py --cut 0 --rdf_cut 0.134 --write      # seed_pool.pt
     python build_seed_pool.py --anchors 14                         # calib_anchors.pt

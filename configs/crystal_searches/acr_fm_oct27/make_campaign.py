@@ -10,7 +10,7 @@ job): the identity cut is that file's 1 kT thermal radius, and its energy model 
 the id of the dev-box copy (campaign.MODELS[MODEL]['local']).
 
 Streams (GPU array jobs writing shards to <ROOT>/<MODEL>):
-  seeded   seed_pool.pt (51,690 distinct states of the earlier acridine landscapes, build_seed_pool.py) and the known forms
+  seeded   seed_pool.pt (21,882 distinct states of the earlier acridine landscapes, build_seed_pool.py) and the known forms
            ACRDIN04 and ACRDIN12, rebuilt with the model's conformer (preflight.py writes seeds/seeds_<task>.pt); every
            seed relaxed through stage 2, the polish stage on the rows within POLISH_KT of the job's best. A fixed list:
            no stopping rule, it ends when its list is done.
