@@ -25,6 +25,19 @@ For each model, `calibrate.py` does three things:
 
 Output: `/scratch/mk8347/data/crystal_datasets/acridine/campaigns/acr_fm_oct27/calibration/<model>/result.json`; logs in `/scratch/mk8347/logs/fm_calib_<model>-<job>.out`. A copy of each `result.json` goes to `calibration/<model>.json` here. That copy sets the campaign's identity cut and sizes its jobs.
 
+## Step 2: the campaigns (one per model)
+`python make_campaign.py [MODEL ...]` writes `<MODEL>/` from `calibration/<MODEL>.json`. That directory holds `coord.yaml`, `streams/{random,hops,seeded}.yaml`, `model.env` and `MANIFEST.md`. The script refuses to run when the calibration is missing, or when its checkpoint id differs from the dev-box copy's. Task counts and the starting batch come from `campaign.TASKS` and `campaign.BATCH`. Launch, and every relaunch, from the cluster checkout:
+
+    bash configs/crystal_searches/acr_fm_oct27/launch.sh MODEL
+
+This mirrors acr_zp1_sep30's `launch.sh`, per model:
+- it freezes the configs into `<ROOT>/<MODEL>`;
+- it submits a CPU preflight (`preflight.py`): imports, conformer SHA1, checkpoint id, the seed files `seeds/seeds_<k>.pt`, the coordinator's per-row path, and one energy;
+- it submits the curator;
+- it submits the seeded, random and hops arrays, named `<MODEL>_<stream>`.
+
+Jobs run 6 h; relaunch until `<ROOT>/<MODEL>/stats.md` shows STOP. Stop by hand with `touch <ROOT>/<MODEL>/STOP`.
+
 ## Built locally (dev box, CPU)
     python build_conformer.py mace|uma MODEL_PATH LABEL --write   # D:/crystal_datasets/acridine/acr_<LABEL>_conformer.pt
     python build_seed_pool.py --write                              # seed_pool.pt

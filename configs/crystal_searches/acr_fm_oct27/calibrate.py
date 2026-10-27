@@ -164,8 +164,8 @@ def thermal(model, rel):
     f = lambda v: f'{np.nanmedian(v):.4f} [{np.nanmin(v):.4f}, {np.nanmax(v):.4f}]'  # noqa: E731
     for n, row in table.items():
         log(f"| {n} | {f(row['latent_kick'])} | {f(row['rdf_distance'])} |")
-    return dict(anchors=[rel['names'][k] for k in chosen], anchor_E=[float(E[k]) for k in chosen], table=table,
-                dE_kT=[r[0].tolist() for r in res], rdf_d=[r[1].tolist() for r in res], sizes=SIZES)
+    return dict(n_draw=N_DRAW, anchors=[rel['names'][k] for k in chosen], anchor_E=[float(E[k]) for k in chosen],
+                table=table, dE_kT=[r[0].tolist() for r in res], rdf_d=[r[1].tolist() for r in res], sizes=SIZES)
 
 
 def throughput(model):

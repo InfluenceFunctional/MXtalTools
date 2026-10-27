@@ -44,6 +44,11 @@ POLISH_KT = 3.5
 POLISH_STEPS = 800
 CASCADE = [[25, 10.0], [50, 8.0], [100, 5.0]]  # stage 2 of random and hops: acr_zp1_sep30's
 
+# array tasks per stream and starting batch, per model (sized from the calibration's throughput; make_campaign.py and
+# preflight.py read them, launch.sh through the generated <model>/model.env)
+TASKS = {m: dict(random=12, hops=12, seeded=8) for m in MODELS}
+BATCH = {m: 96 for m in MODELS}
+
 
 def stages(kind, cascade=True, polish_cascade=True):
     """The relaxation schedule: acr_finish_sep27's two stages (convergence_eps x10, as acr_zp1_sep30), then the polish
