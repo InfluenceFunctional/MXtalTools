@@ -50,6 +50,7 @@ def dict2namespace(data_dict: dict):
 
 
 CENTROID_BOUNDARIES = ('clamp', 'wrap')
+CONVERGENCE_MODES = ('grad', 'params')  # gradient_descent_optimization(convergence=...)
 CELL_EDGE = 1 - 1e-4  # MolCrystalOps.assign_aunit_centroid's upper bound: the builders clip centres there
 
 
@@ -136,6 +137,87 @@ def canonicalize_aunit(crystal_batch):
     crystal_batch.aunit_centroid = centroid
     crystal_batch.aunit_orientation = orientation
     crystal_batch.aunit_handedness = handedness
+
+
+def fd_fold_aunit(crystal_batch):
+    """In place, the wrap-mode end of a stage with ``fd_refold``: every Z' = 1 row re-described by its crystal_fd
+    canonical form read off the BUILT lattice (``fd_refold.fold_batch``, sheet +1), instead of canonicalize_aunit.
+    Never raises for a row (canonicalize_aunit raises in sg 48, 50, 59, 68, 70, 85, 86, 126, 130, 133, 137, 141,
+    whose ASYM_UNITS box does not hold an image of every centre); centres wrapped into [0, 1); rotation vectors on the
+    +z hemisphere; a row crystal_fd does not take keeps its wrapped centre and rotation. The centres are NOT re-expressed
+    inside the ASYM_UNITS box: re-express them before a clamp-mode stage, latent transform or hop kick. Returns [num_graphs] int8
+    ``fd_refold.REFOLD_STATUS`` codes (0: folded). Raises ValueError for a batch that is not Z' = 1."""
+    from mxtaltools.crystal_search import fd_refold
+    return fd_refold.fold_batch(crystal_batch, sheet=1)
+
+
+def _fd_refold_rows(crystal_batch, param_module, optimizer, active_idx, attempts):
+    """One refold pass of ``gradient_descent_optimization(fd_refold=True)`` over the evaluated batch.
+
+    Rows of ``crystal_batch`` (the step's cleaned, centre-wrapped batch: active rows only) that ``refold_triggers``
+    flags and that have fewer than ``fd_refold.REFOLD_MAX_ATTEMPTS`` attempts so far are re-described from their built
+    lattice (``fd_refold.batch_refold``, sheet None: handedness kept, since it is not an optimised parameter). Each
+    applied row's raw parameters (``param_module``, the global row) are overwritten with the canonical values and its
+    optimizer state carried over (``_carry_optimizer_state``). Increments ``attempts`` [n] in place for every tried
+    row. Returns ([n] bool applied, [n] bool tried), over all n rows of the stage. No loop beyond one pass over the
+    flagged rows."""
+    from mxtaltools.crystal_search import fd_refold
+    n = len(attempts)
+    applied = torch.zeros(n, dtype=torch.bool)
+    tried = torch.zeros(n, dtype=torch.bool)
+    glob = torch.arange(crystal_batch.num_graphs) if active_idx is None else active_idx.cpu()
+    flagged = fd_refold.refold_triggers(crystal_batch.cell_angles).cpu() & (attempts[glob] < fd_refold.REFOLD_MAX_ATTEMPTS)
+    if not bool(flagged.any()):
+        return applied, tried
+    if len(param_module.fixed_dims) > 0:
+        raise NotImplementedError('fd_refold with fixed parameter columns')
+    local = torch.nonzero(flagged).flatten()
+    rows = glob[local]
+    attempts[rows] += 1
+    tried[rows] = True
+    res = fd_refold.batch_refold(crystal_batch, local, sheet=None)
+    hand = crystal_batch.aunit_handedness.detach().cpu().reshape(crystal_batch.num_graphs, -1)[local, 0].double()
+    if bool((res.applied & (res.handedness != hand)).any()):  # cannot happen: det +1 cell steps, Gamma+ fold
+        raise RuntimeError('fd_refold changed a handedness with sheet=None; the batch handedness is not optimised')
+    for k in torch.nonzero(res.applied).flatten().tolist():
+        g = int(rows[k])
+        p = param_module.params[g]
+        with torch.no_grad():
+            p.copy_(res.params[k].to(device=p.device, dtype=p.dtype))
+        _carry_optimizer_state(optimizer, p)
+        applied[g] = True
+    return applied, tried
+
+
+def _recorded_params(crystal_batch, raw_centroid):
+    """[num_graphs, n_params] CPU float32 parameters as ``update_record`` plus the wrap-mode centre overwrite record
+    them: cleaned parameters with the raw (unwrapped) centres."""
+    p = crystal_batch.full_cell_parameters().detach().cpu().float()
+    p[:, 6:6 + raw_centroid.shape[1]] = raw_centroid.detach().cpu().float()
+    return p
+
+
+REFOLD_STATE_BLOCKS = ((0, 3), (3, 6), (6, 9), (9, None))  # lengths, angles, centre, rotation vector (Z' = 1)
+
+
+def _carry_optimizer_state(optimizer, p):
+    """Optimizer state of a refolded row ``p`` (its raw parameters just rewritten as the same crystal).
+
+    Rprop (state with ``'step_size'`` and ``'prev'``): each block of ``REFOLD_STATE_BLOCKS`` keeps the median of its
+    learned step sizes (a reduction can permute a, b, c, so per-element sizes need not belong to the same coordinate
+    any more) and the previous gradient is zeroed, so the next step moves by those sizes with no sign-based change.
+    Dropping the state instead restarts every coordinate at the full lr (about 1 A for a fractional centre in a 20 A
+    cell, at stage-1 lr 0.05), which threw rows uphill. Any other optimizer: the state is dropped."""
+    st = optimizer.state.get(p)
+    if st and 'step_size' in st and 'prev' in st:
+        ss = st['step_size'].view(-1)
+        with torch.no_grad():
+            for lo, hi in REFOLD_STATE_BLOCKS:
+                if ss[lo:hi].numel():
+                    ss[lo:hi] = ss[lo:hi].median()
+            st['prev'].zero_()
+    else:
+        optimizer.state.pop(p, None)
 
 
 def get_annealing_factor(start_value, stop_value, total_time, step_iters):
@@ -246,6 +328,10 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         early_stop_ref: Optional[float] = None,
         early_stop_kT: float = 1.0,
         exp6_kwargs: Optional[dict] = None,
+        fd_refold: bool = False,
+        convergence: str = 'params',
+        grad_tol: float = 0.1,
+        grad_patience: int = 5,
 ):
     """
     Do a local optimization via gradient descent on a per-row loss.
@@ -259,8 +345,8 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
     least ``min(max_num_steps, 50)`` steps have run, when ``check_convergence`` marks every row converged. For each
     row, the parameters recorded at its lowest-loss step are then set on a fresh clone of ``init_crystal_batch``
     (``skip_box_analysis=False``, no cleaning), its rotation vectors moved to the +z half-space (``canonicalize_aunit``
-    in wrap mode, ``canonicalize_orientation`` otherwise), and re-analyzed under ``torch.no_grad`` with
-    ``assign_outputs=True``.
+    in wrap mode, ``fd_fold_aunit`` in wrap mode with ``fd_refold``, ``canonicalize_orientation`` otherwise), and
+    re-analyzed under ``torch.no_grad`` with ``assign_outputs=True``.
 
     Parameters
     ----------
@@ -280,7 +366,8 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
     show_tqdm : bool, optional
         Show a progress bar.
     convergence_eps : float
-        Per-row threshold used by ``check_convergence``.
+        At or below 0: no row ever converges (every stage runs to ``max_num_steps``), in either ``convergence`` mode
+        (callers pass 0 or -1 for this). Otherwise read only with ``convergence='params'``: the threshold of ``check_convergence``.
     grad_norm_clip : float, optional
         Maximum gradient norm, taken jointly over all rows' parameters (``clip_grad_norm_``).
     optim_target : str, optional
@@ -335,8 +422,9 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         - ``'clamp'`` (default): clean_cell_parameters' hardtanh bound to the asymmetric-unit box -- a centre that
           reaches a face gets zero gradient there and never moves again.
         - ``'wrap'``: centres are wrapped into the unit cell (wrap_centroid) and may cross any asymmetric-unit
-          face; the returned samples are re-expressed inside the box by canonicalize_aunit. records['params'] then
-          holds the UNWRAPPED centres (a continuous trajectory for the convergence check).
+          face; the returned samples are re-expressed inside the box by canonicalize_aunit (with ``fd_refold``:
+          crystal_fd's canonical form instead, whose centres need not lie in the box; see ``fd_refold``).
+          records['params'] then holds the UNWRAPPED centres (a continuous trajectory for the convergence check).
     intermediates_path : str
         Where the best states so far are saved when the batch runs out of memory after step 0
         (run_search passes a per-run file and resumes from it only at the same batch position).
@@ -354,23 +442,89 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         Options of the ``'exp6'`` compute, forwarded to every ``analyze`` call with ``exp6_`` prefixed to each key
         (``{'params': 'w99', 'charges': 'gasteiger'}`` becomes ``exp6_params='w99', exp6_charges='gasteiger'``);
         see ``MolCrystalAnalysis.compute_exp6_energy``, whose pair form is fixed. None uses that method's defaults.
+    convergence : str
+        How rows stop before ``max_num_steps`` (``CONVERGENCE_MODES``); checked from step ``min_num_steps`` (50).
+
+        - ``'params'`` (default): the earlier rule, ``check_convergence`` on the smoothed parameter record with a 95%
+          quorum.
+        - ``'grad'`` (opt-in; working assumption, not yet the default): per row, by its gradient -- a generalised force. Each step the gradient of the row's
+          own loss with respect to its parameters is read before clipping and reduced to its largest absolute
+          component in each block (``row_gradient_blocks``: cell lengths per A, cell angles per rad, centres per A
+          (fractional gradient / cell length), rotation vectors per rad). A row whose largest block value stays at or
+          below ``grad_tol`` for ``grad_patience`` consecutive steps converges: it leaves the batch, keeps its best
+          state so far, and is returned with ``converged_step``. No quorum: the stage ends when every row has
+          converged or retired, or at the step cap. A coordinate held by a clean wall (3 A length floor, angle or
+          rotation clamp) has zero gradient through that clamp, so a pinned row reads as converged in it.
+
+          Measured 2026-10-27 (one seed each, campaign eLJ stages, ``fd_refold`` on): over 6 space groups x 32 rows
+          of a 15-atom molecule it used 17% fewer row-evaluations than ``'params'`` and ended lower; on 32 MIPCAS
+          latent starts most stage-1 rows (compression on) never reached the tolerance (gradients staying at 1-8),
+          so stage 1 ran to its cap: about 1.9x the row-evaluations at stage-1 ``grad_tol`` 1.0.
+    grad_tol : float
+        Tolerance of ``convergence='grad'``, in loss units per A or per rad. Default 0.1, set on eLJ campaign stages
+        (eLJ units, kT = 6.86); a working assumption for other targets.
+    grad_patience : int
+        Consecutive steps at or below ``grad_tol`` before a row converges (default 5).
+    fd_refold : bool
+        Wrap mode, Z' = 1 only (ValueError otherwise). False (default): nothing below happens and the function
+        behaves exactly as without the option. True:
+
+        - (a) during the walk, after each step's clean and centre wrap, rows whose built lattice is in trouble -- a
+          cleaned cell angle within ``fd_refold.REFOLD_ANGLE_MARGIN`` (0.025 pi) of the [0.2 pi, 0.8 pi] clamp, or
+          (V / abc)^2 = F at or below ``fd_refold.REFOLD_MIN_VOLUME_FACTOR`` (0.1; F <= 0 is a left-handed built
+          lattice) -- are re-described as the SAME crystal: the lattice is read off the built T_fc (a left-handed
+          basis flipped to c -> -c with the centre's z -> -z, Cartesian pose unchanged), canonicalised by crystal_fd
+          (reduced cell, folded pose, handedness kept) with centres wrapped into [0, 1), written into the raw
+          parameters, and that row's optimizer state is carried over (``_carry_optimizer_state``: rprop keeps its
+          learned step sizes, as the median of each parameter block, and forgets the previous gradient; other
+          optimizers drop the state) (``_fd_refold_rows``; proofs in the module docstring of
+          ``crystal_search.fd_refold``). The step is then rebuilt from the new parameters and evaluated. A result
+          that the next clean would change (e.g. a reduced cell with a lattice vector under 3 A) is not applied.
+          The thresholds are working assumptions (``fd_refold`` module constants).
+        - (b) the returned rows are folded with crystal_fd from the built lattice (``fd_fold_aunit``) instead of
+          ``canonicalize_aunit``: no raise in any group, centres in [0, 1), rotation vectors as crystal_fd gives them
+          (+z hemisphere), handedness on the +1 sheet where an improper element of G allows. These centres are
+          crystal_fd's canonical t wrapped into [0, 1), NOT inside the ASYM_UNITS box: a clamp-mode stage, a latent
+          transform or a hop kick (clean_cell_parameters clamps centres into the box) would change the crystal, so
+          run_search refuses fd_refold before a clamp-mode stage and in a campaign.
+
+        Convergence: with ``convergence='grad'`` a refold needs nothing (the gradient is read afresh each step). With
+        ``'params'`` a refold is a jump in the row's parameters, not in its crystal, so ``check_convergence``
+        reads a copy of the record in which the refolded row's earlier steps are shifted by that jump (step-to-step
+        changes kept, jump removed); ``records['params']`` and the best-step pick keep the true descriptions.
+
+        Termination: the refold pass runs at most once per step and contains no retry loop, so the stage still ends
+        by ``max_num_steps - 1`` steps; per row at most ``fd_refold.REFOLD_MAX_ATTEMPTS`` (8) attempts are made per
+        call, after which the row walks as without the option. A canonical cell is never itself a trigger (tri_niggli
+        angles in [60, 120] deg with F >= 1/2; monoclinic beta in [90, 135] deg), so an applied refold does not fire
+        again until the row has walked back to a trigger.
 
     Returns
     -------
     samples_list : list
         One data object per crystal (``batch_to_list``) with its lowest-loss parameters and the attributes assigned
-        by the final ``analyze``. With an active cascade each also carries ``early_stopped``, a [1] bool tensor.
+        by the final ``analyze``. With an active cascade each also carries ``early_stopped``, a [1] bool tensor
+        (retired by the cascade). With ``convergence='grad'`` each carries ``converged_step``, a [1] long tensor (the
+        step at which it converged and left the batch; -1 if it did not).
+        With ``fd_refold`` each also carries ``fd_refolds`` ([1] long, refolds applied to the row during the walk)
+        and ``fd_fold_status`` ([1] long, ``fd_refold.REFOLD_STATUS`` code of the end-of-stage fold, 0 folded).
         With ``enforce_reduced`` the list can be shorter than ``num_graphs``.
     records : dict of torch.Tensor
         CPU tensors stacked along a leading step dimension, one per step taken: every tensor output of the first
         step's ``analyze`` other than ``'rdf'``, plus ``'cp'`` (packing coefficient) and ``'loss'``; after a row
         retires its entries are NaN (``'loss'``: inf). ``'params'`` is the float32 [n_steps, num_graphs,
         6 + 6 * max_z_prime] parameter record (cleaned parameters, except the unwrapped centres in wrap mode).
+        With ``convergence='grad'`` also ``'grad'``, [n_steps, num_graphs, 4] float: the per-block gradient maxima
+        (``row_gradient_blocks``; NaN for rows out of the batch). With ``fd_refold`` also ``'fd_refold'`` and
+        ``'fd_refold_tried'``, [n_steps, num_graphs] bool: a refold was
+        applied / attempted at that step, before its evaluation (per-row counts: ``.sum(0)``).
 
     Raises
     ------
     ValueError
-        If ``centroid_boundary`` is not in ``CENTROID_BOUNDARIES``; also from ``canonicalize_aunit`` in wrap mode.
+        If ``centroid_boundary`` is not in ``CENTROID_BOUNDARIES``; also from ``canonicalize_aunit`` in wrap mode
+        (not with ``fd_refold``). With ``fd_refold``, unless ``centroid_boundary`` is ``'wrap'`` and every row is
+        Z' = 1.
     KeyError
         If ``optim_target`` is not one of the targets listed above.
     AttributeError
@@ -392,7 +546,17 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
     """  # todo implement wrapping over periodic latent DoF
     if centroid_boundary not in CENTROID_BOUNDARIES:
         raise ValueError(f"centroid_boundary must be one of {CENTROID_BOUNDARIES}, got {centroid_boundary!r}")
+    if convergence not in CONVERGENCE_MODES:
+        raise ValueError(f"convergence must be one of {CONVERGENCE_MODES}, got {convergence!r}")
+    by_grad = convergence == 'grad'
     wrap = centroid_boundary == 'wrap'
+    if fd_refold:
+        if not wrap:
+            raise ValueError("fd_refold needs centroid_boundary='wrap'")
+        from mxtaltools.crystal_search.fd_refold import check_zp1
+        check_zp1(init_crystal_batch)
+        refold_attempts = torch.zeros(init_crystal_batch.num_graphs, dtype=torch.long)
+        refold_count = torch.zeros(init_crystal_batch.num_graphs, dtype=torch.long)
 
     if cutoff is None:
         # lennard jones need 10 angstroms to nicely converge
@@ -471,6 +635,10 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
 
     params_record = torch.zeros((max_num_steps, init_crystal_batch.num_graphs, init_sample.shape[-1]),
                                 dtype=torch.float32)
+    conv_record = torch.zeros_like(params_record) if fd_refold and not by_grad else None  # see fd_refold
+    grad_streak = torch.zeros(init_crystal_batch.num_graphs, dtype=torch.long)
+    converged_step = torch.full((init_crystal_batch.num_graphs,), -1, dtype=torch.long)
+    cascade_retired = torch.zeros(init_crystal_batch.num_graphs, dtype=torch.bool)
 
     if optim_target.lower() == 'ellipsoid':
         init_crystal_batch.load_ellipsoid_model()
@@ -514,6 +682,24 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                     if wrap:  # the centres bypass clean's asymmetric-unit clamp: raw parameter, wrapped into the cell
                         raw_centroid = stacked[:, 6:6 + 3 * crystal_batch.max_z_prime]
                         crystal_batch.aunit_centroid = wrap_centroid(raw_centroid)
+                    if fd_refold:  # rows at the angle clamp or near / past F = 0: same crystal, canonical description
+                        pre = _recorded_params(crystal_batch, raw_centroid)
+                        refolded, refold_tried = _fd_refold_rows(crystal_batch, param_module, optimizer, active_idx,
+                                                                 refold_attempts)
+                        if refolded.any():  # rebuild this step from the new raw parameters (one pass, no re-check)
+                            refold_count += refolded.long()
+                            crystal_batch = init_active.clone().detach()
+                            stacked = param_module.stacked() if active_idx is None else param_module.stacked()[active_idx]
+                            crystal_batch.set_cell_parameters(stacked, skip_box_analysis=True)
+                            crystal_batch.clean_cell_parameters(mode='hard', canonicalize_orientations=False)
+                            raw_centroid = stacked[:, 6:6 + 3 * crystal_batch.max_z_prime]
+                            crystal_batch.aunit_centroid = wrap_centroid(raw_centroid)
+                            # the convergence record: shift the refolded rows' history by the jump (crystal unchanged)
+                            glob = torch.arange(crystal_batch.num_graphs) if active_idx is None else active_idx.cpu()
+                            loc = refolded[glob]
+                            if conv_record is not None:
+                                jump = _recorded_params(crystal_batch, raw_centroid)[loc] - pre[loc]
+                                conv_record[:s_ind, glob[loc]] += jump.unsqueeze(0)
 
                     outputs, cluster_batch = crystal_batch.analyze(
                         computes=energy_computes,
@@ -538,6 +724,11 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                     if wrap:  # unwrapped centre: continuous across cell edges, so check_convergence sees no jumps
                         rows = slice(None) if active_idx is None else active_idx.cpu()
                         params_record[s_ind, rows, 6:6 + raw_centroid.shape[1]] = raw_centroid.detach().cpu()
+                    if conv_record is not None:
+                        conv_record[s_ind] = params_record[s_ind]
+                    if fd_refold:
+                        records.setdefault('fd_refold', []).append(refolded)
+                        records.setdefault('fd_refold_tried', []).append(refold_tried)
 
                     """loss and backprop"""
                     if monte_carlo:
@@ -548,19 +739,31 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                                       target_latent, cutoff)
 
                     else:
-                        loss_and_backprop(cluster_batch, crystal_batch, grad_norm_clip,
-                                          optimizer, outputs, param_module, records,
-                                          loss_config, aux_config, s_ind, active_idx, num_samples)
+                        g_blocks = loss_and_backprop(cluster_batch, crystal_batch, grad_norm_clip,
+                                                     optimizer, outputs, param_module, records,
+                                                     loss_config, aux_config, s_ind, active_idx, num_samples,
+                                                     return_grad_blocks=by_grad)
+                    retire = torch.zeros_like(active)
                     if s_ind in cascade:  # retire rows still far above the reference: they leave the batch
                         retire = active & (records['loss'][-1] > early_stop_ref + cascade[s_ind] * early_stop_kT)
-                        if retire.any():
-                            active = active & ~retire
-                            if init_list is None:
-                                init_list = init_crystal_batch.batch_to_list()
-                            active_idx = torch.nonzero(active).flatten()
-                            if len(active_idx):
-                                init_active = collate_data_list([init_list[i] for i in active_idx.tolist()]).to(
-                                    init_crystal_batch.device)
+                        cascade_retired |= retire
+                    if by_grad and not monte_carlo:  # per row: gradient under grad_tol for grad_patience steps
+                        records.setdefault('grad', []).append(_full_rows(g_blocks, active_idx, num_samples))
+                        rows_g = torch.arange(num_samples) if active_idx is None else active_idx.cpu()
+                        below = g_blocks.amax(1) <= grad_tol
+                        grad_streak[rows_g] = torch.where(below, grad_streak[rows_g] + 1, 0)
+                        if convergence_eps > 0 and s_ind + 1 >= min(max_num_steps, min_num_steps):
+                            done = active & ~retire & (grad_streak >= grad_patience)
+                            converged_step[done] = s_ind
+                            retire = retire | done
+                    if retire.any():  # retired rows leave the batch: later steps evaluate only the rest
+                        active = active & ~retire
+                        if init_list is None:
+                            init_list = init_crystal_batch.batch_to_list()
+                        active_idx = torch.nonzero(active).flatten()
+                        if len(active_idx):
+                            init_active = collate_data_list([init_list[i] for i in active_idx.tolist()]).to(
+                                init_crystal_batch.device)
 
                     if s_ind % 10 == 0:
                         gc.collect()
@@ -572,9 +775,9 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                         pbar.update(10)
                     if not active.any():
                         converged = torch.ones_like(converged)
-                    elif s_ind >= min(max_num_steps, max(50, min_num_steps)):
-                        converged = check_convergence(params_record, s_ind, convergence_eps,
-                                                      optimizer, init_lr, active=active)
+                    elif not by_grad and s_ind >= min(max_num_steps, max(50, min_num_steps)):
+                        converged = check_convergence(conv_record if fd_refold else params_record, s_ind,
+                                                      convergence_eps, optimizer, init_lr, active=active)
 
 
     except (RuntimeError, ValueError) as e:
@@ -601,7 +804,10 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                                       skip_box_analysis=False)
     if wrap:  # recorded centres are unwrapped: wrap into the cell, then re-express inside the asymmetric unit
         crystal_batch.aunit_centroid = wrap_centroid(crystal_batch.aunit_centroid)
-        canonicalize_aunit(crystal_batch)  # also puts the rotvecs on the +z half-space
+        if fd_refold:  # crystal_fd's canonical form of the built crystal (never raises for a row)
+            fold_status = fd_fold_aunit(crystal_batch)
+        else:
+            canonicalize_aunit(crystal_batch)  # also puts the rotvecs on the +z half-space
     else:
         crystal_batch.canonicalize_orientation()
     # no_grad: these are reported energies. With grad on, an MLIP energy assigned to each returned sample kept its
@@ -626,7 +832,14 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
     samples_list = crystal_batch.batch_to_list()
     if cascade:
         for i, elem in enumerate(samples_list):
-            elem.early_stopped = torch.tensor([not bool(active[i])])
+            elem.early_stopped = torch.tensor([bool(cascade_retired[i])])
+    if by_grad:
+        for i, elem in enumerate(samples_list):
+            elem.converged_step = torch.tensor([int(converged_step[i])])
+    if fd_refold:
+        for i, elem in enumerate(samples_list):
+            elem.fd_refolds = torch.tensor([int(refold_count[i])])
+            elem.fd_fold_status = torch.tensor([int(fold_status[i])])
     if enforce_reduced:
         penalty = crystal_batch.compute_cell_reduction_penalty()
         samples_list = [elem for i, elem in enumerate(samples_list) if penalty[i] < 1e-3]
@@ -758,13 +971,14 @@ def update_record(crystal_batch, outputs, params_record, records, s_ind, active_
 
 
 def loss_and_backprop(cluster_batch, crystal_batch, grad_norm_clip, optimizer, outputs, param_module, records,
-                      loss_config, aux_config, opt_step, active_idx=None, n_total=None):
+                      loss_config, aux_config, opt_step, active_idx=None, n_total=None, return_grad_blocks=False):
     """Compute the per-row loss, record it, and take one optimizer step on its mean.
 
     The loss is ``compute_loss`` followed by ``compute_auxiliary_loss``. It is appended to ``records['loss']``
     detached on CPU and padded to ``n_total`` rows with inf for rows outside ``active_idx`` (``_full_rows``).
     ``loss.mean()`` is backpropagated, the gradients of ``param_module.parameters()`` are clipped to total norm
-    ``grad_norm_clip`` and ``optimizer.step()`` is called. Returns None.
+    ``grad_norm_clip`` and ``optimizer.step()`` is called. Returns None, or with ``return_grad_blocks`` the
+    [n_active, 4] ``row_gradient_blocks`` of the rows' own losses, read before the clip.
 
     Parameters
     ----------
@@ -799,9 +1013,33 @@ def loss_and_backprop(cluster_batch, crystal_batch, grad_norm_clip, optimizer, o
     records['loss'].append(_full_rows(loss, active_idx, n_total, fill=float('inf')))  # retired: never the best step
     loss_to_backprop = loss.mean()  # save some effort in backprop
     loss_to_backprop.backward()
+    blocks = None
+    if return_grad_blocks:  # before the clip
+        blocks = row_gradient_blocks(param_module, crystal_batch, active_idx, len(loss))
     torch.nn.utils.clip_grad_norm_(param_module.parameters(), grad_norm_clip)  # gradient clipping
     optimizer.step()  # apply grad
     del loss_to_backprop, cluster_batch, outputs, crystal_batch, loss
+    return blocks
+
+
+def row_gradient_blocks(param_module, crystal_batch, active_idx, n_active):
+    """[n_active, 4] CPU float: per evaluated row, the largest absolute component of the gradient of its own loss
+    (``n_active`` x the stored gradient of the batch-mean loss; rows do not share parameters) in each block: cell
+    lengths (loss / A), cell angles (loss / rad), centres (fractional gradient / that axis's cleaned cell length,
+    loss / A) and rotation vectors (loss / rad); Z' > 1 units are pooled per block. Fixed columns count as zero."""
+    rows = range(len(param_module.params)) if active_idx is None else active_idx.tolist()
+    n_par = len(param_module.free_dims) + len(param_module.fixed_dims)
+    full = torch.zeros(n_active, n_par)
+    for k, g in enumerate(rows):
+        gr = param_module.params[g].grad
+        if gr is not None:
+            full[k, param_module.free_dims] = gr.detach().cpu().float().view(-1) * n_active
+    full = full.abs()
+    nz = (n_par - 6) // 6  # Z'
+    lengths = crystal_batch.cell_lengths.detach().cpu().float()  # [n_active, 3], cleaned
+    cen = full[:, 6:6 + 3 * nz].view(n_active, nz, 3) / lengths[:, None, :]
+    return torch.stack([full[:, 0:3].amax(1), full[:, 3:6].amax(1), cen.reshape(n_active, -1).amax(1),
+                        full[:, 6 + 3 * nz:].amax(1)], 1)
 
 
 def get_mc_noised_samples(crystal_batch, log_noise_range):

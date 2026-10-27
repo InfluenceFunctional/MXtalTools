@@ -1,8 +1,9 @@
 """crystal_fd: charts and the reference measure for space groups 16-230, and the sg 6-9 double cover (2026-10-21).
 
 Owner decisions (2026-10-21): one chart coordinate per free cell parameter, the reference cell measure flat in each
-free log length ('latent_v1_lebesgue' in every family), the trainer's averaged length rows not mirrored; sg 6-9 only
-through ``orientation_cover='double'``.
+free log length ('latent_v1_lebesgue' in every family), the trainer's averaged length rows not mirrored; sg 6-9
+through ``orientation_cover='double'`` (since 2026-10-26 also the K cut in the hemisphere chart, tested in
+``test_k_cut_chart.py``; here the double cover, and that the other orientation charts still refuse sg 6-9 without it).
 
 1. Families: ``cell_family`` is ``LATTICE_TYPE`` for all 230 groups; every group builds a ``CrystalChart`` with an
    explicit length box (sg 6-9 refused with the K message unless ``'double'``), cell blocks of 6 / 4 / 3 / 2 / 2 / 1
@@ -460,9 +461,12 @@ def test_orthorhombic_faces_and_gluings():
 # ---------------------------------------------------------------------------
 
 def _double_cover(sg, n=2000):
-    for name in ('euler_zyz', 'hemisphere'):
+    for name in ('euler_zyz', 'axis_angle'):          # no SO(3)/K chart in these (the K cut is built in 'hemisphere')
         with pytest.raises(NotImplementedError, match='cuts K out of SO'):
             charts.CrystalChart.for_latent_v1(sg, 1.7, name)
+    fd = charts.CrystalChart.for_latent_v1(sg, 1.7, 'hemisphere')       # since 2026-10-26: the K cut
+    assert (fd.multiplicity, fd.domain, fd.k_cut) == (1, 'fundamental', True)
+    assert isinstance(fd.orientation, charts.KCutHemisphereChart)
     ch = charts.CrystalChart.for_latent_v1(sg, 1.7, 'euler_zyz', orientation_cover='double')
     assert (ch.multiplicity, ch.domain, ch.orientation_cover) == (2, 'double_cover', 'double')
     assert ch.log_multiplicity == math.log(2)

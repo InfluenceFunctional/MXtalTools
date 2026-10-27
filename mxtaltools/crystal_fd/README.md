@@ -14,10 +14,12 @@ crystal with the unmirrored reference, as an alternative to D2; D2 stays the imp
 a cell step for every group above monoclinic (`axis_order`, `canon`): the cell snapped to the group's exact metric and,
 in sg 16-74, put in the group's canonical axis order, so `canonicalize` no longer returns `pose_only` rows. Since
 2026-10-21 also charts and the reference measure for sg 16-230 (one coordinate per free cell parameter) and for sg 6-9
-as an explicit double cover of the K cut.
-Nothing outside this package and `tests/fd/` consumes it yet: no GFN adapter, no prior migration, no CIF/format
-layer. The design note is the specification; where this code departs from it, the code and
-its gates (below) are what is true now.
+as an explicit double cover of the K cut. Since 2026-10-26 sg 6-9 also have a chart of the fundamental domain itself:
+the K cut in the hemisphere orientation chart (`charts.KCutHemisphereChart`, r signed and bounded by rho(theta, phi));
+the double cover stays as an option.
+Outside this package and `tests/fd/` only GFN evaluation code consumes it (`energy_sampling/eval/fd_search`,
+`eval/fd_stress`): no trainer adapter, no prior migration, no CIF/format layer. The design note is the
+specification; where this code departs from it, the code and its gates (below) are what is true now.
 
 ## What it does
 
@@ -51,8 +53,9 @@ canonical descriptions:
    on faces and an orientation rule at special positions (in sg 6-9 this is the K cut in SO(3)). Free axes are gauged
    to the value `MolCrystalOps.canonicalize_free_axes` sets. The fold never builds atoms and takes no molecule: it
    works on the +1 sheet and never folds through molecular point symmetry.
-3. **Charts** (every group; sg 6-9 only as a double cover): coordinates on the canonical set with exact maps and
-   closed-form log-Jacobians, plus the trainer's latent read as a chart (log-Jacobian sg 1 and 2 only).
+3. **Charts** (every group; sg 6-9 in the hemisphere orientation chart through the K cut, or as a double cover in any
+   orientation chart): coordinates on the canonical set with exact maps and closed-form log-Jacobians, plus the
+   trainer's latent read as a chart (log-Jacobian sg 1 and 2 only).
 4. **Measure**: the log-density of Haar(dR) x (V d^k t) x mu_cell relative to a chart's coordinates, and image
    multiplicities between domains.
 
@@ -72,8 +75,12 @@ ASU(Gamma+) cctbx's asymmetric unit of Gamma+/K on the non-free coordinates.
 - **From orthorhombic up (2026-10-21) the parameterization is designed for efficiency, not for today's trainer**
   ("We will change the trainer so it makes more physical sense. Averaging is probably dumb."): one cell coordinate per
   free cell parameter, and `'latent_v1_lebesgue'` means flat in each free log length (and free angle) in every family.
-  The trainer's averaged length rows are not mirrored by any adapter. sg 6-9 enter only through
-  `orientation_cover='double'`; orientation charts stay as they are (O3 deferred).
+  The trainer's averaged length rows are not mirrored by any adapter. sg 6-9 entered only through
+  `orientation_cover='double'` until 2026-10-26 (next item); orientation charts stay as they are (O3 deferred).
+- **sg 6-9 get a unique chart (2026-10-26).** Owner: uniqueness is required (a cover is not the answer), the
+  orientation chart is `'hemisphere'`, seams are handled by consumers, molecular point symmetry is ignored. Built as
+  `KCutHemisphereChart`, the orientation block `CrystalChart` uses for sg 6-9 without a cover; the double cover stays
+  as an option, and the other orientation charts have no SO(3)/K chart.
 
 ## API in brief
 
@@ -170,18 +177,36 @@ ASU(Gamma+) cctbx's asymmetric unit of Gamma+/K on the non-free coordinates.
   `CrystalChart` (their product on the +1
   sheet, every group; `domain`, `multiplicity`, `log_multiplicity`; `CrystalChart.for_length_box(sg, (lo, hi),
   orientation)` with an explicit box, `CrystalChart.for_latent_v1(sg, radius, orientation)` with the trainer's length
-  box, used above monoclinic as a box only; sg 6-9 refused for want of an SO(3)/K chart unless
-  `orientation_cover='double'`: the chart then covers ASU(Gamma+) x all of SO(3), both K images, `multiplicity` 2,
+  box, used above monoclinic as a box only; sg 6-9 (since 2026-10-26) with `orientation='hemisphere'` and no cover
+  take the orientation block `KCutHemisphereChart(sg)` (`k_cut` True, `domain` `'fundamental'`, `multiplicity` 1):
+  (theta, phi, r) with r signed in (-pi, pi] (the trainer's r in (pi, 2 pi] read as r - 2 pi, the same rotation) and
+  the AR bound |r| <= rho(theta, phi) = 2 atan2(1, sqrt(max(0, 1 - 2 u_x^2))) = arccos(-u_x^2 / (1 - u_x^2)) for
+  u_x^2 < 1/2 and pi above, u_x = sin theta cos phi: exactly R00 >= 0, the fold's rule 2 against Q_K R with
+  Q_K = `K_B_ROTATION` = diag(-1, 1, -1), the 2-fold about b (Cartesian y in MXtalTools' frame; `k_rotation(sg, cell)`
+  is T W_K T^-1 from the table's K element `k_element(sg)`, checked per row within `FRAME_TOL` = 1e-6 in `forward`
+  and `inverse`, which float32-stored rows pass: their alpha and gamma are about 4.4e-8 rad off 90 deg, Q_K up to
+  9.3e-8 off). Haar density the hemisphere one (sin^2(r/2) is even); Haar mass of the cut 1/2; rho is float64 for
+  any prefix dtype. `unmap` decides between R and Q_K R by the fold's own rule 2 (`fold_keeps`, at `FOLD_TOL` =
+  1e-9, the fold's default) and charts the fold's choice: R where the fold keeps it, Q_K R where the fold keeps Q_K R
+  by a later entry (R00 in its tie band, R00 >= -`BAND_TOL` = -5e-10); an image the fold rejects by its first key
+  (R00 < -5e-10) is returned outside the bounds. The charted rotation is projected onto SO(3), turned onto the cut
+  face by `onto_face` (the nearest face point, geodesic move arcsin|R00|) where its R00 is below 0, and |r| left
+  above rho by rounding (about 1e-8, at the cusp u_x^2 = 1/2, |r| = pi) is put on rho. Seams: the equator by
+  (phi, r) -> (phi + pi, -r), r = -pi to pi where rho = pi, the cut face R00 = 0 to itself by K. `euler_zyz`,
+  `axis_angle` and `quaternion` have no SO(3)/K chart (NotImplementedError). With `orientation_cover='double'` (any
+  orientation chart) the chart instead covers ASU(Gamma+) x all of SO(3), both K images, `multiplicity` 2,
   `domain` `'double_cover'`, and a density on it must be K-invariant relative to the reference measure: log p_y -
   `log_reference_density` equal at y and at the chart point of `k_image(desc)` (in `euler_zyz` p_y itself is equal;
-  in `hemisphere` and `axis_angle` the two differ by the Haar ratio); augment training data with `k_image(desc)`),
+  in `hemisphere` and `axis_angle` the two differ by the Haar ratio); augment training data with `k_image(desc)`,
+  defined on the cover and on the K cut, where it is the image outside the chart),
   `LatentV1Chart(sg, radius)` (`describe` / `latents` for any
   group, run through the live MolCrystalOps maps unchanged; `forward` / `inverse` with log-Jacobian for sg 1 and 2;
   sg >= 16 refused for good with `LATENT_ABOVE_MONOCLINIC`: the trainer's latent there is to be replaced, and no
   averaged-row Jacobian is built; the live clamp is returned as a mask), `latent_v1_length_box`, `from_unit`.
 - `measure`: `log_reference_density(desc, chart, cell_measure)` (any `CrystalChart`; `'metric_invariant'` triclinic
-  only), `log_multiplicity(sg, src, dst)`, `images_per_crystal` (domains `'fundamental'`, `'double_cover'` (sg 6-9:
-  2), `'latent_v1_box'` (refused also in the orthorhombic groups with more than one axis order: the trainer fixes
+  only), `log_multiplicity(sg, src, dst)`, `images_per_crystal` (domains `'fundamental'` (1; sg 6-9 the K cut),
+  `'double_cover'` (sg 6-9: 2; log Z of the cover is log Z of the K cut + log 2, measured by Monte Carlo in
+  `test_k_cut_chart.py`), `'latent_v1_box'` (refused also in the orthorhombic groups with more than one axis order: the trainer fixes
   none, so its box holds a cell-dependent number of orders), `'unit_cell'`), `cell_volume`.
 - `checks`: `same_crystal(a, b, mol)` (largest atom deviation, Angstrom; float64 literal build from the table's G),
   `orbit_check(sg, n)`, `round_trip(desc, path, mol=None, cell_rtol=1e-8)`.
@@ -484,6 +509,28 @@ and the 1e5-per-side histogram tests (which are gate 2's acceptance; the fast ti
   facet points and their translates chart to coordinates equal modulo the period with equal log-Jacobians, and only
   the nine [1, +-1, 0] groups are sheared; in those the seam's ends are one crystal with one reference density and
   the interval ends are not.
+  Since 2026-10-26 the sg 6-9 test there also checks that `'hemisphere'` without a cover gives the K cut and that
+  `euler_zyz` and `axis_angle` still refuse.
+- `test_k_cut_chart.py` (the sg 6-9 K cut, `KCutHemisphereChart`; fast lane except the local-data test): the table's
+  W_K is diag(-1, 1, -1) and T W_K T^-1 is the 2-fold about y on random monoclinic cells; rho against the arccos
+  form; round trips within 1e-10 (log-Jacobians cancel); every draw is its own canonical form and in the domain, its
+  K image outside the r bound and not in the domain; canonical forms of 2,000 random crystals per group chart inside
+  the orientation bounds exactly and map back within 1e-10; on 3,794 adversarial rows (R00 from 0.3 down to 0 on both
+  sides, theta at and near pi/2 and near 0, u_x^2 at and near 1/2, r on and near the cut and near +-pi, each with its
+  K image) the bound's inside equals the fold's choice on every row the fold decides by the sign of R00 (|R00| >
+  tol/2), a bound without the (1 - u_x^2) denominator disagrees on more than 100, `fold_keeps` equals the fold's
+  choice on every row, every fold output charts inside exactly and back to itself within 1e-7 (tie-band rows turned
+  onto the face, rounding at the cusp put on rho, measured 2.1e-8), the raw rows the fold keeps or rejects by a later
+  entry chart as the fold's choice and those it rejects by its first key outside; canonical rows stored in float32
+  are accepted, chart inside and agree with `fd_status`, and canonical rows at the cusp whose R is off SO(3) (float32
+  origin, or 1e-7 noise) chart inside and come back within O(eps); the cut's Haar mass is 1/2 by quadrature (1e-6)
+  and Monte Carlo (the wrong bound's is not, the plain chart's is 1); log Z of the double cover minus log Z of the K
+  cut is log 2 (Monte Carlo over the whole chart, sg 7 and 8) and a canonical row's reference density is the same on
+  both; the equator, r = +-pi and cut-face gluings; guards (other orientation charts, a K-cut block where K is
+  trivial or covered, a subclass named `'hemisphere'`, a cell whose Q_K is 1e-5 off refused, float32 storage
+  accepted); 13 other groups keep the plain block bit for bit. Local data (`slow`, `csd_fd_v4`: 5,534 rows of sg 7
+  and 9): every canonical and special-metric row of sg 6-9 charts inside the K cut exactly and maps back within
+  1e-10.
 - `test_gate4_higher_sg.py` (`slow`): crystals drawn from the new charts (19, 92, 146, 169, 198, 205: one group per
   Gamma+ point-group type above monoclinic; 29, 33, 61, 62), built with `dataset.to_mol_crystal_data`: every Gamma+
   image, every allowed axis order and (sg 9) the K image has the source's eLJ (relative 1e-3 or 5e-3 raw; measured
@@ -504,7 +551,8 @@ and the 1e5-per-side histogram tests (which are gate 2's acceptance; the fast ti
   the log-length face chart of `axis_order`, and `CellChart` for the orthorhombic, tetragonal, hexagonal and cubic
   families.
 - Charts and measure: sg 1 and 2; `CrystalChart` also takes monoclinic groups with trivial K (3-5, 10-15) and, since
-  2026-10-21, every group 16-230 and sg 6-9 as the double cover, with `'latent_v1_lebesgue'` only (gate 2's
+  2026-10-21, every group 16-230 and sg 6-9 as the double cover (since 2026-10-26 also as the K cut in the hemisphere
+  chart), with `'latent_v1_lebesgue'` only (gate 2's
   histograms have not been run there; the measure is checked by its closed-form integral). `PolytopeARChart` and
   `LatentV1Chart.describe` / `latents` work in any group; `LatentV1Chart`'s log-Jacobian and `metric_invariant` are
   built for triclinic groups only.
@@ -588,6 +636,22 @@ and the 1e5-per-side histogram tests (which are gate 2's acceptance; the fast ti
   In the nine sheared centroid groups (88, 91, 92, 95, 96, 98, 122, 141, 142) the centroid coordinates are
   (x + y, x - y, z) or (x - y, x + y, z), not (x, y, z): a model or prior built on the old u of these groups does not
   carry over.
+- **The sg 6-9 K cut** (2026-10-26). Built in the hemisphere chart only. Its r coordinate is signed: a prior or
+  model built on the trainer's r in [0, 2 pi] maps by r -> r - 2 pi for r > pi. The fold's set and the chart's
+  closed bounds differ in the fold's tie band |R00| <= tol/2 (measure about 1e-9; measured 2026-10-26: `csd_fd_v4`
+  holds 1,448 canonical or special-metric rows of sg 7 and 4,086 of sg 9, none of sg 6 or 8, and their smallest R00
+  is 1.1e-4): there `inverse` charts the fold's choice turned onto the cut face (R00 = 0), so `forward(inverse(row))`
+  is the canonical row within |R00| <= 5e-10, but a point on the face is fold-canonical only when the fold's later
+  keys favour it (about half of them). A consumer whose outputs can land on |r| = rho (a bounded AR row saturating at
+  its end) canonicalises them before using them as canonical forms. `unmap` assumes the fold's default tolerance
+  (`FOLD_TOL` = 1e-9); rows folded with another tolerance can be charted at the other image within it of the face.
+  rho has a square-root cusp at u_x^2 = 1/2 (infinite slope in theta and phi): a row whose orientation coordinates
+  are stored in float32 can lie up to about 1e-3 rad in r outside the bound of its own float32 prefix, and
+  d rho / d(theta, phi) is unbounded there; a float32 or differentiable consumer keeps the orientation row in float64
+  or clamps r to its own bound. A float32 row within about 1e-7 of R00 = 0 can cast across the cut (as centroids
+  near a face do). Gamma+ of sg 6-9 has rotation parts I and Q_K only, so the fold cuts the same half R00 >= 0 at
+  every t_y, the faces of ASU(Gamma+) included. Gate 2's histograms have not been run on it; its measure is checked by
+  quadrature and Monte Carlo (`test_k_cut_chart.py`).
 - **The tolerance band.** Face tests use `tol` (default 1e-9, fractional unit-normal distance). Within about `tol` of
   a facet, edge or vertex, plane tests within a tolerance are not equivariant: `in_asu` can count 0 or 2 images of an
   orbit, and `fold` may report `tie = 3` (no candidate passed the cut trees; it then returns the candidate the

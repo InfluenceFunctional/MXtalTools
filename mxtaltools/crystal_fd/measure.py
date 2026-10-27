@@ -25,7 +25,8 @@ over their period), and a cell measure chosen explicitly, with no default:
 
 Multiplicities (``images_per_crystal``, ``log_multiplicity``) are hard-wall counts of
 the descriptions of one crystal a domain holds; a ``CrystalChart`` names its own domain
-(``CrystalChart.domain``: 'fundamental', or 'double_cover' for sg 6-9 with
+(``CrystalChart.domain``: 'fundamental', sg 6-9 included through the K cut of
+``charts.KCutHemisphereChart``, or 'double_cover' for sg 6-9 with
 ``orientation_cover='double'``).
 """
 import math
@@ -90,7 +91,9 @@ def log_reference_density(desc: CrystalDescription, chart, cell_measure: str) ->
     For a ``CrystalChart`` of any family it is the chart's log-Jacobian (cell, centroid and
     orientation blocks) + Z' log V + ``log_cell_density`` (0 for ``'latent_v1_lebesgue'``);
     from orthorhombic up the cell block's log-Jacobian is 0 as well, the coordinates being
-    the free log lengths. On the sg 6-9 double cover the density is the same pointwise;
+    the free log lengths. On sg 6-9 the K cut (``KCutHemisphereChart``, signed r) has the
+    hemisphere Haar density, even in r, and integrates to the fundamental domain's mass (its
+    orientation block to 1/2); on the double cover the density is the same pointwise and
     its integral over the chart is ``chart.multiplicity`` (2) times the fundamental
     domain's.
     """
@@ -113,7 +116,8 @@ def images_per_crystal(sg: int, domain: str) -> int:
     ``'latent_v1_box'`` holds the trainer's cell, which is that cell in the hard-wall limit except in the orthorhombic
     groups refused below.
 
-    ``'fundamental'``: 1 (``CrystalChart``'s image). ``'double_cover'``: ASU(Gamma+) x SO(3)
+    ``'fundamental'``: 1 (``CrystalChart``'s image; sg 6-9: ASU(Gamma+) x the K cut of SO(3),
+    ``charts.KCutHemisphereChart``). ``'double_cover'``: ASU(Gamma+) x SO(3)
     without the K cut, |K| = 2, the image of ``CrystalChart(..., orientation_cover='double')``; defined for sg 6-9
     only (elsewhere K is trivial: ValueError). ``'unit_cell'``: [0, 1)^k (non-free coordinates) x SO(3),
     |Gamma+| (counted modulo Z^3 and free shifts). ``'latent_v1_box'``: the trainer's box (``ASYM_UNITS``) with the

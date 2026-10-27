@@ -33,6 +33,24 @@ def reject_retired_keys(config):
         raise ValueError(f"retired crystal-search keys (umbrella repulsion was removed): {found}")
 
 
+def check_fd_refold_stages(opt_stages, coord):
+    """A stage with fd_refold returns crystal_fd's canonical centres, which need not lie in the ASYM_UNITS box. A
+    later clamp-mode stage, or a hop kick of a campaign basin (clean_cell_parameters clamps centres into the box),
+    would change those crystals: raise ValueError for fd_refold before a non-wrap stage or with a campaign
+    (``coord`` not None)."""
+    stages = [s if isinstance(s, dict) else vars(s) for s in opt_stages]
+    for i, s in enumerate(stages):
+        if not s.get('fd_refold', False):
+            continue
+        later = [j for j in range(i + 1, len(stages)) if stages[j].get('centroid_boundary', 'clamp') != 'wrap']
+        if later:
+            raise ValueError(f"cfg:opt[{i}].fd_refold is followed by clamp-mode stage(s) {later}: fd_refold rows "
+                             f"are not in the ASYM_UNITS box; set centroid_boundary 'wrap' on every later stage")
+        if coord is not None:
+            raise ValueError(f"cfg:opt[{i}].fd_refold in a campaign (cfg:coord_dir): its basins become hop "
+                             f"parents, and a hop kick clamps centres into the ASYM_UNITS box")
+
+
 def run_files(out_path):
     """Per-run side files next to the output. Named after the run so two searches sharing a working directory can
     never read (or delete) each other's -- the May acridine chunks carry copies across arms, consistent with one
@@ -225,6 +243,7 @@ def _search_loop(config, samples_to_optim, target, device, data_mode, out_path, 
     running_min = min((float(getattr(r, final_key)) for r in opt_outs if final_key in r.keys()), default=None)
     if hops_mode and coord is None:
         raise ValueError("init_sample_method 'hops' draws its starts from a campaign: set cfg:coord_dir")
+    check_fd_refold_stages(config.opt, coord)
     # hop mode: how long a job waits for hop_parents.pt (the first curate pass may be running in another job, or a
     # killed curator's lease must go stale first: max(3 x curate interval, 3600 s)), and the pass that must list no
     # parent before the stream counts as exhausted (a pass that started after this job's last shard)

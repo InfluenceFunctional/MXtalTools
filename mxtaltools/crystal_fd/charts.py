@@ -28,8 +28,9 @@ inverse map). ``measure.log_reference_density`` adds the cell-measure and V term
 Block charts (``PolytopeARChart`` for t, ``OrientationChart`` for R, ``CellChart``
 for the cell) also offer ``map(y) -> (x, logabsdet)`` and ``unmap(x)``; their
 ``forward`` fills one field of a context description. ``CrystalChart`` is the
-product of the three on the +1 sheet, for every space group (sg 6-9 only as the
-double cover of ``orientation_cover='double'``). ``LatentV1Chart`` wraps the
+product of the three on the +1 sheet, for every space group (sg 6-9 with the K cut of
+``KCutHemisphereChart`` in the hemisphere chart, or as the double cover of
+``orientation_cover='double'`` in any orientation chart). ``LatentV1Chart`` wraps the
 trainer's latent maps (``MolCrystalOps.latent_to_cell_params`` / ``latent_transform``),
 clamp included, and returns the clamp as a mask; its log-Jacobian is built for sg 1
 and 2 only.
@@ -535,6 +536,183 @@ class OrientationChart(_BlockChart):
         return _full(B, lo, y_prefix), _full(B, hi, y_prefix)
 
 
+#: Q_K of sg 6-9 in MXtalTools' Cartesian frame (a along x, b in the xy plane): the 2-fold about b, which is Cartesian
+#: y for every cell with alpha = gamma = 90 deg. ``KCutHemisphereChart``'s bound assumes it; ``CrystalChart`` checks it
+#: per row against ``k_rotation``.
+K_B_ROTATION = ((-1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, -1.0))
+#: the fractional W of K's 2-fold in sg 6-9 (row-major, as the table stores it)
+_W_K_B = [-1, 0, 0, 0, 1, 0, 0, 0, -1]
+
+
+def k_element(sg: int) -> int:
+    """Index into ``group_table(sg).gamma_W`` of the non-identity element of K (sg 6-9); ValueError where K is
+    trivial, NotImplementedError where K has more than two elements (no group in the table)."""
+    tab = group_table(int(sg))
+    ks = [int(i) for i in tab.kernel if int(i) != int(tab.gamma_plus[0])]
+    if not ks:
+        raise ValueError(f'sg {sg}: K is trivial')
+    if len(ks) > 1:
+        raise NotImplementedError(f'sg {sg}: |K| = {len(ks) + 1}; the K cut is built for |K| = 2')
+    return ks[0]
+
+
+def k_rotation(sg: int, cell) -> torch.Tensor:
+    """[B, 3, 3] Q_K = T_fc W_K T_fc^-1 of each cell [B, 6] (projected onto SO(3), as ``domains.fold`` acts), W_K the
+    group table's non-identity element of K (``k_element``). For a monoclinic cell (alpha = gamma = 90 deg) in
+    MXtalTools' frame this is ``K_B_ROTATION``: with W_K = diag(-1, 1, -1) = -I + 2 e_b e_b^T,
+    Q_K = -I + 2 b b*^T (b = T e_b, b* = e_b^T T^-1 the reciprocal row), and b* = b / |b|^2 when b is orthogonal to a
+    and c, so Q_K = -I + 2 b^ b^T, the 2-fold about b^ = e_y (b lies along y when gamma = 90 deg)."""
+    from mxtaltools.crystal_fd.ops import cartesian_rotation, cell_matrices
+    W = group_table(int(sg)).gamma_W[k_element(sg)]
+    cell = torch.as_tensor(cell, dtype=F64)
+    return cartesian_rotation(cell_matrices(cell), W.to(cell.device))
+
+
+class KCutHemisphereChart(OrientationChart):
+    """SO(3)/K for sg 6-9 (K = {I, Q_K}, Q_K = ``K_B_ROTATION``): the hemisphere chart with r read as a signed angle
+    and cut to the fold's half of SO(3). Every orientation of the fundamental domain once (up to its boundary).
+
+    Coordinates (AR order) ``(theta, phi, r)``: the axis n = (sin theta cos phi, sin theta sin phi, cos theta),
+    theta in [0, pi/2], phi a circle of period 2 pi, and the signed angle r in [-rho(theta, phi), rho(theta, phi)],
+    R = rotation by r about n (r < 0 is the trainer's r + 2 pi, the same rotation: ``so3.matrix_to_hemisphere``'s
+    r in (pi, 2 pi] is read as r - 2 pi, so r runs over (-pi, pi]).
+
+    The cut. ``domains.fold``'s rule 2 keeps, of R and Q_K R, the lexicographically larger matrix (row-major). Q_K's
+    first row is (-1, 0, 0), so (Q_K R)[0, :] = -R[0, :] and the first key compares R00 with -R00: the fold keeps
+    R00 > 0 (within its tie band |R00| <= tol/2 the next entries decide; measure zero, and both points lie on this
+    chart's boundary). Gamma+ of sg 6-9 is {I, t(0, 1/2, 0), 2_b, 2_b t(0, 1/2, 0)}: the elements outside K translate
+    t_y by 1/2 with rotation parts I and Q_K, so no t_y has a larger stabiliser in SO(3), and the fold cuts the same
+    half R00 >= 0 at every t_y, the faces of ASU(Gamma+) included. With
+    u_x = n_x = sin theta cos phi, R00 = cos r + u_x^2 (1 - cos r) = (1 - u_x^2) cos r + u_x^2, so R00 >= 0 iff
+    cos r >= -u_x^2 / (1 - u_x^2), i.e. |r| <= rho = arccos(-u_x^2 / (1 - u_x^2)) where u_x^2 < 1/2, and every r
+    where u_x^2 >= 1/2 (rho = pi). Written without the ill-conditioned arccos near -1:
+    rho = 2 atan2(1, sqrt(max(0, 1 - 2 u_x^2))) (arccos c = 2 atan2(sqrt(1 - c), sqrt(1 + c)), and here
+    1 - c = 1 / (1 - u_x^2), 1 + c = (1 - 2 u_x^2) / (1 - u_x^2)). rho runs from pi/2 (axis along y or z) to pi,
+    computed in float64 whatever the prefix's dtype. It has a square-root cusp where u_x^2 = 1/2 (infinite slope in
+    theta and phi): there a perturbation eps of the axis moves rho by about sqrt(eps), so a float32-stored row can
+    lie up to about 1e-3 rad in r outside the bound of its own float32 prefix, and d rho / d(theta, phi) is
+    unbounded; a float32 or differentiable consumer keeps the orientation row in float64 or clamps r to its own
+    bound. The bound holds for every K whose 2-fold axis is perpendicular to Cartesian x; ``CrystalChart`` checks
+    Q_K = ``K_B_ROTATION`` per row within ``FRAME_TOL``.
+
+    Measure. Haar's density in (theta, phi, r) is sin^2(r/2) sin(theta) / (2 pi^2), even in r, so the hemisphere
+    one (``so3.haar_log_density('hemisphere', y)``) holds for signed r; the cut has Haar mass 1/2:
+    (1 / 2 pi^2) * integral of (rho - sin rho) sin theta dtheta dphi = 1/2.
+
+    Gluings (seams for a consumer): the equator theta = pi/2 to itself by (phi, r) -> (phi + pi, -r) (the trainer's
+    (phi + pi, 2 pi - r); rho is unchanged by it); r = -pi to r = pi where rho = pi (one rotation); the cut faces
+    |r| = rho, where R00 = 0, to themselves by R -> Q_K R. A point on the cut face is fold-canonical only when the
+    fold's later keys favour it (about half of them): a consumer whose outputs can land on |r| = rho (a bounded AR
+    row saturating at its end) canonicalises them before using them as canonical forms.
+
+    ``unmap`` (``inverse``) decides between R and Q_K R by the fold's own rule (``fold_keeps``, rule 2 at
+    ``FOLD_TOL``, on R as given), and charts (1) R where the fold keeps it, (2) Q_K R where the fold keeps Q_K R
+    by a later entry (R00 within the fold's tie band, R00 >= -``BAND_TOL``), and (3) R as it is otherwise: an image
+    the fold rejects by its first key (R00 < -``BAND_TOL``), outside the bounds. In (1) and (2) the coordinates are
+    those of the rotation nearest the charted matrix (``so3.nearest_rotation``), turned onto the face by
+    ``onto_face`` where its R00 is below 0 (the fold's choice lies within the closed cut, R00 >= -tol/2, so this is
+    the tie band, rounding, or the non-orthogonality of R; geodesic move arcsin|R00|), and |r| left above rho by
+    rounding (up to about 1e-8, at the cusp u_x^2 = 1/2, |r| = pi) is put on rho. Snapping r alone instead would move
+    R by about 2 sqrt|R00| at the cusp, where r runs along the face. So every row the fold keeps charts inside the
+    bounds, and ``forward(inverse(row))`` returns the row itself within its distance from SO(3), plus |R00| for a
+    tie-band row (put on the face), plus about 1e-8.
+    """
+    #: ``domains.fold``'s default tolerance (on R entries); ``unmap`` applies the fold's rule 2 at this tolerance
+    FOLD_TOL = 1e-9
+    #: the fold's tie band on R00 at ``FOLD_TOL``: its first key (R00 against -R00) is within tolerance where
+    #: |R00| <= FOLD_TOL / 2, and a later entry decides
+    BAND_TOL = FOLD_TOL / 2
+    #: ``CrystalChart`` refuses rows whose Q_K (``k_rotation``) differs from ``K_B_ROTATION`` by more than this. The
+    #: chart reads every row at alpha = gamma = 90 deg (the monoclinic cell chart ignores both, and ``canonicalize``
+    #: snaps them within its ``angle_tol`` = 1e-6 rad before the fold), where Q_K is ``K_B_ROTATION`` exactly. On
+    #: random monoclinic cells (beta 90-130 deg) Q_K's deviation measured 1.31 times an alpha offset and 1.0 times a
+    #: gamma offset; float32 storage leaves both angles about 4.4e-8 rad off 90 deg and Q_K up to 9.3e-8 off.
+    FRAME_TOL = 1e-6
+    cut = 'K'
+
+    def __init__(self, sg: int):
+        sg = int(sg)
+        k = k_element(sg)
+        W = group_table(sg).raw['gamma']['W'][k]
+        if list(W) != _W_K_B:
+            raise NotImplementedError(f'sg {sg}: K is {W}, not the 2-fold about b this chart cuts')
+        super().__init__('hemisphere')
+        self.sg = sg
+        self.k_element = k
+        self.Q_K = torch.tensor(K_B_ROTATION, dtype=F64)
+        self.dims = (Dim('theta', 'interval', None, 0), Dim('phi', 'circle', 2 * math.pi, 1),
+                     Dim('r_signed', 'interval', None, 2))
+
+    @staticmethod
+    def rho(theta, phi) -> torch.Tensor:
+        """[B] float64: the bound on |r| at the axis (theta, phi): 2 atan2(1, sqrt(max(0, 1 - 2 u_x^2))),
+        u_x = sin theta cos phi (computed in float64 whatever the inputs' dtype)."""
+        theta, phi = torch.as_tensor(theta, dtype=F64), torch.as_tensor(phi, dtype=F64)
+        ux = torch.sin(theta) * torch.cos(phi)
+        return 2 * torch.atan2(torch.ones_like(ux), torch.sqrt((1 - 2 * ux * ux).clamp(min=0)))
+
+    def k_image(self, R) -> torch.Tensor:
+        """[B, 3, 3] Q_K R."""
+        R = torch.as_tensor(R, dtype=F64)
+        return self.Q_K.to(R.device) @ R
+
+    def fold_keeps(self, R) -> torch.Tensor:
+        """[B] bool: whether ``domains.fold``'s rule 2 (at ``FOLD_TOL``) keeps R rather than Q_K R. The two poses
+        share their centroid (K acts trivially on it), so the pose keys decide, R first in candidate order."""
+        from mxtaltools.crystal_fd.ops import _lex_select
+        R = torch.as_tensor(R, dtype=F64)
+        keys = torch.stack([R.reshape(-1, 9), self.k_image(R).reshape(-1, 9)], 1)
+        valid = torch.ones(keys.shape[:2], dtype=torch.bool, device=R.device)
+        return _lex_select(keys, valid, self.FOLD_TOL, largest=True) == 0
+
+    def bounds(self, y_prefix, i):
+        B = y_prefix.shape[0]
+        if i == 0:
+            return _full(B, 0, y_prefix), _full(B, math.pi / 2, y_prefix)
+        if i == 1:
+            return _full(B, -math.pi, y_prefix), _full(B, math.pi, y_prefix)
+        rho = self.rho(y_prefix[:, 0], y_prefix[:, 1])
+        return -rho, rho
+
+    @staticmethod
+    def onto_face(R) -> torch.Tensor:
+        """[B, 3, 3] the nearest rotation to each R [B, 3, 3] on the cut face R00 = 0: R turned by the smallest
+        rotation taking its first column c = R e_x to (0, c_y, c_z) / |(c_y, c_z)|, a geodesic distance arcsin|R00|
+        (a rotation by w moves c by at most w, and c is arcsin|c_x| from the yz plane). Rows with c = +-e_x (R00 =
+        +-1, far from the face) are returned unchanged."""
+        R = torch.as_tensor(R, dtype=F64)
+        c = R[:, :, 0]
+        s = torch.sqrt(c[:, 1] ** 2 + c[:, 2] ** 2)
+        ok = s > 0
+        s = torch.where(ok, s, torch.ones_like(s))
+        cp = torch.stack([torch.zeros_like(s), c[:, 1] / s, c[:, 2] / s], 1)
+        v = torch.linalg.cross(c, cp)                            # sin(angle) times the axis
+        cos = (c * cp).sum(1)                                    # = |(c_y, c_z)| > 0
+        z = torch.zeros_like(s)
+        V = torch.stack([z, -v[:, 2], v[:, 1], v[:, 2], z, -v[:, 0], -v[:, 1], v[:, 0], z], 1).reshape(-1, 3, 3)
+        eye = torch.eye(3, dtype=F64, device=R.device).expand_as(V)
+        turn = eye + V + (V @ V) / (1 + cos)[:, None, None]      # Rodrigues: the rotation taking c to cp
+        return torch.where(ok[:, None, None], turn @ R, R)
+
+    def unmap(self, R):
+        R = torch.as_tensor(R, dtype=F64)
+        keeps = self.fold_keeps(R)
+        tie = ~keeps & (R[:, 0, 0] >= -self.BAND_TOL)          # the fold took Q_K R by a later entry
+        charted = keeps | tie
+        Rc = torch.where(tie[:, None, None], self.k_image(R), R)
+        if Rc.shape[0]:
+            Rc = torch.where(charted[:, None, None], so3.nearest_rotation(Rc), Rc)
+            Rc = torch.where((charted & (Rc[:, 0, 0] < 0))[:, None, None], self.onto_face(Rc), Rc)
+        hs = so3.matrix_to_hemisphere(Rc)
+        theta, phi, r = hs.unbind(1)
+        r = torch.where(r > math.pi, r - 2 * math.pi, r)
+        rho = self.rho(theta, phi)
+        snap = charted & (r.abs() > rho)                         # rounding only; |r| > rho >= pi/2, sign(r) = +-1
+        r = torch.where(snap, torch.sign(r) * rho, r)
+        y = torch.stack([theta, phi, r], 1)
+        return y, -so3.haar_log_density('hemisphere', y)
+
+
 class CellGluing(NamedTuple):
     """Two faces of an orthorhombic cell chart glued by an allowed axis order (a seam; each side an interval end).
 
@@ -923,9 +1101,20 @@ class CrystalChart(Chart):
     space group whose K is trivial: the image is the fundamental domain (``domain``
     'fundamental', ``multiplicity`` 1).
 
-    **sg 6-9** (K = C2(b) acts on R alone; the fundamental domain cuts it out of SO(3) and
-    no orientation chart of SO(3)/K is built) are refused unless ``orientation_cover=
-    'double'``: the chart then covers ASU(Gamma+) x all of SO(3), both K images of every
+    **sg 6-9** (K = C2(b) acts on R alone; the fundamental domain cuts it out of SO(3)).
+    With ``orientation_cover=None`` (since 2026-10-26) the orientation block is
+    ``KCutHemisphereChart(sg)``, the hemisphere chart with a signed r cut to
+    |r| <= rho(theta, phi) (the fold's half of SO(3)): ``domain`` 'fundamental',
+    ``multiplicity`` 1. An ``OrientationChart('hemisphere')`` passed in is replaced by it
+    (``k_cut`` True); the other orientation charts have no SO(3)/K chart and are refused
+    (NotImplementedError). ``forward`` and ``inverse`` check per row that Q_K
+    (``k_rotation``, T W_K T^-1 of the row's cell) is the 2-fold about Cartesian y the
+    cut assumes (within ``KCutHemisphereChart.FRAME_TOL`` = 1e-6, which float32-stored
+    rows pass; ValueError otherwise). ``inverse`` charts the fold's choice between R and
+    Q_K R (``KCutHemisphereChart.unmap``).
+
+    With ``orientation_cover='double'`` the chart instead covers ASU(Gamma+) x all of
+    SO(3) in any orientation chart, both K images of every
     crystal, so ``domain`` is 'double_cover', ``multiplicity`` exactly 2 and
     ``log_multiplicity`` log 2 (``measure.log_multiplicity(sg, 'fundamental',
     'double_cover')``): log Z over the chart is log Z of the fundamental domain plus log 2.
@@ -946,6 +1135,7 @@ class CrystalChart(Chart):
     centroid : PolytopeARChart
         Of ``sg``.
     orientation : OrientationChart
+        sg 6-9 without a cover: ``OrientationChart('hemisphere')`` or ``KCutHemisphereChart(sg)`` (above).
     orientation_cover : None or 'double'
         'double' admits sg 6-9 as the double cover (above); ValueError elsewhere (K is trivial).
     """
@@ -969,13 +1159,27 @@ class CrystalChart(Chart):
         if orientation_cover == 'double' and n_k == 1:
             raise ValueError(f"sg {sg}: K is trivial, so the chart is already the fundamental domain; "
                              "orientation_cover='double' is for sg 6-9")
+        k_cut = False
         if cell.family == 'monoclinic':
             if not 3 <= int(sg) <= 15 or int(MONO_CLASS[int(sg)]) != cell.mono_class:
                 raise ValueError(f'sg {sg} is not in the monoclinic setting class of the cell chart (sg {cell.sg})')
             if n_k > 1 and orientation_cover is None:
-                raise NotImplementedError(f'sg {sg}: the domain cuts K out of SO(3); no orientation chart of SO(3)/K '
-                                          'is built')
+                if isinstance(orientation, KCutHemisphereChart):
+                    if orientation.sg != int(sg):
+                        raise ValueError(f'the K-cut orientation chart is for sg {orientation.sg}, not {sg}')
+                elif type(orientation) is OrientationChart and orientation.name == 'hemisphere':
+                    orientation = KCutHemisphereChart(int(sg))
+                else:
+                    raise NotImplementedError(
+                        f"sg {sg}: the domain cuts K out of SO(3); its chart of SO(3)/K is built in the hemisphere "
+                        f"chart only (KCutHemisphereChart), not {getattr(orientation, 'name', orientation)!r}; "
+                        "orientation_cover='double' charts the double cover in any orientation chart")
+                k_cut = True
+        if isinstance(orientation, KCutHemisphereChart) and not k_cut:
+            raise ValueError(f"sg {sg}: KCutHemisphereChart is the orientation block of sg 6-9 without a cover (K is "
+                             f"{'trivial' if n_k == 1 else 'covered by orientation_cover=' + repr(orientation_cover)})")
         self.sg = int(sg)
+        self.k_cut = k_cut
         self.cell, self.centroid, self.orientation = cell, centroid, orientation
         self.orientation_cover = orientation_cover
         self.multiplicity = n_k if orientation_cover == 'double' else 1
@@ -1010,13 +1214,15 @@ class CrystalChart(Chart):
         return cls.for_length_box(sg, box, orientation, device=device, orientation_cover=orientation_cover)
 
     def k_image(self, desc) -> CrystalDescription:
-        """The other K image of each row (double cover only): the same crystal, at the other point of the cover.
+        """The other K image of each row (sg 6-9: the double cover, or the K cut): the same crystal, at the other
+        point of the cover; on the K cut, outside the chart (the image the fold rejects).
 
         K's element acts trivially on the non-free centroid coordinates (kept bit for bit), free coordinates are set
         to the gauge, and R becomes Q_K R with Q_K = T W_K T^-1 of each row's cell.
         """
-        if self.orientation_cover != 'double':
-            raise ValueError("k_image is defined on the double cover (orientation_cover='double') only")
+        if self.orientation_cover != 'double' and not self.k_cut:
+            raise ValueError("k_image is defined where K is nontrivial (sg 6-9: orientation_cover='double', or the "
+                             "K cut) only")
         from mxtaltools.crystal_fd.ops import apply
         tab = group_table(self.sg)
         (k,) = [int(i) for i in tab.kernel if int(i) != int(tab.gamma_plus[0])]
@@ -1026,6 +1232,18 @@ class CrystalChart(Chart):
         t = torch.where(free, self.centroid.gauge.to(d.device), d.t)
         return d.replace(t=t, R=img.R, h=img.h)
 
+    def _check_k_frame(self, cell):
+        """K cut: ValueError unless every row's Q_K (``k_rotation``) is ``K_B_ROTATION`` within ``FRAME_TOL``."""
+        Q = k_rotation(self.sg, cell)
+        dev = (Q - torch.tensor(K_B_ROTATION, dtype=F64, device=Q.device)).abs().amax((1, 2))
+        bad = ~(dev <= KCutHemisphereChart.FRAME_TOL)
+        if bool(bad.any()):
+            rows = torch.nonzero(bad)[:, 0]
+            raise ValueError(f'sg {self.sg}: {len(rows)} rows (rows {rows[:8].tolist()}) have Q_K = T W_K T^-1 further '
+                             f'than FRAME_TOL = {KCutHemisphereChart.FRAME_TOL} from the 2-fold about y the K cut '
+                             f'assumes (largest {float(dev[bad].max()):.3g}); canonicalise them first (alpha = gamma = '
+                             '90 deg)')
+
     def _split(self, y):
         return [y[:, o:o + b.ndim] for o, b in zip(self.offsets, self.blocks)]
 
@@ -1033,6 +1251,8 @@ class CrystalChart(Chart):
         y = torch.as_tensor(y, dtype=F64)
         yc, yt, yr = self._split(y)
         cell, l0 = self.cell.map(yc)
+        if self.k_cut:
+            self._check_k_frame(cell)
         t, l1 = self.centroid.map(yt)
         R, l2 = self.orientation.map(yr)
         return ChartMap(CrystalDescription.from_parts(self.sg, cell, t, R), l0 + l1 + l2)
@@ -1043,6 +1263,8 @@ class CrystalChart(Chart):
             raise ValueError(f"CrystalChart(sg {self.sg}) takes Z' = 1 rows of sg {self.sg}")
         if bool((d.h[:, 0] != 1).any()):
             raise ValueError('CrystalChart is on the +1 sheet; move rows there first (domains.to_sheet)')
+        if self.k_cut:
+            self._check_k_frame(d.cell)
         y0, l0 = self.cell.unmap(d.cell)
         y1, l1 = self.centroid.unmap(d.t[:, 0])
         y2, l2 = self.orientation.unmap(d.R[:, 0])
