@@ -290,9 +290,12 @@ def safe_predict_uma(predictor, uma_batch, retries: int = 1):
     last_error = None
     for attempt in range(retries + 1):
         try:
-            torch.cuda.synchronize()  # flush prior kernels
+            cuda = torch.cuda.is_available()  # a CPU-only process (a preflight job) has no context to drain
+            if cuda:
+                torch.cuda.synchronize()  # flush prior kernels
             out = predictor.predict(uma_batch)  # this launches UMA kernels
-            torch.cuda.synchronize()  # force errors to surface *here*
+            if cuda:
+                torch.cuda.synchronize()  # force errors to surface *here*
             _CONSECUTIVE_CRASHES = 0            # a success clears the streak
             return out, False  # False = no failure
 
@@ -305,8 +308,9 @@ def safe_predict_uma(predictor, uma_batch, retries: int = 1):
             try:
                 # reset the cuda context fully. Guarded: on a sticky fault these
                 # raise too, and that secondary error would mask the real one.
-                torch.cuda.synchronize()
-                torch.cuda.empty_cache()
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                    torch.cuda.empty_cache()
             except RuntimeError as recovery_error:
                 print(f"UMA error: recovery also failed ({recovery_error}) -- "
                       f"the CUDA context is likely unusable")
@@ -606,7 +610,9 @@ def batch_to_fairchem_batch(batch, std_orientation, pbc=True, force_rebuild=Fals
     num_graphs = batch.num_graphs
 
     gather, out_n = _tiled_gather_index(batch_ind, batch.sym_mult, num_graphs)
-    atomic_numbers = z[gather]
+    # long: molecule files may store z as float (the acridine conformers do), and fairchem 2.16's AtomicData asserts
+    # integer atomic numbers
+    atomic_numbers = z[gather].long()
     pos = batch.unit_cell_pos
     n_tot = pos.shape[0]
 
@@ -760,7 +766,7 @@ def batch_to_fairchem_atomicdata(batch, std_orientation, pbc=True, force_rebuild
     sym_mult = batch.sym_mult
     for ind in range(batch.num_graphs):
         pos = ucell_pos[ucell_batch == ind]
-        sample_z = z[batch_ind == ind].repeat(sym_mult[ind])
+        sample_z = z[batch_ind == ind].repeat(sym_mult[ind]).long()  # as the collated path
         atomic_data = AtomicData(
             pos=pos,
             atomic_numbers=sample_z,
@@ -952,10 +958,13 @@ def _build_uma_crystal_predictor(model_path, device, inference_settings):
                                 "regress_stress": False}},
         device=device,
     )
-    predictor.tasks.pop('omc_forces')
-    predictor.tasks.pop('omc_stress')
-    predictor.dataset_to_tasks['omc'].pop(1)
-    predictor.dataset_to_tasks['omc'].pop(1)
+    # energy tasks only: with forces and stress off the model returns no output for those tasks, and fairchem >= 2.16
+    # denormalises every task of every dataset (model.module.tasks, which predictor.tasks now returns), not only the
+    # batch dataset's -- popping omc's alone left oc20_forces to raise KeyError
+    for name in [n for n, t in predictor.tasks.items() if t.property != 'energy']:
+        predictor.tasks.pop(name)
+    for tasks in predictor.dataset_to_tasks.values():
+        tasks[:] = [t for t in tasks if t.property == 'energy']
 
     return predictor
 
