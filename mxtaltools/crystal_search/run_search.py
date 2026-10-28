@@ -15,6 +15,7 @@ from tqdm import tqdm
 
 from mxtaltools.common.config_processing import load_yaml, dict2namespace
 from mxtaltools.common.utils import is_cuda_oom
+from mxtaltools.crystal_search.minima import MinimaLibrary, batch_keys, finish_minima
 from mxtaltools.crystal_search.run_state import RunLease, StopRequest, atomic_json_dump, atomic_torch_save, \
     committed_outputs, read_json
 from mxtaltools.crystal_search.utils import get_initial_state, init_samples_to_optim, parse_args, parse_opt_config, \
@@ -49,6 +50,42 @@ def check_fd_refold_stages(opt_stages, coord):
         if coord is not None:
             raise ValueError(f"cfg:opt[{i}].fd_refold in a campaign (cfg:coord_dir): its basins become hop "
                              f"parents, and a hop kick clamps centres into the ASYM_UNITS box")
+
+
+MINIMA_DEFAULTS = dict(kT=None, capture_d2=9.0, merge_d2=1.0, max_iter=40, tol=1e-4, lj_envelope=1.0)
+
+
+def check_minima_config(config):
+    """cfg:minima, opt-in: the last stage's rows are polished to converged minima with Hessians, merged into a library
+    of distinct minima, and the last stage of later batches retires descents that enter a known minimum's thermal
+    ellipsoid (crystal_search/minima.py). Returns the block with MINIMA_DEFAULTS filled in, or None without it.
+
+    Keys: ``kT`` (required, in the last stage target's units), ``capture_d2``, ``merge_d2``, ``max_iter`` and ``tol``
+    (``minima.newton_polish``), ``lj_envelope`` (A; None for the hard cutoff, which leaves the LJ Hessian undefined at
+    the cutoff). Raises ValueError on an unknown key, a kT that is not positive, or a last stage the polish cannot
+    follow: a target that is not an energy (``minima.ENERGY_TARGETS``), a clamp-mode stage (the polish moves centres
+    freely and re-expresses them in the ASYM_UNITS box), ``enforce_reduced`` (the polish has no wall term, so a row
+    could leave the region that filter keeps), or ``fd_refold`` (crystal_fd's centres are not in the box)."""
+    from mxtaltools.crystal_search.minima import ENERGY_TARGETS
+    block = getattr(config, 'minima', None)
+    if block is None:
+        return None
+    block = dict(block if isinstance(block, dict) else vars(block))
+    unknown = sorted(set(block) - set(MINIMA_DEFAULTS))
+    if unknown:
+        raise ValueError(f"cfg:minima: unknown key(s) {unknown}; known {sorted(MINIMA_DEFAULTS)}")
+    m = {**MINIMA_DEFAULTS, **block}
+    if m['kT'] is None or not float(m['kT']) > 0:
+        raise ValueError(f"cfg:minima.kT must be a positive energy in the last stage target's units, got {m['kT']!r}")
+    last = config.opt[-1] if isinstance(config.opt[-1], dict) else vars(config.opt[-1])
+    if str(last['optim_target']).lower() not in ENERGY_TARGETS:
+        raise ValueError(f"cfg:minima needs an energy target on the last stage ({ENERGY_TARGETS}), "
+                         f"got {last['optim_target']!r}")
+    if last.get('centroid_boundary', 'clamp') != 'wrap':
+        raise ValueError("cfg:minima needs centroid_boundary 'wrap' on the last stage")
+    if last.get('enforce_reduced', False) or last.get('fd_refold', False):
+        raise ValueError("cfg:minima cannot follow a last stage with enforce_reduced or fd_refold")
+    return m
 
 
 def run_files(out_path):
@@ -244,6 +281,8 @@ def _search_loop(config, samples_to_optim, target, device, data_mode, out_path, 
     if hops_mode and coord is None:
         raise ValueError("init_sample_method 'hops' draws its starts from a campaign: set cfg:coord_dir")
     check_fd_refold_stages(config.opt, coord)
+    minima_cfg = check_minima_config(config)
+    library = MinimaLibrary.from_rows(opt_outs) if minima_cfg is not None else None
     # hop mode: how long a job waits for hop_parents.pt (the first curate pass may be running in another job, or a
     # killed curator's lease must go stale first: max(3 x curate interval, 3600 s)), and the pass that must list no
     # parent before the stream counts as exhausted (a pass that started after this job's last shard)
@@ -288,7 +327,7 @@ def _search_loop(config, samples_to_optim, target, device, data_mode, out_path, 
                 print(f"{config.run_name}: no eligible hop parent in the campaign (the stream is exhausted); "
                       f"stopping at cursor {cursor}")
                 break
-        crystal_batch, opt_config = None, {}
+        crystal_batch, opt_config, finish_kw = None, {}, None
         if attempt['cursor'] != cursor:
             attempt.update(cursor=cursor, n=0, t0=time.time())
         attempt['n'] += 1
@@ -319,6 +358,13 @@ def _search_loop(config, samples_to_optim, target, device, data_mode, out_path, 
                 is_mlip = coord is None or stage_key == coord['energy_key']
                 if is_mlip and n_relax is None:
                     n_relax = crystal_batch.num_graphs  # relaxations by the campaign's energy model in this batch
+                if minima_cfg is not None and opt_ind == num_opts - 1:  # cfg:minima: capture by known minima
+                    opt_config.update(capture_library=library, capture_keys=batch_keys(crystal_batch),
+                                      capture_d2=float(minima_cfg['capture_d2']))
+                    finish_kw = dict(optim_target=opt_config['optim_target'], cutoff=opt_config.get('cutoff') or 10,
+                                     supercell_size=opt_config.get('supercell_size', 10),
+                                     predictor=opt_config.get('predictor'), exp6_kwargs=opt_config.get('exp6_kwargs'),
+                                     repulsion=opt_config.get('repulsion', 1.0))
 
                 'do opt'
                 opt_out, opt_record = crystal_batch.optimize_crystal_parameters(return_record=True, **opt_config)
@@ -348,6 +394,24 @@ def _search_loop(config, samples_to_optim, target, device, data_mode, out_path, 
                     lowest = sorted(sorted(range(len(opt_out)), key=lambda i: energies[i])[:k])
                     opt_out = [opt_out[i] for i in lowest]
                 crystal_batch = collate_data_list(opt_out).to(device)
+
+            if finish_kw is not None and crystal_batch is not None:  # cfg:minima: polish, Hessians, library merge
+                n_lib = len(library)
+                try:
+                    rows_m, eff = finish_minima(crystal_batch.batch_to_list(), library, kT=float(minima_cfg['kT']),
+                                                lj_envelope=minima_cfg['lj_envelope'],
+                                                max_iter=int(minima_cfg['max_iter']), tol=float(minima_cfg['tol']),
+                                                merge_d2=float(minima_cfg['merge_d2']), device=device, **finish_kw)
+                except BaseException:  # this batch is redone (OOM) or the run ends: its minima were never saved
+                    library.truncate(n_lib)
+                    raise
+                finish_kw = None
+                crystal_batch = collate_data_list(rows_m).to(device)
+                polish_evals = eff['n_f'] + eff['n_h'] * (eff['d'] + 1)  # a Hessian: one forward, d backward passes
+                if is_mlip:
+                    mlip_evals += polish_evals
+                else:
+                    other_evals += polish_evals
 
             new_rows = []
             if crystal_batch is not None:

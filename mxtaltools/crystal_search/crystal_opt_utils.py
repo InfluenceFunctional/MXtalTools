@@ -332,6 +332,10 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         convergence: str = 'params',
         grad_tol: float = 0.1,
         grad_patience: int = 5,
+        capture_library=None,
+        capture_keys: Optional[list] = None,
+        capture_d2: float = 9.0,
+        capture_every: int = 10,
 ):
     """
     Do a local optimization via gradient descent on a per-row loss.
@@ -498,6 +502,23 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         call, after which the row walks as without the option. A canonical cell is never itself a trigger (tri_niggli
         angles in [60, 120] deg with F >= 1/2; monoclinic beta in [90, 135] deg), so an applied refold does not fire
         again until the row has walked back to a trigger.
+    capture_library : minima.MinimaLibrary, optional
+        Known minima of this stage's energy, each with the Hessian of E/kT there. None (default): nothing below
+        happens. Otherwise, every ``capture_every`` steps from step 0, each active row's evaluated crystal is
+        re-described as the library identifies crystals (``MinimaLibrary.capture_query``: crystal_fd's canonical form
+        at Z' = 1, on a copy) and, if it lies within ``capture_d2`` of a minimum of its key under that minimum's own
+        ellipsoid (d^2 = dx^T H dx, centre lattice translations removed), it is captured: it leaves the batch as a
+        cascade-retired row does, keeps its best state so far, and is returned with ``capture_min``, the minimum's id
+        (-1 for rows never captured). Captured rows count as converged for the ``'params'`` quorum. run_search passes
+        it on the last stage under its ``minima`` block (``minima.finish_minima`` then reports a captured row as the
+        minimum).
+    capture_keys : list of tuple, optional
+        One ``minima.row_key`` per row of ``init_crystal_batch``; required with ``capture_library``.
+    capture_d2 : float
+        Capture threshold on d^2 (default 9: three thermal widths along every direction of the ellipsoid).
+    capture_every : int
+        Steps between capture tests (default 10; each test re-describes the active rows, about half a step's cost
+        for an eLJ batch of 100 measured 2026-10-28).
 
     Returns
     -------
@@ -508,6 +529,7 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         step at which it converged and left the batch; -1 if it did not).
         With ``fd_refold`` each also carries ``fd_refolds`` ([1] long, refolds applied to the row during the walk)
         and ``fd_fold_status`` ([1] long, ``fd_refold.REFOLD_STATUS`` code of the end-of-stage fold, 0 folded).
+        With ``capture_library`` each carries ``capture_min`` ([1] long, the capturing minimum's id or -1).
         With ``enforce_reduced`` the list can be shorter than ``num_graphs``.
     records : dict of torch.Tensor
         CPU tensors stacked along a leading step dimension, one per step taken: every tensor output of the first
@@ -548,6 +570,8 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         raise ValueError(f"centroid_boundary must be one of {CENTROID_BOUNDARIES}, got {centroid_boundary!r}")
     if convergence not in CONVERGENCE_MODES:
         raise ValueError(f"convergence must be one of {CONVERGENCE_MODES}, got {convergence!r}")
+    if capture_library is not None and (capture_keys is None or len(capture_keys) != init_crystal_batch.num_graphs):
+        raise ValueError("capture_library needs capture_keys, one minima.row_key per row")
     by_grad = convergence == 'grad'
     wrap = centroid_boundary == 'wrap'
     if fd_refold:
@@ -639,6 +663,8 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
     grad_streak = torch.zeros(init_crystal_batch.num_graphs, dtype=torch.long)
     converged_step = torch.full((init_crystal_batch.num_graphs,), -1, dtype=torch.long)
     cascade_retired = torch.zeros(init_crystal_batch.num_graphs, dtype=torch.bool)
+    capture_min = torch.full((init_crystal_batch.num_graphs,), -1, dtype=torch.long)
+    capturing = capture_library is not None and len(capture_library) > 0
 
     if optim_target.lower() == 'ellipsoid':
         init_crystal_batch.load_ellipsoid_model()
@@ -756,6 +782,13 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
                             done = active & ~retire & (grad_streak >= grad_patience)
                             converged_step[done] = s_ind
                             retire = retire | done
+                    if capturing and s_ind % capture_every == 0:  # rows inside a known minimum's ellipsoid leave
+                        glob = torch.arange(num_samples) if active_idx is None else active_idx.cpu()
+                        hit_id, hit_d2 = capture_library.capture_query(crystal_batch,
+                                                                       [capture_keys[i] for i in glob.tolist()])
+                        hit = (hit_d2 < capture_d2) & ~retire[glob]
+                        capture_min[glob[hit]] = hit_id[hit]
+                        retire[glob[hit]] = True
                     if retire.any():  # retired rows leave the batch: later steps evaluate only the rest
                         active = active & ~retire
                         if init_list is None:
@@ -840,6 +873,9 @@ def gradient_descent_optimization(  # todo consolidate kwargs somewhere
         for i, elem in enumerate(samples_list):
             elem.fd_refolds = torch.tensor([int(refold_count[i])])
             elem.fd_fold_status = torch.tensor([int(fold_status[i])])
+    if capture_library is not None:
+        for i, elem in enumerate(samples_list):
+            elem.capture_min = torch.tensor([int(capture_min[i])])
     if enforce_reduced:
         penalty = crystal_batch.compute_cell_reduction_penalty()
         samples_list = [elem for i, elem in enumerate(samples_list) if penalty[i] < 1e-3]
