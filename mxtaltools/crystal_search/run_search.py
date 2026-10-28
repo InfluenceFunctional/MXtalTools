@@ -50,6 +50,36 @@ def discard_intermediates(path):
         os.remove(path)
 
 
+def closest_intermolecular_contact(batch, cluster_cutoff=10.0, pair_cutoff=3.0):
+    """[num_graphs] shortest atom-atom distance between different molecules of each crystal (Angstrom; inf when no pair
+    lies within pair_cutoff), in the standard orientation the optimiser scores. The cluster is built at cluster_cutoff,
+    as the search stages build theirs: at 3-4 A the cluster builder left out molecules holding the closest pair (one
+    acridine calibration crystal read 2.02 A at 3 A, 1.53 A at 5, 6 and 10 A)."""
+    with torch.no_grad():
+        cluster = batch.mol2cluster(cutoff=cluster_cutoff, supercell_size=10, std_orientation=True)
+        cluster.construct_radial_graph(cutoff=pair_cutoff)
+        d = cluster.edges_dict['intermolecular_dist'].flatten()
+        b = cluster.edges_dict['intermolecular_dist_batch'].flatten().long()
+        out = torch.full((batch.num_graphs,), float('inf'), device=d.device, dtype=d.dtype)
+        return out.scatter_reduce(0, b, d, reduce='amin')
+
+
+def drop_contact_clashes(batch, min_contact):
+    """cfg:min_intermolecular_contact: the relaxed rows whose closest intermolecular pair is nearer than min_contact are
+    dropped before they are saved, written to a shard or set the job's running minimum (the early_stop reference).
+    Returns (the kept rows as a batch, or None when none is kept; the number dropped).
+    Why (acr_fm_oct27 calibration, 2026-10-28): MACE-OFF24 relaxed one of 192 random acridine starts into interpenetrating
+    molecules (closest pair 0.59 A) at -238 kJ/mol, against -96 for the best real form; as the running minimum it retired
+    every walker of the next batch at the first cascade step. The real low structures of MACE-OFF24, UMA-s 1.1 and UMA-s
+    1.2 all had their closest pair at >= 2.0 A."""
+    clash = closest_intermolecular_contact(batch) < float(min_contact)
+    n = int(clash.sum())
+    if n == 0:
+        return batch, 0
+    rows = [r for r, c in zip(batch.batch_to_list(), clash.tolist()) if not c]
+    return (collate_data_list(rows).to(batch.device) if rows else None), n
+
+
 def crystal_search(config):
     reject_retired_keys(config)
     device = config.device
@@ -237,6 +267,7 @@ def _search_loop(config, samples_to_optim, target, device, data_mode, out_path, 
                     quota=dict(listing=None, this={}, pending=[], draw={}))
     # cfg:oom_ceiling: after an OOM at batch size B, growth stops at 0.95 B (probing 5% higher after 10 clean batches)
     ceiling = dict(value=None, clean=0)
+    min_contact = getattr(config, 'min_intermolecular_contact', None)  # Angstrom; None: no contact filter
 
     while not finished:
         if coord is not None and coord['curate_every_s'] is not None:  # this job may run the campaign's curate pass
@@ -331,6 +362,12 @@ def _search_loop(config, samples_to_optim, target, device, data_mode, out_path, 
                 crystal_batch = collate_data_list(opt_out).to(device)
 
             new_rows = []
+            n_contact = 0
+            if crystal_batch is not None and min_contact is not None:
+                crystal_batch, n_contact = drop_contact_clashes(crystal_batch, min_contact)
+                if n_contact:
+                    print(f"{config.run_name}: batch {batch_idx}: dropped {n_contact} rows with an intermolecular "
+                          f"contact below {float(min_contact)} A")
             if crystal_batch is not None:
                 crystal_batch.box_analysis()
                 new_rows = crystal_batch.cpu().detach().batch_to_list()
@@ -344,7 +381,8 @@ def _search_loop(config, samples_to_optim, target, device, data_mode, out_path, 
             if coord is not None:  # fail-open: returns False rather than raise on any coordination I/O error
                 coord['write'](coord['dir'], config.run_name, coord['stream'], cursor, batch_idx, new_rows,
                                coord['energy_key'],
-                               dict(n_relaxations=n_relax or 0, n_starts=n_starts, row_evals=mlip_evals,
+                               dict(n_relaxations=n_relax or 0, n_starts=n_starts, n_contact_dropped=n_contact,
+                                    row_evals=mlip_evals,
                                     row_evals_other=other_evals, n_attempts=attempt['n'],
                                     wall_s=time.time() - attempt['t0'], gpu=coord['gpu'],
                                     opt_seed=getattr(config, 'opt_seed', None), energy_model_id=coord['model_id'],

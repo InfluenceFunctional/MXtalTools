@@ -67,7 +67,8 @@ def stream_cfg(model, stream):
                grow_batch_size=True, oom_ceiling=True, batch_size=C.BATCH[model], num_samples=NUM_SAMPLES,
                force_restart_run=False, sgs_to_search=[14], zp_to_search=[1], coord_dir=camp, coord_stream=stream,
                coord_curate_every_s=3600, coord_hop_wait_s=7200, init_sample_method='random', dataset_path=None,
-               opt_seed=SEEDS[stream], run_name=f'{stream}_TASK', target_path=None, **C.predictor_paths(model))
+               opt_seed=SEEDS[stream], run_name=f'{stream}_TASK', target_path=None,
+               min_intermolecular_contact=C.MIN_CONTACT, **C.predictor_paths(model))
     cfg['opt'] = C.stages(m['kind'], cascade=stream != 'seeded')
     if stream == 'hops':
         cfg.update(init_sample_method='hops', coord_hop_share=1.0 / C.TASKS[model]['hops'])
@@ -105,6 +106,7 @@ def check(model, streams, coord):
         assert c['opt'][-1]['optim_target'] == coord['energy_key']
         assert c['mace_predictor_path' if m['kind'] == 'mace' else 'uma_predictor_path'] == m['path']
         assert c['uma_activation_checkpointing'] is False
+        assert c['min_intermolecular_contact'] == C.MIN_CONTACT, f'{s}: contact filter'
         assert c['sgs_to_search'] == [coord['sg']] and c['zp_to_search'] == [1]
         assert (s == 'seeded') == (c['init_sample_method'] == 'data')
         assert (s == 'seeded') == ('early_stop' not in c['opt'][-2]), 'stage-2 cascade on random and hops only'

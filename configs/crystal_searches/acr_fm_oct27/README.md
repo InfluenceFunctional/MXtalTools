@@ -10,6 +10,7 @@ Random and hops stop by their Good-Turing rules. Each campaign's identity cut is
 ## Per model
 - **Molecule:** the model's gas-phase minimum, built by `build_conformer.py` into `acr_<model>_conformer.pt`. It keeps the N-first atom order of every seed file.
 - **Schedule:** acr_zp1_sep30's two stages, plus a polish stage. The polish runs to `convergence_eps / 100`, at most 800 steps, on rows within 3.5 kT of the job's best. Unconverged end states inflated acr_zp1_sep30's basin count.
+- **Contact filter:** every search drops a relaxed row whose closest intermolecular atom pair is nearer than 1.5 Å (`min_intermolecular_contact`, `campaign.MIN_CONTACT`). The row is dropped before it is saved, written to a shard or used as the job's cascade reference. Each shard records the count, and `stats.md` lists the totals per stream. In calibration, MACE-OFF24 relaxed one of 192 random starts into interpenetrating molecules (closest pair 0.59 Å) at −238 kJ/mol, against −96 for ACRDIN12. Every real low structure of the three models had its closest pair at 2.0 Å or more.
 - **UMA:** the searches run it with activation checkpointing off (`uma_activation_checkpointing: false`). With it on, the relaxation's backward pass raised torch's CheckpointError.
 - **UMA 1.2 needs fairchem 2.16.** The container's fairchem 2.13 cannot build the model (HydraModel rejects `model_id`). Its jobs put `/scratch/mk8347/pylibs_fc216` first on PYTHONPATH: fairchem-core 2.16.0, pure Python, installed with `pip install --no-deps --target`.
 
@@ -24,6 +25,8 @@ For each model, `calibrate.py` does three things:
 - times 192 random starts at batch 96 on the stream schedule.
 
 Output: `/scratch/mk8347/data/crystal_datasets/acridine/campaigns/acr_fm_oct27/calibration/<model>/result.json`; logs in `/scratch/mk8347/logs/fm_calib_<model>-<job>.out`. A copy of each `result.json` goes to `calibration/<model>.json` here. That copy sets the campaign's identity cut and sizes its jobs.
+
+The three calibrations ran on 2026-10-28 (A100, MXtalTools 0bad97e4, before the contact filter). Their `result.json` files are `calibration/<model>.json`. Throughput at batch 96: MACE-OFF24 732 relaxations per GPU-hour, inflated because its hole retired the second batch at the first cascade step; UMA-s 1.1 78; UMA-s 1.2 75 (70.7 GB peak).
 
 ## Step 2: the campaigns (one per model)
 `python make_campaign.py [MODEL ...]` writes `<MODEL>/` from `calibration/<MODEL>.json`. That directory holds `coord.yaml`, `streams/{random,hops,seeded}.yaml`, `model.env` and `MANIFEST.md`. The script refuses to run when the calibration is missing, or when its checkpoint id differs from the dev-box copy's. Task counts and the starting batch come from `campaign.TASKS` and `campaign.BATCH`. Launch, and every relaunch, from the cluster checkout:

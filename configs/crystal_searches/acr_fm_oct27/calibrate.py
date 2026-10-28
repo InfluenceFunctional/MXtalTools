@@ -63,7 +63,8 @@ def search_cfg(model, out_dir, run_name, **kw):
     kw['opt'] = smoke_stages(kw['opt'])
     cfg = dict(yaml.safe_load(C.BASE.read_text()), device=DEV, mol_path=C.mol_path(model), out_dir=out_dir,
                run_name=run_name, save_trajs=False, force_restart_run=False, sgs_to_search=[14], zp_to_search=[1],
-               coord_dir=None, grow_batch_size=False, oom_ceiling=False, lease_settle_s=0.0, **C.predictor_paths(model))
+               coord_dir=None, grow_batch_size=False, oom_ceiling=False, lease_settle_s=0.0,
+               min_intermolecular_contact=C.MIN_CONTACT, **C.predictor_paths(model))
     cfg.update(kw)
     return cfg
 

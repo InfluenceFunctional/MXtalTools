@@ -43,6 +43,9 @@ MODELS = {
 POLISH_KT = 3.5
 POLISH_STEPS = 800
 CASCADE = [[25, 10.0], [50, 8.0], [100, 5.0]]  # stage 2 of random and hops: acr_zp1_sep30's
+# cfg:min_intermolecular_contact (Angstrom) of every search: a relaxed row whose closest intermolecular atom pair is nearer
+# is dropped before it is saved, written to a shard or sets the early_stop reference (run_search.drop_contact_clashes)
+MIN_CONTACT = 1.5
 
 # array tasks per stream and starting batch, per model (sized from the calibration's throughput; make_campaign.py and
 # preflight.py read them, launch.sh through the generated <model>/model.env)
