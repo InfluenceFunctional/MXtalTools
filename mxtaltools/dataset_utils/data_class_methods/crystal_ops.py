@@ -2034,6 +2034,58 @@ class MolCrystalOps:
         """
         self.aunit_centroid, self.aunit_orientation = self.get_fd_params(is_chiral)
 
+    def _fd_chart(self, rows=None):
+        """crystal_fd's ``CrystalChart`` for this batch's one space group, hemisphere orientation chart, at the
+        ``radius`` of ``rows`` (every row by default): the chart of GFN's ``crystal_coordinates: fd``."""
+        from mxtaltools.crystal_fd import charts
+        sg = int(self.sg_ind[0])
+        assert torch.all(self.sg_ind == sg), "the FD chart assumes one space group per batch"
+        radius = self.radius.detach().cpu().double().reshape(-1)
+        return charts.CrystalChart.for_latent_v1(sg, radius if rows is None else radius[rows], 'hemisphere')
+
+    def fd_chart_coordinates(self):
+        """
+        This batch's rows as points s in [-1, 1]^d of crystal_fd's fundamental-domain chart.
+
+        Each row is canonicalised (``crystal_fd.canon.canonicalize``, handedness sheet +1), charted by
+        ``_fd_chart`` (``CrystalChart.for_latent_v1`` at the row's ``radius``), mapped to u in [0, 1]^d by
+        ``charts.to_unit``, and s = 2u - 1. A row that does not canonicalise to status 'canonical' or
+        'special_metric', or whose u is outside [0, 1] by more than 1e-6 (its canonical cell is outside the
+        length box), is not charted. Z' = 1 and one space group per batch only. ``self`` is not modified.
+
+        Returns
+        -------
+        s : torch.Tensor
+            [num_graphs, d] float64; NaN on rows that are not charted.
+        ok : torch.Tensor
+            [num_graphs] bool, True on charted rows.
+        status : list of str
+            Per row: the ``canonicalize`` status, or 'outside_length_box'.
+        """
+        from mxtaltools.crystal_fd import canon, charts
+        from mxtaltools.crystal_fd.description import CrystalDescription
+        if self.max_z_prime != 1:
+            raise NotImplementedError("FD chart coordinates are Z' = 1 only")
+        p = self.full_cell_parameters().detach().cpu().double()
+        h = self.aunit_handedness.detach().cpu().double().reshape(-1, 1)
+        desc = CrystalDescription.from_crystal_params(int(self.sg_ind[0]), p[:, :3], p[:, 3:6], p[:, 6:9],
+                                                      p[:, 9:12], h)
+        c = canon.canonicalize(desc)
+        status = c.names()
+        ok = torch.tensor([st in ('canonical', 'special_metric') for st in status], dtype=torch.bool)
+        rows = torch.nonzero(ok).flatten()
+        s = torch.full((self.num_graphs, self._fd_chart(rows=[0]).ndim), float('nan'), dtype=torch.float64)
+        if len(rows) > 0:
+            chart = self._fd_chart(rows=rows)
+            y, _ = chart.inverse(c.desc[rows])
+            u = charts.to_unit(chart, y)
+            inside = ((u >= -1e-6) & (u <= 1 + 1e-6)).all(1) & torch.isfinite(u).all(1)
+            for k in torch.nonzero(~inside).flatten().tolist():
+                status[int(rows[k])] = 'outside_length_box'
+            ok[rows[~inside]] = False
+            s[rows[inside]] = 2 * u[inside].clamp(0.0, 1.0) - 1
+        return s, ok, status
+
     def split_cell_params(self):
         """Return ``full_cell_parameters()`` split into (cell_lengths [num_graphs, 3], cell_angles [num_graphs, 3], aunit centroids [num_graphs, 3 * max_z_prime], aunit orientations [num_graphs, 3 * max_z_prime])."""
         cell_lengths, cell_angles, aunit_positions, aunit_orientations = torch.split(self.full_cell_parameters(),
@@ -2391,6 +2443,8 @@ class MolCrystalOps:
         return std_aunit_orientation * orientation_stds + orientation_means
 
     def _build_feature_labels(self, space):
+        if space == 'fd':
+            return [d.name for d in self._fd_chart(rows=[0]).dims]
         lattice_features = ['a', 'b', 'c',
                             r'$\alpha$', r'$\beta$', r'$\gamma$']
         if self.max_z_prime == 1:
@@ -2427,6 +2481,9 @@ class MolCrystalOps:
             custom_ranges = {}
             for ind in range(6 + self.max_z_prime * 6):
                 custom_ranges.update({ind: [-1.1, 1.1]})
+
+        elif space == 'fd':
+            custom_ranges = {ind: [-1.1, 1.1] for ind in range(samples.shape[1])}
 
         elif space == 'standard':
             custom_ranges = {
@@ -2703,8 +2760,11 @@ class MolCrystalOps:
         Parameters
         ----------
         space : str
-            ``'real'`` (``full_cell_parameters``), ``'latent'`` (``latent_params``)
-            or ``'standard'`` (``zp1_std_cell_parameters``, 12 columns).
+            ``'real'`` (``full_cell_parameters``), ``'latent'`` (``latent_params``),
+            ``'standard'`` (``zp1_std_cell_parameters``, 12 columns) or ``'fd'``
+            (``fd_chart_coordinates``: d columns named by the chart, one space group
+            and Z' = 1 only; rows that are not charted are left out and counted on stdout).
+            ``ref_dist`` and ``aux_dists`` must have the same columns as the samples.
         renderer : str, optional
             Passed to ``fig.show``.
         quantiles : iterable of float, optional
@@ -2745,15 +2805,16 @@ class MolCrystalOps:
                                                                   split_by_zp, aux_dists, override_energy)
         # delete or NaN unused higher Z' elements
         # 1d Histograms
-        fig = make_subplots(rows=int(2 + 2 * self.max_z_prime),
+        fig = make_subplots(rows=-(-len(lattice_features) // 3),
                             cols=3,
                             subplot_titles=lattice_features)
         colors = self._get_color_set(num_dists)
         ranges = self._set_cell_ranges(space, samples)
         for i in range(len(lattice_features)):
             for j in range(num_dists):
+                column = dists[j][:, i]
                 self._add_violin(
-                    fig, dists[j][:, i], dist_names[j], colors[j], i, ranges[i],
+                    fig, column[np.isfinite(column)], dist_names[j], colors[j], i, ranges[i],
                     n_kde, bw_factor
                 )
 
@@ -2772,7 +2833,7 @@ class MolCrystalOps:
                           font=dict(family="Helvetica", size=12, color='black'),
                           )
 
-        for i in range(6 + self.max_z_prime * 6):
+        for i in range(len(lattice_features)):
             row = i // 3 + 1
             col = i % 3 + 1
             fig.update_xaxes(range=ranges[i], row=row, col=col)
@@ -2952,6 +3013,17 @@ class MolCrystalOps:
                 gauge_fix_free_axes=gauge_fix_free_axes).detach().cpu().numpy()
         elif space == 'standard':  # todo implement full std method
             samples = self.zp1_std_cell_parameters().detach().cpu().numpy()
+        elif space == 'fd':
+            s, ok, status = self.fd_chart_coordinates()
+            if not bool(ok.any()):
+                raise ValueError(f"no row of the batch is charted in FD coordinates: {sorted(set(status))}")
+            if not bool(ok.all()):
+                bad = [st for st, good in zip(status, ok.tolist()) if not good]
+                counts = {st: bad.count(st) for st in sorted(set(bad))}
+                print(f"FD coordinates: {len(bad)} of {len(status)} rows not charted, left out of the plot {counts}")
+            samples = s.numpy()
+        else:
+            raise ValueError(f"space must be 'real', 'latent', 'standard' or 'fd', not {space!r}")
         return samples
 
     def set_cell_parameters(self,

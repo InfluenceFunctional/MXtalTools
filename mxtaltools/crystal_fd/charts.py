@@ -128,6 +128,23 @@ def from_unit(chart: Chart, u: torch.Tensor):
     return y, logv
 
 
+def to_unit(chart: Chart, y: torch.Tensor) -> torch.Tensor:
+    """The inverse of ``from_unit``: u_i = (y_i - lo_i(y_<i)) / (hi_i - lo_i(y_<i)), [B, n] float64.
+
+    A circle coordinate is first wrapped into its [lo, hi) period. u is not clamped: a
+    row outside the chart's bounds lands outside [0, 1].
+    """
+    y = torch.as_tensor(y, dtype=F64)
+    u = torch.empty_like(y)
+    for i in range(chart.ndim):
+        lo, hi = chart.bounds(y[:, :i], i)
+        yi = y[:, i]
+        if chart.dims[i].kind == 'circle':
+            yi = lo + torch.remainder(yi - lo, float(chart.dims[i].period))
+        u[:, i] = (yi - lo) / (hi - lo)
+    return u
+
+
 def _full(B, value, like):
     return torch.full((B,), float(value), dtype=F64, device=like.device)
 
