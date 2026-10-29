@@ -16,6 +16,8 @@ from tqdm import tqdm
 from mxtaltools.common.config_processing import load_yaml, dict2namespace
 from mxtaltools.common.utils import is_cuda_oom
 from mxtaltools.crystal_search.minima import MinimaLibrary, batch_keys, finish_minima
+from mxtaltools.crystal_search.minima import polish_evals as minima_polish_evals
+from mxtaltools.crystal_search.stream_search import check_stream_config, stream_search
 from mxtaltools.crystal_search.run_state import RunLease, StopRequest, atomic_json_dump, atomic_torch_save, \
     committed_outputs, read_json
 from mxtaltools.crystal_search.utils import get_initial_state, init_samples_to_optim, parse_args, parse_opt_config, \
@@ -52,7 +54,7 @@ def check_fd_refold_stages(opt_stages, coord):
                              f"parents, and a hop kick clamps centres into the ASYM_UNITS box")
 
 
-MINIMA_DEFAULTS = dict(kT=None, capture_d2=9.0, merge_d2=1.0, max_iter=40, tol=1e-4, lj_envelope=1.0)
+MINIMA_DEFAULTS = dict(kT=None, capture_d2=9.0, capture_every=10, merge_d2=1.0, max_iter=40, tol=1e-4, lj_envelope=1.0)
 
 
 def check_minima_config(config):
@@ -60,7 +62,8 @@ def check_minima_config(config):
     of distinct minima, and the last stage of later batches retires descents that enter a known minimum's thermal
     ellipsoid (crystal_search/minima.py). Returns the block with MINIMA_DEFAULTS filled in, or None without it.
 
-    Keys: ``kT`` (required, in the last stage target's units), ``capture_d2``, ``merge_d2``, ``max_iter`` and ``tol``
+    Keys: ``kT`` (required, in the last stage target's units), ``capture_d2``, ``capture_every``, ``merge_d2``,
+    ``max_iter`` and ``tol``
     (``minima.newton_polish``), ``lj_envelope`` (A; None for the hard cutoff, which leaves the LJ Hessian undefined at
     the cutoff). Raises ValueError on an unknown key, a kT that is not positive, or a last stage the polish cannot
     follow: a target that is not an energy (``minima.ENERGY_TARGETS``), a clamp-mode stage (the polish moves centres
@@ -130,12 +133,15 @@ def crystal_search(config):
     intermediates, progress = run_files(out_path)
     num_samples = len(samples_to_optim)
     print(f"Starting optimization of {num_samples} crystal samples")
+    stream_cfg = check_stream_config(config)  # cfg:stream (crystal_search/stream_search.py) or None
     coord = _coordination(config)  # fallible setup first: nothing below may fail while holding a lease it cannot free
     lease = RunLease(str(out_path)[:-3], stale_after_s=getattr(config, 'lease_stale_after_s', 1800),
                      settle_s=getattr(config, 'lease_settle_s', 2.0))
     stop = StopRequest(stop_files=(getattr(config, 'stop_files', None) or []) + (coord['stop_files'] if coord else []))
     try:
         lease.acquire()  # one writer per run name; raises if another live process holds it
+        if stream_cfg is not None:
+            return stream_search(config, samples_to_optim, device, out_path, progress, num_samples, lease, stop)
         return _search_loop(config, samples_to_optim, target, device, data_mode, out_path, intermediates, progress,
                             num_samples, lease, stop, coord)
     finally:
@@ -360,7 +366,8 @@ def _search_loop(config, samples_to_optim, target, device, data_mode, out_path, 
                     n_relax = crystal_batch.num_graphs  # relaxations by the campaign's energy model in this batch
                 if minima_cfg is not None and opt_ind == num_opts - 1:  # cfg:minima: capture by known minima
                     opt_config.update(capture_library=library, capture_keys=batch_keys(crystal_batch),
-                                      capture_d2=float(minima_cfg['capture_d2']))
+                                      capture_d2=float(minima_cfg['capture_d2']),
+                                      capture_every=int(minima_cfg['capture_every']))
                     finish_kw = dict(optim_target=opt_config['optim_target'], cutoff=opt_config.get('cutoff') or 10,
                                      supercell_size=opt_config.get('supercell_size', 10),
                                      predictor=opt_config.get('predictor'), exp6_kwargs=opt_config.get('exp6_kwargs'),
@@ -407,7 +414,7 @@ def _search_loop(config, samples_to_optim, target, device, data_mode, out_path, 
                     raise
                 finish_kw = None
                 crystal_batch = collate_data_list(rows_m).to(device)
-                polish_evals = eff['n_f'] + eff['n_h'] * (eff['d'] + 1)  # a Hessian: one forward, d backward passes
+                polish_evals = minima_polish_evals(eff)
                 if is_mlip:
                     mlip_evals += polish_evals
                 else:

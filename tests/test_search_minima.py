@@ -194,3 +194,37 @@ def test_config_check_refuses_what_the_polish_cannot_follow():
                              (stage, {}), (stage, {'kT': -1.0}), (stage, {'kT': KT, 'capture': 9})]:
         with pytest.raises(ValueError):
             check_minima_config(SimpleNamespace(opt=[bad_stage], minima=block))
+
+
+def _skewed(row):
+    """The same crystal with c replaced by c + n a (n = 1..6), the first whose angles leave the cleaning clamp
+    (some angle above 0.8 pi or below 0.2 pi), centres re-expressed, pose unchanged."""
+    T = row.T_fc[0].double()
+    f = row.aunit_centroid.reshape(-1)[:3].double()
+    for n_ in range(1, 7):
+        for s in (n_, -n_):
+            N = torch.tensor([[1.0, 0.0, float(s)], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dtype=torch.float64)
+            a, b, c = (T @ N).T
+            ang = lambda u, v: torch.arccos(torch.dot(u, v) / (u.norm() * v.norm()))
+            angles = torch.stack([ang(b, c), ang(a, c), ang(a, b)])
+            if bool(((angles > 0.8 * torch.pi) | (angles < 0.2 * torch.pi)).any()):
+                fc = torch.linalg.solve(N, f)
+                return torch.cat([torch.stack([a.norm(), b.norm(), c.norm()]), angles, fc - torch.floor(fc),
+                                  row.aunit_orientation.reshape(-1)[:3].double()])
+    return None
+
+
+def test_a_row_past_the_angle_clamp_polishes_to_its_own_minimum(finished, mol):
+    lib, rows, _ = finished
+    r = rows[0]
+    x = _skewed(r)
+    assert x is not None
+    b = _rows(mol, 2, x[None], r.aunit_handedness.reshape(-1))
+    with torch.no_grad():  # the skewed description, built without cleaning, is the same crystal
+        e_skew = float(b.clone().analyze(computes=['elj'], cutoff=10, return_cluster=False)['elj'])
+    assert abs(e_skew - float(r.elj)) < 1e-2 * abs(float(r.elj))
+    n_lib = len(lib)
+    out, _ = mn.finish_minima(b.batch_to_list(), lib, 'elj', KT, max_iter=60)
+    assert len(lib) == n_lib  # nothing new: it is a known minimum
+    assert int(out[0].polish_status) == 1 and bool(out[0].recapture)
+    assert int(out[0].minimum_id) == int(r.minimum_id)
