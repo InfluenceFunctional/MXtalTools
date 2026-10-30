@@ -3,7 +3,10 @@
 Pins: the config check refuses what the stream does not reproduce; the per-row convergence test is
 check_convergence's without the quorum; a small two-stage stream on CPU relaxes every start once, through both
 stages, with a minima library, and a resumed run finds nothing left to do; slots refill (more starts than slots);
-seeds go first, straight to the polish; stop_p ends the random starts, and the seeds' own bound ends the seeds.
+seeds go first, straight to the polish; stop_p ends the random starts, and the seeds' own bound ends the seeds;
+_bfgs_step converges on a quadratic, rejects a rise and always ends; a bfgs last stage leaves the polish less to do;
+each stage runs at its own cutoff with the envelope; starts at known minima are captured in the last stage, not
+in stage 1.
 CPU, eLJ, the test molecule of the refold tests.
 """
 from types import SimpleNamespace
@@ -30,7 +33,7 @@ def _cfg(**over):
 def test_config_check():
     assert ss.check_stream_config(SimpleNamespace(opt=[STAGE])) is None
     ok = ss.check_stream_config(_cfg())
-    assert ok['slots'] == 4 and ok['polish_chunk'] == 16 and ok['check_every'] == 5
+    assert ok['slots'] == 4 and ok['polish_chunk'] == 1000 and ok['check_every'] == 5
     assert ss.check_stream_config(_cfg(stream={}))['slots'] == 4  # slots default to batch_size
     for over in [dict(coord_dir='/x'), dict(init_sample_method='data'), dict(stream={'slotz': 3}),
                  dict(opt=[dict(STAGE, optimizer_func='adam')]), dict(opt=[dict(STAGE, centroid_boundary='clamp')]),
@@ -39,6 +42,58 @@ def test_config_check():
                  dict(opt=[dict(STAGE), dict(STAGE, optim_target='lj')])]:
         with pytest.raises(ValueError):
             ss.check_stream_config(_cfg(**over))
+    bfgs = dict(STAGE, optimizer_func='bfgs', convergence_eps=1e-4)
+    assert ss.check_stream_config(_cfg(opt=[dict(STAGE), bfgs], minima={'kT': 1.0})) is not None  # last stage only
+    for over in [dict(opt=[dict(STAGE), bfgs]),  # no minima block: no kT for its decrement
+                 dict(opt=[bfgs, dict(STAGE)], minima={'kT': 1.0}),  # not the last stage
+                 dict(opt=[dict(STAGE), dict(bfgs, compression_factor=1.0)], minima={'kT': 1.0}),
+                 dict(opt=[dict(STAGE), dict(bfgs, convergence_eps=0.0)], minima={'kT': 1.0}),
+                 dict(opt=[{k: v for k, v in STAGE.items() if k != 'init_lr'}]),  # rprop needs its lr
+                 dict(opt=[dict(STAGE, cutoff=1.0)], minima={'kT': 1.0})]:  # cutoff inside the 1 A envelope
+        with pytest.raises(ValueError):
+            ss.check_stream_config(_cfg(**over))
+
+
+def _quadratic(x, xs, A):
+    dx = (x.double() - xs)
+    return 0.5 * torch.einsum('ni,ij,nj->n', dx, A, dx), dx @ A
+
+
+def test_bfgs_step_converges_rejects_and_gives_up():
+    """_bfgs_step on a quadratic: converges (done, at the minimum) from a start several caps away; a trial that does
+    not decrease the loss leaves the accepted point unchanged and halves the trust; a row that never decreases is done
+    after two runs of POLISH_TRIES rejections (the reset in between), so a bfgs row always leaves its stage."""
+    from mxtaltools.crystal_search.minima import POLISH_TRIES
+    torch.manual_seed(3)
+    d = 12
+    A = torch.diag(torch.logspace(0, 3, d, dtype=torch.float64))
+    xs = torch.rand(2, d, dtype=torch.float64)
+    slots = ss._Slots(2, d, 'cpu')
+    ib = torch.arange(2)
+    for i in range(2):
+        slots.begin_stage(i, (xs[i] + 0.3).float(), 0.0)
+    for it in range(400):
+        f, g = _quadratic(slots.X[ib], xs, A)
+        ss._bfgs_step(slots, ib, f, g, kT=1.0, tol=1e-10, d=d)
+        if bool(slots.bdone.all()):
+            break
+    assert bool(slots.bdone.all()) and it < 399 and not bool(slots.breset.any())  # converged, not given up
+    assert float((slots.bx - xs).abs().max()) < 1e-3 and bool((slots.bnupd >= ss.BFGS_MIN_UPDATES).all())
+    one = ss._Slots(1, d, 'cpu')
+    one.begin_stage(0, xs[0].float() + 0.3, 0.0)
+    f, g = _quadratic(one.X[:1], xs[:1], A)
+    ss._bfgs_step(one, torch.arange(1), f, g, kT=1.0, tol=1e-10, d=d)  # the first evaluation: accepted
+    x_acc, t0 = one.bx.clone(), float(one.btrust[0])
+    step1 = (one.X[0].double() - x_acc[0]).norm()
+    ss._bfgs_step(one, torch.arange(1), f + 1.0, g, kT=1.0, tol=1e-10, d=d)  # a trial that rose
+    assert torch.equal(one.bx, x_acc) and float(one.btrust[0]) == t0 / 2 and int(one.btries[0]) == 1
+    step2 = (one.X[0].double() - x_acc[0]).norm()  # the retry is a shorter step, even where no cap binds
+    assert 0 < float(step2) <= ss.BFGS_SHRINK * float(step1) * (1 + 1e-5)
+    for _ in range(2 * POLISH_TRIES):
+        if bool(one.bdone[0]):
+            break
+        ss._bfgs_step(one, torch.arange(1), f + 1.0, g, kT=1.0, tol=1e-10, d=d)
+    assert bool(one.bdone[0]) and bool(one.breset[0])
 
 
 def test_example_config_passes_the_checks():
@@ -165,8 +220,84 @@ def test_stop_p_skips_the_remaining_seeds(mol, tmp_path, monkeypatch):
     assert len(rs.crystal_search(cfg)) == len(out)  # resumed: the skipped seeds stay skipped
 
 
+def test_a_bfgs_last_stage_hands_the_polish_converged_rows(mol, tmp_path, monkeypatch):
+    """The same starts through rprop (40 steps) then rprop, and through rprop then bfgs, the last stage 100 steps at
+    most either way: every start is relaxed once, bfgs rows leave their stage converged before the cap, and the polish
+    has less left to do after bfgs."""
+    import json
+    n = 6
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: _placeholders(mol, n))
+    evals = {}
+    for name, last in (('rprop', dict(STAGE, max_num_steps=100)),
+                       ('bfgs', dict(STAGE, optimizer_func='bfgs', max_num_steps=100, convergence_eps=1e-4))):
+        (tmp_path / name).mkdir()
+        cfg = _run_cfg(tmp_path / name, n)
+        cfg.opt = [dict(cfg.opt[0], max_num_steps=40), last]
+        out = rs.crystal_search(cfg)
+        assert sorted(int(r.start_index) for r in out) == list(range(n))
+        assert all('minimum_id' in r.keys() for r in out)
+        with open(tmp_path / name / 'streamtest_stream_effort.json') as fh:
+            evals[name] = json.load(fh)['polish_evals']
+        if name == 'bfgs':
+            assert any(0 < int(r.stage_steps.reshape(-1)[1]) < 99 for r in out)  # left before the cap
+    assert evals['bfgs'] < evals['rprop']
+
+
+def test_each_stage_at_its_own_cutoff_with_the_envelope(mol, tmp_path, monkeypatch):
+    """Every stage's evaluations use that stage's cutoff, and the minima block's lj_envelope in every stage."""
+    from mxtaltools.dataset_utils.data_class_methods.crystal_analysis import MolCrystalAnalysis
+    n = 3
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: _placeholders(mol, n))
+    seen = set()
+    real = MolCrystalAnalysis.analyze
+
+    def spy(self, *a, **k):
+        if k.get('elementwise') and k.get('return_cluster'):  # the stream's step evaluations
+            seen.add((float(k['cutoff']), k.get('lj_envelope')))
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(MolCrystalAnalysis, 'analyze', spy)
+    cfg = _run_cfg(tmp_path, n)
+    cfg.opt = [dict(cfg.opt[0], cutoff=6), cfg.opt[1]]
+    rs.crystal_search(cfg)
+    assert seen == {(6.0, 1.0), (10.0, 1.0)}
+
+
+def test_capture_is_in_the_last_stage(mol, tmp_path, monkeypatch):
+    """Starts placed at minima the seeds put in the library are not captured in stage 1 (no compression, a tiny lr:
+    they sit inside the ellipsoids throughout it) but in the last stage, and are reported as those minima."""
+    import mxtaltools.crystal_search.utils as su
+    n = 3
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: _placeholders(mol, n))
+    (tmp_path / 'a').mkdir()
+    (tmp_path / 'b').mkdir()
+    first = rs.crystal_search(_run_cfg(tmp_path / 'a', n))
+    torch.save(first, tmp_path / 'seeds.pt')
+
+    def at_minima(config, batch, device, b0):
+        src = [first[(b0 * 3 + j) % len(first)] for j in range(batch.num_graphs)]
+        batch.aunit_handedness = torch.stack([r.aunit_handedness.reshape(-1) for r in src]).reshape(
+            batch.aunit_handedness.shape).to(batch.aunit_handedness)
+        batch.set_cell_parameters(torch.stack([r.full_cell_parameters().reshape(-1) for r in src]).to(device),
+                                  skip_box_analysis=False)
+        return batch
+
+    monkeypatch.setattr(su, 'get_initial_state', at_minima)
+    cfg = _run_cfg(tmp_path / 'b', n)
+    cfg.stream.seeds = str(tmp_path / 'seeds.pt')
+    cfg.minima.capture_every = 2
+    cfg.opt = [dict(cfg.opt[0], init_lr=1e-6, compression_factor=0.0), cfg.opt[1]]
+    out = rs.crystal_search(cfg)
+    starts = [r for r in out if int(r.start_index) >= 0]
+    assert len(starts) == n
+    for r in starts:
+        st = r.stage_steps.reshape(-1).tolist()
+        assert int(r.polish_status) == 0 and bool(r.recapture) and st[0] > 0 and st[1] > 0
+
+
 def test_stop_p_draws_no_new_starts(mol, tmp_path, monkeypatch):
-    """Once the missing-mass bound is below stop_p, the slots in flight finish and no start is drawn after."""
+    """Once the missing-mass bound is below stop_p the run ends at once: no start is drawn after, and the rows in
+    flight are dropped (counted in the effort file)."""
     from mxtaltools.crystal_search import minima as mn
     n = 12
     monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: _placeholders(mol, n))
@@ -174,10 +305,11 @@ def test_stop_p_draws_no_new_starts(mol, tmp_path, monkeypatch):
     cfg = _run_cfg(tmp_path, n)
     cfg.stream.stop_p = 0.01
     out = rs.crystal_search(cfg)
-    assert len(out) < n  # the first finished group (2 rows) set the stop; the 3 slots then in flight finished
+    assert len(out) == 2  # the first finished group (polish_chunk 2) set the stop; nothing else was finished
     with open(tmp_path / 'streamtest_stream_effort.json') as fh:
         import json
-        assert json.load(fh)['stopped']['reason'] == 'stop_p'
+        stopped = json.load(fh)['stopped']
+        assert stopped['reason'] == 'stop_p' and stopped['dropped'] >= 1
     two_groups = _placeholders(mol, 4)
     for r, sg in zip(two_groups, (1, 2, 1, 2)):
         r.sg_ind = torch.tensor([sg])
