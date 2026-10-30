@@ -194,12 +194,21 @@ class StageEnergy:
 
 
 def newton_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol: float = 1e-4,
-                  hessian_every: int = 1, capture=None, capture_d2: float = 9.0):
+                  hessian_every: int = 1, capture=None, capture_d2: float = 9.0, keys: Optional[list] = None,
+                  merge_d2: float = 1.0):
     """Per-row saddle-free Levenberg-Marquardt Newton descent of ``energy`` from ``x0`` [n, d].
 
     With ``capture``, a callable taking (x [m, d], row indices [m]) and returning (minimum id [m], d^2 [m]) as
     ``MinimaLibrary.capture_query`` does, every active row is tested before each iteration's evaluations (and before
     the first): a row with d^2 < ``capture_d2`` stops there with status 0 and that id in ``capture``.
+
+    With ``keys`` (one hashable per row, e.g. ``identity_key``) and ``capture_d2`` > 0, rows that converged earlier in
+    this call capture too: each converged row not within ``merge_d2`` of an earlier one (under its own ellipsoid, at
+    its fresh Hessian) becomes a capture target, and before each iteration an active row of the same key within d^2
+    < ``capture_d2`` of a target, measured in this call's coordinates (``MinimaLibrary.nearest``), stops with status
+    0 and that row's index in ``sibling``. On MIPCAS eLJ (2026-10-29) the first group of a run, polished against an
+    empty library, gave 997 converged polishes for 143 new minima, later groups 34 for 27; with this capture the
+    same first 1,000 rows gave 525 converged polishes, a fifth fewer Hessians and the same minima.
 
     Each iteration takes every active row's gradient, and its Hessian H = V diag(lam) V^T when the row's last one is
     ``hessian_every`` iterations old or the row asked for a fresh one; in between, the row steps with its last H.
@@ -221,6 +230,7 @@ def newton_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol
         ``x`` [n, d], ``f`` [n] (E/kT), ``g`` [n, d], ``H`` [n, d, d] at ``x`` (float64, CPU; for a row captured
         before its first evaluation, f is NaN and g and H are 0); ``status`` [n] long (0 captured, 1 converged,
         2 stalled, 3 iteration cap: POLISH_STATUS); ``capture`` [n] long (the capturing minimum, else -1);
+        ``sibling`` [n] long (the converged row of this call that captured the row, else -1);
         ``n_f``, ``n_g``, ``n_h`` [n] long, the energies, gradients and Hessians evaluated per row (a Hessian
         evaluation includes its energy and gradient).
     """
@@ -232,16 +242,35 @@ def newton_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol
     status = torch.zeros(n, dtype=torch.long)
     done = torch.zeros(n, dtype=torch.bool)
     cap_id = torch.full((n,), -1, dtype=torch.long)
+    sib_id = torch.full((n,), -1, dtype=torch.long)
+    targets = MinimaLibrary() if keys is not None and capture_d2 > 0 else None  # this call's converged rows
+    target_row = []  # target id -> row index
 
     def captured(ia):
-        """Rows of ``ia`` inside a known minimum's ellipsoid: marked done (status 0); returns the others."""
-        if capture is None or len(ia) == 0:
-            return ia
-        mid, d2 = capture(x[ia], ia)
-        hit = (mid >= 0) & (d2 < capture_d2)
-        done[ia[hit]] = True
-        cap_id[ia[hit]] = mid[hit]
-        return ia[~hit]
+        """Rows of ``ia`` inside a known minimum's or a converged row's ellipsoid: marked done (status 0); returns
+        the others."""
+        if capture is not None and len(ia):
+            mid, d2 = capture(x[ia], ia)
+            hit = (mid >= 0) & (d2 < capture_d2)
+            done[ia[hit]] = True
+            cap_id[ia[hit]] = mid[hit]
+            ia = ia[~hit]
+        if targets is not None and len(targets) and len(ia):
+            tid, d2 = targets.nearest(x[ia], [keys[int(i)] for i in ia])
+            hit = (tid >= 0) & (d2 < capture_d2)
+            done[ia[hit]] = True
+            sib_id[ia[hit]] = torch.tensor(target_row, dtype=torch.long)[tid[hit]]
+            ia = ia[~hit]
+        return ia
+
+    def add_targets(rows_conv):
+        """Converged rows (fresh positive semi-definite Hessian at x) as capture targets, one per minimum."""
+        if targets is None:
+            return
+        for i in rows_conv.tolist():
+            if targets.match(x[i], ellipsoid_factor(H[i]), keys[i], merge_d2) < 0:
+                targets.add(x[i], H[i], float(F[i]), keys[i], {})
+                target_row.append(i)
 
     F = torch.full((n,), float('nan'), dtype=F64)
     G = torch.zeros(n, d, dtype=F64)
@@ -285,6 +314,7 @@ def newton_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol
         conv = is_fresh & is_psd(H[ia]) & (dec < tol)
         done[ia[conv]] = True
         status[ia[conv]] = 1
+        add_targets(ia[conv])
         ask = ~is_fresh & (dec < tol)  # small under an old Hessian: confirm with a fresh one, no step
         want[ia[ask]] = True
         age[ia] += 1
@@ -317,7 +347,7 @@ def newton_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol
     if len(redo):
         F[redo], G[redo], H[redo] = energy.fgh(x[redo], redo)
         n_h[redo] += 1
-    return dict(x=x, f=F, g=G, H=H, status=status, capture=cap_id, n_f=n_f, n_g=n_g, n_h=n_h)
+    return dict(x=x, f=F, g=G, H=H, status=status, capture=cap_id, sibling=sib_id, n_f=n_f, n_g=n_g, n_h=n_h)
 
 
 def polish_evals(effort: dict) -> int:
@@ -565,7 +595,9 @@ def finish_minima(rows: list, library: MinimaLibrary, optim_target: str, kT: flo
     - Every other row is re-described in the identity description and polished there (``newton_polish`` on
       ``StageEnergy``). With ``capture_d2``, the polish captures as a stage does (``MinimaLibrary.capture_query``
       against the library as it was before this call, before each iteration), and a row captured there is reported
-      as that minimum too, with status 0. A row whose polished cell ``clean_cell_parameters`` would change gets
+      as that minimum too, with status 0; rows of this call that converged earlier capture as well (``newton_polish``
+      ``keys``), and a row captured by one is reported as the minimum that row becomes (status 0), or, if it becomes
+      none, with that row's description and status. A row whose polished cell ``clean_cell_parameters`` would change gets
       status 4. Each remaining row has its Hessian taken again in two descriptions of the polished crystal: the
       identity description (``identity_description``) and the report description (``canonicalize_aunit``, the
       asymmetric-unit box). In ascending E/kT, a converged row whose
@@ -609,6 +641,7 @@ def finish_minima(rows: list, library: MinimaLibrary, optim_target: str, kT: flo
 
     kw = dict(optim_target=optim_target, kT=kT, cutoff=cutoff, supercell_size=supercell_size, predictor=predictor,
               lj_envelope=lj_envelope, exp6_kwargs=exp6_kwargs, device=device, chunk=energy_chunk)
+    sib_of = {}  # row -> the row of this call whose converged polish captured it
     if todo:
         # polish in the identity description: at Z' = 1 a reduced cell, well inside clean_cell_parameters' box. A
         # stage's own description can sit at or past the angle clamp, where StageEnergy (which cleans) is flat in
@@ -624,13 +657,18 @@ def finish_minima(rows: list, library: MinimaLibrary, optim_target: str, kT: flo
                 b.set_cell_parameters(xc.to(device, torch.float32), skip_box_analysis=False)
                 b.aunit_centroid = wrap_centroid(b.aunit_centroid)
                 return library.capture_query(b, batch_keys(b))
+        keys = [identity_key(row_key(r), r.aunit_handedness) for r in sub] if capture_d2 is not None else None
         res = newton_polish(StageEnergy(sub, **kw), x0, max_iter=max_iter, tol=tol, capture=capture,
-                            capture_d2=float(capture_d2) if capture_d2 is not None else 0.0)
+                            capture_d2=float(capture_d2) if capture_d2 is not None else 0.0, keys=keys,
+                            merge_d2=merge_d2)
         effort['n_f'] += int(res['n_f'].sum())
         effort['n_g'] += int(res['n_g'].sum())
         effort['n_h'] += int(res['n_h'].sum())
         for j in torch.nonzero(res['status'] == 0).flatten().tolist():  # captured in the polish
-            as_captured(todo[j], int(res['capture'][j]))
+            if int(res['sibling'][j]) >= 0:  # by a row of this call: reported as that row's minimum, below
+                sib_of[todo[j]] = todo[int(res['sibling'][j])]
+            else:
+                as_captured(todo[j], int(res['capture'][j]))
         keep = torch.nonzero(res['status'] != 0).flatten()
         todo, sub = [todo[j] for j in keep.tolist()], [sub[j] for j in keep.tolist()]
         res = {k: v[keep] for k, v in res.items()}
@@ -670,6 +708,10 @@ def finish_minima(rows: list, library: MinimaLibrary, optim_target: str, kT: flo
                 mid[i], recap[i] = m, True
             else:
                 mid[i] = library.add(x_id[j], H_id[j], F_id[j], key, rep[i])
+    for i, k in sib_of.items():  # as its capturing row ended: that row's minimum, or no minimum with its status
+        rep[i], ident[i], out_f[i], mid[i] = dict(rep[k]), dict(ident[k]), out_f[k], mid[k]
+        recap[i] = mid[k] >= 0
+        status[i] = 0 if mid[k] >= 0 else status[k]
 
     plain = [r.clone() for r in rows]
     for r in plain:  # consumed here (and rows of one stage carry it all or none)

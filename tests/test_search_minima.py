@@ -5,8 +5,9 @@ positive semi-definite Hessian with a small Newton decrement and never raises th
 H dx with centre lattice translations and the group's origin shifts removed (half a cell in P-1, none in P1) and
 keys kept apart; a row started inside a known minimum's ellipsoid is captured at step 0 and leaves the batch while
 the others descend; no library means no capture_min; finish_minima reports a captured row as the library minimum and
-merges a second polish of a known minimum; two cell settings of one crystal are one minimum; the run_search config
-check refuses what the polish cannot follow; truncate undoes a batch's adds.
+merges a second polish of a known minimum; a row converged in the polish captures the rest of its group; two cell
+settings of one crystal are one minimum; the run_search config check refuses what the polish cannot follow; truncate
+undoes a batch's adds.
 CPU, eLJ, a handful of rows of the test molecule (as test_grad_convergence).
 """
 import itertools
@@ -190,6 +191,24 @@ def test_the_polish_captures_rows_inside_a_known_minimum(finished, relaxed):
                            capture=lambda xc, ids: (torch.where(ids == 0, 0, -1), torch.where(ids == 0, 0.0, 1e9)))
     assert int(res['status'][0]) == 0 and int(res['capture'][0]) == 0 and int(res['n_h'][0]) == 0
     assert res['status'][1:].tolist() == [1] * (len(x) - 1)
+
+
+
+def test_rows_converged_in_the_polish_capture_the_rest_of_their_group(finished, relaxed):
+    """A group polished against an empty library: a row already at its minimum converges at once and becomes a
+    capture target, and a row of the same group descending into that minimum is captured there (status 0) and
+    reported as that minimum, instead of being polished to the end and merged."""
+    _, first, _ = finished
+    out, _, _, _ = relaxed
+    at_min = first[0].clone()
+    for k in set(at_min.keys()) - set(out[0].keys()):
+        delattr(at_min, k)
+    lib = mn.MinimaLibrary()
+    rows, eff = mn.finish_minima([at_min, out[0].clone()], lib, 'elj', KT, max_iter=60, capture_d2=9.0)
+    assert len(lib) == 1
+    assert [int(r.polish_status) for r in rows] == [1, 0]
+    assert [int(r.minimum_id) for r in rows] == [0, 0] and bool(rows[1].recapture)
+    assert torch.equal(rows[1].id_params, rows[0].id_params)
 
 
 class _Row:
