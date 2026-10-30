@@ -52,6 +52,18 @@ def test_hessian_matches_finite_differences(relaxed):
     assert float((H[0] - fd).norm() / fd.norm()) < 0.05  # float32 energies: FD noise is a few percent
 
 
+
+def test_finite_difference_hessian_matches_the_double_backward(relaxed):
+    """StageEnergy(hessian='fd'), the MLIP targets' default, agrees with the batched double backward on eLJ."""
+    out, _, x, _ = relaxed
+    a = mn.StageEnergy(out, 'elj', kT=KT, lj_envelope=1.0)
+    b = mn.StageEnergy(out, 'elj', kT=KT, lj_envelope=1.0, hessian='fd')
+    assert mn.StageEnergy(out, 'mace', kT=1.0).hessian == 'fd' and a.hessian == 'autograd'
+    _, _, Ha = a.fgh(x, torch.arange(len(x)))
+    Fb, Gb, Hb = b.fgh(x, torch.arange(len(x)))
+    assert torch.allclose(Hb, Ha, rtol=2e-2, atol=2e-2 * float(Ha.abs().max()))
+
+
 def test_polish_converges_downhill(relaxed):
     _, E, x, res = relaxed
     f0 = E.f(x, torch.arange(len(x)))

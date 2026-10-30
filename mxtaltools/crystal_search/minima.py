@@ -37,6 +37,10 @@ from mxtaltools.crystal_search.crystal_opt_utils import canonicalize_aunit, fd_f
 from mxtaltools.dataset_utils.utils import collate_data_list
 
 ENERGY_TARGETS = ('lj', 'qlj', 'elj', 'exp6', 'silu', 'uma', 'mace')  # stage targets whose compute is an energy
+MLIP_TARGETS = ('uma', 'mace')  # Hessians by central differences of the gradient (fd_step): MACE's TorchScript ops
+# refuse the batched double backward, and d sequential ones cost ~2.4x more and twice the memory (MACE-OFF24 on MIPCAS,
+# 2026-10-30: 0.77 s per row for 12 passes, 8 rows at most under 6.4 GB; differences agree to 0.2%)
+FD_STEP = 1e-3  # central-difference step of the MLIP Hessian, in each coordinate's own unit (A, rad, fraction)
 POLISH_CAPS = (0.1, 0.02, 0.01, 0.02)  # largest step per block: lengths (A), angles (rad), centres, rotvecs (rad)
 POLISH_TRIES = 8  # Levenberg-Marquardt damping increases tried per iteration before a row counts as stalled
 TRUST_RANGE = (1 / 16, 16.0)  # bounds of the per-row factor on POLISH_CAPS (doubled on an accepted step, halved else)
@@ -131,17 +135,23 @@ class StageEnergy:
         Forwarded to ``analyze`` for 'lj', 'qlj' and 'elj' only.
     chunk : int
         Rows per ``analyze`` call.
+    hessian : str
+        'autograd' (the batched double backward) or 'fd' (central differences of the gradient, ``FD_STEP``); default
+        'fd' for ``MLIP_TARGETS``, 'autograd' otherwise.
     """
 
     def __init__(self, rows, optim_target: str, kT: float, cutoff: float = 10, supercell_size: int = 10,
                  predictor=None, lj_envelope: Optional[float] = None, exp6_kwargs: Optional[dict] = None,
-                 device='cpu', chunk: int = 256):
+                 device='cpu', chunk: int = 256, hessian: Optional[str] = None):
         key = str(optim_target).lower()
         if key not in ENERGY_TARGETS:
             raise ValueError(f"minima need an energy target ({ENERGY_TARGETS}), got {optim_target!r}")
         if not kT > 0:
             raise ValueError(f"kT must be positive, got {kT!r}")
         self.rows, self.key, self.kT, self.device, self.chunk = list(rows), key, float(kT), device, int(chunk)
+        self.hessian = hessian or ('fd' if key in MLIP_TARGETS else 'autograd')
+        if self.hessian not in ('autograd', 'fd'):
+            raise ValueError(f"hessian must be 'autograd' or 'fd', got {hessian!r}")
         self.kwargs = dict(cutoff=cutoff, rdf_cutoff=cutoff, supercell_size=supercell_size, return_cluster=False,
                            repulsion=1, surface_padding=0, std_orientation=True, margin=0, predictor=predictor,
                            assign_outputs=False, **{f'exp6_{k}': v for k, v in (exp6_kwargs or {}).items()})
@@ -181,7 +191,17 @@ class StageEnergy:
         double backward of the batch sum: rows share no parameter, so row k of every row's Hessian is the gradient of
         the sum over rows of gradient component k, and the d of them come from one backward batched over the d unit
         vectors (``is_grads_batched``: for 256 MIPCAS rows on a GPU 0.57 s against 1.2 s for d sequential passes, the
-        same values to 3e-6, 2026-10-29)."""
+        same values to 3e-6, 2026-10-29). With ``hessian='fd'``: (g(x + h e_k) - g(x - h e_k)) / 2h for each
+        coordinate k, h = ``FD_STEP``, all 2d displaced copies evaluated together in ``fg``'s chunks."""
+        if self.hessian == 'fd':
+            n, d = x.shape
+            F, G = self.fg(x, idx)
+            shift = FD_STEP * torch.eye(d, dtype=x.dtype)
+            xs = torch.cat([x[:, None] + shift[None], x[:, None] - shift[None]], 1).reshape(-1, d)  # [n * 2d, d]
+            _, Gs = self.fg(xs, torch.as_tensor(idx).repeat_interleave(2 * d))
+            Gs = Gs.reshape(n, 2, d, d)
+            H = ((Gs[:, 0] - Gs[:, 1]) / (2 * FD_STEP)).to(F64)  # [n, k, :] = d g / d x_k
+            return F, G, 0.5 * (H + H.transpose(1, 2))
         F, G, H = [], [], []
         d = x.shape[1]
         for s in self._chunks(len(x)):

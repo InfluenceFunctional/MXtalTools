@@ -52,7 +52,13 @@ rather than eLJ. At the end the run writes ``<run>_minima.pt``, one row per mini
 (``minima.minimum_rows``).
 
 Starts are drawn in blocks of ``slots`` (``get_initial_state`` seeded by the block index, so a stream with ``slots``
-equal to a batch search's ``batch_size`` relaxes the same starts) and carry ``start_index``. With ``seeds`` (a saved
+equal to a batch search's ``batch_size`` relaxes the same starts) and carry ``start_index``. With ``connected_starts``
+(default on) a start whose molecules' contact network at the first stage's cutoff does not span three dimensions
+(``contact_dimension``: isolated layers, chains or molecules, which no force under the cut-off energy can bring
+together) is drawn again, at most ``MAX_REDRAWS`` times; the effort file counts them (``starts_disconnected``,
+``starts_redrawn``, ``starts_kept_disconnected``). On NEHZOR eLJ (P2_1/c, 2026-10-30) 28% of the random starts were
+such slabs, an axis over 40 A at normal density, and about as many ended as isolated layers 5 kT and more above the
+lowest minimum; on MIPCAS (P-1) 1 in 500. With ``seeds`` (a saved
 list of crystal rows, e.g. another search's output or a set of known structures; needs ``minima``) the seeds come
 first, each put on this search's copy of its molecule and polished directly, without a descent stage, in groups of
 ``polish_chunk``, with start index -(j + 1): the polish relaxes them, takes their Hessians and merges or captures
@@ -94,7 +100,7 @@ from mxtaltools.crystal_search.run_state import atomic_json_dump, atomic_torch_s
 from mxtaltools.dataset_utils.utils import collate_data_list
 
 STREAM_DEFAULTS = dict(slots=None, check_every=5, polish_chunk=None, first_polish_chunk=None, seeds=None, stop_p=None,
-                       stop_band_kT=5.0)
+                       stop_band_kT=5.0, connected_starts=True)
 STAGE_KEYS = {'optim_target', 'enforce_reduced', 'compression_factor', 'cutoff', 'init_lr', 'convergence_eps',
               'optimizer_func', 'anneal_lr', 'grad_norm_clip', 'show_tqdm', 'max_num_steps', 'target_packing_coeff',
               'centroid_boundary', 'early_stop', 'early_stop_kT', 'supercell_size', 'convergence'}
@@ -103,6 +109,8 @@ EMA_ALPHA, CONV_WINDOW = 0.1, 50  # check_convergence's smoothing and window
 REGROW_STEPS = 200  # clean steps before a halved evaluation chunk is doubled again
 ANGLE_RANGE = (0.2 * math.pi, 0.8 * math.pi)  # clean_cell_parameters' bound on each cell angle (angle_pad 0.6)
 FLAT_VF = 0.01  # volume / (a b c) below which a row's cell counts as flat and the row is dropped before a step
+MAX_REDRAWS = 20  # redraws of a start whose contact network is not 3-periodic; after them the last draw is kept
+REDRAW_BLOCK = 100000  # a redraw's block index offset per attempt (get_initial_state seeds by block index)
 BFGS_MIN_UPDATES = 3  # accepted BFGS updates before a row's decrement can end its stage (B starts as a guess)
 BFGS_SHRINK = 0.25  # a rejected trial's step is shortened by this factor for the next trial
 
@@ -277,6 +285,72 @@ def _seed_starts(path, samples_to_optim, device, done, chunk: int = 256):
     return [(k, r) for k, r in out if k not in done]
 
 
+def _cell_matrix(lengths, angles):
+    """[3, 3] float64, columns a, b, c in Cartesian (a along x, b in the xy plane), from lengths (A) and angles
+    (rad)."""
+    import numpy as np
+    a, b, c = lengths
+    ca, cb, cg = np.cos(angles)
+    sg = np.sin(angles[2])
+    cz = np.sqrt(max(1 - ca * ca - cb * cb - cg * cg + 2 * ca * cb * cg, 0.0)) / sg
+    return np.array([[a, b * cg, c * cb], [0.0, b * sg, c * (ca - cb * cg) / sg], [0.0, 0.0, c * cz]])
+
+
+def contact_dimension(rows, cutoff: float, max_offsets: int = 200000) -> list:
+    """Per crystal row: the dimension (0-3) of the lattice of translations its molecules' contact network reaches,
+    or -1 when the network falls into more than one piece.
+
+    The molecules are every unit's copy under the row's symmetry operators (``symmetry_operators``, fractional
+    centres ``aunit_centroid``), with their periodic images. Two count as in contact when their centres are closer
+    than ``cutoff`` + 2 x ``radius`` (the row's largest atom distance from a molecule's centre): no atom pair can be
+    within ``cutoff`` otherwise, so the test over-counts contacts, and a result below 3 means that, under an energy cut
+    off at ``cutoff``, no force acts across some gap of the crystal at all -- isolated layers (2), chains (1) or
+    molecules (0), or pieces that interpenetrate without touching (-1). Following the contacts out from one molecule
+    (breadth first), each contact that closes a loop adds the lattice translation it implies; the dimension is the rank
+    of those translations, the dimensionality test used to find layered and chain materials in structure databases.
+    A row whose offset grid would exceed ``max_offsets`` (a cell much thinner than the cutoff) is reported as 3."""
+    import numpy as np
+    out = []
+    for r in rows:
+        L = r.cell_lengths.reshape(-1).double().numpy()
+        A = r.cell_angles.reshape(-1).double().numpy()
+        T = _cell_matrix(L, A)
+        R = float(cutoff) + 2 * float(r.radius.reshape(-1).max()) + 1e-3
+        ops = np.asarray(r.symmetry_operators, dtype=float).reshape(-1, 4, 4)
+        cent = r.aunit_centroid.reshape(-1, 3).double().numpy()
+        f = np.concatenate([(cent @ op[:3, :3].T) + op[:3, 3] for op in ops]) % 1.0  # [M, 3]
+        V = abs(np.linalg.det(T))
+        h = np.array([V / np.linalg.norm(np.cross(T[:, (k + 1) % 3], T[:, (k + 2) % 3])) for k in range(3)])
+        N = np.ceil(R / h).astype(int) + 1
+        if np.prod(2 * N + 1) > max_offsets:
+            out.append(3)
+            continue
+        grid = np.stack(np.meshgrid(*[np.arange(-n, n + 1) for n in N], indexing='ij'), -1).reshape(-1, 3)
+        M = len(f)
+        diff = f[None, :, None, :] - f[:, None, None, :] + grid[None, None]  # [i, j, n, 3]: f_j + n - f_i
+        dist = np.linalg.norm(diff @ T.T, axis=-1)
+        i_, j_, k_ = np.nonzero(dist < R)
+        self_loop = (i_ == j_) & (np.abs(grid[k_]).sum(1) == 0)
+        i_, j_, n_ = i_[~self_loop], j_[~self_loop], grid[k_[~self_loop]]
+        pos = {0: np.zeros(3, dtype=np.int64)}
+        queue, adj = [0], {}
+        for a, b, n in zip(i_.tolist(), j_.tolist(), n_):
+            adj.setdefault(a, []).append((b, n))
+        while queue:
+            a = queue.pop(0)
+            for b, n in adj.get(a, []):
+                if b not in pos:
+                    pos[b] = pos[a] + n
+                    queue.append(b)
+        if len(pos) < M:
+            out.append(-1)
+            continue
+        loops = np.array([pos[a] + n - pos[b] for a, b, n in zip(i_.tolist(), j_.tolist(), n_)])
+        loops = loops[np.abs(loops).sum(1) > 0] if len(loops) else loops
+        out.append(int(np.linalg.matrix_rank(loops.astype(float))) if len(loops) else 0)
+    return out
+
+
 def _converged(slots, i, eps):
     """check_convergence's per-row test on slot i's ring of smoothed parameters."""
     n = int(slots.nstep[i])
@@ -406,7 +480,7 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
 
     running_min = min((final_energy(r) for r in opt_outs if key in r.keys()), default=None)
     effort = dict(stage_evals=[0] * n_st, polish_evals=0, final_evals=0, captured=0, cascaded=0, flat_dropped=0,
-                  wall_s=0.0,
+                  starts_disconnected=0, starts_redrawn=0, starts_kept_disconnected=0, wall_s=0.0,
                   time_s=dict(starts=0.0, emit=0.0, finish=0.0),  # the rest of wall_s is the descent
                   missing_mass=[], stopped=None, seed_missing_mass=[], seeds_stopped=None)
     saturated = [False]  # cfg:stream.stop_p met: no new starts
@@ -431,10 +505,20 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
                           'n_out': len(opt_outs)}, progress)
 
     pool, block = [], [0]
+    cutoff0 = cuts[0][0]  # the first stage's cutoff: the one a start is first evaluated at
+
+    def draw(idx, b0):
+        """Starts for the samples ``idx`` (indices into samples_to_optim), drawn as block b0 draws them, oriented."""
+        batch = collate_data_list([samples_to_optim[k] for k in idx]).to(device)
+        batch = get_initial_state(config, batch, device, b0)  # the seed of a batch search's batch b0
+        batch.orient_molecule(mode='standardized', target_handedness=batch.aunit_handedness)
+        return batch.cpu().detach().batch_to_list()
 
     @timed('starts')
     def fill_pool():
-        """Draw and orient the next block of starts (those not already in the output)."""
+        """Draw and orient the next block of starts (those not already in the output). With ``connected_starts``,
+        a start whose contact network at the first stage's cutoff is not 3-periodic (``contact_dimension``) is drawn
+        again, at most ``MAX_REDRAWS`` times (seeded by the block and the attempt), then kept as last drawn."""
         while block[0] * S < num_samples:
             b0 = block[0]
             block[0] += 1
@@ -442,10 +526,19 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
             todo = [k for k in range(lo, hi) if k not in done]
             if not todo:
                 continue
-            batch = collate_data_list(samples_to_optim[lo:hi]).to(device)
-            batch = get_initial_state(config, batch, device, b0)  # the seed of a batch search's batch b0
-            batch.orient_molecule(mode='standardized', target_handedness=batch.aunit_handedness)
-            rows = batch.cpu().detach().batch_to_list()
+            rows = draw(range(lo, hi), b0)
+            if scfg['connected_starts']:
+                bad = [k for k, dim in zip(todo, contact_dimension([rows[k - lo] for k in todo], cutoff0)) if dim != 3]
+                effort['starts_disconnected'] += len(bad)
+                for attempt in range(1, MAX_REDRAWS + 1):
+                    if not bad:
+                        break
+                    new = draw(bad, b0 + REDRAW_BLOCK * attempt)
+                    effort['starts_redrawn'] += len(bad)
+                    for k, r in zip(bad, new):
+                        rows[k - lo] = r
+                    bad = [k for k, dim in zip(bad, contact_dimension(new, cutoff0)) if dim != 3]
+                effort['starts_kept_disconnected'] += len(bad)
             pool.extend((k, rows[k - lo]) for k in todo)
             return True
         return False

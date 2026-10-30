@@ -6,7 +6,7 @@ stages, with a minima library, and a resumed run finds nothing left to do; slots
 seeds go first, straight to the polish; stop_p ends the random starts, and the seeds' own bound ends the seeds;
 _bfgs_step converges on a quadratic, rejects a rise and always ends; a bfgs last stage leaves the polish less to do;
 each stage runs at its own cutoff with the envelope; starts at known minima are captured in the last stage, not
-in stage 1; a flat cell is dropped before its step.
+in stage 1; a flat cell is dropped before its step; a slab start is drawn again.
 CPU, eLJ, the test molecule of the refold tests.
 """
 from types import SimpleNamespace
@@ -17,6 +17,7 @@ import torch
 import mxtaltools.crystal_search.run_search as rs
 from mxtaltools.common.config_processing import dict2namespace
 from mxtaltools.crystal_search import stream_search as ss
+from mxtaltools.dataset_utils.utils import collate_data_list
 
 from tests.test_fd_refold import _case, _rows, mol  # noqa: F401  (the fixture and row builders of the refold tests)
 
@@ -320,6 +321,60 @@ def test_a_flat_cell_is_dropped_before_its_step(mol, tmp_path, monkeypatch):
     assert sorted(int(r.start_index) for r in out) == [1, 2, 3]
     with open(tmp_path / 'streamtest_stream_effort.json') as fh:
         assert json.load(fh)['flat_dropped'] == 1
+
+
+
+def _stretched(mol, n, axis_len):
+    """n P-1 rows of the test molecule; row 0 with its b axis stretched to ``axis_len`` A (a slab of layers when
+    that is far beyond cutoff + 2 radius)."""
+    rows = _placeholders(mol, n)
+    b = collate_data_list(rows)
+    x = b.full_cell_parameters().clone()
+    x[0, 1] = axis_len
+    b.set_cell_parameters(x, skip_box_analysis=False)
+    return b.batch_to_list()
+
+
+def test_contact_dimension_flags_isolated_layers(mol):
+    """A start whose b axis is far beyond cutoff + 2 radius is a slab (dimension below 3); the same start with a
+    normal b, and a cutoff long enough to reach across the stretched one, are 3-periodic."""
+    rows = _stretched(mol, 2, 120.0)
+    r0 = float(rows[0].radius.reshape(-1).max())
+    dims = ss.contact_dimension(rows, 10.0)
+    assert dims[0] < 3 and dims[1] == 3
+    assert ss.contact_dimension(rows[:1], 130.0 + 2 * r0) == [3]
+
+
+def test_disconnected_starts_are_drawn_again(mol, tmp_path, monkeypatch):
+    """A slab start is drawn again (here the redraw is ordinary) and relaxed; with connected_starts off it is kept."""
+    import json
+    import mxtaltools.crystal_search.utils as su
+    n = 3
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: _placeholders(mol, n))
+    real = su.get_initial_state
+
+    def slab_first(config, batch, device, b0):
+        batch = real(config, batch, device, b0)
+        if b0 == 0:  # the block's first draw: start 0 a slab; a redraw (block + REDRAW_BLOCK) is left alone
+            x = batch.full_cell_parameters().clone()
+            x[0, 1] = 120.0
+            batch.set_cell_parameters(x, skip_box_analysis=False)
+        return batch
+
+    monkeypatch.setattr(su, 'get_initial_state', slab_first)
+    for on in (True, False):
+        (tmp_path / str(on)).mkdir()
+        cfg = _run_cfg(tmp_path / str(on), n)
+        cfg.stream.connected_starts = on
+        out = rs.crystal_search(cfg)
+        assert sorted(int(r.start_index) for r in out) == list(range(n))
+        with open(tmp_path / str(on) / 'streamtest_stream_effort.json') as fh:
+            eff = json.load(fh)
+        if on:
+            assert (eff['starts_disconnected'], eff['starts_redrawn'], eff['starts_kept_disconnected']) == (1, 1, 0)
+            assert float(next(r for r in out if int(r.start_index) == 0).cell_lengths.reshape(-1)[1]) < 100
+        else:
+            assert eff['starts_disconnected'] == 0
 
 
 def test_stop_p_draws_no_new_starts(mol, tmp_path, monkeypatch):
