@@ -26,7 +26,12 @@ Per stage, as ``gradient_descent_optimization`` would run it (wrap mode, Rprop):
 - Rprop is torch's rule (etas 0.5 / 1.2, step sizes in [1e-6, 50], first step lr); the gradient-norm clip and
   anneal_lr, which do not change Rprop's steps, are not applied;
 - each stage is evaluated at its own ``cutoff`` and ``supercell_size`` (rows of stages that share both are evaluated
-  in one call, so stages with different cutoffs cost one call each per step).
+  in one call, so stages with different cutoffs cost one call each per step);
+- before each step a row whose cell is flat -- each angle within ``clean_cell_parameters``' range ``ANGLE_RANGE`` but
+  together giving volume / (a b c) below ``FLAT_VF`` -- is dropped (not in the output; counted in the effort file's
+  ``flat_dropped``; a resumed run draws it again) and its slot refilled: its periodic cluster would take gigabytes
+  (on MIPCAS eLJ, 2026-10-30, one such row asked for 6.4 GB, and the out-of-memory fallback then halved every
+  call for 200 steps).
 The last stage may instead be ``optimizer_func: bfgs`` (needs ``minima``, no compression): per row, gradient-only
 BFGS on the stage's loss, one trial point per step (``_bfgs_step``), each step capped per block by
 ``minima.POLISH_CAPS`` times a trust factor; a row leaves the stage when, after at least ``BFGS_MIN_UPDATES``
@@ -38,9 +43,13 @@ With the search config's ``minima`` block every stage is evaluated with ``minima
 computes switched off smoothly over the last ``lj_envelope`` A before the stage's cutoff, as the polish evaluates
 them), the last stage captures (``MinimaLibrary.capture_query`` every ``capture_every`` steps; on MIPCAS eLJ,
 2026-10-30, rows captured in the first stage reached the captured minimum on a full polish 80% of the time, with or
-without its compression term, against 89-95% in the last stage, and capturing there saved no time), and emitted rows are finished in groups of
-``polish_chunk`` (default 1,000) by ``minima.finish_minima``, whose polish captures too; at the end the run
-writes ``<run>_minima.pt``, one row per minimum with its hit counts (``minima.minimum_rows``).
+without its compression term, against 89-95% in the last stage, and capturing there saved no time), and emitted
+rows are finished in groups of ``polish_chunk`` (default 1,000) by ``minima.finish_minima``, whose polish captures
+too. The first random-start group can be smaller (``first_polish_chunk``, default ``polish_chunk``), so the library
+starts filling sooner: on MIPCAS eLJ (2026-10-30) a first group of 250 cut the polish's evaluations by 12% and its
+converged polishes from 510 to 272, but the extra group cost wall time, so it suits energies whose calls are costly
+rather than eLJ. At the end the run writes ``<run>_minima.pt``, one row per minimum with its hit counts
+(``minima.minimum_rows``).
 
 Starts are drawn in blocks of ``slots`` (``get_initial_state`` seeded by the block index, so a stream with ``slots``
 equal to a batch search's ``batch_size`` relaxes the same starts) and carry ``start_index``. With ``seeds`` (a saved
@@ -84,13 +93,16 @@ from mxtaltools.crystal_search.crystal_opt_utils import canonicalize_aunit, wrap
 from mxtaltools.crystal_search.run_state import atomic_json_dump, atomic_torch_save, committed_outputs
 from mxtaltools.dataset_utils.utils import collate_data_list
 
-STREAM_DEFAULTS = dict(slots=None, check_every=5, polish_chunk=None, seeds=None, stop_p=None, stop_band_kT=5.0)
+STREAM_DEFAULTS = dict(slots=None, check_every=5, polish_chunk=None, first_polish_chunk=None, seeds=None, stop_p=None,
+                       stop_band_kT=5.0)
 STAGE_KEYS = {'optim_target', 'enforce_reduced', 'compression_factor', 'cutoff', 'init_lr', 'convergence_eps',
               'optimizer_func', 'anneal_lr', 'grad_norm_clip', 'show_tqdm', 'max_num_steps', 'target_packing_coeff',
               'centroid_boundary', 'early_stop', 'early_stop_kT', 'supercell_size', 'convergence'}
 ETAS, STEP_SIZES = (0.5, 1.2), (1e-6, 50.0)  # torch.optim.Rprop defaults (init_opt uses them)
 EMA_ALPHA, CONV_WINDOW = 0.1, 50  # check_convergence's smoothing and window
 REGROW_STEPS = 200  # clean steps before a halved evaluation chunk is doubled again
+ANGLE_RANGE = (0.2 * math.pi, 0.8 * math.pi)  # clean_cell_parameters' bound on each cell angle (angle_pad 0.6)
+FLAT_VF = 0.01  # volume / (a b c) below which a row's cell counts as flat and the row is dropped before a step
 BFGS_MIN_UPDATES = 3  # accepted BFGS updates before a row's decrement can end its stage (B starts as a guess)
 BFGS_SHRINK = 0.25  # a rejected trial's step is shortened by this factor for the next trial
 
@@ -119,9 +131,11 @@ def check_stream_config(config):
     s = {**STREAM_DEFAULTS, **block}
     s['slots'] = int(s['slots'] or config.batch_size)
     s['polish_chunk'] = int(s['polish_chunk'] or 1000)
+    s['first_polish_chunk'] = int(s['first_polish_chunk'] or s['polish_chunk'])
     s['check_every'] = int(s['check_every'])
-    if s['slots'] < 1 or s['check_every'] < 1 or s['polish_chunk'] < 1:
-        raise ValueError(f"cfg:stream: slots, check_every and polish_chunk must be positive, got {s}")
+    if s['slots'] < 1 or s['check_every'] < 1 or s['polish_chunk'] < 1 or s['first_polish_chunk'] < 1:
+        raise ValueError(f"cfg:stream: slots, check_every, polish_chunk and first_polish_chunk must be positive, "
+                         f"got {s}")
     if s['stop_p'] is not None:
         s['stop_p'], s['stop_band_kT'] = float(s['stop_p']), float(s['stop_band_kT'])
         if not 0 < s['stop_p'] < 1 or not s['stop_band_kT'] > 0:
@@ -391,7 +405,8 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         return float(getattr(r, key))
 
     running_min = min((final_energy(r) for r in opt_outs if key in r.keys()), default=None)
-    effort = dict(stage_evals=[0] * n_st, polish_evals=0, final_evals=0, captured=0, cascaded=0, wall_s=0.0,
+    effort = dict(stage_evals=[0] * n_st, polish_evals=0, final_evals=0, captured=0, cascaded=0, flat_dropped=0,
+                  wall_s=0.0,
                   time_s=dict(starts=0.0, emit=0.0, finish=0.0),  # the rest of wall_s is the descent
                   missing_mass=[], stopped=None, seed_missing_mass=[], seeds_stopped=None)
     saturated = [False]  # cfg:stream.stop_p met: no new starts
@@ -438,6 +453,7 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
     d = None
     slots = None
     pending = []  # emitted rows awaiting the polish
+    groups_done = [0]  # random-start polish groups finished in this run
     energy_chunk = [256]  # finish_minima's rows per energy evaluation; halved on out-of-memory
 
     def load(i, k, row):
@@ -586,6 +602,21 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         occ = slots.occupied()
         if not occ:
             break
+        with torch.no_grad():  # a flat cell (each angle in range, together near zero volume) has a cluster of
+            c_ = slots.X[occ, 3:6].clamp(*ANGLE_RANGE).double().cos()  # gigabytes: drop the row before the step
+            flat = [i for i, v in zip(occ, (1 - (c_ ** 2).sum(1) + 2 * c_.prod(1)).tolist()) if v < FLAT_VF]
+        if flat:
+            for i in flat:
+                slots.row[i] = None
+            effort['flat_dropped'] += len(flat)
+            if not stopping and not saturated[0]:
+                while len(pool) < len(flat) and fill_pool():
+                    pass
+                for i in flat:
+                    if pool:
+                        load(i, *pool.pop(0))
+            templates = None
+            continue
         if templates is None:  # rows grouped by their stage's (cutoff, supercell size), then chunked
             groups = {}
             for i in occ:
@@ -603,7 +634,11 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
             templates, clean = None, 0
             gc.collect()
             torch.cuda.empty_cache()
-            print(f"{config.run_name}: out of memory; evaluating {eval_chunk} rows at a time")
+            free, total = torch.cuda.mem_get_info() if torch.cuda.is_available() else (0, 0)
+            alloc, resv = torch.cuda.memory_allocated() / 2**30, torch.cuda.memory_reserved() / 2**30
+            print(f"{config.run_name}: out of memory; evaluating {eval_chunk} rows at a time (this process: "
+                  f"{alloc:.2f} GiB allocated, {resv:.2f} GiB reserved; device: {free / 2**30:.2f} of "
+                  f"{total / 2**30:.2f} GiB free)")
             continue
         lc, g, rec = (torch.cat([p_[k] for p_ in parts]) for k in range(3))
         del parts
@@ -692,9 +727,13 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
                     if pool:
                         load(i, *pool.pop(0))
             templates = None
-        while len(pending) >= scfg['polish_chunk'] and not saturated[0]:
-            finish(pending[:scfg['polish_chunk']])
-            del pending[:scfg['polish_chunk']]
+        while not saturated[0]:  # the first random-start group may be smaller: the library starts filling sooner
+            chunk = scfg['polish_chunk'] if groups_done[0] else scfg['first_polish_chunk']
+            if len(pending) < chunk:
+                break
+            finish(pending[:chunk])
+            del pending[:chunk]
+            groups_done[0] += 1
         if saturated[0]:  # stop_p met: end now; rows in flight and emitted rows not yet polished are not finished
             effort['stopped']['dropped'] = len(slots.occupied()) + len(pending)
             pending.clear()
@@ -702,7 +741,8 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
     if pending:
         finish(pending[:])
         pending.clear()
-    effort.update(wall_s=time.time() - t0, global_steps=gstep, rows=len(opt_outs))
+    effort.update(wall_s=time.time() - t0, global_steps=gstep, rows=len(opt_outs),
+                  fd_merged=library.fd_merged if library is not None else 0)
     if mcfg is not None:
         atomic_torch_save(mn.minimum_rows(opt_outs), str(out_path)[:-3] + '_minima.pt')
     atomic_json_dump(effort, str(out_path)[:-3] + '_stream_effort.json')

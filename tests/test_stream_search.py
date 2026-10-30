@@ -6,7 +6,7 @@ stages, with a minima library, and a resumed run finds nothing left to do; slots
 seeds go first, straight to the polish; stop_p ends the random starts, and the seeds' own bound ends the seeds;
 _bfgs_step converges on a quadratic, rejects a rise and always ends; a bfgs last stage leaves the polish less to do;
 each stage runs at its own cutoff with the envelope; starts at known minima are captured in the last stage, not
-in stage 1.
+in stage 1; a flat cell is dropped before its step.
 CPU, eLJ, the test molecule of the refold tests.
 """
 from types import SimpleNamespace
@@ -39,9 +39,10 @@ def test_config_check():
                  dict(opt=[dict(STAGE, optimizer_func='adam')]), dict(opt=[dict(STAGE, centroid_boundary='clamp')]),
                  dict(opt=[dict(STAGE, enforce_reduced=True)]), dict(opt=[dict(STAGE, convergence='grad')]),
                  dict(opt=[dict(STAGE, keep_lowest_fraction=0.5)]), dict(opt=[dict(STAGE, fd_refold=True)]),
-                 dict(opt=[dict(STAGE), dict(STAGE, optim_target='lj')])]:
+                 dict(opt=[dict(STAGE), dict(STAGE, optim_target='lj')]), dict(stream={'first_polish_chunk': -1})]:
         with pytest.raises(ValueError):
             ss.check_stream_config(_cfg(**over))
+    assert ss.check_stream_config(_cfg(stream={'polish_chunk': 8}))['first_polish_chunk'] == 8  # default: the same
     bfgs = dict(STAGE, optimizer_func='bfgs', convergence_eps=1e-4)
     assert ss.check_stream_config(_cfg(opt=[dict(STAGE), bfgs], minima={'kT': 1.0})) is not None  # last stage only
     for over in [dict(opt=[dict(STAGE), bfgs]),  # no minima block: no kT for its decrement
@@ -295,6 +296,32 @@ def test_capture_is_in_the_last_stage(mol, tmp_path, monkeypatch):
         assert int(r.polish_status) == 0 and bool(r.recapture) and st[0] > 0 and st[1] > 0
 
 
+
+def test_a_flat_cell_is_dropped_before_its_step(mol, tmp_path, monkeypatch):
+    """A start whose angles are each in range but together nearly flat (volume / abc 0.008) is dropped before its
+    first evaluation, counted in the effort file, and every other start is relaxed."""
+    import json
+    import math
+    import mxtaltools.crystal_search.utils as su
+    n = 4
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: _placeholders(mol, n))
+    real = su.get_initial_state
+
+    def one_flat(config, batch, device, b0):
+        batch = real(config, batch, device, b0)
+        if b0 == 0:
+            x = batch.full_cell_parameters().clone()
+            x[0, 3:6] = torch.tensor([math.radians(v) for v in (52.9, 88.4, 36.0)], device=x.device)
+            batch.set_cell_parameters(x, skip_box_analysis=False)
+        return batch
+
+    monkeypatch.setattr(su, 'get_initial_state', one_flat)
+    out = rs.crystal_search(_run_cfg(tmp_path, n))
+    assert sorted(int(r.start_index) for r in out) == [1, 2, 3]
+    with open(tmp_path / 'streamtest_stream_effort.json') as fh:
+        assert json.load(fh)['flat_dropped'] == 1
+
+
 def test_stop_p_draws_no_new_starts(mol, tmp_path, monkeypatch):
     """Once the missing-mass bound is below stop_p the run ends at once: no start is drawn after, and the rows in
     flight are dropped (counted in the effort file)."""
@@ -310,6 +337,9 @@ def test_stop_p_draws_no_new_starts(mol, tmp_path, monkeypatch):
         import json
         stopped = json.load(fh)['stopped']
         assert stopped['reason'] == 'stop_p' and stopped['dropped'] >= 1
+    cfg.stream.first_polish_chunk = 1  # a smaller first group: the stop is checked after one row
+    assert len(rs.crystal_search(cfg)) == 1
+    cfg.stream.first_polish_chunk = None
     two_groups = _placeholders(mol, 4)
     for r, sg in zip(two_groups, (1, 2, 1, 2)):
         r.sg_ind = torch.tensor([sg])
