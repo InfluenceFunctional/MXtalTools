@@ -551,7 +551,8 @@ def ingest_shards(reg, cfg, coord_dir):
         eff['attempts'] += int(s.get('n_attempts', 1))
         eff['wall_s'] += float(s.get('wall_s', 0.0))
         eff['shards'] += 1
-        eff['max_shard_wall_s'] = max(float(eff.get('max_shard_wall_s', 0.0)), float(s.get('wall_s', 0.0)))
+        eff['contact_dropped'] = int(eff.get('contact_dropped', 0)) + int(s.get('n_contact_dropped', 0))
+        eff['max_shard_wall_s'] =max(float(eff.get('max_shard_wall_s', 0.0)), float(s.get('wall_s', 0.0)))
         gpu = str(s.get('gpu', 'unknown'))
         eff['gpus'][gpu] = eff['gpus'].get(gpu, 0) + 1
         parents = None
@@ -802,6 +803,10 @@ def write_outputs(coord_dir, cfg, reg, stats, decisions, campaign_stop, total):
     lines += ['| stream | verdict | reason |', '|---|---|---|']
     for s, d in decisions.items():
         lines.append(f"| {s} | {'STOP' if d['stop'] else 'run'} | {d['why']} |")
+    dropped = {s: int(e.get('contact_dropped', 0)) for s, e in reg['effort'].items()}
+    if any(dropped.values()):
+        lines += ['', 'Relaxed rows dropped by the contact filter (cfg:min_intermolecular_contact), counted in '
+                      'relaxations but never ingested: ' + ', '.join(f'{s} {n}' for s, n in dropped.items())]
     lines += ['', f"Campaign: {'STOP' if campaign_stop else 'running'}."]
     if reg['refused']:
         lines += ['', f"Refused inputs ({len(reg['refused'])}; latest shown): " +

@@ -232,6 +232,49 @@ def test_effort_excludes_row_steps_skipped_by_the_cascade(acridine, tmp_path, mo
     assert s['row_evals'] == 4 * 3 - 2
 
 
+def test_contact_filter_keeps_an_overlap_hole_out_of_outputs_shards_and_the_cascade_reference(acridine, tmp_path,
+                                                                                             monkeypatch):
+    """cfg:min_intermolecular_contact: a crushed cell (molecules interpenetrating) scored as the deepest state -- an MLIP
+    hole, as MACE-OFF24's on acridine -- is dropped from the outputs and the shard, counted in the shard and stats.md,
+    and never becomes the early_stop reference of the next batch."""
+    coord_dir, cfg = _campaign(tmp_path, acridine[0])
+    normal = _seeds(cfg, acridine[1], 5)
+    b = acridine[1][0]
+    p = torch.cat([b.cell_lengths.reshape(-1), b.cell_angles.reshape(-1), b.aunit_centroid.reshape(-1)[:6],
+                   b.aunit_orientation.reshape(-1)[:6]]).float()
+    crushed_p = p.clone()
+    crushed_p[:3] = crushed_p[:3] * 0.6
+    crushed = co.rebuild_crystals(cfg, crushed_p[None], b.aunit_handedness.reshape(1, -1)[:, :2].float())
+    closest = rs.closest_intermolecular_contact(collate_data_list(crushed + normal))
+    assert float(closest[0]) < 1.5 and bool((closest[1:] >= 1.5).all()), closest
+    a_crushed = float(crushed_p[0]) * 1.01
+
+    refs = []
+
+    def fake(self, return_record=False, **kwargs):
+        refs.append(kwargs.get('early_stop_ref'))
+        out = self.batch_to_list()
+        for c in out:
+            c.elj = torch.tensor([-5000.0 if float(c.cell_lengths.reshape(-1)[0]) < a_crushed else _energy(c)])
+            c.lj = torch.tensor([-500.0])
+        return (out, dict(loss=torch.zeros(4, len(out)))) if return_record else out
+
+    seeds = crushed + normal
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: [s.clone() for s in seeds])
+    monkeypatch.setattr(MolCrystalData, 'optimize_crystal_parameters', fake)
+    stage = {'optim_target': 'elj', 'init_lr': 0.01, 'max_num_steps': 3, 'optimizer_func': 'rprop', 'show_tqdm': False,
+             'early_stop': [[0, 1000.0]]}
+    outs = rs.crystal_search(_search_config(tmp_path, 6, coord_dir, opt=[stage], min_intermolecular_contact=1.5))
+    assert len(outs) == 5 and all(float(o.elj) > -5000.0 for o in outs), 'the hole must not be saved'
+    assert refs[0] is None and refs[1] > -5000.0, f'the hole became the cascade reference: {refs}'
+    shards = sorted((coord_dir / 'shards' / 'run_random').glob('*.pt'))
+    s0 = torch.load(shards[0], weights_only=False)
+    assert s0['n_contact_dropped'] == 1 and len(s0['energy']) == 2 and s0['n_relaxations'] == 3
+    assert float(s0['energy'].min()) > -5000.0
+    co.curate(str(coord_dir))
+    assert 'dropped by the contact filter' in (coord_dir / 'stats.md').read_text()
+
+
 # ---------------------------------------------------------------------------
 # hop stream
 # ---------------------------------------------------------------------------

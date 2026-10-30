@@ -590,7 +590,13 @@ def parse_opt_config(opt_config, config, device, target):
         opt_config['score_model'] = score_model
     if opt_config['optim_target'] in ['uma']:
         pred_path = config.uma_predictor_path  # smaller mol crystal model
-        opt_config['predictor'] = init_uma_crystal_predictor(pred_path, device=device)
+        # cfg:uma_activation_checkpointing (default True, the predictor's own default). A relaxation backpropagates
+        # through UMA, and with checkpointing on that backward raised torch's CheckpointError (a different number of
+        # tensors saved in the forward and in its recomputation) for UMA-s 1.1 and 1.2 under fairchem 2.13 and 2.16 on
+        # CPU, 2026-10-27; the acr_fm_oct27 searches set it False
+        opt_config['predictor'] = init_uma_crystal_predictor(
+            pred_path, device=device,
+            activation_checkpointing=bool(getattr(config, 'uma_activation_checkpointing', True)))
     if opt_config['optim_target'] in ['mace']:
         pred_path = config.mace_predictor_path  # smaller mol crystal model
         opt_config['predictor'] = load_mace_model(pred_path, device=device, dtype=torch.float32)

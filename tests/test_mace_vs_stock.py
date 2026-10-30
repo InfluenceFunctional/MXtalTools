@@ -166,14 +166,25 @@ def _ase_unit_cells(batch):
     return out
 
 
+def _e0_sum_ev(numbers, model):
+    """The checkpoint's per-atom reference energies E0 summed over `numbers`, in float64 (eV; head 0, as our route)."""
+    table = [int(a) for a in model.atomic_numbers]
+    e0 = model.atomic_energies_fn.atomic_energies.detach().double().cpu()
+    e0 = e0[0] if e0.ndim == 2 else e0
+    return float(sum(float(e0[table.index(int(z))]) for z in numbers))
+
+
 def _stock_energies(atoms_list, calculator):
     """One ASE call per crystal, on a fresh copy so the calculator's result cache is
-    keyed on a distinct object and cannot serve a stale energy."""
+    keyed on a distinct object and cannot serve a stale energy. Returned as the
+    interaction energy, the stock total minus the checkpoint's E0 sum, which is what
+    compute_crystal_mace_on_mxt_batch returns."""
+    model = calculator.models[0]
     out = []
     for atoms in atoms_list:
         a = atoms.copy()
         a.calc = calculator
-        out.append(float(a.get_potential_energy()))
+        out.append(float(a.get_potential_energy()) - _e0_sum_ev(a.numbers, model))
     return torch.tensor(out, dtype=torch.float64)
 
 

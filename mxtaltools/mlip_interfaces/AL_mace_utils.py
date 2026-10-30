@@ -442,7 +442,13 @@ def compute_crystal_mace_on_mxt_batch(batch, model,
         energy = torch.full((batch.num_graphs,), float('nan'),
                             dtype=torch.float32, device=batch.device)
     else:
-        energy = output['energy']
+        # The interaction energy, not the total. The total adds the model's per-atom reference energies E0, which cancel
+        # in every lattice energy built from these values but set the total's magnitude: MACE-OFF24 (DFT atomic
+        # references) gives about -1.46e6 kJ/mol per acridine molecule, where float32 resolves ~1 kJ/mol per molecule
+        # (a rigid translation of one crystal moved the total by 1.04 kJ/mol and the interaction energy by 0.003,
+        # 2026-10-26). For a checkpoint with small E0s the two differ by a constant per composition.
+        inter = output.get('interaction_energy')
+        energy = inter if inter is not None else output['energy']
     return energy
 
 
