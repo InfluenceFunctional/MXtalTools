@@ -1,0 +1,126 @@
+
+#######################################################################
+#
+#                 Cambridge Crystallographic Data Centre
+#                                CCDC 
+#
+#######################################################################
+#
+# If this CIF has been generated from an entry in the Cambridge 
+# Structural Database, then it will include bibliographic, chemical, 
+# crystal, experimental, refinement or atomic coordinate data resulting 
+# from the CCDC's data processing and validation procedures.
+#
+#######################################################################
+
+data_NEHZOR
+_chemical_formula_moiety         'C12 H9 Br1 O2'
+_chemical_name_systematic        1-(4-Bromo-1-hydroxy-2-naphthyl)ethanone
+_symmetry_cell_setting           monoclinic
+_symmetry_space_group_name_H-M   'P 21/c'
+_symmetry_Int_Tables_number      14
+_space_group_name_Hall           '-P 2ybc'
+loop_
+_symmetry_equiv_pos_site_id
+_symmetry_equiv_pos_as_xyz
+1 x,y,z
+2 -x,1/2+y,1/2-z
+3 -x,-y,-z
+4 x,1/2-y,1/2+z
+_cell_length_a                   10.4784(2)
+_cell_length_b                   14.4026(3)
+_cell_length_c                   7.0563(2)
+_cell_angle_alpha                90
+_cell_angle_beta                 108.9280(10)
+_cell_angle_gamma                90
+_cell_volume                     1007.33
+_exptl_crystal_colour            colorless
+_exptl_crystal_description       needle
+_cell_formula_units_Z            4
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_U_iso_or_equiv
+_atom_site_thermal_displace_type
+Br1 Br 0.298301(17) 0.502260(11) 0.48255(3) 0.0309 Uani
+O1 O -0.17934(12) 0.78829(9) 0.0474(2) 0.0317 Uani
+O2 O 0.03322(12) 0.87590(8) 0.24712(19) 0.0263 Uani
+C1 C 0.21771(15) 0.62056(10) 0.4089(2) 0.0206 Uani
+C2 C 0.08598(15) 0.62317(11) 0.2936(2) 0.0210 Uani
+H1 H 0.0378 0.5668 0.2532 0.0250 Uiso
+C3 C 0.01882(14) 0.70971(11) 0.2322(2) 0.0196 Uani
+C4 C 0.09050(15) 0.79183(11) 0.2942(2) 0.0193 Uani
+C5 C 0.22986(14) 0.78985(10) 0.4152(2) 0.0187 Uani
+C6 C 0.30312(15) 0.87292(11) 0.4757(2) 0.0237 Uani
+H2 H 0.2597 0.9310 0.4356 0.0280 Uiso
+C7 C 0.43636(17) 0.87067(12) 0.5918(2) 0.0272 Uani
+H3 H 0.4849 0.9270 0.6311 0.0330 Uiso
+C8 C 0.50131(16) 0.78512(13) 0.6527(2) 0.0277 Uani
+H4 H 0.5932 0.7841 0.7352 0.0330 Uiso
+C9 C 0.43333(15) 0.70309(12) 0.5942(2) 0.0236 Uani
+H5 H 0.4791 0.6458 0.6348 0.0280 Uiso
+C10 C 0.29558(14) 0.70281(11) 0.4740(2) 0.0188 Uani
+C11 C -0.12323(15) 0.71307(11) 0.1049(2) 0.0226 Uani
+C12 C -0.20130(16) 0.62425(12) 0.0441(3) 0.0300 Uani
+H6 H -0.2936 0.6385 -0.0405 0.0450 Uiso
+H7 H -0.2036 0.5910 0.1641 0.0450 Uiso
+H8 H -0.1576 0.5854 -0.0308 0.0450 Uiso
+H9 H -0.036(3) 0.864(2) 0.182(4) 0.0670 Uiso
+loop_
+_atom_site_aniso_label
+_atom_site_aniso_U_11
+_atom_site_aniso_U_22
+_atom_site_aniso_U_33
+_atom_site_aniso_U_23
+_atom_site_aniso_U_13
+_atom_site_aniso_U_12
+Br1 0.03185(11) 0.02188(10) 0.03393(11) 0.00398(6) 0.00353(8) 0.00683(6)
+O1 0.0213(5) 0.0285(6) 0.0381(7) 0.0020(5) -0.0003(5) 0.0046(5)
+O2 0.0235(6) 0.0197(5) 0.0310(6) 0.0004(5) 0.0025(5) 0.0039(4)
+C1 0.0230(7) 0.0182(7) 0.0204(7) 0.0022(5) 0.0069(6) 0.0033(5)
+C2 0.0222(7) 0.0185(7) 0.0216(7) 0.0005(5) 0.0062(6) -0.0005(5)
+C3 0.0174(6) 0.0213(7) 0.0194(7) 0.0005(6) 0.0052(5) 0.0010(5)
+C4 0.0197(6) 0.0209(7) 0.0174(7) 0.0006(5) 0.0061(5) 0.0015(5)
+C5 0.0192(6) 0.0208(7) 0.0166(7) -0.0010(5) 0.0063(5) -0.0002(5)
+C6 0.0257(8) 0.0214(7) 0.0238(8) -0.0024(6) 0.0078(6) -0.0030(6)
+C7 0.0264(8) 0.0296(8) 0.0237(8) -0.0044(6) 0.0055(6) -0.0081(6)
+C8 0.0190(7) 0.0405(10) 0.0205(7) -0.0007(7) 0.0023(6) -0.0038(6)
+C9 0.0184(7) 0.0312(8) 0.0198(7) 0.0026(6) 0.0043(6) 0.0028(6)
+C10 0.0186(7) 0.0229(7) 0.0156(6) 0.0011(5) 0.0064(5) 0.0012(5)
+C11 0.0198(7) 0.0266(8) 0.0209(7) -0.0006(6) 0.0059(6) -0.0006(6)
+C12 0.0201(7) 0.0302(9) 0.0352(9) -0.0034(7) 0.0029(7) -0.0026(6)
+loop_
+_geom_bond_atom_site_label_1
+_geom_bond_atom_site_label_2
+_geom_bond_site_symmetry_1
+_geom_bond_site_symmetry_2
+Br1 C1 1_555 1_555
+O1 C11 1_555 1_555
+O2 C4 1_555 1_555
+C1 C2 1_555 1_555
+C2 H1 1_555 1_555
+C3 C2 1_555 1_555
+C4 C3 1_555 1_555
+C5 C4 1_555 1_555
+C6 C5 1_555 1_555
+H2 C6 1_555 1_555
+C7 C6 1_555 1_555
+H3 C7 1_555 1_555
+C8 C7 1_555 1_555
+H4 C8 1_555 1_555
+C9 C8 1_555 1_555
+H5 C9 1_555 1_555
+C10 C1 1_555 1_555
+C11 C3 1_555 1_555
+C12 C11 1_555 1_555
+H6 C12 1_555 1_555
+H7 C12 1_555 1_555
+H8 C12 1_555 1_555
+H9 O2 1_555 1_555
+C5 C10 1_555 1_555
+C9 C10 1_555 1_555
+
+#END

@@ -4,7 +4,6 @@ import multiprocessing as mp
 import numpy as np
 import torch
 from ase.spacegroup import Spacegroup
-from ccdc.crystal import PackingSimilarity
 from ccdc.io import CrystalReader
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
@@ -15,6 +14,7 @@ from mxtaltools.analysis.crystal_rdf import crystal_rdf, compute_rdf_distance
 from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
 from mxtaltools.common.ase_interface import get_niggli_cell
 from mxtaltools.common.training_utils import load_crystal_score_model
+from mxtaltools.dataset_utils.data_class_methods.crystal_analysis import compack_compare
 from mxtaltools.dataset_utils.utils import collate_data_list
 from mxtaltools.models.utils import softmax_and_score
 
@@ -225,20 +225,13 @@ def batch_compack(best_sample_inds, optimized_samples, reference_cluster_batch, 
 
 
 def single_compack_run(ind):
-    ref_crystal = CrystalReader('compack_placeholder.cif')[0]
-    sample_crystal = CrystalReader(f'temp_{ind}.cif')[0]
-    similarity_engine = PackingSimilarity()
-    similarity_engine.settings.distance_tolerance = 0.4
-    similarity_engine.settings.angle_tolerance = 40
-    similarity_engine.settings.allow_molecular_differences = True
-    similarity_engine.settings.packing_shell_size = 20
-    try:
-        result = similarity_engine.compare(ref_crystal, sample_crystal)
-        print(f"Crystal {ind} RMSD = {result.rmsd:.3f} Å, {result.nmatched_molecules} mols matched")
-        return result.rmsd, result.nmatched_molecules
-    except AttributeError:
+    r = compack_compare('compack_placeholder.cif', f'temp_{ind}.cif',
+                        settings=dict(distance_tolerance=0.4, angle_tolerance=40, allow_molecular_differences=True))
+    if r['status'] != 'ok':
         print("Analysis failed")
         return 0, 0
+    print(f"Crystal {ind} RMSD = {r['rmsd']:.3f} Å, {r['n_matched']} mols matched")
+    return r['rmsd'], r['n_matched']
 
 
 def cluster_batch_to_ccdc_crystals(cluster_batch, inds):

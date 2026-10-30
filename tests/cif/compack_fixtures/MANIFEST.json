@@ -1,0 +1,303 @@
+{
+ "about": "Unit-cell CIFs written by MolCrystalData.write_cif(mode=\"unit cell\") from eLJ crystal-search states (campaigns nehzor_elj_sep28 and mipcas_elj_sep28, sg 14), copied from the GFN fd_analysis outputs of 2026-10-26; each pair is (reference, test). molecules: atomic numbers and Cartesian positions (Angstrom) of the campaign conformer, in the order the CIFs write each molecule.",
+ "molecules": {
+  "nehzor": {
+   "source": "D:/crystal_datasets/nehzor/NEHZOR0_std_conf.pt",
+   "atomic_numbers": [
+    35,
+    8,
+    8,
+    6,
+    6,
+    6,
+    6,
+    6,
+    6,
+    6,
+    6,
+    6,
+    6,
+    6,
+    6,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ],
+   "positions": [
+    [
+     7.312745094299316,
+     0.03255072236061096,
+     0.11646746844053268
+    ],
+    [
+     11.32162857055664,
+     4.152125358581543,
+     3.0209927558898926
+    ],
+    [
+     9.551482200622559,
+     5.413938045501709,
+     1.6879137754440308
+    ],
+    [
+     7.98862886428833,
+     1.7363779544830322,
+     0.6080659627914429
+    ],
+    [
+     9.105034828186035,
+     1.7739684581756592,
+     1.3776648044586182
+    ],
+    [
+     9.66822338104248,
+     3.020369529724121,
+     1.7874969244003296
+    ],
+    [
+     9.059043884277344,
+     4.203111171722412,
+     1.3736642599105835
+    ],
+    [
+     7.875733852386475,
+     4.174593925476074,
+     0.5660194158554077
+    ],
+    [
+     7.246565818786621,
+     5.371018409729004,
+     0.16219905018806458
+    ],
+    [
+     6.1161675453186035,
+     5.338613033294678,
+     -0.6127398610115051
+    ],
+    [
+     5.574991703033447,
+     4.106470584869385,
+     -1.019234299659729
+    ],
+    [
+     6.153412818908691,
+     2.925025224685669,
+     -0.6287635564804077
+    ],
+    [
+     7.321683406829834,
+     2.920992374420166,
+     0.17354163527488708
+    ],
+    [
+     10.865300178527832,
+     3.0687615871429443,
+     2.637192964553833
+    ],
+    [
+     11.544181823730469,
+     1.789522409439087,
+     3.043015480041504
+    ],
+    [
+     10.374369621276855,
+     5.305315971374512,
+     2.232989549636841
+    ],
+    [
+     9.577293395996094,
+     0.8425808548927307,
+     1.686550498008728
+    ],
+    [
+     7.662823677062988,
+     6.329415321350098,
+     0.4689972400665283
+    ],
+    [
+     5.636672019958496,
+     6.26882791519165,
+     -0.9139151573181152
+    ],
+    [
+     4.6877241134643555,
+     4.089458465576172,
+     -1.6504132747650146
+    ],
+    [
+     5.709853172302246,
+     1.9800093173980713,
+     -0.9387984275817871
+    ],
+    [
+     11.871503829956055,
+     1.2541064023971558,
+     2.1530091762542725
+    ],
+    [
+     10.845603942871094,
+     1.1697027683258057,
+     3.6031343936920166
+    ],
+    [
+     12.406997680664062,
+     2.018503189086914,
+     3.6667466163635254
+    ]
+   ]
+  },
+  "mipcas": {
+   "source": "D:/crystal_datasets/mipcas/MIPCAS_standardized.pt",
+   "atomic_numbers": [
+    8,
+    7,
+    7,
+    6,
+    6,
+    6,
+    6,
+    6,
+    6,
+    1,
+    1,
+    1,
+    1
+   ],
+   "positions": [
+    [
+     -2.4285151958465576,
+     1.4813148975372314,
+     0.005948781967163086
+    ],
+    [
+     -1.8203327655792236,
+     -0.7143964767456055,
+     0.028842836618423462
+    ],
+    [
+     3.3226606845855713,
+     0.5595543384552002,
+     0.035794079303741455
+    ],
+    [
+     0.810161828994751,
+     -0.054125040769577026,
+     -0.027110770344734192
+    ],
+    [
+     -1.5177611112594604,
+     0.6246640682220459,
+     0.0036218762397766113
+    ],
+    [
+     -0.11883744597434998,
+     0.9446263313293457,
+     -0.028624922037124634
+    ],
+    [
+     -0.8923249244689941,
+     -1.7048003673553467,
+     0.00790470838546753
+    ],
+    [
+     0.4349418878555298,
+     -1.4270620346069336,
+     -0.02108180522918701
+    ],
+    [
+     2.2100067138671875,
+     0.2902243137359619,
+     -0.005294740200042725
+    ],
+    [
+     -2.799190044403076,
+     -0.9803386330604553,
+     0.06543418765068054
+    ],
+    [
+     0.20095723867416382,
+     1.985295295715332,
+     -0.05431169271469116
+    ],
+    [
+     -1.2200831174850464,
+     -2.7432844638824463,
+     0.014513015747070312
+    ],
+    [
+     1.1810946464538574,
+     -2.220066785812378,
+     -0.03896522521972656
+    ]
+   ]
+  }
+ },
+ "pairs": [
+  {
+   "molecule": "nehzor",
+   "name": "canonical_control",
+   "ref": "nehzor_canonical_control_ref.cif",
+   "test": "nehzor_canonical_control_test.cif",
+   "note": "a state against its fundamental-domain canonical form rebuilt from cell parameters (one crystal); the CSD reader fuses both cells into 2 components; single_compack_run: 9/20 at RMSD 1.54e-6 A",
+   "source": "D:/crystal_datasets/fd_analysis_oct26/calibrate_nehzor/cif/{6f6620c6c3a2c577a829,8f056b5ff14acceeb5ab_can}.cif"
+  },
+  {
+   "molecule": "nehzor",
+   "name": "engine_failure",
+   "ref": "nehzor_engine_failure_ref.cif",
+   "test": "nehzor_engine_failure_test.cif",
+   "note": "two search states; the reader fuses the reference cell into 2 components; single_compack_run: (0, 0) engine failure; repaired 20/20 at RMSD 0.0618 A",
+   "source": "D:/crystal_datasets/fd_analysis_oct26/calibrate_nehzor_v2/cif/{5aee931012270852366a,69809c9e870d42d11259}.cif"
+  },
+  {
+   "molecule": "mipcas",
+   "name": "partial_match",
+   "ref": "mipcas_partial_match_ref.cif",
+   "test": "mipcas_partial_match_test.cif",
+   "note": "two search states, not fused; single_compack_run: 15/20 at RMSD 0.421 A",
+   "source": "D:/crystal_datasets/fd_analysis_oct26/calibrate_mipcas_v2/cif/{003f02775f9cc0f670e4,5f826f854247dab11416}.cif"
+  },
+  {
+   "molecule": "mipcas",
+   "name": "setting_control",
+   "ref": "mipcas_setting_control_ref.cif",
+   "test": "mipcas_setting_control_test.cif",
+   "note": "a state against itself in another cell setting (one crystal), not fused; single_compack_run: 20/20 at RMSD 8.8e-7 A",
+   "source": "D:/crystal_datasets/fd_analysis_oct26/calibrate_mipcas_v2/cif/{5ef7fa39036027d3b9dc_ctl,ae3c7153f4adfef3a157}.cif"
+  }
+ ],
+ "crystals": {
+  "nehzor_canonical_control_ref": {
+   "note": "cell parameters of the state written in nehzor_canonical_control_ref.cif, as stored by the search (MXtalTools coordinator.rebuild_crystals order: 3 cell lengths (A), 3 cell angles (rad), centroid (fractional), orientation (rotation vector)), sg 14, Z'=1, handedness +1",
+   "source": "D:/crystal_datasets/nehzor_elj_sep28/shards/hops_2/00020398_000010.pt row 1250 (eLJ energy -658.2886)",
+   "sg": 14,
+   "params": [
+    15.891103744506836,
+    3.63496732711792,
+    17.329774856567383,
+    1.5707963705062866,
+    1.9442174434661865,
+    1.5707963705062866,
+    0.23568928241729736,
+    0.009541451930999756,
+    0.2933988571166992,
+    2.0157833099365234,
+    2.7333147525787354,
+    2.9182448387145996
+   ],
+   "handedness": 1.0
+  }
+ },
+ "external": {
+  "nehzor_experimental_NEHZOR.cif": {
+   "note": "CSD deposition NEHZOR (P21/c, Z'=1) as distributed: asymmetric unit with symmetry operators and a bond loop; the CSD reader returns one whole C12 H9 Br1 O2 molecule",
+   "source": "D:/crystal_datasets/nehzor/NEHZOR.cif"
+  }
+ }
+}

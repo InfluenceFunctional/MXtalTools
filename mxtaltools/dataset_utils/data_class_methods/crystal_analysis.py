@@ -3,8 +3,12 @@
 ``MolCrystalAnalysis`` is a mixin of ``MolCrystalData``. Its entry point is
 ``MolCrystalAnalysis.analyze``, which builds whatever structure the requested
 compute keys need (periodic cluster, unit cell, or neither) and dispatches each
-key to a method of this class. ``single_compack_run`` wraps one CCDC COMPACK
-packing-similarity comparison.
+key to a method of this class. Every CCDC COMPACK comparison in the package
+runs through ``compack_compare`` (one pair of CIFs, on the engine
+``compack_engine`` builds), which ``single_compack_run`` and
+``MolCrystalAnalysis.batch_compack`` call; with ``repair`` it compares the
+crystals after ``repair_compack_crystal`` has undone the CSD reader's bonds
+between molecules (``compack_bond_template`` gives the molecule's own bonds).
 
 Module constants:
 
@@ -40,15 +44,95 @@ from mxtaltools.mlip_interfaces.uma_utils import compute_crystal_uma_on_mxt_batc
 from mxtaltools.models.functions.radial_graph import build_radial_graph
 
 
-def single_compack_run(ind, test_path, ref_path):
-    """Run one CCDC COMPACK packing-similarity comparison between two CIF files.
+def compack_engine(settings=None):
+    """The CCDC COMPACK engine every comparison in this package runs on.
 
-    Reads the first crystal of each file with ``ccdc.io.CrystalReader`` and
-    compares them with ``ccdc.crystal.PackingSimilarity`` with
-    ``packing_shell_size = 20`` and all other settings at their CCDC defaults,
-    ``ref_path`` being the reference. Prints the result. Requires the CSD Python
-    API (``ccdc``), imported on call. Errors raised while reading the files
-    propagate.
+    A ``ccdc.crystal.PackingSimilarity`` with ``packing_shell_size = 20`` and
+    every other setting at its CCDC default, then each ``name: value`` of
+    ``settings`` set on ``engine.settings`` (``packing_shell_size``,
+    ``distance_tolerance``, ``angle_tolerance``,
+    ``allow_molecular_differences``, ``ignore_bond_types``, ``timeout_ms``,
+    ...). Requires the CSD Python API (``ccdc``), imported on call.
+
+    Raises
+    ------
+    ValueError
+        If ``settings`` names a setting the engine does not have (assigning it
+        would add an attribute the engine never reads).
+    """
+    from ccdc.crystal import PackingSimilarity
+    engine = PackingSimilarity()
+    engine.settings.packing_shell_size = 20
+    for name, value in (settings or {}).items():
+        if not hasattr(engine.settings, name):
+            raise ValueError(f'PackingSimilarity settings have no {name!r}')
+        setattr(engine.settings, name, value)
+    return engine
+
+
+def compack_compare(ref_path, test_path, template=None, repair=False, settings=None):
+    """One CCDC COMPACK comparison of two CIF files, ``ref_path`` the
+    reference: the package's COMPACK producer (``single_compack_run`` and
+    ``MolCrystalAnalysis.batch_compack`` run through it).
+
+    Reads the first crystal of each file with ``ccdc.io.CrystalReader`` or,
+    with ``repair``, takes it from ``repair_compack_crystal``, and compares the
+    two on ``compack_engine(settings)``. Prints nothing. Requires the CSD
+    Python API (``ccdc``), imported on call. Errors raised while reading the
+    files propagate.
+
+    Parameters
+    ----------
+    ref_path : str
+        CIF of the reference crystal.
+    test_path : str
+        CIF of the crystal to compare.
+    template : dict, optional
+        ``compack_bond_template`` of the molecule (or asymmetric unit) both
+        CIFs hold; required with ``repair``.
+    repair : bool, optional
+        Repair both CIFs before the comparison. Default False: the crystals as
+        the reader perceives them.
+    settings : dict, optional
+        Engine settings, as ``compack_engine`` takes them.
+
+    Returns
+    -------
+    dict
+        ``rmsd`` (Angstrom) and ``n_matched`` (molecules matched) as COMPACK
+        reports them; ``status``: ``'ok'``; ``'failed'`` when comparing or
+        reading the result raises AttributeError (rmsd 0, n_matched 0);
+        ``'repair_failed: <reason>'`` when either CIF fails the repair (rmsd
+        nan, n_matched -1). ``repair_ref`` and ``repair_test``: each CIF's
+        repair info; None without ``repair`` or after a repair failure.
+    """
+    if repair and template is None:
+        raise ValueError('repair needs the molecule template (compack_bond_template)')
+    info_ref = info_test = None
+    if repair:
+        try:
+            ref_crystal, info_ref = repair_compack_crystal(ref_path, template)
+            test_crystal, info_test = repair_compack_crystal(test_path, template)
+        except ValueError as e:
+            return dict(rmsd=float('nan'), n_matched=-1, status=f'repair_failed: {str(e)[:200]}', repair_ref=None,
+                        repair_test=None)
+    else:
+        from ccdc.io import CrystalReader
+        ref_crystal = CrystalReader(ref_path)[0]
+        test_crystal = CrystalReader(test_path)[0]
+    engine = compack_engine(settings)
+    try:
+        result = engine.compare(ref_crystal, test_crystal)
+        rmsd, n_matched, status = float(result.rmsd), int(result.nmatched_molecules), 'ok'
+    except AttributeError:
+        rmsd, n_matched, status = 0.0, 0, 'failed'
+    return dict(rmsd=rmsd, n_matched=n_matched, status=status, repair_ref=info_ref, repair_test=info_test)
+
+
+def single_compack_run(ind, test_path, ref_path):
+    """One CCDC COMPACK comparison of two CIF files, printed:
+    ``compack_compare(ref_path, test_path)`` (no repair, ``packing_shell_size
+    = 20``, CCDC defaults otherwise), ``ref_path`` being the reference.
 
     Parameters
     ----------
@@ -69,26 +153,250 @@ def single_compack_run(ind, test_path, ref_path):
 
     Notes
     -----
-    A comparison counts as failed when reading ``rmsd`` or
-    ``nmatched_molecules`` from the result raises AttributeError; the function
-    then prints "Analysis failed" and returns ``(0, 0)``.
+    A comparison counts as failed when ``compack_compare`` reports
+    ``'failed'`` (comparing or reading the result raised AttributeError); the
+    function then prints "Analysis failed" and returns ``(0, 0)``.
     """
-    from ccdc.io import CrystalReader
-    from ccdc.crystal import PackingSimilarity
-    ref_crystal = CrystalReader(ref_path)[0]
-    sample_crystal = CrystalReader(test_path)[0]
-    similarity_engine = PackingSimilarity()
-    # similarity_engine.settings.distance_tolerance = 0.4
-    # similarity_engine.settings.angle_tolerance = 20
-    # similarity_engine.settings.allow_molecular_differences = True
-    similarity_engine.settings.packing_shell_size = 20
-    try:
-        result = similarity_engine.compare(ref_crystal, sample_crystal)
-        print(f"Crystal {ind} RMSD = {result.rmsd:.3f} Å, {result.nmatched_molecules} mols matched")
-        return result.rmsd, result.nmatched_molecules
-    except AttributeError:
+    r = compack_compare(ref_path, test_path)
+    if r['status'] != 'ok':
         print("Analysis failed")
         return 0, 0
+    print(f"Crystal {ind} RMSD = {r['rmsd']:.3f} Å, {r['n_matched']} mols matched")
+    return r['rmsd'], r['n_matched']
+
+
+def _batch_compack_job(ind, test_path, ref_path, template, repair, settings):
+    """``MolCrystalAnalysis.batch_compack``'s worker: ``compack_compare``,
+    printed and returned as ``single_compack_run`` does, a repair failure as
+    ``(nan, -1)``."""
+    r = compack_compare(ref_path, test_path, template=template, repair=repair, settings=settings)
+    if r['status'] == 'ok':
+        print(f"Crystal {ind} RMSD = {r['rmsd']:.3f} Å, {r['n_matched']} mols matched")
+        return r['rmsd'], r['n_matched']
+    if r['status'] == 'failed':
+        print("Analysis failed")
+        return 0, 0
+    print(f"Crystal {ind}: {r['status']}")
+    return float('nan'), -1
+
+
+def compack_bond_template(atomic_numbers, positions):
+    """The bond graph the CSD reader perceives on one isolated molecule, or on
+    one isolated asymmetric unit of several, for ``repair_compack_crystal``.
+
+    Writes the atoms alone, centred, in a 60 A cubic P1 cell (labels
+    ``<symbol><index + 1>``), reads them back with
+    ``ccdc.crystal.Crystal.from_string`` and records the reader's bonds and
+    components by atom index. Requires the CSD Python API (``ccdc``), imported
+    on call.
+
+    Parameters
+    ----------
+    atomic_numbers : array-like of int
+        [n_atoms], in the atom order the crystal CIFs write each molecule (or
+        asymmetric unit) in.
+    positions : array-like of float
+        [n_atoms, 3] Cartesian coordinates (Angstrom), same order.
+
+    Returns
+    -------
+    dict
+        ``n_atoms``; ``symbols``, the element symbol of each atom; ``bonds``,
+        sorted ``(i, j)`` index pairs with ``i < j``; ``components``, the atom
+        indices of each component the reader returns (one per molecule);
+        ``formulas``, their formulas as the reader writes them, sorted;
+        ``distances``, the [n_atoms, n_atoms] interatomic distances (Angstrom,
+        numpy).
+    """
+    import numpy as np
+    from ccdc.crystal import Crystal
+    from ccdc.molecule import Atom
+    z = np.asarray(atomic_numbers).astype(int).reshape(-1)
+    X = np.asarray(positions, dtype=float).reshape(-1, 3)
+    X = X - X.mean(0)
+    L = 60.0
+    sym = [Atom(atomic_number=int(v)).atomic_symbol for v in z]
+    rows = [f'{s} {s}{i + 1} {(x[0] + L / 2) / L:.10f} {(x[1] + L / 2) / L:.10f} {(x[2] + L / 2) / L:.10f}'
+            for i, (s, x) in enumerate(zip(sym, X))]
+    txt = '\n'.join(['data_template'] + [f'_cell_length_{a} {L}' for a in 'abc'] +
+                    [f'_cell_angle_{a} 90' for a in ('alpha', 'beta', 'gamma')] +
+                    ["_space_group_name_H-M_alt 'P 1'", '_space_group_IT_number 1', 'loop_',
+                     '_space_group_symop_operation_xyz', "'x, y, z'", 'loop_', '_atom_site_type_symbol',
+                     '_atom_site_label', '_atom_site_fract_x', '_atom_site_fract_y', '_atom_site_fract_z']
+                    + rows) + '\n'
+    m = Crystal.from_string(txt, 'cif').molecule
+    li = {f'{s}{i + 1}': i for i, s in enumerate(sym)}
+    bonds = sorted(tuple(sorted((li[b.atoms[0].label], li[b.atoms[1].label]))) for b in m.bonds)
+    components = [sorted(li[a.label] for a in c.atoms) for c in m.components]
+    return dict(n_atoms=len(z), symbols=sym, bonds=bonds, components=components,
+                formulas=sorted(c.formula for c in m.components),
+                distances=np.linalg.norm(X[:, None] - X[None], axis=-1))
+
+
+def compack_cif_sites(path):
+    """Labels, element symbols and fractional coordinates of a CIF's
+    ``_atom_site`` loop.
+
+    Reads the first data block with the package's own CIF tokenizer
+    (``dataset_utils.construction.cif.parse_cif``).
+
+    Returns
+    -------
+    labels : list of str
+        ``_atom_site_label`` values, in file order.
+    symbols : list of str or None
+        ``_atom_site_type_symbol`` values, same order; None if the loop has no
+        such column.
+    fractional : numpy.ndarray
+        [n_sites, 3] ``_atom_site_fract_x/y/z``, same order.
+    """
+    import numpy as np
+    from mxtaltools.dataset_utils.construction.cif import as_float, parse_cif
+    with open(path, encoding='utf-8') as fh:
+        block = parse_cif(fh.read())[0]
+    loop = block.loop_with('_atom_site_label')
+    if loop is None:
+        raise ValueError(f'no _atom_site loop in {path}')
+    frac = np.array([[as_float(v) for v in loop.column(f'_atom_site_fract_{a}')] for a in 'xyz']).T
+    symbols = list(loop.column('_atom_site_type_symbol')) if '_atom_site_type_symbol' in loop else None
+    return list(loop.column('_atom_site_label')), symbols, frac
+
+
+def _template_deviation(B, template):
+    """Largest deviation (A) of block B's interatomic distances ([n_atoms, 3] Cartesian) from the template's, within
+    each template component (distances between the molecules of one asymmetric unit are not compared)."""
+    import numpy as np
+    dev = 0.0
+    for comp in template['components']:
+        D = np.linalg.norm(B[comp][:, None] - B[comp][None], axis=-1)
+        dev = max(dev, float(np.abs(D - template['distances'][np.ix_(comp, comp)]).max()))
+    return dev
+
+
+def repair_compack_crystal(path, template):
+    """The first crystal of a CIF as ``ccdc.io.CrystalReader`` reads it, its
+    molecules restored to the template's bond graph where the reader fused
+    them.
+
+    The reader perceives bonds from interatomic distances. Where molecules sit
+    close it bonds atoms of different molecules, adds image atoms to close the
+    resulting polymer and moves atoms by lattice vectors, so a cell of Z
+    molecules reads as fewer components or a polymer and PackingSimilarity
+    fails or under-matches. Seen on NEHZOR eLJ search minima, whose Br...Br
+    contacts between molecules of 2.0-2.8 A the reader bonds: a crystal against
+    itself rebuilt from another description matched 9 of 20 molecules at RMSD
+    1.5e-6 A.
+
+    A CIF in the writer's layout -- distinct site labels, the sites Z blocks of
+    ``template['n_atoms']``, each block the template's elements in its order
+    with its interatomic distances (to 1e-3 A within each component), as
+    ``MolCrystalData.write_cif(..., mode='unit cell')`` writes a unit cell --
+    is repaired: one atom per site label is kept (atoms the reader added, with
+    a repeated label or one not in the file, are removed), every atom is put at
+    the file's coordinates through the reader's own fractional-to-Cartesian
+    map, and block k (sites ``k * n_atoms`` to ``(k + 1) * n_atoms - 1``) is
+    given exactly the template's bonds: every other bond, between molecules or
+    within one, is removed, and a missing template bond is added with type
+    ``'Unknown'``. A crystal the reader did not fuse comes back as read. Any
+    other CIF (a CSD file: an asymmetric unit, its own atom order) is used as
+    read when the reader returns a non-polymeric molecule whose every component
+    has one of the template's formulas, and refused otherwise. Requires the CSD
+    Python API (``ccdc``), imported on call.
+
+    Parameters
+    ----------
+    path : str
+        CIF file.
+    template : dict
+        ``compack_bond_template`` of the molecule (or asymmetric unit).
+
+    Returns
+    -------
+    crystal : ccdc.crystal.Crystal
+        The repaired crystal, or the crystal as read.
+    info : dict
+        ``mode``: ``'repaired'`` (writer layout) or ``'as_read'``; ``Z`` (the
+        number of blocks; None as read); ``components_as_read``;
+        ``image_atoms_removed``; ``atoms_moved`` (moved back to the written
+        coordinates by more than 1e-4 A in any Cartesian component);
+        ``inter_bonds_removed``, ``intra_bonds_removed``,
+        ``intra_bonds_added``; ``changed`` (any of these happened).
+
+    Raises
+    ------
+    ValueError
+        If a writer-layout CIF does not repair to Z blocks of the template's
+        components, each with the template's interatomic distances to 1e-3 A,
+        or a CIF of any other layout is polymeric or holds a component of
+        another formula as read.
+    """
+    import numpy as np
+    from ccdc.io import CrystalReader
+    from ccdc.molecule import Bond
+    na, bonds = template['n_atoms'], template['bonds']
+    c = CrystalReader(path)[0]
+    lab, sym, fr = compack_cif_sites(path)
+    m = c.molecule
+    n_comp_read = len(m.components)
+    Fc = np.array([a.fractional_coordinates for a in m.atoms])
+    Cc = np.array([a.coordinates for a in m.atoms])
+    Mx = np.linalg.lstsq(np.c_[Fc, np.ones(len(Fc))], Cc, rcond=None)[0]  # the reader's fractional -> Cartesian map
+    target = np.c_[fr, np.ones(len(fr))] @ Mx
+    Z = len(lab) // na
+    writer = (len(set(lab)) == len(lab) and Z > 0 and len(lab) == Z * na and sym is not None
+              and all(sym[k * na:(k + 1) * na] == template['symbols'] for k in range(Z))
+              and all(_template_deviation(target[k * na:(k + 1) * na], template) <= 1e-3 for k in range(Z)))
+    if not writer:
+        formulas = [x.formula for x in m.components]
+        if m.is_polymeric or any(f not in template['formulas'] for f in formulas):
+            raise ValueError(f'not in the writer layout, and read as {"a polymer of " if m.is_polymeric else ""}'
+                             f'components {sorted(formulas)}, not the template\'s {template["formulas"]}')
+        return c, dict(mode='as_read', Z=None, components_as_read=n_comp_read, image_atoms_removed=0, atoms_moved=0,
+                       inter_bonds_removed=0, intra_bonds_removed=0, intra_bonds_added=0, changed=False)
+    labset, idx = set(lab), {l: i for i, l in enumerate(lab)}
+    seen, extra = set(), []
+    for a in m.atoms:
+        if a.label in seen or a.label not in labset:
+            extra.append(a)
+        seen.add(a.label)
+    if extra:
+        m.remove_atoms(extra)
+    at = {a.label: a for a in m.atoms}
+    if len(at) != len(lab) or len(m.atoms) != len(lab):
+        raise ValueError(f'{len(m.atoms)} atoms after removing images, {len(lab)} sites')
+    moved = 0
+    for l, x in zip(lab, target):
+        if np.abs(np.array(at[l].coordinates) - x).max() > 1e-4:
+            at[l].coordinates = tuple(float(v) for v in x)
+            moved += 1
+    want = {(k * na + p, k * na + q) for k in range(Z) for p, q in bonds}
+    have, rem = set(), []
+    for b in m.bonds:
+        e = tuple(sorted((idx[b.atoms[0].label], idx[b.atoms[1].label])))
+        have.add(e)
+        if e not in want:
+            rem.append(b)
+    n_inter = sum(1 for b in rem if idx[b.atoms[0].label] // na != idx[b.atoms[1].label] // na)
+    add = sorted(want - have)
+    if rem:
+        m.remove_bonds(rem)
+    for p, q in add:
+        m.add_bond(Bond.BondType('Unknown'), at[lab[p]], at[lab[q]])
+    changed = bool(extra or moved or rem or add)
+    if changed:
+        c.molecule = m
+    comps = c.molecule.components
+    info = dict(mode='repaired', Z=Z, components_as_read=n_comp_read, image_atoms_removed=len(extra),
+                atoms_moved=moved, inter_bonds_removed=n_inter, intra_bonds_removed=len(rem) - n_inter,
+                intra_bonds_added=len(add), changed=changed)
+    if sorted(x.formula for x in comps) != sorted(template['formulas'] * Z):
+        raise ValueError(f'repaired: components {sorted(x.formula for x in comps)}, not {Z} x {template["formulas"]}')
+    P = {a.label: np.array(a.coordinates) for a in c.molecule.atoms}
+    for k in range(Z):
+        dev = _template_deviation(np.stack([P[l] for l in lab[k * na:(k + 1) * na]]), template)
+        if dev > 1e-3:
+            raise ValueError(f'repaired block {k}: internal distances off the template by {dev:.3g} A')
+    return c, info
 
 
 # defaults of the 'exp6' compute key (MolCrystalAnalysis.compute_exp6_energy), read by analyze when it builds the
@@ -2017,26 +2325,37 @@ class MolCrystalAnalysis:
 
         return E
 
-    def batch_compack(self, ref_path, inds_to_check, n_cpus: int = 8):  # todo refactor into analysis code
+    def batch_compack(self, ref_path, inds_to_check, n_cpus: int = 8, repair: bool = False,
+                      settings: Optional[dict] = None):  # todo refactor into analysis code
         """Compare selected crystals of the batch against a reference CIF with CCDC COMPACK.
 
         Calls ``self.mol2ucell()`` (``std_orientation=True``), which rebuilds
         ``pos`` and the unit cell of ``self`` in place, then writes
         ``compack_{ind}.cif`` (a P1 unit cell, ``write_cif(..., 'unit cell')``)
         in the working directory for each ``ind`` in ``inds_to_check``. A pool
-        of ``n_cpus`` processes then runs
-        ``single_compack_run(i, f'compack_{i}.cif', ref_path)`` for ``i`` in
-        ``range(len(inds_to_check))``; the files read coincide with the files
-        written only when ``inds_to_check`` is ``range(len(inds_to_check))``.
+        of ``n_cpus`` processes then compares each written file against
+        ``ref_path`` with ``compack_compare`` (``ref_path`` the reference),
+        printing each result as ``single_compack_run`` does.
 
         Parameters
         ----------
         ref_path : str
             CIF of the reference crystal.
         inds_to_check : sequence of int
-            Batch indices of the crystals to write.
+            Batch indices of the crystals to write and compare.
         n_cpus : int, optional
             Number of worker processes.
+        repair : bool, optional
+            Repair both CIFs of each comparison (``repair_compack_crystal``)
+            with the template of the written crystal's own asymmetric unit
+            (``compack_bond_template`` of its ``z`` and ``pos``): the written
+            CIF is repaired; the reference is repaired too if it is in the
+            writer's layout, used as read if the reader returns whole
+            molecules of the template, refused otherwise. Default False: both
+            as the CSD reader perceives them.
+        settings : dict, optional
+            Engine settings (``compack_engine``); default
+            ``packing_shell_size = 20`` and CCDC defaults.
 
         Returns
         -------
@@ -2044,20 +2363,25 @@ class MolCrystalAnalysis:
             [len(inds_to_check)] number of matched molecules per comparison.
         rmsds : numpy.ndarray
             [len(inds_to_check)] COMPACK RMSD per comparison; a failed
-            comparison gives 0 in both arrays.
+            comparison gives 0 in both arrays, a repair failure -1 matched and
+            RMSD nan.
         """
         import numpy as np
         import multiprocessing as mp
 
+        inds = [int(i) for i in inds_to_check]
         self.mol2ucell()
-        self.write_cif(inds_to_check, f'compack', 'unit cell')
+        self.write_cif(inds, f'compack', 'unit cell')
+        templates = [compack_bond_template(self.z[self.batch == ind].cpu().numpy(),
+                                           self.pos[self.batch == ind].detach().cpu().double().numpy())
+                     if repair else None for ind in inds]
         pool = mp.Pool(n_cpus)
         results = []
-        for ind in range(len(inds_to_check)):
+        for ind, template in zip(inds, templates):
             results.append(
                 pool.apply_async(
-                    single_compack_run,
-                    (ind, f'compack_{ind}.cif', ref_path)
+                    _batch_compack_job,
+                    (ind, f'compack_{ind}.cif', ref_path, template, repair, settings)
                 )
             )
         pool.close()
