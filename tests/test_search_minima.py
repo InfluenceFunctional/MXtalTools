@@ -1,13 +1,13 @@
 """crystal_search.minima and the capture rule of gradient_descent_optimization (cfg:minima of run_search).
 
 Pins: StageEnergy's double-backward Hessian agrees with finite differences of its gradient; newton_polish ends on a
-positive semi-definite Hessian with a small Newton decrement and never raises the energy; the library's d^2 is dx^T
-H dx with centre lattice translations and the group's origin shifts removed (half a cell in P-1, none in P1) and
-keys kept apart; a row started inside a known minimum's ellipsoid is captured at step 0 and leaves the batch while
-the others descend; no library means no capture_min; finish_minima reports a captured row as the library minimum and
-merges a second polish of a known minimum; a row converged in the polish captures the rest of its group; two cell
-settings of one crystal are one minimum; the run_search config check refuses what the polish cannot follow; truncate
-undoes a batch's adds.
+positive semi-definite Hessian with a small Newton decrement (flat directions left out) and never raises the energy;
+the library's d^2 is dx^T H dx with centre lattice translations and the group's origin shifts removed (half a cell
+in P-1, none in P1) and keys kept apart; a minimum in another cell setting merges by the glued FD distance; a row
+started inside a known minimum's ellipsoid is captured at step 0 and leaves the batch while the others descend; no
+library means no capture_min; finish_minima reports a captured row as the library minimum and merges a second polish
+of a known minimum; a row converged in the polish captures the rest of its group; two cell settings of one crystal
+are one minimum; the run_search config check refuses what the polish cannot follow; truncate undoes a batch's adds.
 CPU, eLJ, a handful of rows of the test molecule (as test_grad_convergence).
 """
 import itertools
@@ -67,6 +67,35 @@ def _report(x, H):
     return dict(x=x, hand=torch.ones(1), H=H)
 
 
+
+class _Quadratic:
+    """E/kT = 0.5 x^T A x + b^T x, as StageEnergy's f, fg, fgh (rows independent)."""
+
+    def __init__(self, A, b):
+        self.A, self.b = A, b
+
+    def f(self, x, idx):
+        return 0.5 * torch.einsum('ni,ij,nj->n', x, self.A, x) + x @ self.b
+
+    def fg(self, x, idx):
+        return self.f(x, idx), x @ self.A + self.b
+
+    def fgh(self, x, idx):
+        return self.f(x, idx), x @ self.A + self.b, self.A.expand(len(x), -1, -1).clone()
+
+
+def test_the_polish_converges_where_the_energy_is_flat_along_some_directions():
+    """Two directions of exactly zero curvature (a crystal system's fixed angle, a layer's spacing across a vacuum gap):
+    a gradient component of 1e-6 along one must not hold the decrement up (it used to, 1e-12 / 1e-12, so such rows
+    ended stalled or capped); a real slope (0.1) along it is not converged."""
+    A = torch.diag(torch.tensor([10.0, 3.0, 1.0, 0.0, 5.0, 0.0, 2.0, 7.0, 4.0, 1.5, 6.0, 9.0], dtype=torch.float64))
+    for slope, converged in ((1e-6, True), (0.1, False)):
+        b = torch.zeros(12, dtype=torch.float64)
+        b[3] = slope
+        res = mn.newton_polish(_Quadratic(A, b), torch.zeros(2, 12, dtype=torch.float64) + 0.01, max_iter=10)
+        assert (res['status'] == 1).all().item() == converged
+
+
 def test_library_d2_is_the_ellipsoid_with_centre_translations_removed():
     torch.manual_seed(1)
     A = torch.randn(12, 12, dtype=torch.float64)
@@ -113,6 +142,43 @@ def test_a_half_cell_origin_shift_is_the_same_minimum_in_p_1_but_not_in_p1():
         ids, d2 = lib.nearest(x[None], [k])
         assert (int(ids[0]) == 0) and (bool(torch.isclose(d2[0], dx @ H @ dx, rtol=1e-8)) == same)
         assert lib.match(x, W, k, merge_d2=1.0) == (0 if same else -1)
+
+
+
+def test_a_minimum_in_another_cell_setting_merges_by_the_glued_fd_distance():
+    """One P2_1/c crystal in two cell settings (c and c + 2a, a basis change of its setting group): far apart in the
+    parameters, so the ellipsoids miss, but the glued FD distance is zero, so match merges them -- inside the energy
+    window, with the molecule's r_g, and only with fd_merge on."""
+    import math
+    import numpy as np
+    from mxtaltools.crystal_fd import ops
+    from mxtaltools.crystal_fd.description import CrystalDescription
+    from mxtaltools.crystal_fd.metric import canonical
+    from mxtaltools.crystal_search.standardize import setting_shift
+    F64 = torch.float64
+    sg = 14
+    p = torch.tensor([[5.0, 7.0, 10.0, math.pi / 2, math.radians(100.0), math.pi / 2, 0.1, 0.2, 0.3, 0.3, 0.2, 0.1]],
+                     dtype=F64)
+    can = canonical(sg, p, torch.ones(1))
+    d1 = CrystalDescription.from_parts(sg, can['cell'], can['t'], can['R'], can['h'])
+    N = np.array([[1, 0, 2], [0, 1, 0], [0, 0, 1]])
+    shift = setting_shift(N, sg)
+    assert shift is not None  # c -> c + 2a keeps P2_1/c's c glide
+    d2 = ops.change_basis(d1, torch.as_tensor(N, dtype=F64)[None], torch.as_tensor(shift, dtype=F64)[None])
+    params = lambda d: torch.cat([torch.as_tensor(v).double().reshape(1, -1) for v in d.crystal_params()[:4]], 1)[0]
+    x1, x2 = params(d1), params(d2)
+    assert float((x1 - x2).abs().max()) > 1.0  # the same crystal, far apart in the parameters
+    H = 100.0 * torch.eye(12, dtype=F64)
+    W = mn.ellipsoid_factor(H)
+    key = ('MOL', sg, 1, (int(can['h'][0]),))
+    lib = mn.MinimaLibrary()
+    lib.add(x1, H, -10.0, key, {})
+    assert lib.match(x2, W, key, 1.0) == -1  # no energy or r_g: the ellipsoids alone
+    assert lib.match(x2, W, key, 1.0, f=-10.0, rg=2.0) == 0
+    assert lib.match(x2, W, key, 1.0, f=-10.0 + 2 * mn.FD_MERGE_KT, rg=2.0) == -1  # outside the energy window
+    off = mn.MinimaLibrary(fd_merge=None)
+    off.add(x1, H, -10.0, key, {})
+    assert off.match(x2, W, key, 1.0, f=-10.0, rg=2.0) == -1
 
 
 def test_truncate_undoes_adds():

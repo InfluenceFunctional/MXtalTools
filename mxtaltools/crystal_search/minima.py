@@ -19,9 +19,11 @@ descriptions (cell settings, symmetry images, handedness under an improper eleme
 descents captured, in one description per crystal (``identity_description``: crystal_fd's canonical form at Z' = 1),
 with each minimum's Hessian taken in that description; rows are reported in the asymmetric-unit box
 (``canonicalize_aunit``) with the Hessian taken there. d^2 removes the centres' lattice translations (``min_image``)
-and the shifts to an equivalent origin (``centre_shifts``: in P-1, half a cell along any axis); near another seam of
-the fundamental domain (a face of the reduced-cell domain) two descriptions of one crystal can still differ, and such a
-pair is two minima.
+and the shifts to an equivalent origin (``centre_shifts``: in P-1, half a cell along any axis). Near a face of the
+reduced-cell domain two descriptions of one crystal can still differ (two bases nearly equally reduced, the reduction
+picking either); ``MinimaLibrary.match`` therefore also merges a new Z' = 1 minimum into a known one of nearly the same
+energy within ``FD_MERGE_A`` of it in the glued FD distance (``crystal_fd.metric.GluedFDMetric``, which minimises over
+each crystal's near-minimal bases). Capture keeps the ellipsoid test alone.
 
 Termination: ``newton_polish`` evaluates at most ``max_iter + 1`` Hessians and ``max_iter * POLISH_TRIES`` energies
 per row and has no other loop; ``finish_minima`` calls it once.
@@ -41,6 +43,11 @@ TRUST_RANGE = (1 / 16, 16.0)  # bounds of the per-row factor on POLISH_CAPS (dou
 POLISH_STATUS = {0: 'captured (in the stage or the polish)', 1: 'converged', 2: 'stalled', 3: 'iteration cap',
                  4: 'left the cell-parameter box'}
 NEG_REL = 1e-6  # a Hessian counts as positive semi-definite when its lowest eigenvalue is above -NEG_REL * its highest
+FLAT_REL = 1e-9  # an eigen-direction whose |curvature| is below this times the largest is flat (the energy ignores it)
+FLAT_GRAD = 1e-3  # E/kT per unit coordinate: a flat direction with a smaller gradient component is converged along it
+FD_MERGE_A = 0.05  # glued FD distance (A) under which a new minimum is a known one (crystal_fd.metric's identity cut)
+FD_MERGE_KT = 0.01  # E/kT window around a new minimum inside which known minima are measured by the glued FD distance
+# (copies of one minimum differ by ~1e-4: the polish's tolerance; NEHZOR's cell-face pair, 2026-10-30)
 F64 = torch.float64
 
 
@@ -217,7 +224,12 @@ def newton_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol
     and left some rows stalled or capped (2026-10-28).
     A row stops when its Hessian is fresh (taken at the current x), positive semi-definite (``is_psd``), and the
     Newton decrement 0.5 sum_i (v_i . g)^2 / |lam_i| is below ``tol`` (kT); a decrement below ``tol`` under an older
-    Hessian asks for a fresh one at the next iteration instead of a step. Otherwise it tries
+    Hessian asks for a fresh one at the next iteration instead of a step. Flat directions -- |lam_i| below ``FLAT_REL``
+    times the largest, along which the energy does not change: angles a crystal system fixes, and a layer's spacing
+    and offsets across a vacuum gap wider than the cutoff -- are left out of the decrement and need only
+    |v_i . g| < ``FLAT_GRAD`` (on NEHZOR eLJ, 2026-10-30, 210 of 211 stalled polishes were such layers, b 52-153 A,
+    whose decrement was all on directions of curvature ~1e-7 against a largest ~1e5, and whose trial steps changed the
+    energy by less than its evaluation noise, ~1e-4 kT). Otherwise it tries
     x - V diag(1 / (|lam| + mu)) V^T g, scaled so no block moves more than its POLISH_CAPS entry times the row's
     trust factor, and keeps it if E/kT falls (mu /= 3, floored at 1e-4; trust doubled up to TRUST_RANGE[1]), else
     mu *= 4 and trust is halved (down to TRUST_RANGE[0]) and it tries again, at most POLISH_TRIES times; a row with
@@ -309,7 +321,9 @@ def newton_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol
                 n_g[stale] += 1
         lam, V = lam_all[ia], V_all[ia]
         gv = torch.einsum('nij,ni->nj', V, G[ia])
-        dec = 0.5 * (gv ** 2 / lam.abs().clamp_min(1e-12)).sum(1)
+        flat = lam.abs() < FLAT_REL * lam.abs().amax(1, keepdim=True)
+        dec = 0.5 * (gv ** 2 / lam.abs().clamp_min(1e-12)).masked_fill(flat, 0.0).sum(1)
+        dec = torch.where((gv.abs().masked_fill(~flat, 0.0) < FLAT_GRAD).all(1), dec, torch.full_like(dec, float('inf')))
         is_fresh = age[ia] == 0
         conv = is_fresh & is_psd(H[ia]) & (dec < tol)
         done[ia[conv]] = True
@@ -403,7 +417,9 @@ class MinimaLibrary:
     (``min_image`` over the offsets of ``centre_images``), minima of the same key only. In the report description (asymmetric-unit box, ``canonicalize_aunit``): parameters, handedness and Hessian,
     which a row reported as the minimum carries."""
 
-    def __init__(self):
+    def __init__(self, fd_merge: Optional[float] = FD_MERGE_A):
+        self.fd_merge = fd_merge  # A; None: merge by the ellipsoids alone
+        self.fd_merged = 0  # matches made by the glued FD distance (the ellipsoids missed)
         self.x, self.H, self.W, self.f, self.key = [], [], [], [], []
         self.report = []  # dicts: x [d], hand [zp], H [d, d] in the asymmetric-unit-box description
         self._ids = {}  # key -> list of minimum ids
@@ -477,12 +493,15 @@ class MinimaLibrary:
         keys = [identity_key(base_keys[i], hand[i]) for i in range(b.num_graphs)]
         return self.nearest(b.full_cell_parameters().detach(), keys)
 
-    def match(self, x, W, key, merge_d2: float) -> int:
+    def match(self, x, W, key, merge_d2: float, f: Optional[float] = None, rg: Optional[float] = None) -> int:
         """Id of a minimum of ``key`` within ``merge_d2`` of the identity-description point ``x`` [d] under both
         ellipsoids (the minimum's and the point's own factor ``W``), the lowest such d^2 first; -1 if none. Both,
         not either: a Hessian that is nearly flat along some direction puts distant points inside its own ellipsoid
         (with "either", 2.6% of MIPCAS merges joined minima more than 0.05 A apart in the glued FD distance, up to
-        6 A; 2026-10-28)."""
+        6 A; 2026-10-28). Failing that, with ``fd_merge``, a Z' = 1 point of E/kT ``f`` for a molecule of radius of
+        gyration ``rg`` (A, ``molecule_rg``) matches the nearest known minimum within ``FD_MERGE_KT`` of ``f`` whose
+        glued FD distance (``glued_fd_distance``) is below ``fd_merge``: the same crystal described across a face of
+        the reduced-cell domain, which the ellipsoids, measured in the parameters, see as far apart."""
         st = self._stacked(tuple(key))
         if st is None:
             return -1
@@ -495,7 +514,20 @@ class MinimaLibrary:
             d2s = torch.maximum(d2_lib, d2_own)
             d2 = d2s if d2 is None else torch.minimum(d2, d2s)
         j = int(torch.argmin(d2))
-        return int(mids[j]) if float(d2[j]) < merge_d2 else -1
+        if float(d2[j]) < merge_d2:
+            return int(mids[j])
+        if self.fd_merge is None or f is None or rg is None or int(key[2]) != 1:
+            return -1
+        fs = torch.tensor([self.f[int(i)] for i in mids], dtype=F64)
+        near = torch.nonzero((fs - float(f)).abs() < FD_MERGE_KT).flatten()
+        if not len(near):
+            return -1
+        d = glued_fd_distance(int(key[1]), float(rg), int(key[3][0]), x, X[near])
+        k = int(torch.argmin(d))
+        if float(d[k]) >= float(self.fd_merge):
+            return -1
+        self.fd_merged += 1
+        return int(mids[near[k]])
 
     @classmethod
     def from_rows(cls, rows):
@@ -515,6 +547,32 @@ class MinimaLibrary:
                     dict(x=r.full_cell_parameters().reshape(-1), hand=r.aunit_handedness.reshape(-1),
                          H=r.hessian[0]))
         return lib
+
+
+def molecule_rg(row) -> float:
+    """Radius of gyration (A) of a crystal row's molecule as ``crystal_fd.metric`` takes it: the RMS distance of all
+    atoms from the heavy-atom centroid."""
+    pos, z = row.pos.double(), row.z
+    X = pos - pos[z > 1].mean(0)
+    return float(X.pow(2).sum(1).mean().sqrt())
+
+
+_GLUED = {}  # (space group, rg) -> crystal_fd.metric.GluedFDMetric (its basis-change set is costly to build)
+
+
+def glued_fd_distance(sg: int, rg: float, hand: int, x: torch.Tensor, X: torch.Tensor) -> torch.Tensor:
+    """[k] glued FD distances (A, ``crystal_fd.metric.GluedFDMetric``, margin 1 A, CPU) from the Z' = 1 crystal of
+    full cell parameters ``x`` [12] to each of ``X`` [k, 12], all of handedness ``hand`` in space group ``sg``, for a
+    molecule of radius of gyration ``rg``: each put in crystal_fd's canonical form, then the symmetric distance."""
+    from mxtaltools.crystal_fd.metric import GluedFDMetric, canonical
+    key = (int(sg), round(float(rg), 6))
+    if key not in _GLUED:
+        _GLUED[key] = GluedFDMetric(int(sg), float(rg))
+    metric = _GLUED[key]
+    P = torch.cat([x.reshape(1, -1), X.reshape(len(X), -1)]).to(F64).cpu()
+    can = canonical(int(sg), P, torch.full((len(P),), int(hand)))
+    prep = metric.prepare_glued(can)
+    return metric.distance(prep, torch.zeros(len(X), dtype=torch.long), torch.arange(1, len(P)))
 
 
 def missing_mass(rows, library: MinimaLibrary, band_kT: float, conf: float = 0.9, seeds: bool = False) -> dict:
@@ -703,7 +761,8 @@ def finish_minima(rows: list, library: MinimaLibrary, optim_target: str, kT: flo
             if status[i] != 1 or not bool(psd[j]):
                 continue
             key = identity_key(row_key(rows[i]), ident[i]['hand'])
-            m = library.match(x_id[j], ellipsoid_factor(H_id[j]), key, merge_d2)
+            m = library.match(x_id[j], ellipsoid_factor(H_id[j]), key, merge_d2, f=float(F_id[j]),
+                              rg=molecule_rg(rows[i]))
             if m >= 0:
                 mid[i], recap[i] = m, True
             else:
