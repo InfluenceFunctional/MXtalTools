@@ -260,7 +260,7 @@ def _greedy_reduce(G: torch.Tensor, max_iter: int = 1000):
             E = torch.eye(3, dtype=F64, device=G.device).repeat(B, 1, 1)
             E[:, j, i] = torch.where(ok, -m, torch.zeros_like(m))
             G = E.transpose(1, 2) @ G @ E
-            N = N @ E.round().to(torch.long)
+            N = _imatmul(N, E.round().to(torch.long))
             changed |= ok
         if not bool(changed.any()):
             return N, G
@@ -392,7 +392,7 @@ def triclinic_basis(cell: torch.Tensor, tol: float = 1e-10, chunk: int = 256):
         out_N.append(M[pick])
         out_tied.append(valid.sum(1))
         out_v.append(viol.gather(1, pick[:, None])[:, 0])
-    Nsel = N0 @ torch.cat(out_N)
+    Nsel = _imatmul(N0, torch.cat(out_N))
     cell_new = cell_from_metric_tensor(Nsel.to(F64).transpose(1, 2) @ G @ Nsel.to(F64))
     return Nsel, cell_new, torch.cat(out_tied), torch.cat(out_v)
 
