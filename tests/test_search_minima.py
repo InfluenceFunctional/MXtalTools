@@ -1,14 +1,16 @@
 """crystal_search.minima and the capture rule of gradient_descent_optimization (cfg:minima of run_search).
 
 Pins: StageEnergy's double-backward Hessian agrees with finite differences of its gradient; newton_polish ends on a
-positive semi-definite Hessian with a small Newton decrement and never raises the energy; the library's d^2 is
-dx^T H dx with centre lattice translations removed and keys kept apart; a row started inside a known minimum's
-ellipsoid is captured at step 0 and leaves the batch while the others descend; no library means no capture_min;
-finish_minima reports a captured row as the library minimum and merges a second polish of a known minimum;
-two cell settings of one crystal are one minimum; the run_search config check refuses what the polish cannot follow;
-truncate undoes a batch's adds.
+positive semi-definite Hessian with a small Newton decrement and never raises the energy; the library's d^2 is dx^T
+H dx with centre lattice translations and the group's origin shifts removed (half a cell in P-1, none in P1) and
+keys kept apart; a row started inside a known minimum's ellipsoid is captured at step 0 and leaves the batch while
+the others descend; no library means no capture_min; finish_minima reports a captured row as the library minimum and
+merges a second polish of a known minimum; two cell settings of one crystal are one minimum; the run_search config
+check refuses what the polish cannot follow; truncate undoes a batch's adds.
 CPU, eLJ, a handful of rows of the test molecule (as test_grad_convergence).
 """
+import itertools
+
 import pytest
 import torch
 
@@ -83,6 +85,35 @@ def test_library_d2_is_the_ellipsoid_with_centre_translations_removed():
         assert ids.tolist() == [-1] and bool(torch.isinf(d2).all())
 
 
+
+def test_centre_shifts_are_the_groups_equivalent_origins():
+    half = [[float(v) for v in t] for t in itertools.product((0.0, 0.5), repeat=3)]
+    for sg in (2, 14, 15, 19):  # P-1, P21/c, C2/c (centring and normalizer together), P212121
+        assert mn.centre_shifts(sg).tolist() == half
+    assert mn.centre_shifts(1).tolist() == [[0.0, 0.0, 0.0]]  # P1: the origin moves continuously, no discrete shift
+    assert mn.centre_shifts(4).tolist() == [[0.0, 0.0, 0.0], [0.0, 0.0, 0.5], [0.5, 0.0, 0.0], [0.5, 0.0, 0.5]]
+
+
+def test_a_half_cell_origin_shift_is_the_same_minimum_in_p_1_but_not_in_p1():
+    """A P-1 crystal with its centre moved half a cell is the same crystal about another inversion centre (one stored
+    minimum had been counted twice this way, 2026-10-29); in P1 the same move is another crystal."""
+    torch.manual_seed(2)
+    A = torch.randn(12, 12, dtype=torch.float64)
+    H = A @ A.T + torch.eye(12, dtype=torch.float64)
+    W = mn.ellipsoid_factor(H)
+    x0 = torch.rand(12, dtype=torch.float64)
+    dx = 0.01 * torch.randn(12, dtype=torch.float64)
+    x = x0 + dx
+    x[6:9] += torch.tensor([0.5, 0.0, -0.5], dtype=torch.float64)
+    for sg, same in ((2, True), (1, False)):
+        lib = mn.MinimaLibrary()
+        k = ('MOL', sg, 1, (1,))
+        lib.add(x0, H, -10.0, k, _report(x0, H))
+        ids, d2 = lib.nearest(x[None], [k])
+        assert (int(ids[0]) == 0) and (bool(torch.isclose(d2[0], dx @ H @ dx, rtol=1e-8)) == same)
+        assert lib.match(x, W, k, merge_d2=1.0) == (0 if same else -1)
+
+
 def test_truncate_undoes_adds():
     lib = mn.MinimaLibrary()
     k = ('MOL', 2, 1, (1,))
@@ -142,6 +173,57 @@ def test_captured_and_repeated_rows_are_recaptures(finished, relaxed):
     m0 = int(first[0].minimum_id)
     assert torch.allclose(second[0].full_cell_parameters().reshape(-1).double(), lib.report[m0]['x'], atol=1e-5)
     assert int(second[0].polish_status) == 0
+
+
+def test_the_polish_captures_rows_inside_a_known_minimum(finished, relaxed):
+    """The polished minima finished again with capture_d2: each is at its known minimum before the polish's first
+    evaluation, so it is captured there (status 0, no Hessian taken) as that minimum."""
+    lib, first, _ = finished
+    out, E, x, _ = relaxed
+    n_lib = len(lib)
+    second, eff = mn.finish_minima([r.clone() for r in first], lib, 'elj', KT, max_iter=60, capture_d2=9.0)
+    assert len(lib) == n_lib and eff['n_h'] == 0
+    assert [int(r.polish_status) for r in second] == [0] * len(first)
+    assert [int(r.minimum_id) for r in second] == [int(r.minimum_id) for r in first]
+    # newton_polish's own rule: a row the callable reports inside stops with status 0 and is not evaluated
+    res = mn.newton_polish(E, x, max_iter=60, capture_d2=9.0,
+                           capture=lambda xc, ids: (torch.where(ids == 0, 0, -1), torch.where(ids == 0, 0.0, 1e9)))
+    assert int(res['status'][0]) == 0 and int(res['capture'][0]) == 0 and int(res['n_h'][0]) == 0
+    assert res['status'][1:].tolist() == [1] * (len(x) - 1)
+
+
+class _Row:
+    """A stand-in output row: tensors as attributes, ``keys`` and ``clone`` as on crystal rows."""
+
+    def __init__(self, **kw):
+        self.__dict__.update({k: torch.tensor([v]) for k, v in kw.items()})
+
+    def keys(self):
+        return list(self.__dict__)
+
+    def clone(self):
+        r = _Row()
+        r.__dict__.update({k: v.clone() for k, v in self.__dict__.items()})
+        return r
+
+
+def test_missing_mass_and_minimum_rows():
+    lib = mn.MinimaLibrary()
+    for f in (0.0, 1.0, 10.0):  # E/kT: minima 0 and 1 are within 5 kT of the lowest, minimum 2 is not
+        lib.add(torch.zeros(12), torch.eye(12), f, ('m', 2, 1, (1,)), dict(x=torch.zeros(12)))
+    rows = [_Row(start_index=0, minimum_id=0, recapture=False), _Row(start_index=1, minimum_id=0, recapture=True),
+            _Row(start_index=2, minimum_id=1, recapture=False), _Row(start_index=3, minimum_id=2, recapture=False),
+            _Row(start_index=4, minimum_id=-1, recapture=False),  # a random start that did not converge
+            _Row(start_index=-1, minimum_id=1, recapture=True)]  # a seed: not in the sample
+    mm = mn.missing_mass(rows, lib, band_kT=5.0)
+    from mxtaltools.crystal_search.coordinator import poisson_upper
+    assert (mm['n'], mm['f1'], mm['band_minima']) == (5, 1, 2)  # minimum 1 is the band's one singleton
+    assert mm['p'] == pytest.approx(1 / 5) and mm['p_hi'] == pytest.approx(poisson_upper(1) / 5)
+    seeds = mn.missing_mass(rows, lib, band_kT=5.0, seeds=True)  # the seed's row alone: minimum 1 once
+    assert (seeds['n'], seeds['f1']) == (1, 1)
+    table = mn.minimum_rows(rows)
+    assert [int(r.minimum_id) for r in table] == [0, 1, 2]
+    assert [int(r.hits) for r in table] == [2, 1, 1] and [int(r.seed_hits) for r in table] == [0, 1, 0]
 
 
 def _sheared(row):

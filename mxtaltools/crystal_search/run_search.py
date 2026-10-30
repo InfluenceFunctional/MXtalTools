@@ -408,7 +408,8 @@ def _search_loop(config, samples_to_optim, target, device, data_mode, out_path, 
                     rows_m, eff = finish_minima(crystal_batch.batch_to_list(), library, kT=float(minima_cfg['kT']),
                                                 lj_envelope=minima_cfg['lj_envelope'],
                                                 max_iter=int(minima_cfg['max_iter']), tol=float(minima_cfg['tol']),
-                                                merge_d2=float(minima_cfg['merge_d2']), device=device, **finish_kw)
+                                                merge_d2=float(minima_cfg['merge_d2']), device=device,
+                                                capture_d2=float(minima_cfg['capture_d2']), **finish_kw)
                 except BaseException:  # this batch is redone (OOM) or the run ends: its minima were never saved
                     library.truncate(n_lib)
                     raise

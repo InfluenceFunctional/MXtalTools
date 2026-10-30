@@ -1,0 +1,69 @@
+# Streaming search with converged minima: MIPCAS, space group 2, Z' = 1, eLJ.
+# run: python mxtaltools/crystal_search/run_search.py --config configs/crystal_searches/minima_stream/mipcas_elj.yaml
+# Stages as configs/crystal_searches/zp1_sep28/mipcas_elj/streams/random.yaml, stage 2 capped at 50 steps.
+# Outputs in out_dir: <run_name>.pt (every start), <run_name>_minima.pt (one row per minimum, with hits),
+# <run_name>_stream_effort.json (effort, wall time, missing-mass estimates, stop record).
+device: cuda
+mol_path: /scratch/mk8347/data/crystal_datasets/mipcas/MIPCAS_standardized.pt
+dataset_path: null
+target_path: null
+out_dir: /scratch/mk8347/data/crystal_datasets/mipcas/minima_stream
+run_name: mipcas_elj_minima
+target_identifier: null
+save_trajs: false
+init_sample_method: random
+init_reduced: true
+force_restart_run: false
+mol_seed: 0
+opt_seed: 1000000000
+sampling_mode: all
+mols_to_sample: 1
+num_samples: 6000  # random starts at most; stream.stop_p can end the run sooner
+sgs_to_search:
+- 2
+zp_to_search:
+- 1
+batch_size: 250
+grow_batch_size: false
+init_target_cp: std
+oom_ceiling: false
+minima:
+  kT: 6.859493755713105  # eLJ units; E/kT is the polish's objective and the unit of every band
+  capture_d2: 9.0  # a descent or polish row inside d^2 < 9 of a known minimum is that minimum
+stream:
+  slots: 250  # starts in flight on the GPU
+  check_every: 5
+  stop_p: 0.01  # stop drawing starts once the Good-Turing bound on P(next start finds a new minimum) is below this
+  stop_band_kT: 5.0  # ... counting only minima within this of the lowest
+  seeds: null  # a saved list of crystal rows relaxed first, at the last stage (e.g. another search's _minima.pt)
+opt:
+- optim_target: elj
+  enforce_reduced: false
+  compression_factor: 1.0
+  cutoff: 10
+  init_lr: 0.05
+  convergence_eps: 0.01
+  optimizer_func: rprop
+  anneal_lr: false
+  grad_norm_clip: 0.1
+  show_tqdm: false
+  max_num_steps: 350
+  target_packing_coeff: null
+  centroid_boundary: wrap
+- optim_target: elj
+  enforce_reduced: false
+  compression_factor: 0.0
+  cutoff: 10
+  init_lr: 0.01
+  convergence_eps: 0.0001
+  optimizer_func: rprop
+  anneal_lr: true
+  grad_norm_clip: 0.1
+  show_tqdm: false
+  max_num_steps: 50
+  target_packing_coeff: null
+  centroid_boundary: wrap
+  early_stop:  # the source's checks at 50 and 100 steps never run under the 50-step cap
+  - - 25
+    - 10.0
+  early_stop_kT: 6.859493755713105

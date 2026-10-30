@@ -18,12 +18,15 @@ centres, rotation vectors in rad) in wrap mode (``crystal_opt_utils.wrap_centroi
 descriptions (cell settings, symmetry images, handedness under an improper element), so minima are identified, and
 descents captured, in one description per crystal (``identity_description``: crystal_fd's canonical form at Z' = 1),
 with each minimum's Hessian taken in that description; rows are reported in the asymmetric-unit box
-(``canonicalize_aunit``) with the Hessian taken there. d^2 removes the centres' lattice translations (``min_image``);
-near a seam of the fundamental domain two descriptions of one crystal can still differ, and such a pair is two minima.
+(``canonicalize_aunit``) with the Hessian taken there. d^2 removes the centres' lattice translations (``min_image``)
+and the shifts to an equivalent origin (``centre_shifts``: in P-1, half a cell along any axis); near another seam of
+the fundamental domain (a face of the reduced-cell domain) two descriptions of one crystal can still differ, and such a
+pair is two minima.
 
 Termination: ``newton_polish`` evaluates at most ``max_iter + 1`` Hessians and ``max_iter * POLISH_TRIES`` energies
 per row and has no other loop; ``finish_minima`` calls it once.
 """
+import functools
 from typing import Optional
 
 import torch
@@ -35,7 +38,7 @@ ENERGY_TARGETS = ('lj', 'qlj', 'elj', 'exp6', 'silu', 'uma', 'mace')  # stage ta
 POLISH_CAPS = (0.1, 0.02, 0.01, 0.02)  # largest step per block: lengths (A), angles (rad), centres, rotvecs (rad)
 POLISH_TRIES = 8  # Levenberg-Marquardt damping increases tried per iteration before a row counts as stalled
 TRUST_RANGE = (1 / 16, 16.0)  # bounds of the per-row factor on POLISH_CAPS (doubled on an accepted step, halved else)
-POLISH_STATUS = {0: 'not polished (captured)', 1: 'converged', 2: 'stalled', 3: 'iteration cap',
+POLISH_STATUS = {0: 'captured (in the stage or the polish)', 1: 'converged', 2: 'stalled', 3: 'iteration cap',
                  4: 'left the cell-parameter box'}
 NEG_REL = 1e-6  # a Hessian counts as positive semi-definite when its lowest eigenvalue is above -NEG_REL * its highest
 F64 = torch.float64
@@ -54,6 +57,38 @@ def min_image(dx: torch.Tensor) -> torch.Tensor:
     cen = blocks(dx.shape[-1])[2]
     dx[..., cen] = dx[..., cen] - torch.round(dx[..., cen])
     return dx
+
+
+@functools.lru_cache(maxsize=None)
+def centre_shifts(sg: int) -> torch.Tensor:
+    """[k, 3] float64: the translations t in [0, 1)^3, zero first, for which moving every centre by t describes the
+    same crystal of space group ``sg``: the conventional cell's centring and the Euclidean normalizer's pure
+    translations (an equivalent origin, such as the eight inversion centres of P-1). They are the products with
+    identity rotation of a normalizer coset representative (``NORMALIZER_OPS``, or the identity) and a group operator
+    (``SYM_OPS``). A translation that normalizes the group is an isometry, so the set is the translation part of the
+    affine normalizer as well, and every cell setting of the group (the identity description's reduced cells
+    included) has the same set. Continuous origin shifts (``CONTINUOUS_DIMS``, polar axes) are not listed: along
+    them a minimum's Hessian is flat."""
+    import numpy as np
+    from mxtaltools.constants.space_group_info import NORMALIZER_OPS, SYM_OPS
+    reps = [(np.eye(3), np.zeros(3))] + [(np.asarray(W, dtype=float), np.asarray(w, dtype=float))
+                                         for W, w in NORMALIZER_OPS[str(int(sg))]]
+    out = {(0.0, 0.0, 0.0)}
+    for W, w in reps:
+        for op in SYM_OPS[int(sg)]:
+            if np.allclose(W @ op[:3, :3], np.eye(3)):
+                t = np.round((W @ op[:3, 3] + w) % 1.0, 6) % 1.0
+                out.add(tuple(float(v) for v in t))
+    return torch.tensor(sorted(out), dtype=F64)
+
+
+def centre_images(key: tuple, d: int) -> torch.Tensor:
+    """[k, d] float64: ``centre_shifts`` of the key's space group (``row_key``: molecule, space group, Z', ...) as
+    full-parameter offsets, the same shift on every unit's centre and zero elsewhere; the zero offset first."""
+    sh = centre_shifts(int(key[1]))
+    out = torch.zeros(len(sh), d, dtype=F64)
+    out[:, blocks(d)[2]] = sh.repeat(1, (d - 6) // 6)
+    return out
 
 
 def ellipsoid_factor(H: torch.Tensor) -> torch.Tensor:
@@ -136,8 +171,10 @@ class StageEnergy:
 
     def fgh(self, x: torch.Tensor, idx):
         """E/kT [n], its gradient [n, d] and its Hessian [n, d, d] (symmetrised), float64 on CPU. The Hessian is the
-        double backward of the batch sum: rows share no parameter, so column k of every row's Hessian is the gradient
-        of the sum over rows of gradient component k (d further backward passes)."""
+        double backward of the batch sum: rows share no parameter, so row k of every row's Hessian is the gradient of
+        the sum over rows of gradient component k, and the d of them come from one backward batched over the d unit
+        vectors (``is_grads_batched``: for 256 MIPCAS rows on a GPU 0.57 s against 1.2 s for d sequential passes, the
+        same values to 3e-6, 2026-10-29)."""
         F, G, H = [], [], []
         d = x.shape[1]
         for s in self._chunks(len(x)):
@@ -145,11 +182,11 @@ class StageEnergy:
             fi = self._energy(xi, idx[s])
             gi, = torch.autograd.grad(fi.sum(), xi, create_graph=True)
             Hi = torch.zeros(len(xi), d, d, dtype=F64)
-            for k in range(d):
-                if gi[:, k].requires_grad:
-                    hk, = torch.autograd.grad(gi[:, k].sum(), xi, retain_graph=k < d - 1, allow_unused=True)
-                    if hk is not None:
-                        Hi[:, k] = hk.detach().double().cpu()
+            if gi.requires_grad:
+                eye = torch.eye(d, device=gi.device, dtype=gi.dtype).unsqueeze(1).expand(d, len(xi), d)
+                hb, = torch.autograd.grad(gi, xi, grad_outputs=eye, is_grads_batched=True, allow_unused=True)
+                if hb is not None:  # [d, n, d] -> [n, d, d]
+                    Hi = hb.detach().permute(1, 0, 2).double().cpu()
             F.append(fi.detach().double().cpu())
             G.append(gi.detach().double().cpu())
             H.append(0.5 * (Hi + Hi.transpose(1, 2)))
@@ -157,8 +194,12 @@ class StageEnergy:
 
 
 def newton_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol: float = 1e-4,
-                  hessian_every: int = 1):
+                  hessian_every: int = 1, capture=None, capture_d2: float = 9.0):
     """Per-row saddle-free Levenberg-Marquardt Newton descent of ``energy`` from ``x0`` [n, d].
+
+    With ``capture``, a callable taking (x [m, d], row indices [m]) and returning (minimum id [m], d^2 [m]) as
+    ``MinimaLibrary.capture_query`` does, every active row is tested before each iteration's evaluations (and before
+    the first): a row with d^2 < ``capture_d2`` stops there with status 0 and that id in ``capture``.
 
     Each iteration takes every active row's gradient, and its Hessian H = V diag(lam) V^T when the row's last one is
     ``hessian_every`` iterations old or the row asked for a fresh one; in between, the row steps with its last H.
@@ -177,29 +218,52 @@ def newton_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol
     Returns
     -------
     dict
-        ``x`` [n, d], ``f`` [n] (E/kT), ``g`` [n, d], ``H`` [n, d, d] at ``x`` (float64, CPU); ``status`` [n] long
-        (1 converged, 2 stalled, 3 iteration cap: POLISH_STATUS); ``n_f``, ``n_g``, ``n_h`` [n] long, the energies,
-        gradients and Hessians evaluated per row (a Hessian evaluation includes its energy and gradient).
+        ``x`` [n, d], ``f`` [n] (E/kT), ``g`` [n, d], ``H`` [n, d, d] at ``x`` (float64, CPU; for a row captured
+        before its first evaluation, f is NaN and g and H are 0); ``status`` [n] long (0 captured, 1 converged,
+        2 stalled, 3 iteration cap: POLISH_STATUS); ``capture`` [n] long (the capturing minimum, else -1);
+        ``n_f``, ``n_g``, ``n_h`` [n] long, the energies, gradients and Hessians evaluated per row (a Hessian
+        evaluation includes its energy and gradient).
     """
     x = x0.detach().to(F64).cpu().clone()
     n, d = x.shape
-    idx = torch.arange(n)
     cap = torch.zeros(d, dtype=F64)
     for sl, c in zip(blocks(d), POLISH_CAPS):
         cap[sl] = c
-    F, G, H = energy.fgh(x, idx)
-    lam_all, V_all = torch.linalg.eigh(H)
+    status = torch.zeros(n, dtype=torch.long)
+    done = torch.zeros(n, dtype=torch.bool)
+    cap_id = torch.full((n,), -1, dtype=torch.long)
+
+    def captured(ia):
+        """Rows of ``ia`` inside a known minimum's ellipsoid: marked done (status 0); returns the others."""
+        if capture is None or len(ia) == 0:
+            return ia
+        mid, d2 = capture(x[ia], ia)
+        hit = (mid >= 0) & (d2 < capture_d2)
+        done[ia[hit]] = True
+        cap_id[ia[hit]] = mid[hit]
+        return ia[~hit]
+
+    F = torch.full((n,), float('nan'), dtype=F64)
+    G = torch.zeros(n, d, dtype=F64)
+    H = torch.zeros(n, d, d, dtype=F64)
+    lam_all = torch.ones(n, d, dtype=F64)
+    V_all = torch.eye(d, dtype=F64).expand(n, d, d).clone()
+    n_h = torch.zeros(n, dtype=torch.long)
+    live = captured(torch.arange(n))
+    if len(live):
+        F[live], G[live], H[live] = energy.fgh(x[live], live)
+        lam_all[live], V_all[live] = torch.linalg.eigh(H[live])
+        n_h[live] = 1
     age = torch.zeros(n, dtype=torch.long)  # iterations since the row's Hessian was taken at its current x
     want = torch.zeros(n, dtype=torch.bool)
-    n_h = torch.ones(n, dtype=torch.long)
     n_g = torch.zeros(n, dtype=torch.long)
     n_f = torch.zeros(n, dtype=torch.long)
     mu = torch.ones(n, dtype=F64)
     trust = torch.ones(n, dtype=F64)
-    status = torch.zeros(n, dtype=torch.long)
-    done = torch.zeros(n, dtype=torch.bool)
     for it in range(max_iter):
         ia = torch.nonzero(~done).flatten()
+        if it > 0:
+            ia = captured(ia)
         if len(ia) == 0:
             break
         if it > 0:
@@ -253,7 +317,7 @@ def newton_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol
     if len(redo):
         F[redo], G[redo], H[redo] = energy.fgh(x[redo], redo)
         n_h[redo] += 1
-    return dict(x=x, f=F, g=G, H=H, status=status, n_f=n_f, n_g=n_g, n_h=n_h)
+    return dict(x=x, f=F, g=G, H=H, status=status, capture=cap_id, n_f=n_f, n_g=n_g, n_h=n_h)
 
 
 def polish_evals(effort: dict) -> int:
@@ -305,8 +369,8 @@ class MinimaLibrary:
 
     Each minimum is held twice. In the identity description (``identity_description``): parameters x, the Hessian H of
     E/kT there, E/kT and its key (``identity_key``: molecule, space group, Z', handedness signs); ``nearest`` and
-    ``match`` measure against these, d^2 = dx^T H_+ dx (``ellipsoid_factor``, ``min_image``), minima of the same key
-    only. In the report description (asymmetric-unit box, ``canonicalize_aunit``): parameters, handedness and Hessian,
+    ``match`` measure against these, d^2 = dx^T H_+ dx (``ellipsoid_factor``) at the nearest image of dx
+    (``min_image`` over the offsets of ``centre_images``), minima of the same key only. In the report description (asymmetric-unit box, ``canonicalize_aunit``): parameters, handedness and Hessian,
     which a row reported as the minimum carries."""
 
     def __init__(self):
@@ -360,11 +424,15 @@ class MinimaLibrary:
             if st is None:
                 continue
             mids, X, W = st
+            shifts = centre_images(key, X.shape[1])
             rows = torch.tensor([i for i, k in enumerate(keys) if tuple(k) == key])
             for c in range(0, len(rows), chunk):
                 r = rows[c:c + chunk]
-                dx = min_image(x[r, None, :] - X[None])  # [b, m, d]
-                d2 = torch.einsum('mji,bmj->bmi', W, dx).pow(2).sum(-1)
+                d2 = None
+                for s in shifts:
+                    dx = min_image(x[r, None, :] - X[None] - s)  # [b, m, d]
+                    d2s = torch.einsum('mji,bmj->bmi', W, dx).pow(2).sum(-1)
+                    d2 = d2s if d2 is None else torch.minimum(d2, d2s)
                 v, a = d2.min(1)
                 best[r], ids[r] = v, mids[a]
         return ids, best
@@ -389,10 +457,13 @@ class MinimaLibrary:
         if st is None:
             return -1
         mids, X, Wm = st
-        dx = min_image(x.to(F64)[None] - X)  # [m, d]
-        d2_lib = torch.einsum('mji,mj->mi', Wm, dx).pow(2).sum(-1)
-        d2_own = (dx @ W.to(F64)).pow(2).sum(-1)
-        d2 = torch.maximum(d2_lib, d2_own)
+        d2 = None
+        for s in centre_images(key, X.shape[1]):
+            dx = min_image(x.to(F64)[None] - X - s)  # [m, d]
+            d2_lib = torch.einsum('mji,mj->mi', Wm, dx).pow(2).sum(-1)
+            d2_own = (dx @ W.to(F64)).pow(2).sum(-1)
+            d2s = torch.maximum(d2_lib, d2_own)
+            d2 = d2s if d2 is None else torch.minimum(d2, d2s)
         j = int(torch.argmin(d2))
         return int(mids[j]) if float(d2[j]) < merge_d2 else -1
 
@@ -414,6 +485,51 @@ class MinimaLibrary:
                     dict(x=r.full_cell_parameters().reshape(-1), hand=r.aunit_handedness.reshape(-1),
                          H=r.hessian[0]))
         return lib
+
+
+def missing_mass(rows, library: MinimaLibrary, band_kT: float, conf: float = 0.9, seeds: bool = False) -> dict:
+    """Good-Turing estimate of the chance that the next random start (with ``seeds``: the next seed, the seeds
+    taken in a random order) ends at a minimum not yet found within ``band_kT`` of the lowest minimum in ``library``.
+
+    The sample is the rows of random starts (``start_index`` >= 0), or with ``seeds`` the seeds' rows (negative
+    indices); rows without a ``minimum_id`` are left out. Each is a draw of the minimum it ended at (``minimum_id``; -1, not converged, counts
+    as a draw of no minimum). With n such rows and f1 the band's minima reached by exactly one of them, the estimate
+    is p = f1 / n, and p_hi = poisson_upper(f1, conf) / n its one-sided upper bound (coordinator.py's bound on f1). A
+    minimum known from a seed but reached by one random start counts in f1, so p over-states the chance of an
+    unknown minimum. Band membership is by the library's E/kT."""
+    from mxtaltools.crystal_search.coordinator import poisson_upper
+    if not len(library):
+        return dict(n=0, f1=0, band_minima=0, p=float('nan'), p_hi=float('inf'))
+    lo = min(library.f)
+    in_band = torch.tensor([f - lo <= band_kT for f in library.f])
+    ids = torch.tensor([int(r.minimum_id) for r in rows if 'minimum_id' in r.keys() and 'start_index' in r.keys()
+                        and (int(r.start_index) < 0) == bool(seeds)], dtype=torch.long)
+    hits = torch.bincount(ids[ids >= 0], minlength=len(library)) if len(ids) else torch.zeros(len(library))
+    n = len(ids)
+    f1 = int(((hits == 1) & in_band).sum())
+    return dict(n=n, f1=f1, band_minima=int(in_band.sum()), p=f1 / n if n else float('nan'),
+                p_hi=poisson_upper(f1, conf) / n if n else float('inf'))
+
+
+def minimum_rows(rows) -> list:
+    """One row per minimum, in id order: the row that defined it (``minimum_id`` >= 0, not a recapture), cloned, with
+    ``hits`` (rows of random starts that ended at it, captures included) and ``seed_hits`` (rows of seeds)."""
+    hits, seed_hits, own = {}, {}, {}
+    for r in rows:
+        if 'minimum_id' not in r.keys() or int(r.minimum_id) < 0:
+            continue
+        m = int(r.minimum_id)
+        tally = seed_hits if 'start_index' in r.keys() and int(r.start_index) < 0 else hits
+        tally[m] = tally.get(m, 0) + 1
+        if not bool(r.recapture):
+            own[m] = r
+    out = []
+    for m in sorted(own):
+        r = own[m].clone()
+        r.hits = torch.tensor([hits.get(m, 0)])
+        r.seed_hits = torch.tensor([seed_hits.get(m, 0)])
+        out.append(r)
+    return out
 
 
 def _inside_clean_box(rows, x, device, tol: float = 1e-5):
@@ -440,15 +556,19 @@ def _described(rows, x, device, how):
 def finish_minima(rows: list, library: MinimaLibrary, optim_target: str, kT: float, cutoff: float = 10,
                   supercell_size: int = 10, predictor=None, exp6_kwargs: Optional[dict] = None,
                   repulsion: float = 1.0, lj_envelope: Optional[float] = 1.0, max_iter: int = 40, tol: float = 1e-4,
-                  merge_d2: float = 1.0, device='cpu', energy_chunk: int = 256):
+                  merge_d2: float = 1.0, device='cpu', energy_chunk: int = 256,
+                  capture_d2: Optional[float] = None):
     """Turn a last stage's output rows into converged minima, and update ``library``.
 
     - A row the stage captured (``capture_min`` >= 0) is reported as that library minimum: its parameters, handedness
       and Hessian are the minimum's report description.
-    - Every other row is re-described in the identity description, polished there (``newton_polish`` on
-      ``StageEnergy``; a row whose polished cell ``clean_cell_parameters`` would change gets status 4), and its
-      Hessian taken again in two descriptions of the polished crystal: the identity description (``identity_description``) and the report
-      description (``canonicalize_aunit``, the asymmetric-unit box). In ascending E/kT, a converged row whose
+    - Every other row is re-described in the identity description and polished there (``newton_polish`` on
+      ``StageEnergy``). With ``capture_d2``, the polish captures as a stage does (``MinimaLibrary.capture_query``
+      against the library as it was before this call, before each iteration), and a row captured there is reported
+      as that minimum too, with status 0. A row whose polished cell ``clean_cell_parameters`` would change gets
+      status 4. Each remaining row has its Hessian taken again in two descriptions of the polished crystal: the
+      identity description (``identity_description``) and the report description (``canonicalize_aunit``, the
+      asymmetric-unit box). In ascending E/kT, a converged row whose
       identity Hessian is positive semi-definite is matched against the library in the identity description
       (``MinimaLibrary.match`` at ``merge_d2``): a match makes it a recapture of that minimum (it keeps its own
       polished state), otherwise it is added as a new minimum. Rows with any other status are kept and not added.
@@ -477,16 +597,19 @@ def finish_minima(rows: list, library: MinimaLibrary, optim_target: str, kT: flo
     mid = [-1] * n
     recap = [False] * n
     status = [0] * n
+
+    def as_captured(i, m):
+        rep[i] = dict(library.report[m])
+        ident[i] = dict(x=library.x[m], hand=torch.tensor(library.key[m][3], dtype=torch.float32), H=library.H[m])
+        out_f[i], mid[i], recap[i] = library.f[m], m, True
+
     for i in range(n):
         if cap[i] >= 0:
-            m = cap[i]
-            rep[i] = dict(library.report[m])
-            ident[i] = dict(x=library.x[m], hand=torch.tensor(library.key[m][3], dtype=torch.float32), H=library.H[m])
-            out_f[i], mid[i], recap[i] = library.f[m], m, True
+            as_captured(i, cap[i])
 
+    kw = dict(optim_target=optim_target, kT=kT, cutoff=cutoff, supercell_size=supercell_size, predictor=predictor,
+              lj_envelope=lj_envelope, exp6_kwargs=exp6_kwargs, device=device, chunk=energy_chunk)
     if todo:
-        kw = dict(optim_target=optim_target, kT=kT, cutoff=cutoff, supercell_size=supercell_size, predictor=predictor,
-                  lj_envelope=lj_envelope, exp6_kwargs=exp6_kwargs, device=device, chunk=energy_chunk)
         # polish in the identity description: at Z' = 1 a reduced cell, well inside clean_cell_parameters' box. A
         # stage's own description can sit at or past the angle clamp, where StageEnergy (which cleans) is flat in
         # that coordinate, so a polish there could end on a point that is not the crystal it reports.
@@ -494,10 +617,24 @@ def finish_minima(rows: list, library: MinimaLibrary, optim_target: str, kT: flo
         x00 = torch.stack([r.full_cell_parameters().reshape(-1) for r in sub0]).double()
         sub = _described(sub0, x00, device, identity_description)
         x0 = torch.stack([r.full_cell_parameters().reshape(-1) for r in sub]).double()
-        res = newton_polish(StageEnergy(sub, **kw), x0, max_iter=max_iter, tol=tol)
+        capture = None
+        if capture_d2 is not None and len(library):
+            def capture(xc, ids):  # the polish's rows re-described and measured as a stage's capture measures them
+                b = collate_data_list([sub[int(j)] for j in ids]).to(device)
+                b.set_cell_parameters(xc.to(device, torch.float32), skip_box_analysis=False)
+                b.aunit_centroid = wrap_centroid(b.aunit_centroid)
+                return library.capture_query(b, batch_keys(b))
+        res = newton_polish(StageEnergy(sub, **kw), x0, max_iter=max_iter, tol=tol, capture=capture,
+                            capture_d2=float(capture_d2) if capture_d2 is not None else 0.0)
         effort['n_f'] += int(res['n_f'].sum())
         effort['n_g'] += int(res['n_g'].sum())
         effort['n_h'] += int(res['n_h'].sum())
+        for j in torch.nonzero(res['status'] == 0).flatten().tolist():  # captured in the polish
+            as_captured(todo[j], int(res['capture'][j]))
+        keep = torch.nonzero(res['status'] != 0).flatten()
+        todo, sub = [todo[j] for j in keep.tolist()], [sub[j] for j in keep.tolist()]
+        res = {k: v[keep] for k, v in res.items()}
+    if todo:
         res['status'][~_inside_clean_box(sub, res['x'], device)] = 4
         both = {}
         for name, how in (('id', identity_description), ('rep', canonicalize_aunit)):

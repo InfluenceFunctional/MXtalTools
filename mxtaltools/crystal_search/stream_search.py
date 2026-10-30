@@ -25,15 +25,35 @@ Per stage, as ``gradient_descent_optimization`` would run it (wrap mode, Rprop):
   anneal_lr, which do not change Rprop's steps, are not applied.
 With the search config's ``minima`` block the last stage also captures (``MinimaLibrary.capture_query`` every
 ``capture_every`` steps) and emitted rows are finished in groups of ``polish_chunk`` (default 4 x ``slots``) by
-``minima.finish_minima``.
+``minima.finish_minima``, whose polish captures too; at the end the run writes ``<run>_minima.pt``, one row per
+minimum with its hit counts (``minima.minimum_rows``).
 
 Starts are drawn in blocks of ``slots`` (``get_initial_state`` seeded by the block index, so a stream with ``slots``
-equal to a batch search's ``batch_size`` relaxes the same starts) and carry ``start_index``. Outputs are saved after
-every finished group; a resumed run skips the starts already in its output and redraws the rest (rows in flight at
-a stop are relaxed again).
+equal to a batch search's ``batch_size`` relaxes the same starts) and carry ``start_index``. With ``seeds`` (a saved
+list of crystal rows, e.g. another search's output or a set of known structures; needs ``minima``) the seeds come
+first, each put on this search's copy of its molecule and polished directly, without a descent stage, in groups of
+``polish_chunk``, with start index -(j + 1): the polish relaxes them, takes their Hessians and merges or captures
+the repeats, and their minima are in the library before any random start reaches it. (On MIPCAS eLJ, 2026-10-29:
+the 13,505 anchors of an earlier eLJ prior polished to 100 minima and the 9,237 of a UMA prior to 80; each set
+reached all 15 minima within 2 kT of the lowest that a random run found. Entering at the last stage instead took
+about as many evaluations for the eLJ seeds and about 30% fewer for the UMA seeds, and the UMA seeds then reached
+14 of the 15.) The seeds are taken in a random order (seeded by ``opt_seed``), so that with ``stop_p`` they stop as
+the random starts do: before each seed group the Good-Turing bound over the seeds polished so far
+(``minima.missing_mass(seeds=True)``) is compared with ``stop_p``, and once below it the remaining seeds are skipped.
+(Simulated on the eLJ-prior seeds above, 50 orders: stopped after 1,000-2,000 of the 13,505, with all 15 minima
+within 2 kT found.) In a file of distinct minima, such as another run's ``_minima.pt``, most seeds are singletons, the
+bound stays high, and the file is polished whole. Outputs are saved after every finished group; a resumed run skips
+the starts already in its output and redraws the rest (rows in flight at a stop are relaxed again).
+
+With ``stop_p`` (needs ``minima``, and one molecule, space group and Z' in the search), after every finished group
+the Good-Turing estimate of the chance that the next
+random start finds a minimum not yet found within ``stop_band_kT`` of the lowest (``minima.missing_mass``, its 90%
+upper bound) is compared with ``stop_p``; below it, no new starts are drawn and the slots in flight finish. The
+estimates are recorded in the effort file.
 
 Termination: a start is in a slot for at most the sum of its stages' max_num_steps - 1 steps (rounded up to
-check_every), the starts are finite, and ``newton_polish`` is bounded, so the loop ends.
+check_every), the starts (seeds and ``num_samples`` random ones) are finite, and ``newton_polish`` is bounded, so the
+loop ends; ``stop_p`` can only end it sooner.
 """
 import gc
 import json
@@ -47,7 +67,7 @@ from mxtaltools.crystal_search.crystal_opt_utils import canonicalize_aunit, wrap
 from mxtaltools.crystal_search.run_state import atomic_json_dump, atomic_torch_save, committed_outputs
 from mxtaltools.dataset_utils.utils import collate_data_list
 
-STREAM_DEFAULTS = dict(slots=None, check_every=5, polish_chunk=None)
+STREAM_DEFAULTS = dict(slots=None, check_every=5, polish_chunk=None, seeds=None, stop_p=None, stop_band_kT=5.0)
 STAGE_KEYS = {'optim_target', 'enforce_reduced', 'compression_factor', 'cutoff', 'init_lr', 'convergence_eps',
               'optimizer_func', 'anneal_lr', 'grad_norm_clip', 'show_tqdm', 'max_num_steps', 'target_packing_coeff',
               'centroid_boundary', 'early_stop', 'early_stop_kT', 'supercell_size', 'convergence'}
@@ -59,8 +79,11 @@ REGROW_STEPS = 200  # clean steps before a halved evaluation chunk is doubled ag
 def check_stream_config(config):
     """The ``stream`` block with STREAM_DEFAULTS filled in (``slots`` defaults to ``batch_size``, ``polish_chunk`` to
     4 x ``slots``: the polish's wall time is its sequential depth, so larger groups cost less per row -- 400 MIPCAS
-    rows polished in one call took 33 s against 74 s in four calls of 100, 2026-10-28), or None without it. Raises ValueError on an unknown key, a campaign (``coord_dir``), a start method
-    other than 'random' or 'reasonable', or a stage it does not reproduce: an optimizer other than rprop, clamp mode,
+    rows polished in one call took 33 s against 74 s in four calls of 100, 2026-10-28), or None without it. Raises
+    ValueError on an unknown key, a campaign (``coord_dir``), a start method other than 'random' or 'reasonable',
+    ``stop_p`` outside (0, 1) or without the ``minima`` block, a ``seeds`` file that does not exist or ``seeds``
+    without the ``minima`` block, or a stage it
+    does not reproduce: an optimizer other than rprop, clamp mode,
     ``enforce_reduced``, ``fd_refold``, ``target_packing_coeff``, ``keep_lowest_fraction``, ``convergence: grad``,
     any other stage key, or stages with different optimisation targets."""
     block = getattr(config, 'stream', None)
@@ -76,6 +99,17 @@ def check_stream_config(config):
     s['check_every'] = int(s['check_every'])
     if s['slots'] < 1 or s['check_every'] < 1 or s['polish_chunk'] < 1:
         raise ValueError(f"cfg:stream: slots, check_every and polish_chunk must be positive, got {s}")
+    if s['stop_p'] is not None:
+        s['stop_p'], s['stop_band_kT'] = float(s['stop_p']), float(s['stop_band_kT'])
+        if not 0 < s['stop_p'] < 1 or not s['stop_band_kT'] > 0:
+            raise ValueError(f"cfg:stream: stop_p must be in (0, 1) and stop_band_kT positive, got {s}")
+        if getattr(config, 'minima', None) is None:
+            raise ValueError("cfg:stream.stop_p counts minima: it needs the cfg:minima block")
+    if s['seeds'] is not None:
+        if not os.path.exists(str(s['seeds'])):
+            raise ValueError(f"cfg:stream.seeds: no file {s['seeds']!r}")
+        if getattr(config, 'minima', None) is None:
+            raise ValueError("cfg:stream.seeds are polished: they need the cfg:minima block")
     if getattr(config, 'coord_dir', None):
         raise ValueError("cfg:stream does not run in a campaign (cfg:coord_dir) yet")
     if config.init_sample_method not in ('random', 'reasonable'):
@@ -137,6 +171,37 @@ class _Slots:
         self.smooth[i] = 0
 
 
+def _seed_starts(path, samples_to_optim, device, done, chunk: int = 256):
+    """Seed starts: each row of the list saved at ``path`` (crystal rows, e.g. another search's output) whose
+    molecule identifier, space group and Z' (``minima.row_key``) this search has, with its cell parameters and
+    handedness put on this search's copy of that molecule (the first start with that key, oriented as a drawn start
+    is), as start index -(j + 1) for row j. Rows already in the output (``done``) are left out. Raises ValueError
+    when no row matches."""
+    from mxtaltools.crystal_search.minima import row_key
+    seeds = torch.load(path, weights_only=False)
+    if not isinstance(seeds, list):
+        seeds = seeds.batch_to_list() if hasattr(seeds, 'batch_to_list') else [seeds]
+    tmpl = {}
+    for r in samples_to_optim:
+        tmpl.setdefault(row_key(r), r)
+    use = [(j, s) for j, s in enumerate(seeds) if row_key(s) in tmpl]
+    if not use:
+        raise ValueError(f"cfg:stream.seeds: none of the {len(seeds)} rows of {path} has a molecule, space group and "
+                         f"Z' of this search ({sorted(tmpl)})")
+    out = []
+    for c in range(0, len(use), chunk):
+        part = use[c:c + chunk]
+        b = collate_data_list([tmpl[row_key(s)].clone() for _, s in part]).to(device)
+        b.aunit_handedness = torch.stack([s.aunit_handedness.reshape(-1) for _, s in part]).reshape(
+            b.aunit_handedness.shape).to(b.aunit_handedness)
+        b.set_cell_parameters(torch.stack([s.full_cell_parameters().reshape(-1) for _, s in part]).to(
+            device, torch.float32), skip_box_analysis=False)
+        b.orient_molecule(mode='standardized', target_handedness=b.aunit_handedness)
+        out.extend((-(j + 1), r) for (j, _), r in zip(part, b.cpu().detach().batch_to_list()))
+    print(f"cfg:stream.seeds: {len(use)} of {len(seeds)} rows have a molecule, space group and Z' of this search")
+    return [(k, r) for k, r in out if k not in done]
+
+
 def _converged(slots, i, eps):
     """check_convergence's per-row test on slot i's ring of smoothed parameters."""
     n = int(slots.nstep[i])
@@ -160,6 +225,9 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
     if n_st > 8:
         raise ValueError("cfg:stream: at most 8 stages")
     key = str(stages[0]['optim_target']).lower()
+    if scfg['stop_p'] is not None and len({mn.row_key(r) for r in samples_to_optim}) > 1:
+        raise ValueError("cfg:stream.stop_p compares minima with the lowest one, so it needs one molecule, space group "
+                         "and Z' per search")
     cutoff = float(stages[-1].get('cutoff') or 10)
     supercell = int(stages[-1].get('supercell_size', 10))
     S = scfg['slots']
@@ -178,7 +246,9 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
     library = mn.MinimaLibrary.from_rows(opt_outs) if mcfg is not None else None
     running_min = min((float(getattr(r, key)) for r in opt_outs if key in r.keys()), default=None)
     effort = dict(stage_evals=[0] * n_st, polish_evals=0, final_evals=0, captured=0, cascaded=0, wall_s=0.0,
-                  time_s=dict(starts=0.0, emit=0.0, finish=0.0))  # the rest of wall_s is the descent
+                  time_s=dict(starts=0.0, emit=0.0, finish=0.0),  # the rest of wall_s is the descent
+                  missing_mass=[], stopped=None, seed_missing_mass=[], seeds_stopped=None)
+    saturated = [False]  # cfg:stream.stop_p met: no new starts
 
     def timed(name):
         def wrap(fn):
@@ -233,6 +303,24 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         slots.begin_stage(i, row.full_cell_parameters().reshape(-1), float(stages[0]['init_lr']))
 
     @timed('emit')
+    def emit_seeds(seeds):
+        """Seed rows as emitted rows (no stage steps), described and analysed as ``emit`` does."""
+        b = collate_data_list([r for _, r in seeds]).to(device)
+        b.aunit_centroid = wrap_centroid(b.aunit_centroid)
+        canonicalize_aunit(b)
+        with torch.no_grad():
+            b.analyze(computes=list({'lj', 'elj', key}), cutoff=cutoff, rdf_cutoff=cutoff, supercell_size=supercell,
+                      return_cluster=False, repulsion=1.0, surface_padding=0, assign_outputs=True, elementwise=False,
+                      atomwise=True, bins=100)
+        out = b.cpu().detach().batch_to_list()
+        for r, (k, _) in zip(out, seeds):
+            r.start_index = torch.tensor([k])
+            r.stage_steps = torch.zeros(1, n_st, dtype=torch.long)
+            r.capture_min = torch.tensor([-1])
+        effort['final_evals'] += len(out)
+        return out
+
+    @timed('emit')
     def emit(idx):
         rows = [slots.row[i] for i in idx]
         b = collate_data_list(rows).to(device)
@@ -254,7 +342,7 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         pending.extend(out)
 
     @timed('finish')
-    def finish(rows):
+    def finish(rows, seeds=False):
         nonlocal running_min
         if mcfg is not None:
             n_lib = len(library)
@@ -264,7 +352,8 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
                                                       supercell_size=supercell, lj_envelope=mcfg['lj_envelope'],
                                                       max_iter=int(mcfg['max_iter']), tol=float(mcfg['tol']),
                                                       merge_d2=float(mcfg['merge_d2']), device=device,
-                                                      energy_chunk=energy_chunk[0])
+                                                      energy_chunk=energy_chunk[0],
+                                                      capture_d2=float(mcfg['capture_d2']))
                     break
                 except RuntimeError as e:
                     library.truncate(n_lib)
@@ -281,10 +370,33 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         lo = min(float(getattr(r, key)) for r in rows)
         running_min = lo if running_min is None else min(running_min, lo)
         save()
+        if scfg['stop_p'] is not None and not seeds:  # the seeds' own bound is checked by the seed loop
+            mm = mn.missing_mass(opt_outs, library, scfg['stop_band_kT'])
+            effort['missing_mass'].append(mm)
+            if mm['p_hi'] < scfg['stop_p'] and not saturated[0]:
+                saturated[0] = True
+                effort['stopped'] = dict(reason='stop_p', **mm)
+                print(f"{config.run_name}: a new minimum within {scfg['stop_band_kT']} kT of the lowest is expected "
+                      f"in under {scfg['stop_p']} of starts ({mm}); finishing the rows in flight")
 
     t0 = time.time()
     if not os.path.exists(progress) or config.force_restart_run:
         save()
+    if scfg['seeds'] is not None:  # seeds first, straight to the polish: their minima are in the library before any
+        seeds = _seed_starts(scfg['seeds'], samples_to_optim, device, done)  # random start reaches it
+        order = torch.randperm(len(seeds), generator=torch.Generator().manual_seed(int(config.opt_seed))).tolist()
+        seeds = [seeds[i] for i in order]  # a random order: the seeds' missing-mass sample
+        for c in range(0, len(seeds), scfg['polish_chunk']):
+            if scfg['stop_p'] is not None:  # checked before the group, so a resumed run skips seeds it had stopped
+                mm = mn.missing_mass(opt_outs, library, scfg['stop_band_kT'], seeds=True)
+                if mm['n']:
+                    effort['seed_missing_mass'].append(mm)
+                if mm['p_hi'] < scfg['stop_p']:
+                    effort['seeds_stopped'] = dict(skipped=len(seeds) - c, **mm)
+                    print(f"{config.run_name}: a new minimum within {scfg['stop_band_kT']} kT of the lowest is "
+                          f"expected in under {scfg['stop_p']} of seeds ({mm}); {len(seeds) - c} seeds skipped")
+                    break
+            finish(emit_seeds(seeds[c:c + scfg['polish_chunk']]), seeds=True)
     while len(pool) < S and fill_pool():
         pass
     if pool:
@@ -410,6 +522,7 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
             if not stopping and stop.reason() is not None:  # drain: no new starts, the slots in flight finish
                 stopping = True
                 print(f"{config.run_name}: stop requested ({stop.reason()}); finishing the rows in flight")
+            stopping = stopping or saturated[0]
             if not stopping:
                 while len(pool) < len(out) and fill_pool():
                     pass
@@ -424,6 +537,8 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         finish(pending[:])
         pending.clear()
     effort.update(wall_s=time.time() - t0, global_steps=gstep, rows=len(opt_outs))
+    if mcfg is not None:
+        atomic_torch_save(mn.minimum_rows(opt_outs), str(out_path)[:-3] + '_minima.pt')
     atomic_json_dump(effort, str(out_path)[:-3] + '_stream_effort.json')
     print(f"{config.run_name}: stream effort {json.dumps(effort)}")
     return opt_outs

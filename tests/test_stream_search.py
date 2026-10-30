@@ -2,7 +2,8 @@
 
 Pins: the config check refuses what the stream does not reproduce; the per-row convergence test is
 check_convergence's without the quorum; a small two-stage stream on CPU relaxes every start once, through both
-stages, with a minima library, and a resumed run finds nothing left to do; slots refill (more starts than slots).
+stages, with a minima library, and a resumed run finds nothing left to do; slots refill (more starts than slots);
+seeds go first, straight to the polish; stop_p ends the random starts, and the seeds' own bound ends the seeds.
 CPU, eLJ, the test molecule of the refold tests.
 """
 from types import SimpleNamespace
@@ -38,6 +39,18 @@ def test_config_check():
                  dict(opt=[dict(STAGE), dict(STAGE, optim_target='lj')])]:
         with pytest.raises(ValueError):
             ss.check_stream_config(_cfg(**over))
+
+
+def test_example_config_passes_the_checks():
+    """configs/crystal_searches/minima_stream/mipcas_elj.yaml, the example of a streaming search with minima."""
+    from pathlib import Path
+    from mxtaltools.common.config_processing import load_yaml
+    path = Path(rs.__file__).resolve().parents[2] / 'configs' / 'crystal_searches' / 'minima_stream' / 'mipcas_elj.yaml'
+    cfg = dict2namespace(load_yaml(str(path)))
+    s = ss.check_stream_config(cfg)
+    assert s['slots'] == 250 and s['stop_p'] == 0.01 and s['stop_band_kT'] == 5.0
+    m = rs.check_minima_config(cfg)
+    assert m['capture_d2'] == 9.0 and m['kT'] > 0
 
 
 def test_per_row_convergence_matches_check_convergence():
@@ -89,6 +102,91 @@ def test_stream_runs_every_start_once_and_resumes(mol, tmp_path, monkeypatch):
     again = rs.crystal_search(_run_cfg(tmp_path, n, force=False))  # resume: nothing left
     assert len(again) == n
     assert sorted(int(r.start_index) for r in again) == list(range(n))
+
+
+def test_seeds_go_first_straight_to_the_polish(mol, tmp_path, monkeypatch):
+    """A first run's outputs as the seeds of a second: each seed is placed with its own cell parameters and
+    handedness on the search's copy of its molecule, is polished once with a negative start index and no stage step,
+    and the run writes one row per minimum with its hits."""
+    n = 4
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: _placeholders(mol, n))
+    (tmp_path / 'a').mkdir()
+    (tmp_path / 'b').mkdir()
+    first = rs.crystal_search(_run_cfg(tmp_path / 'a', n))
+    torch.save(first, tmp_path / 'seeds.pt')
+    placed = ss._seed_starts(str(tmp_path / 'seeds.pt'), _placeholders(mol, n), 'cpu', done=set())
+    assert [k for k, _ in placed] == [-1, -2, -3, -4]
+    other = _placeholders(mol, 1)
+    other[0].identifier = 'NOT_THIS_MOLECULE'
+    with pytest.raises(ValueError):  # seeds are placed on the search's copy of their own molecule only
+        ss._seed_starts(str(tmp_path / 'seeds.pt'), other, 'cpu', done=set())
+    for (_, r), s in zip(placed, first):
+        assert torch.allclose(r.full_cell_parameters(), s.full_cell_parameters(), atol=1e-5)
+        assert torch.equal(r.aunit_handedness.reshape(-1), s.aunit_handedness.reshape(-1))
+    cfg = _run_cfg(tmp_path / 'b', n)
+    cfg.stream.seeds = str(tmp_path / 'seeds.pt')
+    out = rs.crystal_search(cfg)
+    assert sorted(int(r.start_index) for r in out) == list(range(-n, n))  # the n seeds and the n random starts
+    for r in out:
+        st = r.stage_steps.reshape(-1).tolist()
+        assert st == [0, 0] if int(r.start_index) < 0 else st[0] >= 7
+        assert 'minimum_id' in r.keys()
+    table = torch.load(tmp_path / 'b' / 'streamtest_minima.pt', weights_only=False)
+    assert sum(int(r.hits) + int(r.seed_hits) for r in table) == sum(1 for r in out if int(r.minimum_id) >= 0)
+
+
+
+def test_stop_p_skips_the_remaining_seeds(mol, tmp_path, monkeypatch):
+    """With stop_p the seeds' own bound (missing_mass over the seeds) is checked before each seed group: once it is
+    met the remaining seeds are skipped, the random starts run, and a resumed run skips those seeds too."""
+    from mxtaltools.crystal_search import minima as mn
+    n = 4
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: _placeholders(mol, n))
+    (tmp_path / 'a').mkdir()
+    (tmp_path / 'b').mkdir()
+    torch.save(rs.crystal_search(_run_cfg(tmp_path / 'a', n)), tmp_path / 'seeds.pt')
+    real = mn.missing_mass
+
+    def bound(rows, lib, band_kT, seeds=False):  # the seeds' bound is met once any seed is in; the starts' never
+        mm = real(rows, lib, band_kT, seeds=seeds)
+        return dict(mm, p_hi=0.0 if seeds and mm['n'] else float('inf'))
+
+    monkeypatch.setattr(mn, 'missing_mass', bound)
+    cfg = _run_cfg(tmp_path / 'b', n)
+    cfg.stream.seeds = str(tmp_path / 'seeds.pt')
+    cfg.stream.stop_p = 0.01
+    out = rs.crystal_search(cfg)
+    assert sum(int(r.start_index) < 0 for r in out) == 2  # one group of polish_chunk = 2 seeds
+    assert sorted(int(r.start_index) for r in out if int(r.start_index) >= 0) == list(range(n))
+    with open(tmp_path / 'b' / 'streamtest_stream_effort.json') as fh:
+        import json
+        assert json.load(fh)['seeds_stopped']['skipped'] == 2
+    cfg.force_restart_run = False
+    assert len(rs.crystal_search(cfg)) == len(out)  # resumed: the skipped seeds stay skipped
+
+
+def test_stop_p_draws_no_new_starts(mol, tmp_path, monkeypatch):
+    """Once the missing-mass bound is below stop_p, the slots in flight finish and no start is drawn after."""
+    from mxtaltools.crystal_search import minima as mn
+    n = 12
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: _placeholders(mol, n))
+    monkeypatch.setattr(mn, 'missing_mass', lambda rows, lib, band_kT: dict(n=len(rows), f1=0, p_hi=0.0))
+    cfg = _run_cfg(tmp_path, n)
+    cfg.stream.stop_p = 0.01
+    out = rs.crystal_search(cfg)
+    assert len(out) < n  # the first finished group (2 rows) set the stop; the 3 slots then in flight finished
+    with open(tmp_path / 'streamtest_stream_effort.json') as fh:
+        import json
+        assert json.load(fh)['stopped']['reason'] == 'stop_p'
+    two_groups = _placeholders(mol, 4)
+    for r, sg in zip(two_groups, (1, 2, 1, 2)):
+        r.sg_ind = torch.tensor([sg])
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: two_groups)
+    with pytest.raises(ValueError, match='one molecule, space group'):  # the band needs one lowest minimum
+        rs.crystal_search(cfg)
+    with pytest.raises(ValueError):
+        cfg.minima = None
+        ss.check_stream_config(cfg)
 
 
 def test_out_of_memory_halves_the_chunk_and_retries(mol, tmp_path, monkeypatch):
