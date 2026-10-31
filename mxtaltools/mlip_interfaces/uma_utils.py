@@ -1171,13 +1171,14 @@ def compute_molecule_uma_on_mxt_batch(batch,
 def crystal_inference_settings(activation_checkpointing: bool = True,
                                compile: bool = False,
                                edge_chunk_size: Optional[int] = None,
-                               external_graph_gen: Optional[bool] = None):
+                               external_graph_gen: Optional[bool] = None,
+                               tf32: bool = True):
     """
     Build a new fairchem InferenceSettings for crystal energy prediction.
 
     Our own InferenceSettings, rather than the 'default' preset mutated in place.
-    Every call returns a fresh ``InferenceSettings(tf32=True, merge_mole=False,
-    internal_graph_gen_version=2, ...)`` carrying the four arguments below.
+    Every call returns a fresh ``InferenceSettings(merge_mole=False,
+    internal_graph_gen_version=2, ...)`` carrying the five arguments below.
 
     WHY NOT MUTATE THE PRESET. fairchem's NAME_TO_INFERENCE_SETTING holds module-level
     SINGLETON instances, and guess_inference_settings returns the object, not a copy.
@@ -1233,6 +1234,13 @@ def crystal_inference_settings(activation_checkpointing: bool = True,
         None resolves to :data:`USE_UMA_EXTERNAL_GRAPH` when this function is called.
         True means the caller supplies the neighbour list
         (:func:`attach_external_graph`); False means the model builds it internally.
+    tf32 : bool, default True
+        TF32 matmuls. They make the energy noisy at the level a relaxation resolves: eSEN-S
+        (OMC25) on 8 MIPCAS crystals, 2026-10-30, one batch evaluated four times spread by
+        0.019 kT (kT = 2.494 kJ/mol) with TF32 and 7e-5 kT without, and a central-difference
+        Hessian of the gradient (step 1e-3) by 88 and 0.56 E/kT per unit squared; a 16-row
+        energy and gradient took 0.64 s and 0.54 s. Float64 (``base_precision_dtype``) added
+        nothing and took 3.7 s. The crystal search passes False.
 
     Returns
     -------
@@ -1244,7 +1252,7 @@ def crystal_inference_settings(activation_checkpointing: bool = True,
         # module flag before building a predictor gets what it asked for
         external_graph_gen = USE_UMA_EXTERNAL_GRAPH
     return InferenceSettings(
-        tf32=True,                      # what the old code set, minus the global mutation
+        tf32=tf32,                      # True: what the old code set, minus the global mutation
         activation_checkpointing=activation_checkpointing,
         merge_mole=False,               # never safe for a multi-crystal batch
         compile=compile,
@@ -1260,7 +1268,8 @@ def crystal_inference_settings(activation_checkpointing: bool = True,
 def init_uma_crystal_predictor(model_path, device, inference_settings=None,
                                compile: bool = False,
                                edge_chunk_size: Optional[int] = None,
-                               activation_checkpointing: bool = True):
+                               activation_checkpointing: bool = True,
+                               tf32: bool = True):
     """
     Load a UMA predict unit configured for energy-only crystal inference.
 
@@ -1271,9 +1280,9 @@ def init_uma_crystal_predictor(model_path, device, inference_settings=None,
     device : str or torch.device
         Passed to ``load_predict_unit``.
     inference_settings : InferenceSettings or None, default None
-        Used as given when not None, in which case ``compile``, ``edge_chunk_size``
-        and ``activation_checkpointing`` are ignored. When None, built by
-        :func:`crystal_inference_settings` from those three arguments, so
+        Used as given when not None, in which case ``compile``, ``edge_chunk_size``,
+        ``activation_checkpointing`` and ``tf32`` are ignored. When None, built by
+        :func:`crystal_inference_settings` from those four arguments, so
         ``external_graph_gen`` takes that function's default,
         :data:`USE_UMA_EXTERNAL_GRAPH`.
     compile : bool, default False
@@ -1283,6 +1292,8 @@ def init_uma_crystal_predictor(model_path, device, inference_settings=None,
     activation_checkpointing : bool, default True
         Forwarded to :func:`crystal_inference_settings`, which describes when it
         matters.
+    tf32 : bool, default True
+        Forwarded to :func:`crystal_inference_settings`, which gives its measured noise.
 
     Returns
     -------
@@ -1346,7 +1357,8 @@ def init_uma_crystal_predictor(model_path, device, inference_settings=None,
         inference_settings = crystal_inference_settings(
             activation_checkpointing=activation_checkpointing,
             compile=compile,
-            edge_chunk_size=edge_chunk_size)
+            edge_chunk_size=edge_chunk_size,
+            tf32=tf32)
     return _build_uma_crystal_predictor(model_path, device, inference_settings)
 
 

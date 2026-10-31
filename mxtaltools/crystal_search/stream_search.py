@@ -19,14 +19,19 @@ Per stage, as ``gradient_descent_optimization`` would run it (wrap mode, Rprop):
   when its own EMA-smoothed parameter change (``ema_trajectory``, alpha 0.1; the mean absolute step-to-step change
   over its last 50 smoothed steps) is below ``convergence_eps`` -- ``check_convergence``'s per-row test, without
   the batch's 95% quorum;
-- ``early_stop`` retires a row whose loss at its first check past each listed step exceeds the lowest emitted
-  final energy + margin x ``early_stop_kT`` (inactive until a row has been emitted); with ``minima`` the final energy
+- ``early_stop`` retires a row whose loss at its first check past each listed step exceeds the lowest finished
+  final energy of its condition + margin x ``early_stop_kT`` (inactive until one has finished); with ``minima`` the
+  final energy
   is the enveloped one at the last stage's cutoff (``minimum_f`` x kT), as the stages evaluate, and a bfgs row's loss
   is that of its accepted point (a stage at another cutoff still reads its own loss against it);
 - Rprop is torch's rule (etas 0.5 / 1.2, step sizes in [1e-6, 50], first step lr); the gradient-norm clip and
   anneal_lr, which do not change Rprop's steps, are not applied;
-- each stage is evaluated at its own ``cutoff`` and ``supercell_size`` (rows of stages that share both are evaluated
-  in one call, so stages with different cutoffs cost one call each per step);
+- each stage is evaluated at its own ``cutoff``, ``supercell_size`` and ``optim_target`` (rows of stages that share
+  all three are evaluated in one call, so stages that differ cost one call each per step): a search may relax under
+  eLJ first and finish under an MLIP (``minima.MLIP_TARGETS``, its model loaded once by ``utils.parse_opt_config``
+  from ``cfg:mace_predictor_path`` / ``cfg:uma_predictor_path``); the last stage's target is the minima's, and each
+  target's rows per call are halved on its own out-of-memory errors (an MLIP call holds far fewer rows than an eLJ
+  one: MACE-OFF24 on MIPCAS ~175 MB per row for a gradient, 2026-10-30);
 - before each step a row whose cell is flat -- each angle within ``clean_cell_parameters``' range ``ANGLE_RANGE`` but
   together giving volume / (a b c) below ``FLAT_VF`` -- is dropped (not in the output; counted in the effort file's
   ``flat_dropped``; a resumed run draws it again) and its slot refilled: its periodic cluster would take gigabytes
@@ -51,8 +56,25 @@ converged polishes from 510 to 272, but the extra group cost wall time, so it su
 rather than eLJ. At the end the run writes ``<run>_minima.pt``, one row per minimum with its hit counts
 (``minima.minimum_rows``).
 
-Starts are drawn in blocks of ``slots`` (``get_initial_state`` seeded by the block index, so a stream with ``slots``
-equal to a batch search's ``batch_size`` relaxes the same starts) and carry ``start_index``. With ``connected_starts``
+A search's conditions are its (molecule, space group, Z') combinations (``minima.row_key``; the stream gets one
+template of each, ``utils.init_samples_to_optim`` with ``num_samples=1``), in identifier order, each with
+``cfg:num_samples`` starts at most: start ``k = c N + j`` is start j of condition c. A condition's starts are drawn in
+blocks of M = min(``slots``, N) (``get_initial_state`` seeded by c times the blocks per condition plus the block, so a
+one-condition stream with ``slots`` equal to a batch search's ``batch_size`` relaxes the same starts) and carry
+``start_index``. With a ``quota`` the blocks are of min(``slots``, N, ``quota``). An emptied slot takes the next start of the drawing condition with the fewest rows in slots among those
+with fewer rows outstanding (in slots or awaiting the polish) than the minima they still need for their quota (no
+bound without one); when no drawing condition may take one, the next condition is admitted, in order, at most
+``window`` (default: all) drawing at once, and when none can be, the start goes to the drawing condition least over
+its need rather than leave the slot idle. A condition stops drawing when its starts are all drawn or it meets its
+quota. The cascade compares a row with its own condition's lowest finished
+energy. With ``quota`` (needs ``minima``; not with ``stop_p``) a condition is done once its library minima within
+``quota_band_kT`` (default 10) of its lowest number ``quota``: checked after each polish group, it draws no more
+starts, and its rows in slots and awaiting the polish are dropped (``quota_dropped`` in the effort file; a resumed
+run finds the condition done and draws nothing for it). The run writes ``<run>_conditions.json``: per condition its
+finished random starts, minima, minima within the band (``quota_band_kT`` with a quota, else ``stop_band_kT``), lowest
+E/kT and whether it met its quota. Admitting conditions only as the slots need them keeps a condition's rows together, so its
+library, capture and cascade reference fill early while it is still drawing, and the bound on its outstanding rows
+keeps the rows dropped at its quota few. With ``connected_starts``
 (default on) a start whose molecules' contact network at the first stage's cutoff does not span three dimensions
 (``contact_dimension``: isolated layers, chains or molecules, which no force under the cut-off energy can bring
 together) is drawn again, at most ``MAX_REDRAWS`` times; the effort file counts them (``starts_disconnected``,
@@ -83,8 +105,9 @@ to hold a new minimum (finishing them took about 30% of a MIPCAS eLJ run, 2026-1
 (``stop``) still drains: no new starts, the slots in flight finish.
 
 Termination: a start is in a slot for at most the sum of its stages' max_num_steps - 1 steps (rounded up to
-check_every), the starts (seeds and ``num_samples`` random ones) are finite, and ``newton_polish`` is bounded, so the
-loop ends; ``stop_p`` can only end it sooner.
+check_every), the starts (seeds and ``num_samples`` random ones per condition) are finite, each call for a start draws
+a block, retires a condition or returns one (``next_start``), and the polish is bounded, so the loop ends; ``stop_p``
+and ``quota`` can only end it sooner.
 """
 import gc
 import json
@@ -100,7 +123,7 @@ from mxtaltools.crystal_search.run_state import atomic_json_dump, atomic_torch_s
 from mxtaltools.dataset_utils.utils import collate_data_list
 
 STREAM_DEFAULTS = dict(slots=None, check_every=5, polish_chunk=None, first_polish_chunk=None, seeds=None, stop_p=None,
-                       stop_band_kT=5.0, connected_starts=True)
+                       stop_band_kT=5.0, connected_starts=True, quota=None, quota_band_kT=10.0, window=None)
 STAGE_KEYS = {'optim_target', 'enforce_reduced', 'compression_factor', 'cutoff', 'init_lr', 'convergence_eps',
               'optimizer_func', 'anneal_lr', 'grad_norm_clip', 'show_tqdm', 'max_num_steps', 'target_packing_coeff',
               'centroid_boundary', 'early_stop', 'early_stop_kT', 'supercell_size', 'convergence'}
@@ -122,13 +145,14 @@ def check_stream_config(config):
     and the cascade, waits for the first group: at 4 x 500 slots a 2,000-start run captured nothing, 2026-10-30), or
     None without it. Raises
     ValueError on an unknown key, a campaign (``coord_dir``), a start method other than 'random' or 'reasonable',
-    ``stop_p`` outside (0, 1) or without the ``minima`` block, a ``seeds`` file that does not exist or ``seeds``
-    without the ``minima`` block, or a stage it
+    ``stop_p`` outside (0, 1) or without the ``minima`` block, a ``quota`` that is not a positive count, without the
+    ``minima`` block or with ``stop_p``, a ``window`` that is not a positive count, a ``seeds`` file that does not
+    exist or ``seeds`` without the ``minima`` block, or a stage it
     does not reproduce: an optimizer other than rprop (bfgs is allowed on the last stage, with the ``minima`` block, no
     compression and ``convergence_eps`` > 0), an rprop stage without ``init_lr``, a cutoff not above the minima
-    block's ``lj_envelope``, clamp mode,
+    block's ``lj_envelope``, ``early_stop`` on a stage whose target is not the last stage's, clamp mode,
     ``enforce_reduced``, ``fd_refold``, ``target_packing_coeff``, ``keep_lowest_fraction``, ``convergence: grad``,
-    any other stage key, or stages with different optimisation targets."""
+    or any other stage key."""
     block = getattr(config, 'stream', None)
     if block is None:
         return None
@@ -150,6 +174,18 @@ def check_stream_config(config):
             raise ValueError(f"cfg:stream: stop_p must be in (0, 1) and stop_band_kT positive, got {s}")
         if getattr(config, 'minima', None) is None:
             raise ValueError("cfg:stream.stop_p counts minima: it needs the cfg:minima block")
+    if s['quota'] is not None:
+        s['quota'], s['quota_band_kT'] = int(s['quota']), float(s['quota_band_kT'])
+        if s['quota'] < 1 or not s['quota_band_kT'] > 0:
+            raise ValueError(f"cfg:stream: quota must be a positive count and quota_band_kT positive, got {s}")
+        if getattr(config, 'minima', None) is None:
+            raise ValueError("cfg:stream.quota counts minima: it needs the cfg:minima block")
+        if s['stop_p'] is not None:
+            raise ValueError("cfg:stream: quota and stop_p are two stop rules; set one")
+    if s['window'] is not None:
+        s['window'] = int(s['window'])
+        if s['window'] < 1:
+            raise ValueError(f"cfg:stream.window must be a positive count of conditions, got {s['window']}")
     if s['seeds'] is not None:
         if not os.path.exists(str(s['seeds'])):
             raise ValueError(f"cfg:stream.seeds: no file {s['seeds']!r}")
@@ -192,9 +228,11 @@ def check_stream_config(config):
         if env is not None and any(float(st.get('cutoff') or 10) <= float(env) for st in stages):
             raise ValueError(f"cfg:stream: every stage's cutoff must exceed cfg:minima.lj_envelope ({env} A), "
                              "which every stage is evaluated with")
-    targets = {str(st['optim_target']).lower() for st in stages}
-    if len(targets) != 1:
-        raise ValueError(f"cfg:stream: every stage must share one optim_target, got {sorted(targets)}")
+    last_target = str(stages[-1]['optim_target']).lower()
+    for i, st in enumerate(stages):
+        if str(st['optim_target']).lower() != last_target and st.get('early_stop'):
+            raise ValueError(f"cfg:stream: cfg:opt[{i}].early_stop compares the stage's loss with finished energies "
+                             f"of the last stage's target ({last_target}); its target is {st['optim_target']!r}")
     return s
 
 
@@ -446,13 +484,20 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
     n_st = len(stages)
     if n_st > 8:
         raise ValueError("cfg:stream: at most 8 stages")
-    key = str(stages[0]['optim_target']).lower()
+    key = str(stages[-1]['optim_target']).lower()  # the minima's target: emitted energies, polish, capture, cascade
     if scfg['stop_p'] is not None and len({mn.row_key(r) for r in samples_to_optim}) > 1:
         raise ValueError("cfg:stream.stop_p compares minima with the lowest one, so it needs one molecule, space group "
                          "and Z' per search")
     cutoff = float(stages[-1].get('cutoff') or 10)  # the polish's, and the emitted rows' re-analysis
     supercell = int(stages[-1].get('supercell_size', 10))
-    cuts = [(float(st.get('cutoff') or 10), int(st.get('supercell_size', 10))) for st in stages]
+    cuts = [(float(st.get('cutoff') or 10), int(st.get('supercell_size', 10)), str(st['optim_target']).lower())
+            for st in stages]  # a step's call groups: rows of stages sharing cutoff, supercell size and target
+    predictors = {}  # an MLIP target's model, loaded once (utils.parse_opt_config: cfg:mace_predictor_path, ...)
+    for st in stages:
+        t_ = str(st['optim_target']).lower()
+        if t_ in mn.MLIP_TARGETS and t_ not in predictors:
+            from mxtaltools.crystal_search.utils import parse_opt_config
+            predictors[t_] = parse_opt_config(dict(st), config, device, None)['predictor']
     is_bfgs = [str(st.get('optimizer_func', '')).lower() == 'bfgs' for st in stages]
     envelope = {} if mcfg is None or mcfg['lj_envelope'] is None else {'lj_envelope': float(mcfg['lj_envelope'])}
     stage_lr = lambda k: 0.0 if is_bfgs[k] else float(stages[k]['init_lr'])  # noqa: E731  (bfgs has no lr)
@@ -478,9 +523,14 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
             return float(r.minimum_f) * float(mcfg['kT'])
         return float(getattr(r, key))
 
-    running_min = min((final_energy(r) for r in opt_outs if key in r.keys()), default=None)
+    running_min = {}  # per condition (minima.row_key): the lowest finished energy, the cascade's reference
+    for r in opt_outs:
+        if key in r.keys():
+            k_ = mn.row_key(r)
+            running_min[k_] = min(running_min.get(k_, math.inf), final_energy(r))
     effort = dict(stage_evals=[0] * n_st, polish_evals=0, final_evals=0, captured=0, cascaded=0, flat_dropped=0,
-                  starts_disconnected=0, starts_redrawn=0, starts_kept_disconnected=0, wall_s=0.0,
+                  starts_disconnected=0, starts_redrawn=0, starts_kept_disconnected=0, quota_met=0, quota_dropped=0,
+                  slot_steps=0, wall_s=0.0,
                   time_s=dict(starts=0.0, emit=0.0, finish=0.0),  # the rest of wall_s is the descent
                   missing_mass=[], stopped=None, seed_missing_mass=[], seeds_stopped=None)
     saturated = [False]  # cfg:stream.stop_p met: no new starts
@@ -504,52 +554,124 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         atomic_json_dump({'mode': 'stream', 'cursor': len(opt_outs), 'batch_idx': -1, 'num_samples': num_samples,
                           'n_out': len(opt_outs)}, progress)
 
-    pool, block = [], [0]
     cutoff0 = cuts[0][0]  # the first stage's cutoff: the one a start is first evaluated at
+    # conditions: one template per (molecule, space group, Z') in a fixed order; start k is start j = k - c N of
+    # condition c, N = cfg:num_samples at most per condition, drawn in blocks of M seeded by c * n_sub + the block
+    tmpl_of = {}
+    for r in samples_to_optim:
+        tmpl_of.setdefault(mn.row_key(r), r)
+    keys = sorted(tmpl_of, key=lambda k_: tuple(str(v) for v in k_))
+    cidx = {k_: c for c, k_ in enumerate(keys)}
+    C, N = len(keys), int(config.num_samples)
+    M = max(1, min(S, N, scfg['quota'] or N))  # one condition without a quota: blocks of S, seeded by the block
+    # index, as a batch search's batches; with a quota, blocks of the quota (a condition rarely needs many more)
+    n_sub = -(-N // M)
+    queue = [[] for _ in range(C)]  # drawn starts not yet in a slot: (k, row)
+    next_sub = [0] * C  # a condition's next block to draw
+    inflight = [0] * C  # its rows in slots
+    waiting = [0] * C  # its rows awaiting the polish
+    band_n = [0] * C  # its library minima within quota_band_kT of its lowest (with a quota)
+    closed = [False] * C  # its quota met: no new starts, its rows in flight and unpolished rows dropped
+    issuing, next_c = [], [0]  # conditions drawing starts now (at most cfg:stream.window), the next to admit
+    window = scfg['window'] or C
+    slot_c = [None] * S  # the condition of each slot's row
+    cond_minima = [[] for _ in range(C)]  # library ids per condition
+    for m_, k_ in enumerate(library.key if library is not None else []):
+        if tuple(k_[:3]) in cidx:
+            cond_minima[cidx[tuple(k_[:3])]].append(m_)
 
-    def draw(idx, b0):
-        """Starts for the samples ``idx`` (indices into samples_to_optim), drawn as block b0 draws them, oriented."""
-        batch = collate_data_list([samples_to_optim[k] for k in idx]).to(device)
-        batch = get_initial_state(config, batch, device, b0)  # the seed of a batch search's batch b0
+    def drawn(c, m, b0):
+        """m starts of condition c, drawn as get_initial_state draws a batch with index b0, oriented."""
+        batch = collate_data_list([tmpl_of[keys[c]].clone() for _ in range(m)]).to(device)
+        batch = get_initial_state(config, batch, device, b0)
         batch.orient_molecule(mode='standardized', target_handedness=batch.aunit_handedness)
         return batch.cpu().detach().batch_to_list()
 
     @timed('starts')
-    def fill_pool():
-        """Draw and orient the next block of starts (those not already in the output). With ``connected_starts``,
+    def draw(c, sb):
+        """Block sb of condition c: its starts not already in the output, as (k, row). With ``connected_starts``,
         a start whose contact network at the first stage's cutoff is not 3-periodic (``contact_dimension``) is drawn
         again, at most ``MAX_REDRAWS`` times (seeded by the block and the attempt), then kept as last drawn."""
-        while block[0] * S < num_samples:
-            b0 = block[0]
-            block[0] += 1
-            lo, hi = b0 * S, min((b0 + 1) * S, num_samples)
-            todo = [k for k in range(lo, hi) if k not in done]
-            if not todo:
+        lo, hi = sb * M, min((sb + 1) * M, N)
+        todo = [j for j in range(lo, hi) if c * N + j not in done]
+        if not todo:
+            return []
+        b0 = c * n_sub + sb
+        rows = drawn(c, hi - lo, b0)
+        if scfg['connected_starts']:
+            bad = [j for j, dim in zip(todo, contact_dimension([rows[j - lo] for j in todo], cutoff0)) if dim != 3]
+            effort['starts_disconnected'] += len(bad)
+            for attempt in range(1, MAX_REDRAWS + 1):
+                if not bad:
+                    break
+                new = drawn(c, len(bad), b0 + REDRAW_BLOCK * attempt)
+                effort['starts_redrawn'] += len(bad)
+                for j, r in zip(bad, new):
+                    rows[j - lo] = r
+                bad = [j for j, dim in zip(bad, contact_dimension(new, cutoff0)) if dim != 3]
+            effort['starts_kept_disconnected'] += len(bad)
+        return [(c * N + j, rows[j - lo]) for j in todo]
+
+    def need(c):
+        """Rows condition c may have outstanding (in slots or awaiting the polish): the minima it still needs for
+        its quota, unbounded without one."""
+        return math.inf if scfg['quota'] is None else scfg['quota'] - band_n[c]
+
+    def next_start():
+        """The next start (k, row), from the drawing conditions with fewer rows outstanding than they still need
+        (``need``): the one with the fewest rows in slots, the earliest on a tie. When none may take one, the next
+        condition is admitted, in order and at most ``window`` drawing at once; when none can be, the start goes to
+        the drawing condition least over its need rather than leave a slot idle; None when no condition is drawing.
+        Each pass returns, draws a block, retires a condition whose starts are all drawn, or admits one, and each of
+        these happens finitely often."""
+        while True:
+            ok = [t for t, c_ in enumerate(issuing) if inflight[c_] + waiting[c_] < need(c_)]
+            if not ok:
+                if len(issuing) < window and next_c[0] < C:
+                    if not closed[next_c[0]]:
+                        issuing.append(next_c[0])
+                    next_c[0] += 1
+                    continue
+                if not issuing:
+                    return None
+                c = issuing[min(range(len(issuing)), key=lambda t: (
+                    inflight[issuing[t]] + waiting[issuing[t]] - need(issuing[t]), t))]
+            else:
+                c = issuing[min(ok, key=lambda t: (inflight[issuing[t]], t))]
+            if queue[c]:
+                inflight[c] += 1
+                return queue[c].pop(0)
+            if next_sub[c] < n_sub:
+                queue[c].extend(draw(c, next_sub[c]))
+                next_sub[c] += 1
+            else:
+                issuing.remove(c)  # every start drawn: its rows in flight finish
+
+    def quota_check(cs):
+        """Close each condition of ``cs`` holding ``quota`` minima within ``quota_band_kT`` of its lowest."""
+        if scfg['quota'] is None:
+            return
+        for c in sorted(set(cs)):
+            if closed[c] or not cond_minima[c]:
                 continue
-            rows = draw(range(lo, hi), b0)
-            if scfg['connected_starts']:
-                bad = [k for k, dim in zip(todo, contact_dimension([rows[k - lo] for k in todo], cutoff0)) if dim != 3]
-                effort['starts_disconnected'] += len(bad)
-                for attempt in range(1, MAX_REDRAWS + 1):
-                    if not bad:
-                        break
-                    new = draw(bad, b0 + REDRAW_BLOCK * attempt)
-                    effort['starts_redrawn'] += len(bad)
-                    for k, r in zip(bad, new):
-                        rows[k - lo] = r
-                    bad = [k for k, dim in zip(bad, contact_dimension(new, cutoff0)) if dim != 3]
-                effort['starts_kept_disconnected'] += len(bad)
-            pool.extend((k, rows[k - lo]) for k in todo)
-            return True
-        return False
+            fs = [library.f[m_] for m_ in cond_minima[c]]
+            band_n[c] = sum(f_ - min(fs) <= scfg['quota_band_kT'] for f_ in fs)
+            if band_n[c] >= scfg['quota']:
+                closed[c] = True
+                effort['quota_met'] += 1
+                queue[c].clear()
+                if c in issuing:
+                    issuing.remove(c)
 
     d = None
     slots = None
     pending = []  # emitted rows awaiting the polish
     groups_done = [0]  # random-start polish groups finished in this run
-    energy_chunk = [256]  # finish_minima's rows per energy evaluation; halved on out-of-memory
+    energy_chunk = [16 if key in mn.MLIP_TARGETS else 256]  # finish_minima's rows per energy evaluation (and emit's
+    # per re-analysis); halved on out-of-memory. An MLIP call holds far fewer rows (MACE-OFF24, MIPCAS: ~175 MB a row)
 
     def load(i, k, row):
+        slot_c[i] = cidx[mn.row_key(row)]
         slots.row[i] = row
         slots.start[i] = k
         slots.stage[i] = 0
@@ -558,16 +680,26 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         slots.begin_stage(i, row.full_cell_parameters().reshape(-1), stage_lr(0))
 
     @timed('emit')
+    def analysed(b):
+        """The rows of a built, described batch re-analysed (the target's energy, lj and elj), in energy_chunk rows."""
+        rows_ = b.cpu().detach().batch_to_list()
+        out_ = []
+        for c in range(0, len(rows_), energy_chunk[0]):
+            bc = collate_data_list(rows_[c:c + energy_chunk[0]]).to(device)
+            with torch.no_grad():
+                bc.analyze(computes=list({'lj', 'elj', key}), cutoff=cutoff, rdf_cutoff=cutoff,
+                           supercell_size=supercell, return_cluster=False, repulsion=1.0, surface_padding=0,
+                           assign_outputs=True, elementwise=False, atomwise=True, bins=100,
+                           predictor=predictors.get(key))
+            out_.extend(bc.cpu().detach().batch_to_list())
+        return out_
+
     def emit_seeds(seeds):
         """Seed rows as emitted rows (no stage steps), described and analysed as ``emit`` does."""
         b = collate_data_list([r for _, r in seeds]).to(device)
         b.aunit_centroid = wrap_centroid(b.aunit_centroid)
         canonicalize_aunit(b)
-        with torch.no_grad():
-            b.analyze(computes=list({'lj', 'elj', key}), cutoff=cutoff, rdf_cutoff=cutoff, supercell_size=supercell,
-                      return_cluster=False, repulsion=1.0, surface_padding=0, assign_outputs=True, elementwise=False,
-                      atomwise=True, bins=100)
-        out = b.cpu().detach().batch_to_list()
+        out = analysed(b)
         for r, (k, _) in zip(out, seeds):
             r.start_index = torch.tensor([k])
             r.stage_steps = torch.zeros(1, n_st, dtype=torch.long)
@@ -582,30 +714,48 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         b.set_cell_parameters(slots.best_x[idx].to(device), skip_box_analysis=False)
         b.aunit_centroid = wrap_centroid(b.aunit_centroid)
         canonicalize_aunit(b)
-        with torch.no_grad():
-            b.analyze(computes=list({'lj', 'elj', key}), cutoff=cutoff, rdf_cutoff=cutoff, supercell_size=supercell,
-                      return_cluster=False, repulsion=1.0, surface_padding=0, assign_outputs=True, elementwise=False,
-                      atomwise=True, bins=100)
-        out = b.cpu().detach().batch_to_list()
+        out = analysed(b)
         for r, i in zip(out, idx):
             r.start_index = torch.tensor([int(slots.start[i])])
             r.stage_steps = slots.steps_in[i, :n_st].clone().reshape(1, n_st)
             if mcfg is not None:
                 r.capture_min = torch.tensor([int(slots.cap_id[i])])
             slots.row[i] = None
+            inflight[slot_c[i]] -= 1
+            waiting[slot_c[i]] += 1
         effort['final_evals'] += len(out)
         pending.extend(out)
 
+    def polish(group):
+        """finish() a group of emitted rows (no longer awaiting the polish)."""
+        for r in group:
+            waiting[cidx[mn.row_key(r)]] -= 1
+        finish(group)
+
+    def refill():
+        """Load the next starts into the empty slots; the number loaded."""
+        n_ = 0
+        for i in range(S):
+            if slots.row[i] is None:
+                s_ = next_start()
+                if s_ is None:
+                    break
+                load(i, *s_)
+                n_ += 1
+        return n_
+
     @timed('finish')
     def finish(rows, seeds=False):
-        nonlocal running_min
+        n_lib0 = len(library) if library is not None else 0
         if mcfg is not None:
             n_lib = len(library)
             while True:  # on a CUDA out-of-memory error: undo this group's adds, halve the energy chunk, redo
                 try:
                     done_rows, eff = mn.finish_minima(rows, library, key, float(mcfg['kT']), cutoff=cutoff,
+                                                      predictor=predictors.get(key),
                                                       supercell_size=supercell, lj_envelope=mcfg['lj_envelope'],
                                                       max_iter=int(mcfg['max_iter']), tol=float(mcfg['tol']),
+                                                      polish=mcfg['polish'],
                                                       merge_d2=float(mcfg['merge_d2']), device=device,
                                                       energy_chunk=energy_chunk[0],
                                                       capture_d2=float(mcfg['capture_d2']))
@@ -622,8 +772,14 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
             effort['polish_evals'] += mn.polish_evals(eff)
             effort['final_evals'] += len(rows)
         opt_outs.extend(rows)
-        lo = min(final_energy(r) for r in rows)
-        running_min = lo if running_min is None else min(running_min, lo)
+        for r in rows:
+            k_ = mn.row_key(r)
+            running_min[k_] = min(running_min.get(k_, math.inf), final_energy(r))
+        if library is not None:
+            for m_ in range(n_lib0, len(library)):
+                if tuple(library.key[m_][:3]) in cidx:
+                    cond_minima[cidx[tuple(library.key[m_][:3])]].append(m_)
+        quota_check(cidx[mn.row_key(r)] for r in rows if mn.row_key(r) in cidx)
         save()
         if scfg['stop_p'] is not None and not seeds:  # the seeds' own bound is checked by the seed loop
             mm = mn.missing_mass(opt_outs, library, scfg['stop_band_kT'])
@@ -652,25 +808,30 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
                           f"expected in under {scfg['stop_p']} of seeds ({mm}); {len(seeds) - c} seeds skipped")
                     break
             finish(emit_seeds(seeds[c:c + scfg['polish_chunk']]), seeds=True)
-    while len(pool) < S and fill_pool():
-        pass
-    if pool:
-        d = int(pool[0][1].full_cell_parameters().shape[-1])
+    quota_check(range(C))  # a resumed run: conditions already at their quota draw nothing
+    first = next_start()
+    if first is not None:
+        d = int(first[1].full_cell_parameters().shape[-1])
         slots = _Slots(S, d, device)
-        for i in range(S):
-            if pool:
-                load(i, *pool.pop(0))
+        load(0, *first)
+        for i in range(1, S):
+            s_ = next_start()
+            if s_ is None:
+                break
+            load(i, *s_)
     gstep, templates, tmpl = 0, None, None
-    eval_chunk = S  # rows per energy evaluation; halved on a CUDA out-of-memory error (rows are independent)
-    clean = 0  # steps since the last out-of-memory error
+    eval_chunk = {c[2]: S for c in cuts}  # rows per energy evaluation, per target; halved on a CUDA out-of-memory
+    clean = 0  # steps since the last out-of-memory error                 error in that target's call (rows independent)
     stopping = False  # a stop request: no new starts; the loop ends when the slots in flight are done
     nz = (d - 6) // 6 if d is not None else 0
-    computes = list({'lj', 'elj', 'reduction_en' if key == 'reduce' else key})
 
     def step_chunk(template, idx, cut):
-        """One evaluation of the rows ``idx`` (built on ``template``) at ``cut`` (cutoff, supercell size): loss [n]
-        (CPU), gradient [n, d], recorded parameters [n, d] (cleaned, centre unwrapped as gradient_descent_optimization
-        records)."""
+        """One evaluation of the rows ``idx`` (built on ``template``) at ``cut`` (cutoff, supercell size, target):
+        loss [n] (CPU), gradient [n, d], recorded parameters [n, d] (cleaned, centre unwrapped as
+        gradient_descent_optimization records)."""
+        target = cut[2]
+        out_key = 'reduction_en' if target == 'reduce' else target
+        computes = [target] if target in mn.MLIP_TARGETS else list({'lj', 'elj', out_key})
         cb = template.clone().detach()
         x = slots.X[idx].clone().requires_grad_(True)
         cb.set_cell_parameters(x, skip_box_analysis=True)
@@ -679,8 +840,9 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         outputs, cluster = cb.analyze(computes=computes, cutoff=cut[0], rdf_cutoff=cut[0], supercell_size=cut[1],
                                       return_cluster=True, repulsion=1, surface_padding=0, std_orientation=True,
                                       margin=0, assign_outputs=True, elementwise=True, atomwise=False, bins=100,
-                                      **envelope)
-        loss = outputs['reduction_en' if key == 'reduce' else key].reshape(-1)
+                                      predictor=predictors.get(target),
+                                      **(envelope if target in ('lj', 'qlj', 'elj') else {}))
+        loss = outputs[out_key].reshape(-1)
         cf = torch.tensor([float(stages[int(slots.stage[i])].get('compression_factor') or 0) for i in idx],
                           device=loss.device, dtype=loss.dtype)
         if bool((cf != 0).any()):  # compute_auxiliary_loss's pressure term, per row
@@ -701,13 +863,13 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         if flat:
             for i in flat:
                 slots.row[i] = None
+                inflight[slot_c[i]] -= 1
             effort['flat_dropped'] += len(flat)
             if not stopping and not saturated[0]:
-                while len(pool) < len(flat) and fill_pool():
-                    pass
                 for i in flat:
-                    if pool:
-                        load(i, *pool.pop(0))
+                    s_ = next_start()
+                    if s_ is not None:
+                        load(i, *s_)
             templates = None
             continue
         if templates is None:  # rows grouped by their stage's (cutoff, supercell size), then chunked
@@ -715,29 +877,44 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
             for i in occ:
                 groups.setdefault(cuts[int(slots.stage[i])], []).append(i)
             tmpl = torch.tensor([i for c in groups for i in groups[c]])
-            templates = [(collate_data_list([slots.row[i] for i in g_[c:c + eval_chunk]]).to(device),
-                          torch.tensor(g_[c:c + eval_chunk]), cut) for cut, g_ in groups.items()
-                         for c in range(0, len(g_), eval_chunk)]
+            templates = [(collate_data_list([slots.row[i] for i in g_[c:c + eval_chunk[cut[2]]]]).to(device),
+                          torch.tensor(g_[c:c + eval_chunk[cut[2]]]), cut) for cut, g_ in groups.items()
+                         for c in range(0, len(g_), eval_chunk[cut[2]])]
+        effort['slot_steps'] += len(occ)  # occupied slots per step: occupancy = slot_steps / (global_steps x slots)
+        parts, failed = [], None
         try:
-            parts = [step_chunk(t, i, cut) for t, i, cut in templates]
+            for t, i, cut in templates:
+                failed, failed_rows = cut[2], (i, cut[0])
+                parts.append(step_chunk(t, i, cut))
         except RuntimeError as e:  # nothing has been updated yet: the step is redone in smaller chunks
-            if not is_cuda_oom(e) or eval_chunk == 1:
+            if not is_cuda_oom(e) or eval_chunk[failed] == 1:
                 raise
-            eval_chunk = max(1, eval_chunk // 2)
-            templates, clean = None, 0
+            eval_chunk[failed] = max(1, eval_chunk[failed] // 2)
+            templates, clean, parts = None, 0, None
             gc.collect()
             torch.cuda.empty_cache()
             free, total = torch.cuda.mem_get_info() if torch.cuda.is_available() else (0, 0)
             alloc, resv = torch.cuda.memory_allocated() / 2**30, torch.cuda.memory_reserved() / 2**30
-            print(f"{config.run_name}: out of memory; evaluating {eval_chunk} rows at a time (this process: "
-                  f"{alloc:.2f} GiB allocated, {resv:.2f} GiB reserved; device: {free / 2**30:.2f} of "
-                  f"{total / 2**30:.2f} GiB free)")
+            with torch.no_grad():  # the failed chunk's largest periodic cluster, in unit cells: the reach sphere's
+                ix, cut0 = failed_rows  # volume over the cell's (as build_cluster's selection, for a cell small
+                X_ = slots.X[ix].double().cpu()  # against the reach)
+                c_ = X_[:, 3:6].clamp(*ANGLE_RANGE).cos()
+                vol = X_[:, :3].prod(1) * (1 - (c_ ** 2).sum(1) + 2 * c_.prod(1)).clamp_min(0).sqrt()
+                reach = torch.tensor([float(slots.row[j].radius.reshape(-1).max()) for j in ix.tolist()],
+                                     dtype=torch.float64)
+                cells = 4 / 3 * math.pi * (float(cut0) + 2 * reach) ** 3 / vol.clamp_min(1e-12)
+                k = int(cells.argmax())
+            print(f"{config.run_name}: out of memory; evaluating {eval_chunk[failed]} {failed} rows at a time (this "
+                  f"process: {alloc:.2f} GiB allocated, {resv:.2f} GiB reserved; device: {free / 2**30:.2f} of "
+                  f"{total / 2**30:.2f} GiB free; the chunk's largest cluster about {float(cells[k]):.0f} cells: "
+                  f"lengths {[round(float(v), 2) for v in X_[k, :3]]} A, volume {float(vol[k]):.1f} A^3)")
             continue
         lc, g, rec = (torch.cat([p_[k] for p_ in parts]) for k in range(3))
         del parts
         clean += 1
-        if eval_chunk < S and clean >= REGROW_STEPS:  # a passing peak (e.g. after a polish) must not halve the rest
-            eval_chunk, templates, clean = min(S, 2 * eval_chunk), None, 0
+        if clean >= REGROW_STEPS and any(v < S for v in eval_chunk.values()):  # a passing peak (e.g. after a
+            eval_chunk = {t_: min(S, 2 * v) for t_, v in eval_chunk.items()}    # polish) must not halve the rest
+            templates, clean = None, 0
         with torch.no_grad():
             rec_c = rec.cpu()
             better = lc < slots.best_loss[tmpl]
@@ -779,11 +956,12 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
                 continue
             casc = [(int(a), float(m)) for a, m in (st.get('early_stop') or [])]
             kT = float(st.get('early_stop_kT', 1.0))
-            while running_min is not None and int(slots.casc_k[i]) < len(casc) and \
+            ref = running_min.get(keys[slot_c[i]])  # this condition's lowest finished energy
+            while ref is not None and int(slots.casc_k[i]) < len(casc) and \
                     int(slots.nstep[i]) > casc[int(slots.casc_k[i])][0]:
                 now = float(slots.bf[i]) if is_bfgs[int(slots.stage[i])] and bool(slots.bhave[i]) else \
                     float(slots.last_loss[i])  # a bfgs row: its accepted point, not a rejected trial
-                if now > running_min + casc[int(slots.casc_k[i])][1] * kT:
+                if now > ref + casc[int(slots.casc_k[i])][1] * kT:
                     out.append(i)
                     effort['cascaded'] += 1
                     break
@@ -814,30 +992,58 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
                 stopping = True
                 print(f"{config.run_name}: stop requested ({stop.reason()}); finishing the rows in flight")
             if not stopping and not saturated[0]:
-                while len(pool) < len(out) and fill_pool():
-                    pass
                 for i in sorted(out):
-                    if pool:
-                        load(i, *pool.pop(0))
+                    s_ = next_start()
+                    if s_ is not None:
+                        load(i, *s_)
             templates = None
         while not saturated[0]:  # the first random-start group may be smaller: the library starts filling sooner
             chunk = scfg['polish_chunk'] if groups_done[0] else scfg['first_polish_chunk']
             if len(pending) < chunk:
                 break
-            finish(pending[:chunk])
+            polish(pending[:chunk])
             del pending[:chunk]
             groups_done[0] += 1
+        if any(closed):  # a condition at its quota: its rows in slots and awaiting the polish are not finished
+            gone = [i for i in slots.occupied() if closed[slot_c[i]]]
+            keep = [r for r in pending if not closed[cidx[mn.row_key(r)]]]
+            effort['quota_dropped'] += len(gone) + len(pending) - len(keep)
+            for r in pending:
+                if closed[cidx[mn.row_key(r)]]:
+                    waiting[cidx[mn.row_key(r)]] -= 1
+            pending[:] = keep
+            for i in gone:
+                slots.row[i] = None
+                inflight[slot_c[i]] -= 1
+            if gone:
+                templates = None
+        if not stopping and not saturated[0] and refill():  # slots a polish group freed: a condition's rows are
+            templates = None  # no longer awaiting it, or a condition met its quota
         if saturated[0]:  # stop_p met: end now; rows in flight and emitted rows not yet polished are not finished
             effort['stopped']['dropped'] = len(slots.occupied()) + len(pending)
             pending.clear()
             break
     if pending:
-        finish(pending[:])
+        polish(pending[:])
         pending.clear()
     effort.update(wall_s=time.time() - t0, global_steps=gstep, rows=len(opt_outs),
+                  occupancy=effort['slot_steps'] / max(gstep * S, 1),
                   fd_merged=library.fd_merged if library is not None else 0)
     if mcfg is not None:
         atomic_torch_save(mn.minimum_rows(opt_outs), str(out_path)[:-3] + '_minima.pt')
+        per = {}
+        for r in opt_outs:
+            if mn.row_key(r) in cidx and int(r.start_index) >= 0:
+                per[cidx[mn.row_key(r)]] = per.get(cidx[mn.row_key(r)], 0) + 1
+        cond = []
+        for c, k_ in enumerate(keys):
+            fs = [library.f[m_] for m_ in cond_minima[c]]
+            band = scfg['quota_band_kT'] if scfg['quota'] is not None else scfg['stop_band_kT']
+            cond.append(dict(identifier=k_[0], sg=k_[1], z_prime=k_[2], starts_finished=per.get(c, 0),
+                             minima=len(fs), band_kT=band,
+                             band_minima=sum(f_ - min(fs) <= band for f_ in fs) if fs else 0,
+                             lowest_f=min(fs) if fs else None, quota_met=bool(closed[c])))
+        atomic_json_dump(cond, str(out_path)[:-3] + '_conditions.json')
     atomic_json_dump(effort, str(out_path)[:-3] + '_stream_effort.json')
     print(f"{config.run_name}: stream effort {json.dumps(effort)}")
     return opt_outs

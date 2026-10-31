@@ -54,7 +54,10 @@ def check_fd_refold_stages(opt_stages, coord):
                              f"parents, and a hop kick clamps centres into the ASYM_UNITS box")
 
 
-MINIMA_DEFAULTS = dict(kT=None, capture_d2=9.0, capture_every=10, merge_d2=1.0, max_iter=40, tol=1e-4, lj_envelope=1.0)
+MINIMA_DEFAULTS = dict(kT=None, capture_d2=9.0, capture_every=10, merge_d2=1.0, max_iter=40, tol=None, lj_envelope=1.0,
+                       polish=None)
+MLIP_TOL = 2e-3  # kT: the polish's default tolerance on MLIP targets, above MACE-OFF24's float32 energy noise (~3e-4 kT
+# at a minimum, up to 9e-4 between repeats; with 1e-4, 2 to 18 of 40 MIPCAS re-relaxations stalled, 2026-10-30)
 
 
 def check_minima_config(config):
@@ -64,7 +67,8 @@ def check_minima_config(config):
 
     Keys: ``kT`` (required, in the last stage target's units), ``capture_d2``, ``capture_every``, ``merge_d2``,
     ``max_iter`` and ``tol``
-    (``minima.newton_polish``), ``lj_envelope`` (A; None for the hard cutoff, which leaves the LJ Hessian undefined at
+    (the polish's; ``tol`` defaults to 1e-4 kT, or ``MLIP_TOL`` on an MLIP target), ``polish`` ('newton' or 'bfgs';
+    default by target, ``minima.finish_minima``), ``lj_envelope`` (A; None for the hard cutoff, which leaves the LJ Hessian undefined at
     the cutoff). Raises ValueError on an unknown key, a kT that is not positive, or a last stage the polish cannot
     follow: a target that is not an energy (``minima.ENERGY_TARGETS``), a clamp-mode stage (the polish moves centres
     freely and re-expresses them in the ASYM_UNITS box), ``enforce_reduced`` (the polish has no wall term, so a row
@@ -88,6 +92,11 @@ def check_minima_config(config):
         raise ValueError("cfg:minima needs centroid_boundary 'wrap' on the last stage")
     if last.get('enforce_reduced', False) or last.get('fd_refold', False):
         raise ValueError("cfg:minima cannot follow a last stage with enforce_reduced or fd_refold")
+    from mxtaltools.crystal_search.minima import MLIP_TARGETS
+    if m['tol'] is None:
+        m['tol'] = MLIP_TOL if str(last['optim_target']).lower() in MLIP_TARGETS else 1e-4
+    if m['polish'] not in (None, 'newton', 'bfgs'):
+        raise ValueError(f"cfg:minima.polish must be 'newton' or 'bfgs', got {m['polish']!r}")
     return m
 
 
@@ -151,7 +160,9 @@ def crystal_search(config):
     else:
         target = None
 
-    samples_to_optim = init_samples_to_optim(config, target=target)
+    stream_cfg = check_stream_config(config)  # cfg:stream (crystal_search/stream_search.py) or None
+    # the stream draws each condition's starts as it needs them: one template per molecule, space group and Z'
+    samples_to_optim = init_samples_to_optim(config, target=target, num_samples=1) if stream_cfg else         init_samples_to_optim(config, target=target)
     data_mode = config.init_sample_method == 'data'
     if data_mode:
         # outputs carry the index of the seed they came from: the enforce_reduced filter drops rows, so position in
@@ -161,9 +172,8 @@ def crystal_search(config):
 
     out_path = Path(config.out_dir + f"/{config.run_name}.pt")  # where to save outputs
     intermediates, progress = run_files(out_path)
-    num_samples = len(samples_to_optim)
+    num_samples = len(samples_to_optim) * (int(config.num_samples) if stream_cfg else 1)
     print(f"Starting optimization of {num_samples} crystal samples")
-    stream_cfg = check_stream_config(config)  # cfg:stream (crystal_search/stream_search.py) or None
     coord = _coordination(config)  # fallible setup first: nothing below may fail while holding a lease it cannot free
     lease = RunLease(str(out_path)[:-3], stale_after_s=getattr(config, 'lease_stale_after_s', 1800),
                      settle_s=getattr(config, 'lease_settle_s', 2.0))
@@ -439,6 +449,7 @@ def _search_loop(config, samples_to_optim, target, device, data_mode, out_path, 
                     rows_m, eff = finish_minima(crystal_batch.batch_to_list(), library, kT=float(minima_cfg['kT']),
                                                 lj_envelope=minima_cfg['lj_envelope'],
                                                 max_iter=int(minima_cfg['max_iter']), tol=float(minima_cfg['tol']),
+                                                polish=minima_cfg['polish'],
                                                 merge_d2=float(minima_cfg['merge_d2']), device=device,
                                                 capture_d2=float(minima_cfg['capture_d2']), **finish_kw)
                 except BaseException:  # this batch is redone (OOM) or the run ends: its minima were never saved

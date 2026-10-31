@@ -108,6 +108,31 @@ def test_the_polish_converges_where_the_energy_is_flat_along_some_directions():
         assert (res['status'] == 1).all().item() == converged
 
 
+
+def test_bfgs_polish_converges_where_the_energy_is_flat_along_some_directions():
+    """bfgs_polish shares newton_polish's flat-direction rule: a 1e-6 slope along a direction of no curvature does
+    not hold up convergence; a 0.1 slope does."""
+    A = torch.diag(torch.tensor([10.0, 3.0, 1.0, 0.0, 5.0, 0.0, 2.0, 7.0, 4.0, 1.5, 6.0, 9.0], dtype=torch.float64))
+    for slope, converged in ((1e-6, True), (0.1, False)):
+        b = torch.zeros(12, dtype=torch.float64)
+        b[3] = slope
+        res = mn.bfgs_polish(_Quadratic(A, b), torch.zeros(2, 12, dtype=torch.float64) + 0.3, max_iter=10)
+        assert (res['status'] == 1).all().item() == converged
+
+
+def test_bfgs_polish_reaches_the_newton_minima_with_fewer_hessians(relaxed):
+    """From the same eLJ descent outputs, bfgs_polish ends where newton_polish does -- E/kT to 1e-3, and inside the
+    Newton minimum's ellipsoid at the library's merge radius (d^2 < 1; a soft rotation can differ by ~1e-2 at this
+    tolerance) -- on a fresh positive semi-definite Hessian, and takes fewer Hessians."""
+    _, E, x, ref = relaxed
+    res = mn.bfgs_polish(E, x, max_iter=60)
+    assert res['status'].tolist() == [1] * len(x) and bool(mn.is_psd(res['H']).all())
+    assert torch.allclose(res['f'], ref['f'], atol=1e-3)
+    dx = mn.min_image(res['x'] - ref['x'])
+    assert float(torch.einsum('ni,nij,nj->n', dx, ref['H'], dx).max()) < 1.0
+    assert int(res['n_h'].sum()) < int(ref['n_h'].sum())
+
+
 def test_library_d2_is_the_ellipsoid_with_centre_translations_removed():
     torch.manual_seed(1)
     A = torch.randn(12, 12, dtype=torch.float64)
@@ -365,12 +390,16 @@ def test_config_check_refuses_what_the_polish_cannot_follow():
     stage = dict(optim_target='elj', centroid_boundary='wrap')
     assert check_minima_config(SimpleNamespace(opt=[stage])) is None
     ok = check_minima_config(SimpleNamespace(opt=[stage], minima={'kT': KT}))
-    assert ok['capture_d2'] == 9.0 and ok['merge_d2'] == 1.0
+    assert ok['capture_d2'] == 9.0 and ok['merge_d2'] == 1.0 and ok['tol'] == 1e-4 and ok['polish'] is None
+    from mxtaltools.crystal_search.run_search import MLIP_TOL
+    mlip = check_minima_config(SimpleNamespace(opt=[dict(stage, optim_target='mace')], minima={'kT': 2.494}))
+    assert mlip['tol'] == MLIP_TOL  # above the MLIP's float32 energy noise
     for bad_stage, block in [(dict(stage, centroid_boundary='clamp'), {'kT': KT}),
                              (dict(stage, enforce_reduced=True), {'kT': KT}),
                              (dict(stage, fd_refold=True), {'kT': KT}),
                              (dict(stage, optim_target='rdf_dist'), {'kT': KT}),
-                             (stage, {}), (stage, {'kT': -1.0}), (stage, {'kT': KT, 'capture': 9})]:
+                             (stage, {}), (stage, {'kT': -1.0}), (stage, {'kT': KT, 'capture': 9}),
+                             (stage, {'kT': KT, 'polish': 'lbfgs'})]:
         with pytest.raises(ValueError):
             check_minima_config(SimpleNamespace(opt=[bad_stage], minima=block))
 

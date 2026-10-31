@@ -40,7 +40,8 @@ def test_config_check():
                  dict(opt=[dict(STAGE, optimizer_func='adam')]), dict(opt=[dict(STAGE, centroid_boundary='clamp')]),
                  dict(opt=[dict(STAGE, enforce_reduced=True)]), dict(opt=[dict(STAGE, convergence='grad')]),
                  dict(opt=[dict(STAGE, keep_lowest_fraction=0.5)]), dict(opt=[dict(STAGE, fd_refold=True)]),
-                 dict(opt=[dict(STAGE), dict(STAGE, optim_target='lj')]), dict(stream={'first_polish_chunk': -1})]:
+                 dict(opt=[dict(STAGE, optim_target='lj', early_stop=[[2, 10.0]]), dict(STAGE)]),  # cascade units
+                 dict(stream={'first_polish_chunk': -1})]:
         with pytest.raises(ValueError):
             ss.check_stream_config(_cfg(**over))
     assert ss.check_stream_config(_cfg(stream={'polish_chunk': 8}))['first_polish_chunk'] == 8  # default: the same
@@ -99,7 +100,8 @@ def test_bfgs_step_converges_rejects_and_gives_up():
 
 
 def test_example_config_passes_the_checks():
-    """configs/crystal_searches/minima_stream/mipcas_elj.yaml, the example of a streaming search with minima."""
+    """configs/crystal_searches/minima_stream/mipcas_elj.yaml, the example of a streaming search with minima, and
+    qm9rc_conditional.yaml beside it, of a conditional one (its cascade margins wider than its quota band)."""
     from pathlib import Path
     from mxtaltools.common.config_processing import load_yaml
     path = Path(rs.__file__).resolve().parents[2] / 'configs' / 'crystal_searches' / 'minima_stream' / 'mipcas_elj.yaml'
@@ -108,6 +110,11 @@ def test_example_config_passes_the_checks():
     assert s['slots'] == 250 and s['stop_p'] == 0.01 and s['stop_band_kT'] == 5.0
     m = rs.check_minima_config(cfg)
     assert m['capture_d2'] == 9.0 and m['kT'] > 0
+    cfg = dict2namespace(load_yaml(str(path.with_name('qm9rc_conditional.yaml'))))  # the conditional example
+    s = ss.check_stream_config(cfg)
+    assert s['quota'] == 25 and s['quota_band_kT'] == 10.0 and s['window'] is None and s['polish_chunk'] == 100
+    margins = [m_ for _, m_ in cfg.opt[1]['early_stop']]
+    assert min(margins) * cfg.opt[1]['early_stop_kT'] / cfg.minima.kT > s['quota_band_kT']  # cascade wider than band
 
 
 def test_per_row_convergence_matches_check_convergence():
@@ -149,7 +156,7 @@ def _run_cfg(tmp_path, n, force=True):
 
 def test_stream_runs_every_start_once_and_resumes(mol, tmp_path, monkeypatch):
     n = 7  # more starts than slots: slots refill
-    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: _placeholders(mol, n))
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None, num_samples=None: _placeholders(mol, n))
     out = rs.crystal_search(_run_cfg(tmp_path, n))
     assert sorted(int(r.start_index) for r in out) == list(range(n))
     for r in out:
@@ -166,7 +173,7 @@ def test_seeds_go_first_straight_to_the_polish(mol, tmp_path, monkeypatch):
     handedness on the search's copy of its molecule, is polished once with a negative start index and no stage step,
     and the run writes one row per minimum with its hits."""
     n = 4
-    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: _placeholders(mol, n))
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None, num_samples=None: _placeholders(mol, n))
     (tmp_path / 'a').mkdir()
     (tmp_path / 'b').mkdir()
     first = rs.crystal_search(_run_cfg(tmp_path / 'a', n))
@@ -198,7 +205,7 @@ def test_stop_p_skips_the_remaining_seeds(mol, tmp_path, monkeypatch):
     met the remaining seeds are skipped, the random starts run, and a resumed run skips those seeds too."""
     from mxtaltools.crystal_search import minima as mn
     n = 4
-    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: _placeholders(mol, n))
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None, num_samples=None: _placeholders(mol, n))
     (tmp_path / 'a').mkdir()
     (tmp_path / 'b').mkdir()
     torch.save(rs.crystal_search(_run_cfg(tmp_path / 'a', n)), tmp_path / 'seeds.pt')
@@ -228,7 +235,7 @@ def test_a_bfgs_last_stage_hands_the_polish_converged_rows(mol, tmp_path, monkey
     has less left to do after bfgs."""
     import json
     n = 6
-    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: _placeholders(mol, n))
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None, num_samples=None: _placeholders(mol, n))
     evals = {}
     for name, last in (('rprop', dict(STAGE, max_num_steps=100)),
                        ('bfgs', dict(STAGE, optimizer_func='bfgs', max_num_steps=100, convergence_eps=1e-4))):
@@ -249,7 +256,7 @@ def test_each_stage_at_its_own_cutoff_with_the_envelope(mol, tmp_path, monkeypat
     """Every stage's evaluations use that stage's cutoff, and the minima block's lj_envelope in every stage."""
     from mxtaltools.dataset_utils.data_class_methods.crystal_analysis import MolCrystalAnalysis
     n = 3
-    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: _placeholders(mol, n))
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None, num_samples=None: _placeholders(mol, n))
     seen = set()
     real = MolCrystalAnalysis.analyze
 
@@ -270,7 +277,7 @@ def test_capture_is_in_the_last_stage(mol, tmp_path, monkeypatch):
     they sit inside the ellipsoids throughout it) but in the last stage, and are reported as those minima."""
     import mxtaltools.crystal_search.utils as su
     n = 3
-    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: _placeholders(mol, n))
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None, num_samples=None: _placeholders(mol, n))
     (tmp_path / 'a').mkdir()
     (tmp_path / 'b').mkdir()
     first = rs.crystal_search(_run_cfg(tmp_path / 'a', n))
@@ -305,7 +312,7 @@ def test_a_flat_cell_is_dropped_before_its_step(mol, tmp_path, monkeypatch):
     import math
     import mxtaltools.crystal_search.utils as su
     n = 4
-    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: _placeholders(mol, n))
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None, num_samples=None: _placeholders(mol, n))
     real = su.get_initial_state
 
     def one_flat(config, batch, device, b0):
@@ -350,7 +357,7 @@ def test_disconnected_starts_are_drawn_again(mol, tmp_path, monkeypatch):
     import json
     import mxtaltools.crystal_search.utils as su
     n = 3
-    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: _placeholders(mol, n))
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None, num_samples=None: _placeholders(mol, n))
     real = su.get_initial_state
 
     def slab_first(config, batch, device, b0):
@@ -377,12 +384,55 @@ def test_disconnected_starts_are_drawn_again(mol, tmp_path, monkeypatch):
             assert eff['starts_disconnected'] == 0
 
 
+
+def test_each_stage_is_evaluated_under_its_own_target(mol, tmp_path, monkeypatch):
+    """Stage 1 under eLJ, the last stage under another energy (qlj): each stage's rows are evaluated with their own
+    target (the qlj compute requested only for last-stage rows), and the minima are the last target's."""
+    from mxtaltools.dataset_utils.data_class_methods.crystal_analysis import MolCrystalAnalysis
+    n = 3
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None, num_samples=None: _placeholders(mol, n))
+    seen = []
+    real = MolCrystalAnalysis.analyze
+
+    def spy(self, *a, **k):
+        if k.get('elementwise') and k.get('return_cluster'):  # the stream's step evaluations
+            seen.append('qlj' in k['computes'])
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(MolCrystalAnalysis, 'analyze', spy)
+    cfg = _run_cfg(tmp_path, n)
+    cfg.opt = [cfg.opt[0], dict(cfg.opt[1], optim_target='qlj', early_stop=None)]
+    out = rs.crystal_search(cfg)
+    assert sorted(int(r.start_index) for r in out) == list(range(n))
+    assert True in seen and False in seen  # both targets evaluated
+    assert all('minimum_id' in r.keys() for r in out)
+
+
+def test_an_mlip_last_stage_runs_end_to_end(mol, tmp_path, monkeypatch):
+    """eLJ stage 1, then a MACE bfgs stage and the MACE polish (model from cfg:mace_predictor_path): every start is
+    relaxed and polished under MACE. Needs MACE_CHECKPOINT; CPU."""
+    import os
+    path = os.environ.get('MACE_CHECKPOINT')
+    if not path:
+        pytest.skip('set MACE_CHECKPOINT to a MACE checkpoint to run the MLIP stream test')
+    n = 2
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None, num_samples=None: _placeholders(mol, n))
+    cfg = _run_cfg(tmp_path, n)
+    cfg.mace_predictor_path = path
+    cfg.minima = dict2namespace({'kT': 2.494, 'max_iter': 5})
+    cfg.opt = [cfg.opt[0], dict(STAGE, optim_target='mace', optimizer_func='bfgs', max_num_steps=6,
+                                convergence_eps=2e-3, cutoff=6)]
+    out = rs.crystal_search(cfg)
+    assert sorted(int(r.start_index) for r in out) == list(range(n))
+    assert all('mace' in r.keys() and torch.isfinite(r.minimum_f).all() for r in out)
+
+
 def test_stop_p_draws_no_new_starts(mol, tmp_path, monkeypatch):
     """Once the missing-mass bound is below stop_p the run ends at once: no start is drawn after, and the rows in
     flight are dropped (counted in the effort file)."""
     from mxtaltools.crystal_search import minima as mn
     n = 12
-    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: _placeholders(mol, n))
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None, num_samples=None: _placeholders(mol, n))
     monkeypatch.setattr(mn, 'missing_mass', lambda rows, lib, band_kT: dict(n=len(rows), f1=0, p_hi=0.0))
     cfg = _run_cfg(tmp_path, n)
     cfg.stream.stop_p = 0.01
@@ -398,7 +448,7 @@ def test_stop_p_draws_no_new_starts(mol, tmp_path, monkeypatch):
     two_groups = _placeholders(mol, 4)
     for r, sg in zip(two_groups, (1, 2, 1, 2)):
         r.sg_ind = torch.tensor([sg])
-    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: two_groups)
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None, num_samples=None: two_groups)
     with pytest.raises(ValueError, match='one molecule, space group'):  # the band needs one lowest minimum
         rs.crystal_search(cfg)
     with pytest.raises(ValueError):
@@ -412,7 +462,7 @@ def test_out_of_memory_halves_the_chunk_and_retries(mol, tmp_path, monkeypatch):
     from mxtaltools.crystal_search import minima as mn
     from mxtaltools.dataset_utils.data_classes import MolCrystalData
     n = 5
-    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None: _placeholders(mol, n))
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None, num_samples=None: _placeholders(mol, n))
     real_analyze, real_finish = MolCrystalData.analyze, mn.finish_minima
     calls = dict(step=0, finish=0)
 
@@ -435,3 +485,92 @@ def test_out_of_memory_halves_the_chunk_and_retries(mol, tmp_path, monkeypatch):
     out = rs.crystal_search(_run_cfg(tmp_path, n))
     assert calls['step'] == 1 and calls['finish'] >= 2
     assert sorted(int(r.start_index) for r in out) == list(range(n))
+
+
+def _two_conditions(mol, n):
+    """n placeholders of the test molecule as condition 'A' and n as condition 'B' (two identifiers)."""
+    rows = _placeholders(mol, 2 * n)
+    for r in rows[n:]:
+        r.identifier = 'B'
+    for r in rows[:n]:
+        r.identifier = 'A'
+    return rows
+
+
+def test_conditions_draw_their_own_starts_in_a_window(mol, tmp_path, monkeypatch):
+    """Two conditions, cfg:num_samples starts each: start k is start k - c N of condition c (conditions in identifier
+    order), every start runs once, and with window 1 condition B draws nothing until A has drawn all its starts. The
+    run writes one record per condition."""
+    import json
+    n = 3
+    monkeypatch.setattr(rs, 'init_samples_to_optim',
+                        lambda config, target=None, num_samples=None: _two_conditions(mol, n))
+    cfg = _run_cfg(tmp_path, n)
+    cfg.stream.window = 1
+    out = rs.crystal_search(cfg)
+    assert sorted(int(r.start_index) for r in out) == list(range(2 * n))
+    assert all(str(r.identifier) == ('A' if int(r.start_index) < n else 'B') for r in out)
+    with open(tmp_path / 'streamtest_conditions.json') as fh:
+        cond = json.load(fh)
+    assert [(c['identifier'], c['starts_finished']) for c in cond] == [('A', n), ('B', n)]
+    assert all(c['minima'] >= 1 and not c['quota_met'] for c in cond)
+
+
+def test_the_cascade_reads_each_conditions_own_lowest(mol, tmp_path, monkeypatch):
+    """A cascade that retires every row once a reference exists (margin -1e9 kT), twice as many starts per condition
+    as slots: A's later rows are retired by A's first ones, but B's first rows, run after A's have finished, are not
+    retired by A's energies -- they run the last stage to its cap until B has a finished row."""
+    n = 6
+    monkeypatch.setattr(rs, 'init_samples_to_optim',
+                        lambda config, target=None, num_samples=None: _two_conditions(mol, n))
+    cfg = _run_cfg(tmp_path, n)
+    cfg.stream.window = 1
+    cfg.opt[1]['early_stop'] = [[2, -1e9]]
+    out = rs.crystal_search(cfg)
+    last = {k: [int(r.stage_steps.reshape(-1)[1]) for r in out if str(r.identifier) == k] for k in 'AB'}
+    cap = int(cfg.opt[1]['max_num_steps']) - 1
+    assert max(last['A']) >= cap and max(last['B']) >= cap  # each condition's first rows ran uncascaded
+    assert min(last['A'] + last['B']) < cap  # and the cascade did retire later rows
+
+
+def test_a_condition_stops_at_its_quota(mol, tmp_path, monkeypatch):
+    """quota 1 with a wide band: a condition closes at its first minimum; its remaining starts are not drawn and its
+    rows in flight are dropped (counted), the other condition runs on; the record says which met it."""
+    import json
+    n = 6
+    monkeypatch.setattr(rs, 'init_samples_to_optim',
+                        lambda config, target=None, num_samples=None: _two_conditions(mol, n))
+    cfg = _run_cfg(tmp_path, n)
+    cfg.stream.quota, cfg.stream.quota_band_kT, cfg.stream.polish_chunk = 1, 1e9, 1
+    out = rs.crystal_search(cfg)
+    with open(tmp_path / 'streamtest_conditions.json') as fh:
+        cond = json.load(fh)
+    with open(tmp_path / 'streamtest_stream_effort.json') as fh:
+        eff = json.load(fh)
+    met = [c for c in cond if c['quota_met']]
+    assert met and eff['quota_met'] == len(met)
+    assert all(c['starts_finished'] < n for c in met)  # stopped short of its budget
+    assert len(out) < 2 * n
+    with pytest.raises(ValueError):
+        ss.check_stream_config(_cfg(stream={'quota': 1}))  # no minima block
+    with pytest.raises(ValueError):
+        ss.check_stream_config(_cfg(stream={'quota': 1, 'stop_p': 0.1}, minima={'kT': 1.0}))
+    with pytest.raises(ValueError):
+        ss.check_stream_config(_cfg(stream={'window': 0}))
+
+
+def test_rows_awaiting_the_polish_do_not_stall_the_run(mol, tmp_path, monkeypatch):
+    """A condition takes no more starts than the minima it still needs while its rows await the polish, unless a slot
+    would otherwise sit idle; with a polish group larger than the run (nothing is polished until the slots empty),
+    each condition still either meets its quota or runs all its starts."""
+    import json
+    n = 6
+    monkeypatch.setattr(rs, 'init_samples_to_optim',
+                        lambda config, target=None, num_samples=None: _two_conditions(mol, n))
+    cfg = _run_cfg(tmp_path, n)
+    cfg.stream.quota, cfg.stream.quota_band_kT, cfg.stream.polish_chunk = 3, 1e9, 1000
+    rs.crystal_search(cfg)
+    with open(tmp_path / 'streamtest_conditions.json') as fh:
+        cond = json.load(fh)
+    assert all(c['quota_met'] or c['starts_finished'] == n for c in cond)
+    assert all(c['starts_finished'] >= 3 for c in cond)

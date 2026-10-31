@@ -425,7 +425,7 @@ def get_initial_state(config, crystal_batch, device, batch_idx):
     return crystal_batch
 
 
-def init_samples_to_optim(config, target=None):
+def init_samples_to_optim(config, target=None, num_samples=None):
     """
     Load and select molecules to optimize, returning the list of crystals a search starts from.
 
@@ -446,6 +446,8 @@ def init_samples_to_optim(config, target=None):
       1), ``max_z_prime=max(config.zp_to_search)``, all-ones placeholder cell lengths, angles, centroid,
       orientation and handedness, and ``do_box_analysis=True``; ``skip_box_analysis=True`` is also passed and
       reaches the constructor's ``**kwargs``. The list is shuffled with ``random.shuffle`` (the global Python RNG).
+      ``num_samples``, when given, takes the place of ``config.num_samples`` here (the streaming search passes 1: one
+      template per molecule, space group and Z', its starts drawn as it needs them).
 
     Parameters
     ----------
@@ -454,6 +456,8 @@ def init_samples_to_optim(config, target=None):
     target : object, optional
         Data object passed (cloned) as the ``molecule`` of every crystal on the construction path, in place of the
         contents of ``config.mol_path``.
+    num_samples : int, optional
+        Crystals per molecule, space group and Z' on the construction path, in place of ``config.num_samples``.
 
     Returns
     -------
@@ -513,7 +517,7 @@ def init_samples_to_optim(config, target=None):
         print("Initializing crystals to optimize")
         for mol in mols_to_optim:
             for sg in config.sgs_to_search:
-                for s_ind in range(config.num_samples):
+                for s_ind in range(config.num_samples if num_samples is None else int(num_samples)):
                     for zp in config.zp_to_search:
                         opt_sample = MolCrystalData(
                             molecule=[mol.clone() for _ in range(zp)] if zp > 1 else mol.clone(),
@@ -594,9 +598,12 @@ def parse_opt_config(opt_config, config, device, target):
         # through UMA, and with checkpointing on that backward raised torch's CheckpointError (a different number of
         # tensors saved in the forward and in its recomputation) for UMA-s 1.1 and 1.2 under fairchem 2.13 and 2.16 on
         # CPU, 2026-10-27; the acr_fm_oct27 searches set it False
+        # TF32 off: with it, eSEN-S energies of one batch spread by 0.019 kT over repeats (7e-5 kT without), above the
+        # polish's tolerance, and its finite-difference Hessians were noise in the soft directions (2026-10-30;
+        # uma_utils.crystal_inference_settings)
         opt_config['predictor'] = init_uma_crystal_predictor(
             pred_path, device=device,
-            activation_checkpointing=bool(getattr(config, 'uma_activation_checkpointing', True)))
+            activation_checkpointing=bool(getattr(config, 'uma_activation_checkpointing', True)), tf32=False)
     if opt_config['optim_target'] in ['mace']:
         pred_path = config.mace_predictor_path  # smaller mol crystal model
         opt_config['predictor'] = load_mace_model(pred_path, device=device, dtype=torch.float32)

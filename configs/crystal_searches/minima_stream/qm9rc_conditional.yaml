@@ -1,0 +1,74 @@
+# Conditional streaming search with converged minima: every molecule of one rc_oct22 qm9rc chunk (one random conformer
+# each), space group 2, Z' = 1, eLJ, each molecule to a quota of distinct minima.
+# run: python mxtaltools/crystal_search/run_search.py --config configs/crystal_searches/minima_stream/qm9rc_conditional.yaml
+# Stages as configs/crystal_searches/minima_stream/mipcas_elj.yaml; the last stage's cascade margins are wider than
+# quota_band_kT.
+# Outputs in out_dir: <run_name>.pt (every start), <run_name>_minima.pt (one row per minimum, with hits),
+# <run_name>_conditions.json (per molecule: starts, minima, minima in the band, quota met),
+# <run_name>_stream_effort.json (effort, wall time, occupancy).
+device: cuda
+mol_path: /scratch/mk8347/data/crystal_datasets/conditional/rc_oct22/mols/qm9rc_mols_chunk0.pt
+dataset_path: null
+target_path: null
+out_dir: /scratch/mk8347/data/crystal_datasets/conditional/minima_stream
+run_name: qm9rc_c0_minima
+target_identifier: null
+save_trajs: false
+init_sample_method: random
+init_reduced: true
+force_restart_run: false
+mol_seed: 0
+opt_seed: 1000000000
+sampling_mode: all
+mols_to_sample: 0
+num_samples: 100  # random starts at most per molecule
+sgs_to_search:
+- 2
+zp_to_search:
+- 1
+batch_size: 500
+grow_batch_size: false
+init_target_cp: std
+oom_ceiling: false
+minima:
+  kT: 6.859493755713105  # eLJ units; E/kT is the polish's objective and the unit of every band
+  capture_d2: 9.0
+stream:
+  slots: 500
+  check_every: 5
+  polish_chunk: 100
+  quota: 25  # a molecule is done at 25 minima ...
+  quota_band_kT: 10.0  # ... within 10 kT of its lowest
+  window: null  # molecules drawing at once: as many as the slots need
+opt:
+- optim_target: elj
+  enforce_reduced: false
+  compression_factor: 0.0
+  cutoff: 10
+  init_lr: 0.05
+  convergence_eps: 0.01
+  optimizer_func: rprop
+  anneal_lr: false
+  grad_norm_clip: 0.1
+  show_tqdm: false
+  max_num_steps: 350
+  target_packing_coeff: null
+  centroid_boundary: wrap
+- optim_target: elj
+  enforce_reduced: false
+  compression_factor: 0.0
+  cutoff: 10
+  convergence_eps: 0.0001  # kT: the BFGS decrement 0.5 g^T B g / kT that ends the stage
+  optimizer_func: bfgs
+  show_tqdm: false
+  max_num_steps: 200
+  target_packing_coeff: null
+  centroid_boundary: wrap
+  early_stop:
+  - - 25
+    - 20.0
+  - - 50
+    - 15.0
+  - - 100
+    - 12.0
+  early_stop_kT: 6.859493755713105
