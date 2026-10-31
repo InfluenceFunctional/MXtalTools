@@ -58,7 +58,12 @@ bfgs, whose inverse-Hessian estimate a deferral would lose), a group's polish st
 unconverged awaits the next group, at its polished point (``finish_minima``'s ``defer_after``; never a seed), so the few rows far
 from a minimum no longer hold every group open; the effort file counts them (``polish_deferred``), and at the end the
 remaining rows are polished in groups until none is deferred. At the end the run writes ``<run>_minima.pt``, one row
-per minimum with its hit counts (``minima.minimum_rows``).
+per minimum with its hit counts (``minima.minimum_rows``), and with ``basin_set`` the same minima as a basin set
+(``basin_set.write_basin_set``) in ``<run>_basins/``, its header naming the energy (target, model id, units, the
+analysis settings), the search (run, config hash, stop rule, counts) and the identity rules; an earlier folder there
+is moved aside, never overwritten. Seeds are deferred as random starts are (except under ``stop_p``, whose seed rule
+counts whole groups), and with a ``quota`` a seed whose condition has met it is skipped (``seeds_skipped``); with
+``cfg:num_samples`` 0 a run polishes its seeds and draws no random start.
 
 A search's conditions are its (molecule, space group, Z') combinations (``minima.row_key``; the stream gets one
 template of each, ``utils.init_samples_to_optim`` with ``num_samples=1``), in identifier order, each with
@@ -130,7 +135,7 @@ from mxtaltools.dataset_utils.utils import collate_data_list
 
 STREAM_DEFAULTS = dict(slots=None, check_every=5, polish_chunk=None, first_polish_chunk=None, seeds=None, stop_p=None,
                        stop_band_kT=5.0, connected_starts=True, quota=None, quota_band_kT=10.0, window=None,
-                       polish_defer=None)
+                       polish_defer=None, basin_set=False)
 STAGE_KEYS = {'optim_target', 'enforce_reduced', 'compression_factor', 'cutoff', 'init_lr', 'convergence_eps',
               'optimizer_func', 'anneal_lr', 'grad_norm_clip', 'show_tqdm', 'max_num_steps', 'target_packing_coeff',
               'centroid_boundary', 'early_stop', 'early_stop_kT', 'supercell_size', 'convergence'}
@@ -191,6 +196,9 @@ def check_stream_config(config):
             raise ValueError("cfg:stream.quota counts minima: it needs the cfg:minima block")
         if s['stop_p'] is not None:
             raise ValueError("cfg:stream: quota and stop_p are two stop rules; set one")
+    s['basin_set'] = bool(s['basin_set'])
+    if s['basin_set'] and getattr(config, 'minima', None) is None:
+        raise ValueError("cfg:stream.basin_set writes the run's minima: it needs the cfg:minima block")
     if s['polish_defer'] is not None:
         s['polish_defer'] = int(s['polish_defer'])
         if s['polish_defer'] < 1:
@@ -303,6 +311,47 @@ class _Slots:
         self.bhave[i] = self.bupd[i] = self.breset[i] = self.bdone[i] = False
         self.bnupd[i] = 0
         self.balpha[i] = 1.0
+
+
+def _write_basins(table, path, config, stages, mcfg, scfg, counts) -> dict:
+    """Write a stream run's minima (``minima.minimum_rows``) as a basin set at ``path``
+    (``basin_set.write_basin_set``), first moving an existing folder there aside to ``<path>_superseded_<k>``; returns
+    a record for the effort file (the path and counts, or why nothing was written: Z' > 1 and lattice types that tie
+    cell lengths are outside the format)."""
+    import hashlib
+    from mxtaltools.crystal_search import minima as mn
+    from mxtaltools.crystal_search.basin_set import write_basin_set
+    from mxtaltools.crystal_search.coordinator import energy_model_id
+    key = str(stages[-1]['optim_target']).lower()
+    if key in mn.MLIP_TARGETS:
+        energy = dict(target=key, model_id=energy_model_id(stages[-1], config), units='kJ/mol', per='molecule')
+    else:
+        energy = dict(target=key, model_id=f'{key}:lj_coeff=1', units=f'raw {key}' if key != 'elj' else 'raw eLJ',
+                      per='asymmetric_unit')
+    energy['analyze'] = dict(cutoff=float(stages[-1].get('cutoff') or 10),
+                             supercell_size=int(stages[-1].get('supercell_size', 10)), repulsion=1.0,
+                             lj_envelope_A=mcfg['lj_envelope'], std_orientation=True)
+    cfg_text = json.dumps(vars(config) if hasattr(config, '__dict__') else dict(config), sort_keys=True, default=str)
+    search = dict(run=config.run_name, out_dir=str(config.out_dir), seeds=scfg['seeds'],
+                  config_sha1=hashlib.sha1(cfg_text.encode()).hexdigest()[:16],
+                  stop=dict(quota=scfg['quota'], quota_band_kT=scfg['quota_band_kT'], stop_p=scfg['stop_p'],
+                            stop_band_kT=scfg['stop_band_kT']), counts=counts)
+    identity = dict(key="(identifier, space group, Z', handedness signs)", merge_d2=float(mcfg['merge_d2']),
+                    capture_d2=float(mcfg['capture_d2']), fd_merge_A=mn.FD_MERGE_A, fd_merge_kT=mn.FD_MERGE_KT)
+    if os.path.exists(path):
+        k = 0
+        while os.path.exists(f'{path}_superseded_{k}'):
+            k += 1
+        os.rename(path, f'{path}_superseded_{k}')
+    try:
+        meta = write_basin_set(table, path, kT=float(mcfg['kT']), energy_attr=key, energy=energy, search=search,
+                               identity=identity)
+    except NotImplementedError as e:
+        print(f"{config.run_name}: no basin set written ({e})")
+        return dict(path=None, reason=str(e))
+    counts_ = (meta.get('provenance') or {}).get('counts') if isinstance(meta, dict) else None
+    print(f"{config.run_name}: basin set {path} ({counts_})")
+    return dict(path=path, counts=counts_)
 
 
 def load_stream_outputs(out_path, progress):
@@ -573,7 +622,7 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
             running_min[k_] = min(running_min.get(k_, math.inf), final_energy(r))
     effort = dict(stage_evals=[0] * n_st, polish_evals=0, final_evals=0, captured=0, cascaded=0, flat_dropped=0,
                   starts_disconnected=0, starts_redrawn=0, starts_kept_disconnected=0, quota_met=0, quota_dropped=0,
-                  slot_steps=0, polish_deferred=0, wall_s=0.0,
+                  slot_steps=0, polish_deferred=0, seeds_skipped=0, basin_set=None, wall_s=0.0,
                   time_s=dict(starts=0.0, emit=0.0, finish=0.0),  # the rest of wall_s is the descent
                   missing_mass=[], stopped=None, seed_missing_mass=[], seeds_stopped=None)
     saturated = [False]  # cfg:stream.stop_p met: no new starts
@@ -827,7 +876,8 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
                                                       merge_d2=float(mcfg['merge_d2']), device=device,
                                                       energy_chunk=energy_chunk[0],
                                                       capture_d2=float(mcfg['capture_d2']),
-                                                      defer_after=None if seeds else polish_defer)
+                                                      defer_after=None if seeds and scfg['stop_p'] is not None
+                                                      else polish_defer)  # the seeds' stop rule counts whole groups
                     break
                 except RuntimeError as e:
                     library.truncate(n_lib)
@@ -868,6 +918,7 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         seeds = _seed_starts(scfg['seeds'], samples_to_optim, device, done)  # random start reaches it
         order = torch.randperm(len(seeds), generator=torch.Generator().manual_seed(int(config.opt_seed))).tolist()
         seeds = [seeds[i] for i in order]  # a random order: the seeds' missing-mass sample
+        quota_check(range(C))  # a resumed run: conditions already at their quota take no seed either
         for c in range(0, len(seeds), scfg['polish_chunk']):
             if scfg['stop_p'] is not None:  # checked before the group, so a resumed run skips seeds it had stopped
                 mm = mn.missing_mass(opt_outs, library, scfg['stop_band_kT'], seeds=True)
@@ -878,7 +929,14 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
                     print(f"{config.run_name}: a new minimum within {scfg['stop_band_kT']} kT of the lowest is "
                           f"expected in under {scfg['stop_p']} of seeds ({mm}); {len(seeds) - c} seeds skipped")
                     break
-            finish(emit_seeds(seeds[c:c + scfg['polish_chunk']]), seeds=True)
+            group = [s_ for s_ in seeds[c:c + scfg['polish_chunk']] if not closed[cidx[mn.row_key(s_[1])]]]
+            effort['seeds_skipped'] += min(scfg['polish_chunk'], len(seeds) - c) - len(group)  # quota already met
+            if not group:
+                continue
+            back = finish(emit_seeds(group), seeds=True)
+            for r in back:  # deferred: polished with the random starts' groups (or at the end)
+                waiting[cidx[mn.row_key(r)]] += 1
+            pending.extend(back)
     quota_check(range(C))  # a resumed run: conditions already at their quota draw nothing
     first = next_start()
     if first is not None:
@@ -1104,7 +1162,13 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
                   occupancy=effort['slot_steps'] / max(gstep * S, 1),
                   fd_merged=library.fd_merged if library is not None else 0)
     if mcfg is not None:
-        atomic_torch_save(mn.minimum_rows(opt_outs), str(out_path)[:-3] + '_minima.pt')
+        table = mn.minimum_rows(opt_outs)
+        atomic_torch_save(table, str(out_path)[:-3] + '_minima.pt')
+        if scfg['basin_set'] and table:
+            effort['basin_set'] = _write_basins(table, str(out_path)[:-3] + '_basins', config, stages, mcfg, scfg,
+                                                dict(conditions=C, starts_per_condition=N, rows=len(opt_outs),
+                                                     minima=len(table), stage_evals=effort['stage_evals'],
+                                                     polish_evals=effort['polish_evals']))
         per = {}
         for r in opt_outs:
             if mn.row_key(r) in cidx and int(r.start_index) >= 0:

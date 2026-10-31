@@ -627,3 +627,49 @@ def test_committed_outputs_are_the_merged_file_then_the_parts(tmp_path):
     prog.write_text(json.dumps(dict(mode='batch', n_out=1)))
     with pytest.raises(ValueError):
         ss.load_stream_outputs(str(out), str(prog))
+
+
+def test_seeds_alone_become_a_basin_set(mol, tmp_path, monkeypatch):
+    """An earlier two-condition run's outputs as seeds of a run with no random start (num_samples 0) and basin_set:
+    every seed is polished once (negative start indices only), and the minima are written as a basin set whose
+    header names the energy, the search and the identity rules, readable by basin_set.read_basin_set; a second
+    write moves the first folder aside."""
+    import os
+    from mxtaltools.crystal_search.basin_set import read_basin_set
+    n = 3
+    monkeypatch.setattr(rs, 'init_samples_to_optim',
+                        lambda config, target=None, num_samples=None: _two_conditions(mol, n))
+    (tmp_path / 'a').mkdir()
+    first = rs.crystal_search(_run_cfg(tmp_path / 'a', n))
+    torch.save(first, tmp_path / 'seeds.pt')
+    cfg = _run_cfg(tmp_path, 0)
+    cfg.stream.seeds, cfg.stream.basin_set = str(tmp_path / 'seeds.pt'), True
+    out = rs.crystal_search(cfg)
+    assert sorted(int(r.start_index) for r in out) == list(range(-2 * n, 0))
+    table = torch.load(tmp_path / 'streamtest_minima.pt', weights_only=False)
+    ds, header = read_basin_set(str(tmp_path / 'streamtest_basins'))
+    assert len(ds) + sum(header['counts']['refused'].values()) == len(table) > 0
+    assert header['energy']['target'] == 'elj' and header['energy']['per'] == 'asymmetric_unit'
+    assert header['search']['kT'] == 6.86 and header['identity']['merge_d2'] == 1.0
+    assert {str(i) for i in ds.identifier} <= {'A', 'B'}
+    rs.crystal_search(cfg)  # again: the earlier set is moved aside, not overwritten
+    assert os.path.isdir(tmp_path / 'streamtest_basins') and os.path.isdir(tmp_path / 'streamtest_basins_superseded_0')
+    with pytest.raises(ValueError):
+        ss.check_stream_config(_cfg(stream={'basin_set': True}))  # no minima block
+
+
+def test_seeds_of_a_condition_at_its_quota_are_skipped(mol, tmp_path, monkeypatch):
+    """quota 1, seeds one per group: once a condition has its minimum, its remaining seeds are not polished."""
+    import json
+    n = 4
+    monkeypatch.setattr(rs, 'init_samples_to_optim',
+                        lambda config, target=None, num_samples=None: _two_conditions(mol, n))
+    (tmp_path / 'a').mkdir()
+    torch.save(rs.crystal_search(_run_cfg(tmp_path / 'a', n)), tmp_path / 'seeds.pt')
+    cfg = _run_cfg(tmp_path, 0)
+    cfg.stream.seeds = str(tmp_path / 'seeds.pt')
+    cfg.stream.quota, cfg.stream.quota_band_kT, cfg.stream.polish_chunk = 1, 1e9, 1
+    out = rs.crystal_search(cfg)
+    with open(tmp_path / 'streamtest_stream_effort.json') as fh:
+        eff = json.load(fh)
+    assert eff['seeds_skipped'] > 0 and len(out) + eff['seeds_skipped'] == 2 * n
