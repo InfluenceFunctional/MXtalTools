@@ -436,6 +436,7 @@ def test_stop_p_draws_no_new_starts(mol, tmp_path, monkeypatch):
     monkeypatch.setattr(mn, 'missing_mass', lambda rows, lib, band_kT: dict(n=len(rows), f1=0, p_hi=0.0))
     cfg = _run_cfg(tmp_path, n)
     cfg.stream.stop_p = 0.01
+    cfg.stream.polish_defer = 100  # above max_iter: no deferral, so a group finishes all its rows
     out = rs.crystal_search(cfg)
     assert len(out) == 2  # the first finished group (polish_chunk 2) set the stop; nothing else was finished
     with open(tmp_path / 'streamtest_stream_effort.json') as fh:
@@ -574,3 +575,55 @@ def test_rows_awaiting_the_polish_do_not_stall_the_run(mol, tmp_path, monkeypatc
         cond = json.load(fh)
     assert all(c['quota_met'] or c['starts_finished'] == n for c in cond)
     assert all(c['starts_finished'] >= 3 for c in cond)
+
+
+def test_a_deferred_polish_finishes_every_start(mol, tmp_path, monkeypatch):
+    """polish_defer 1: a group's polish stops after one iteration and its unconverged rows await the next group, in
+    groups mixing them with new rows; every start still finishes once, with a polish status, some at a minimum, and no
+    output carries the deferral state. (Deferral re-describes a row between calls, so its path, and which rows converge
+    within max_iter, can differ from an undeferred polish: on this case 1, 4 and 1 of 5 at polish_defer 20, 8, 1.)"""
+    import json
+    from mxtaltools.crystal_search import minima as mn
+    n = 5
+    monkeypatch.setattr(rs, 'init_samples_to_optim',
+                        lambda config, target=None, num_samples=None: _placeholders(mol, n))
+    cfg = _run_cfg(tmp_path, n)
+    cfg.stream.polish_defer = 1
+    out = rs.crystal_search(cfg)
+    assert sorted(int(r.start_index) for r in out) == list(range(n))
+    with open(tmp_path / 'streamtest_stream_effort.json') as fh:
+        assert json.load(fh)['polish_deferred'] > 0
+    assert not any(a in r.keys() for r in out for a in ('polish_iters', 'polish_mu', 'polish_trust'))
+    assert all(int(r.polish_status) in mn.POLISH_STATUS for r in out) and any(int(r.minimum_id) >= 0 for r in out)
+    with pytest.raises(ValueError):
+        ss.check_stream_config(_cfg(stream={'polish_defer': 0}))
+
+
+def test_committed_outputs_are_the_merged_file_then_the_parts(tmp_path):
+    """load_stream_outputs: the merged file's first `base` rows, then the counted part files, truncated to n_out; a
+    part beyond the count (written before a crash, its progress not) is not read; a progress file from before part
+    files vouches for n_out rows of the merged file; no progress file, the whole merged file; a batch search's
+    progress file raises."""
+    import json
+    out, prog, parts = tmp_path / 'r.pt', tmp_path / 'r_progress.json', tmp_path / 'r_parts'
+    parts.mkdir()
+    torch.save([0, 1, 2, 3], out)
+    torch.save([4, 5], parts / 'part_000000.pt')
+    torch.save([6], parts / 'part_000001.pt')
+    torch.save([7, 8], parts / 'part_000002.pt')  # orphan: not in the progress file's count
+
+    def state(**k):
+        prog.write_text(json.dumps(dict(mode='stream', **k)))
+    state(n_out=6, base=3, parts=2)
+    assert ss.load_stream_outputs(str(out), str(prog)) == ([0, 1, 2, 4, 5, 6], 2, 3)
+    state(n_out=5, base=3, parts=2)
+    assert ss.load_stream_outputs(str(out), str(prog))[0] == [0, 1, 2, 4, 5]
+    state(n_out=2, base=0, parts=1)
+    assert ss.load_stream_outputs(str(out), str(prog)) == ([4, 5], 1, 0)
+    state(n_out=3)  # before part files
+    assert ss.load_stream_outputs(str(out), str(prog)) == ([0, 1, 2], 0, 3)
+    prog.unlink()
+    assert ss.load_stream_outputs(str(out), str(prog)) == ([0, 1, 2, 3], 0, 4)
+    prog.write_text(json.dumps(dict(mode='batch', n_out=1)))
+    with pytest.raises(ValueError):
+        ss.load_stream_outputs(str(out), str(prog))

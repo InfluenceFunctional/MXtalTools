@@ -96,6 +96,37 @@ class _Quadratic:
         return self.f(x, idx), x @ self.A + self.b, self.A.expand(len(x), -1, -1).clone()
 
 
+class _Bumpy(_Quadratic):
+    """A quadratic plus 2 sum_i cos(4 x_i): non-convex, so Newton steps are often rejected and the damping rises."""
+
+    def f(self, x, idx):
+        return super().f(x, idx) + 2 * torch.cos(4 * x).sum(1)
+
+    def fg(self, x, idx):
+        return self.f(x, idx), x @ self.A + self.b - 8 * torch.sin(4 * x)
+
+    def fgh(self, x, idx):
+        H = self.A.expand(len(x), -1, -1).clone() - torch.diag_embed(32 * torch.cos(4 * x))
+        return self.f(x, idx), self.fg(x, idx)[1], H
+
+
+def test_tries_evaluated_together_take_the_steps_tried_one_after_another(monkeypatch):
+    """POLISH_PAR tries per call accept the first that lowers E/kT, with the damping and trust that many rejections
+    leave: the same path, minima and statuses as trying one at a time, on a surface where tries are rejected."""
+    torch.manual_seed(0)
+    A = torch.diag(torch.rand(12, dtype=torch.float64) * 4 + 0.5)
+    x0 = torch.randn(16, 12, dtype=torch.float64) * 2
+    E = _Bumpy(A, torch.zeros(12, dtype=torch.float64))
+    monkeypatch.setattr(mn, 'POLISH_PAR', 1)
+    one = mn.newton_polish(E, x0, max_iter=40)
+    monkeypatch.setattr(mn, 'POLISH_PAR', 3)
+    three = mn.newton_polish(E, x0, max_iter=40)
+    assert int((one['n_f'] - (one['n_h'] - 1)).clamp_min(0).sum()) >= 10  # tries beyond one per step: rejections
+    assert torch.equal(one['status'], three['status'])
+    assert torch.allclose(one['x'], three['x'], atol=1e-12) and torch.allclose(one['mu'], three['mu'])
+    assert torch.equal(one['n_h'], three['n_h'])
+
+
 def test_the_polish_converges_where_the_energy_is_flat_along_some_directions():
     """Two directions of exactly zero curvature (a crystal system's fixed angle, a layer's spacing across a vacuum gap):
     a gradient component of 1e-6 along one must not hold the decrement up (it used to, 1e-12 / 1e-12, so such rows

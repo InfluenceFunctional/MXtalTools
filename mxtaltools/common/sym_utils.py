@@ -88,6 +88,16 @@ def make_lattice_code_lookup(lattice_type):
         raise ValueError(f"Missing lattice types for space groups: {missing}")
 
     return lattice_code
+_LATTICE_CODE = []
+
+
+def _lattice_code():
+    """``make_lattice_code_lookup(LATTICE_TYPE)``, built on first use and kept."""
+    if not _LATTICE_CODE:
+        _LATTICE_CODE.append(make_lattice_code_lookup(LATTICE_TYPE))
+    return _LATTICE_CODE[0]
+
+
 def init_sym_info():
     """
     Collect the symmetry tables for crystals with standard settings and general positions.
@@ -111,7 +121,7 @@ def init_sym_info():
     lattice_type = LATTICE_TYPE
     space_groups = SPACE_GROUPS
 
-    lattice_code = make_lattice_code_lookup(lattice_type)
+    lattice_code = _lattice_code().clone()  # a fresh tensor, as before; built once (it took ~2 ms a call)
 
     sym_info = {
         "sym_ops": sym_ops,

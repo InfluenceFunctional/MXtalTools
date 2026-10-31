@@ -53,8 +53,12 @@ rows are finished in groups of ``polish_chunk`` (default 1,000) by ``minima.fini
 too. The first random-start group can be smaller (``first_polish_chunk``, default ``polish_chunk``), so the library
 starts filling sooner: on MIPCAS eLJ (2026-10-30) a first group of 250 cut the polish's evaluations by 12% and its
 converged polishes from 510 to 272, but the extra group cost wall time, so it suits energies whose calls are costly
-rather than eLJ. At the end the run writes ``<run>_minima.pt``, one row per minimum with its hit counts
-(``minima.minimum_rows``).
+rather than eLJ. With ``polish_defer`` (iterations; default ``POLISH_DEFER`` under the Newton polish, none under
+bfgs, whose inverse-Hessian estimate a deferral would lose), a group's polish stops there and a row it leaves
+unconverged awaits the next group, at its polished point (``finish_minima``'s ``defer_after``; never a seed), so the few rows far
+from a minimum no longer hold every group open; the effort file counts them (``polish_deferred``), and at the end the
+remaining rows are polished in groups until none is deferred. At the end the run writes ``<run>_minima.pt``, one row
+per minimum with its hit counts (``minima.minimum_rows``).
 
 A search's conditions are its (molecule, space group, Z') combinations (``minima.row_key``; the stream gets one
 template of each, ``utils.init_samples_to_optim`` with ``num_samples=1``), in identifier order, each with
@@ -93,8 +97,10 @@ the random starts do: before each seed group the Good-Turing bound over the seed
 (``minima.missing_mass(seeds=True)``) is compared with ``stop_p``, and once below it the remaining seeds are skipped.
 (Simulated on the eLJ-prior seeds above, 50 orders: stopped after 1,000-2,000 of the 13,505, with all 15 minima
 within 2 kT found.) In a file of distinct minima, such as another run's ``_minima.pt``, most seeds are singletons, the
-bound stays high, and the file is polished whole. Outputs are saved after every finished group; a resumed run skips
-the starts already in its output and redraws the rest (rows in flight at a stop are relaxed again).
+bound stays high, and the file is polished whole. Outputs are committed after every finished group, the group's rows as the next file of
+``<run>_parts/`` (``load_stream_outputs`` reads a run's committed rows), and merged into ``<run>.pt`` at the end; a
+resumed run skips the starts already in its output and redraws the rest (rows in flight at a stop are relaxed
+again).
 
 With ``stop_p`` (needs ``minima``, and one molecule, space group and Z' in the search), after every finished group
 the Good-Turing estimate of the chance that the next random start finds a minimum not yet found within
@@ -123,7 +129,8 @@ from mxtaltools.crystal_search.run_state import atomic_json_dump, atomic_torch_s
 from mxtaltools.dataset_utils.utils import collate_data_list
 
 STREAM_DEFAULTS = dict(slots=None, check_every=5, polish_chunk=None, first_polish_chunk=None, seeds=None, stop_p=None,
-                       stop_band_kT=5.0, connected_starts=True, quota=None, quota_band_kT=10.0, window=None)
+                       stop_band_kT=5.0, connected_starts=True, quota=None, quota_band_kT=10.0, window=None,
+                       polish_defer=None)
 STAGE_KEYS = {'optim_target', 'enforce_reduced', 'compression_factor', 'cutoff', 'init_lr', 'convergence_eps',
               'optimizer_func', 'anneal_lr', 'grad_norm_clip', 'show_tqdm', 'max_num_steps', 'target_packing_coeff',
               'centroid_boundary', 'early_stop', 'early_stop_kT', 'supercell_size', 'convergence'}
@@ -136,6 +143,8 @@ MAX_REDRAWS = 20  # redraws of a start whose contact network is not 3-periodic; 
 REDRAW_BLOCK = 100000  # a redraw's block index offset per attempt (get_initial_state seeds by block index)
 BFGS_MIN_UPDATES = 3  # accepted BFGS updates before a row's decrement can end its stage (B starts as a guess)
 BFGS_SHRINK = 0.25  # a rejected trial's step is shortened by this factor for the next trial
+POLISH_DEFER = 8  # newton polish iterations per group before an unconverged row awaits the next group (default; on
+# qm9rc eLJ, 2026-10-31, half the polish's sequential calls for the same minima and polish evaluations)
 
 
 def check_stream_config(config):
@@ -182,6 +191,10 @@ def check_stream_config(config):
             raise ValueError("cfg:stream.quota counts minima: it needs the cfg:minima block")
         if s['stop_p'] is not None:
             raise ValueError("cfg:stream: quota and stop_p are two stop rules; set one")
+    if s['polish_defer'] is not None:
+        s['polish_defer'] = int(s['polish_defer'])
+        if s['polish_defer'] < 1:
+            raise ValueError(f"cfg:stream.polish_defer must be a positive count of iterations, got {s['polish_defer']}")
     if s['window'] is not None:
         s['window'] = int(s['window'])
         if s['window'] < 1:
@@ -290,6 +303,34 @@ class _Slots:
         self.bhave[i] = self.bupd[i] = self.breset[i] = self.bdone[i] = False
         self.bnupd[i] = 0
         self.balpha[i] = 1.0
+
+
+def load_stream_outputs(out_path, progress):
+    """(rows, parts, base): a stream run's committed outputs -- the first ``base`` rows of ``out_path`` (the merged
+    file, written at the end of a run), then the rows of the ``parts`` part files in ``<run>_parts/``, written one per
+    polish group, truncated to the progress file's ``n_out`` -- the number of part files and ``base``. A progress file
+    without ``parts`` (written before part files existed) vouches for ``n_out`` rows of ``out_path``; with no progress
+    file, every row of ``out_path``; with neither file, nothing. Raises ValueError for a progress file a batch search
+    wrote."""
+    state = {}
+    if os.path.exists(progress):
+        with open(progress) as fh:
+            state = json.load(fh)
+        if state.get('mode') != 'stream':
+            raise ValueError(f"{out_path} was written by a batch search; cfg:stream cannot resume it")
+    if 'parts' in state:
+        base, parts = int(state.get('base', 0)), int(state['parts'])
+    else:
+        base, parts = (int(state['n_out']) if state.get('n_out') is not None else None), 0
+    rows = []
+    if os.path.exists(out_path) and base != 0:
+        rows = torch.load(out_path, weights_only=False)
+        rows = rows if base is None else rows[:base]
+    parts_dir = str(out_path)[:-3] + '_parts'
+    for k in range(parts):
+        rows.extend(torch.load(os.path.join(parts_dir, f'part_{k:06d}.pt'), weights_only=False))
+    rows = committed_outputs(rows, state)
+    return rows, parts, len(rows) if base is None else base
 
 
 def _seed_starts(path, samples_to_optim, device, done, chunk: int = 256):
@@ -502,18 +543,20 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
     envelope = {} if mcfg is None or mcfg['lj_envelope'] is None else {'lj_envelope': float(mcfg['lj_envelope'])}
     stage_lr = lambda k: 0.0 if is_bfgs[k] else float(stages[k]['init_lr'])  # noqa: E731  (bfgs has no lr)
     captures = [k == n_st - 1 for k in range(n_st)]  # the last stage only (module docstring)
+    newton = mcfg is not None and (mcfg['polish'] or ('bfgs' if key in mn.MLIP_TARGETS else 'newton')) == 'newton'
+    polish_defer = scfg['polish_defer'] if scfg['polish_defer'] is not None else (POLISH_DEFER if newton else None)
     S = scfg['slots']
 
-    # resume: outputs, truncated to the progress file's count
-    opt_outs = []
-    if os.path.exists(out_path) and not config.force_restart_run:
-        opt_outs = torch.load(out_path, weights_only=False)
-        if os.path.exists(progress):
-            with open(progress) as fh:
-                state = json.load(fh)
-            if state.get('mode') != 'stream':
-                raise ValueError(f"{out_path} was written by a batch search; cfg:stream cannot resume it")
-            opt_outs = committed_outputs(opt_outs, state)
+    # resume: the committed outputs (the merged file's first `base` rows, then the part files)
+    parts_dir = str(out_path)[:-3] + '_parts'
+    opt_outs, n_parts, base = [], [0], [0]
+    if config.force_restart_run:
+        for f_ in (sorted(os.listdir(parts_dir)) if os.path.isdir(parts_dir) else []):
+            if f_.startswith('part_') and f_.endswith('.pt'):  # this run name's own earlier parts
+                os.remove(os.path.join(parts_dir, f_))
+    else:
+        opt_outs, n_parts[0], base[0] = load_stream_outputs(out_path, progress)
+    saved = [len(opt_outs)]  # rows already in the merged file or a part
     done = {int(r.start_index) for r in opt_outs if 'start_index' in r.keys()}
     library = mn.MinimaLibrary.from_rows(opt_outs) if mcfg is not None else None
     def final_energy(r):
@@ -530,7 +573,7 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
             running_min[k_] = min(running_min.get(k_, math.inf), final_energy(r))
     effort = dict(stage_evals=[0] * n_st, polish_evals=0, final_evals=0, captured=0, cascaded=0, flat_dropped=0,
                   starts_disconnected=0, starts_redrawn=0, starts_kept_disconnected=0, quota_met=0, quota_dropped=0,
-                  slot_steps=0, wall_s=0.0,
+                  slot_steps=0, polish_deferred=0, wall_s=0.0,
                   time_s=dict(starts=0.0, emit=0.0, finish=0.0),  # the rest of wall_s is the descent
                   missing_mass=[], stopped=None, seed_missing_mass=[], seeds_stopped=None)
     saturated = [False]  # cfg:stream.stop_p met: no new starts
@@ -548,11 +591,28 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
             return run
         return wrap
 
-    def save():
+    def save(final=False):
+        """Commit the outputs: the rows finished since the last save as the next part file (a save costs the new
+        rows; rewriting the whole list each group grew with the run, 1.5 ms a row on qm9rc, 2026-10-31), then the
+        progress file; with ``final``, the whole list as ``out_path`` and the part files removed."""
         lease.check()
-        atomic_torch_save(opt_outs, out_path)
+        if final:
+            atomic_torch_save(opt_outs, out_path)
+            n_old, n_parts[0], base[0], saved[0] = n_parts[0], 0, len(opt_outs), len(opt_outs)
+        elif len(opt_outs) > saved[0]:
+            os.makedirs(parts_dir, exist_ok=True)
+            atomic_torch_save(opt_outs[saved[0]:], os.path.join(parts_dir, f'part_{n_parts[0]:06d}.pt'))
+            n_parts[0] += 1
+            saved[0] = len(opt_outs)
         atomic_json_dump({'mode': 'stream', 'cursor': len(opt_outs), 'batch_idx': -1, 'num_samples': num_samples,
-                          'n_out': len(opt_outs)}, progress)
+                          'n_out': len(opt_outs), 'base': base[0], 'parts': n_parts[0]}, progress)
+        if final:
+            for k in range(n_old):
+                f_ = os.path.join(parts_dir, f'part_{k:06d}.pt')
+                if os.path.exists(f_):
+                    os.remove(f_)
+            if os.path.isdir(parts_dir) and not os.listdir(parts_dir):
+                os.rmdir(parts_dir)
 
     cutoff0 = cuts[0][0]  # the first stage's cutoff: the one a start is first evaluated at
     # conditions: one template per (molecule, space group, Z') in a fixed order; start k is start j = k - c N of
@@ -681,8 +741,11 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
 
     @timed('emit')
     def analysed(b):
-        """The rows of a built, described batch re-analysed (the target's energy, lj and elj), in energy_chunk rows."""
+        """The rows of a built, described batch re-analysed (the target's energy, lj and elj), in energy_chunk rows;
+        with ``minima`` not analysed here (``finish_minima`` analyses every row it returns)."""
         rows_ = b.cpu().detach().batch_to_list()
+        if mcfg is not None:
+            return rows_
         out_ = []
         for c in range(0, len(rows_), energy_chunk[0]):
             bc = collate_data_list(rows_[c:c + energy_chunk[0]]).to(device)
@@ -727,10 +790,13 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         pending.extend(out)
 
     def polish(group):
-        """finish() a group of emitted rows (no longer awaiting the polish)."""
+        """finish() a group of emitted rows; the rows it defers await the next group."""
         for r in group:
             waiting[cidx[mn.row_key(r)]] -= 1
-        finish(group)
+        back = finish(group)
+        for r in back:
+            waiting[cidx[mn.row_key(r)]] += 1
+        pending.extend(back)
 
     def refill():
         """Load the next starts into the empty slots; the number loaded."""
@@ -746,7 +812,9 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
 
     @timed('finish')
     def finish(rows, seeds=False):
+        """Polish and record a group; returns the rows the polish deferred (``polish_defer``; never seeds)."""
         n_lib0 = len(library) if library is not None else 0
+        back = []
         if mcfg is not None:
             n_lib = len(library)
             while True:  # on a CUDA out-of-memory error: undo this group's adds, halve the energy chunk, redo
@@ -758,7 +826,8 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
                                                       polish=mcfg['polish'],
                                                       merge_d2=float(mcfg['merge_d2']), device=device,
                                                       energy_chunk=energy_chunk[0],
-                                                      capture_d2=float(mcfg['capture_d2']))
+                                                      capture_d2=float(mcfg['capture_d2']),
+                                                      defer_after=None if seeds else polish_defer)
                     break
                 except RuntimeError as e:
                     library.truncate(n_lib)
@@ -768,8 +837,9 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
                     gc.collect()
                     torch.cuda.empty_cache()
                     print(f"{config.run_name}: out of memory in the polish; {energy_chunk[0]} rows per evaluation")
-            rows = done_rows
+            rows, back = done_rows, eff.pop('deferred', [])
             effort['polish_evals'] += mn.polish_evals(eff)
+            effort['polish_deferred'] += len(back)
             effort['final_evals'] += len(rows)
         opt_outs.extend(rows)
         for r in rows:
@@ -789,6 +859,7 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
                 effort['stopped'] = dict(reason='stop_p', wall_s=time.time() - t0, **mm)
                 print(f"{config.run_name}: a new minimum within {scfg['stop_band_kT']} kT of the lowest is expected "
                       f"in under {scfg['stop_p']} of starts ({mm}); the rows in flight are dropped")
+        return back
 
     t0 = time.time()
     if not os.path.exists(progress) or config.force_restart_run:
@@ -1001,8 +1072,9 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
             chunk = scfg['polish_chunk'] if groups_done[0] else scfg['first_polish_chunk']
             if len(pending) < chunk:
                 break
-            polish(pending[:chunk])
+            group = pending[:chunk]
             del pending[:chunk]
+            polish(group)
             groups_done[0] += 1
         if any(closed):  # a condition at its quota: its rows in slots and awaiting the polish are not finished
             gone = [i for i in slots.occupied() if closed[slot_c[i]]]
@@ -1023,9 +1095,11 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
             effort['stopped']['dropped'] = len(slots.occupied()) + len(pending)
             pending.clear()
             break
-    if pending:
-        polish(pending[:])
+    while pending:  # a deferred row returns with more of its max_iter used, so this ends
+        group = pending[:]
         pending.clear()
+        polish(group)
+    save(final=True)
     effort.update(wall_s=time.time() - t0, global_steps=gstep, rows=len(opt_outs),
                   occupancy=effort['slot_steps'] / max(gstep * S, 1),
                   fd_merged=library.fd_merged if library is not None else 0)

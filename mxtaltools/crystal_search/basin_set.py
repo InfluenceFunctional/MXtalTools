@@ -3,7 +3,8 @@
 Design: GFN ``energy_sampling/docs/design/basin_set.md`` (2026-10-30). One writer (``write_basin_set``) turns the
 rows ``minima.minimum_rows`` selects (one row per library minimum, carrying ``id_params``, ``id_handedness``,
 ``id_hessian`` and ``minimum_f``) into a dataset folder; one reader (``read_basin_set``) returns the dataset and its
-header. The streaming search, a partial ``<run>.pt``, or the batch loop's output can all be written through it.
+header. The streaming search, a partial run's committed rows (``stream_search.load_stream_outputs``: during a run
+they are in ``<run>_parts/``), or the batch loop's output can all be written through it.
 
 What a row holds
 ----------------

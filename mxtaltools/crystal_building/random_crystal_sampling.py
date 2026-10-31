@@ -15,6 +15,8 @@ import torch
 import torch.nn.functional as F
 from torch.distributions import MultivariateNormal
 
+_PRIORS = {}  # the fixed-parameter sampling distributions, built on first use
+
 from mxtaltools.common.geometry_utils import cell_vol_angle_factor, batch_cell_vol_torch
 from mxtaltools.common.utils import softplus_shift, invert_softplus_shift, siginv
 from mxtaltools.constants.asymmetric_units import ASYM_UNITS
@@ -58,8 +60,9 @@ def sample_cell_angles(num_samples):
     torch.Tensor
         [num_samples, 3] angles (alpha, beta, gamma) in radians.
     """
-    angles_prior = MultivariateNormal(angles_means, angles_cov)
-    return angles_prior.sample((num_samples,))
+    if 'angles' not in _PRIORS:  # fixed parameters: built once (construction and its argument checks dominated)
+        _PRIORS['angles'] = MultivariateNormal(angles_means, angles_cov)
+    return _PRIORS['angles'].sample((num_samples,))
 
 
 def sample_aunit_centroids(num_samples, z_prime: int=1):
@@ -256,8 +259,10 @@ def sample_aunit_lengths(num_samples,
         [num_samples, 3] asymmetric-unit lengths, on the device of
         ``mol_volumes``.
     """
-    normed_aunit_lengths_prior = MultivariateNormal(normed_aunit_length_log_means,
-                                                    normed_aunit_length_log_covs + torch.eye(3) * eps)
+    if ('lengths', eps) not in _PRIORS:  # fixed parameters: built once per eps
+        _PRIORS[('lengths', eps)] = MultivariateNormal(normed_aunit_length_log_means,
+                                                       normed_aunit_length_log_covs + torch.eye(3) * eps)
+    normed_aunit_lengths_prior = _PRIORS[('lengths', eps)]
     random_sampled_aunit_lengths = normed_aunit_lengths_prior.sample((num_samples,)).exp()
     random_normed_aunit_lengths = (
             random_sampled_aunit_lengths / random_sampled_aunit_lengths.prod(dim=1, keepdim=True) ** (1 / 3)).to(

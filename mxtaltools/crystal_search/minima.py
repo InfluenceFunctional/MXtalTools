@@ -43,6 +43,8 @@ MLIP_TARGETS = ('uma', 'mace')  # Hessians by central differences of the gradien
 FD_STEP = 1e-3  # central-difference step of the MLIP Hessian, in each coordinate's own unit (A, rad, fraction)
 POLISH_CAPS = (0.1, 0.02, 0.01, 0.02)  # largest step per block: lengths (A), angles (rad), centres, rotvecs (rad)
 POLISH_TRIES = 8  # Levenberg-Marquardt damping increases tried per iteration before a row counts as stalled
+POLISH_PAR = 3  # of those tries, evaluated together in one call: the first that lowers E/kT is taken, as one after
+# another would take it (a call's cost is mostly its latency; on qm9rc eLJ, 2026-10-31, 3.4 tries per iteration)
 TRUST_RANGE = (1 / 16, 16.0)  # bounds of the per-row factor on POLISH_CAPS (doubled on an accepted step, halved else)
 POLISH_STATUS = {0: 'captured (in the stage or the polish)', 1: 'converged', 2: 'stalled', 3: 'iteration cap',
                  4: 'left the cell-parameter box'}
@@ -266,7 +268,8 @@ def _capture_rules(capture, capture_d2, keys, merge_d2, x, F, H, done, cap_id, s
 
 def newton_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol: float = 1e-4,
                   hessian_every: int = 1, capture=None, capture_d2: float = 9.0, keys: Optional[list] = None,
-                  merge_d2: float = 1.0):
+                  merge_d2: float = 1.0, mu0: Optional[torch.Tensor] = None, trust0: Optional[torch.Tensor] = None,
+                  keep_capped: Optional[torch.Tensor] = None):
     """Per-row saddle-free Levenberg-Marquardt Newton descent of ``energy`` from ``x0`` [n, d].
 
     With ``capture``, a callable taking (x [m, d], row indices [m]) and returning (minimum id [m], d^2 [m]) as
@@ -298,7 +301,9 @@ def newton_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol
     trust factor, and keeps it if E/kT falls (mu /= 3, floored at 1e-4; trust doubled up to TRUST_RANGE[1]), else
     mu *= 4 and trust is halved (down to TRUST_RANGE[0]) and it tries again, at most POLISH_TRIES times; a row with
     no accepted step is stalled. Rows still active after ``max_iter`` iterations stop at the cap. Stalled and
-    capped rows get a fresh Hessian at their final x.
+    capped rows get a fresh Hessian at their final x, except capped rows marked in ``keep_capped`` [n] bool (a caller
+    that will polish them again). ``mu0`` and ``trust0`` [n] start each row's damping and trust factor (default 1:
+    a row continued from an earlier call keeps what it had there).
 
     Returns
     -------
@@ -308,7 +313,8 @@ def newton_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol
         2 stalled, 3 iteration cap: POLISH_STATUS); ``capture`` [n] long (the capturing minimum, else -1);
         ``sibling`` [n] long (the converged row of this call that captured the row, else -1);
         ``n_f``, ``n_g``, ``n_h`` [n] long, the energies, gradients and Hessians evaluated per row (a Hessian
-        evaluation includes its energy and gradient).
+        evaluation includes its energy and gradient); ``mu``, ``trust`` [n] float64, each row's damping and trust
+        factor at the end.
     """
     x = x0.detach().to(F64).cpu().clone()
     n, d = x.shape
@@ -335,8 +341,8 @@ def newton_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol
     want = torch.zeros(n, dtype=torch.bool)
     n_g = torch.zeros(n, dtype=torch.long)
     n_f = torch.zeros(n, dtype=torch.long)
-    mu = torch.ones(n, dtype=F64)
-    trust = torch.ones(n, dtype=F64)
+    mu = torch.ones(n, dtype=F64) if mu0 is None else torch.as_tensor(mu0, dtype=F64).clone()
+    trust = torch.ones(n, dtype=F64) if trust0 is None else torch.as_tensor(trust0, dtype=F64).clone()
     for it in range(max_iter):
         ia = torch.nonzero(~done).flatten()
         if it > 0:
@@ -369,33 +375,44 @@ def newton_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol
         keep = ~conv & ~ask
         ia, lam, V, gv = ia[keep], lam[keep], V[keep], gv[keep]
         pending = torch.ones(len(ia), dtype=torch.bool)
-        for _ in range(POLISH_TRIES):
+        tries = 0
+        while tries < POLISH_TRIES:  # the tries one after another would take; POLISH_PAR of them in one call
             pj = torch.nonzero(pending).flatten()
             if len(pj) == 0:
                 break
             r = ia[pj]
-            step = -torch.einsum('nij,nj->ni', V[pj], gv[pj] / (lam[pj].abs() + mu[r, None]))
-            scale = (trust[r, None] * cap / step.abs().clamp_min(1e-300)).amin(1).clamp(max=1.0)
-            xn = x[r] + scale[:, None] * step
-            fn = energy.f(xn, r)
-            n_f[r] += 1
-            acc = torch.isfinite(fn) & (fn < F[r])
-            x[r[acc]], F[r[acc]] = xn[acc], fn[acc]
-            mu[r[acc]] = (mu[r[acc]] / 3).clamp_min(1e-4)
-            mu[r[~acc]] *= 4
-            trust[r[acc]] = (trust[r[acc]] * 2).clamp(max=TRUST_RANGE[1])
-            trust[r[~acc]] = (trust[r[~acc]] / 2).clamp(min=TRUST_RANGE[0])
+            w = min(POLISH_PAR, POLISH_TRIES - tries)
+            k4 = 4.0 ** torch.arange(w, dtype=F64)  # try k: damping mu 4^k, trust halved k times (as k rejections)
+            mus = mu[r][None] * k4[:, None]  # [w, m]
+            trs = (trust[r][None] / (2.0 ** torch.arange(w, dtype=F64))[:, None]).clamp(min=TRUST_RANGE[0])
+            step = -torch.einsum('nij,wnj->wni', V[pj], gv[pj][None] / (lam[pj].abs()[None] + mus[..., None]))
+            scale = (trs[..., None] * cap / step.abs().clamp_min(1e-300)).amin(2).clamp(max=1.0)
+            xn = x[r][None] + scale[..., None] * step  # [w, m, d]
+            fn = energy.f(xn.reshape(-1, d), r.repeat(w)).reshape(w, len(r))
+            n_f[r] += w
+            ok = torch.isfinite(fn) & (fn < F[r][None])
+            k = torch.where(ok.any(0), ok.float().argmax(0), torch.full_like(r, w))  # the first accepted try
+            acc = k < w
+            ra, ka = r[acc], k[acc]
+            x[ra], F[ra] = xn[ka, acc.nonzero().flatten()], fn[ka, acc.nonzero().flatten()]
+            mu[r] = mu[r] * 4.0 ** k.to(F64)  # the rejections before the accepted try (all w when none was)
+            trust[r] = (trust[r] / 2.0 ** k.to(F64)).clamp(min=TRUST_RANGE[0])
+            mu[ra] = (mu[ra] / 3).clamp_min(1e-4)
+            trust[ra] = (trust[ra] * 2).clamp(max=TRUST_RANGE[1])
             pending[pj[acc]] = False
+            tries += w
         stalled = ia[pending]
         done[stalled] = True
         status[stalled] = 2
     capped = torch.nonzero(~done).flatten()
     status[capped] = 3
-    redo = torch.nonzero(status >= 2).flatten()  # stalled or capped: the Hessian in hand may be older than x
-    if len(redo):
+    again = torch.zeros(n, dtype=torch.bool) if keep_capped is None else torch.as_tensor(keep_capped, dtype=torch.bool)
+    redo = torch.nonzero((status >= 2) & ~((status == 3) & again)).flatten()  # stalled or capped: the Hessian in
+    if len(redo):                                                              # hand may be older than x
         F[redo], G[redo], H[redo] = energy.fgh(x[redo], redo)
         n_h[redo] += 1
-    return dict(x=x, f=F, g=G, H=H, status=status, capture=cap_id, sibling=sib_id, n_f=n_f, n_g=n_g, n_h=n_h)
+    return dict(x=x, f=F, g=G, H=H, status=status, capture=cap_id, sibling=sib_id, n_f=n_f, n_g=n_g, n_h=n_h,
+                mu=mu, trust=trust)
 
 
 def polish_evals(effort: dict) -> int:
@@ -499,13 +516,16 @@ class MinimaLibrary:
         x = x.to(F64).cpu()
         ids = torch.full((len(x),), -1, dtype=torch.long)
         best = torch.full((len(x),), float('inf'), dtype=F64)
-        for key in set(tuple(k) for k in keys):
+        groups = {}  # key -> its rows, in one pass (a conditional search has a key per molecule)
+        for i, k in enumerate(keys):
+            groups.setdefault(tuple(k), []).append(i)
+        for key, rows_ in groups.items():
             st = self._stacked(key)
             if st is None:
                 continue
             mids, X, W = st
             shifts = centre_images(key, X.shape[1])
-            rows = torch.tensor([i for i, k in enumerate(keys) if tuple(k) == key])
+            rows = torch.tensor(rows_)
             for c in range(0, len(rows), chunk):
                 r = rows[c:c + chunk]
                 d2 = None
@@ -784,6 +804,15 @@ def bfgs_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol: 
     return dict(x=x, f=F, g=G, H=H, status=status, capture=cap_id, sibling=sib_id, n_f=n_f, n_g=n_g, n_h=n_h)
 
 
+def _without(row, attr: str):
+    """``row``, or a copy of it without ``attr`` when it has one."""
+    if attr not in row.keys():
+        return row
+    r = row.clone()
+    delattr(r, attr)
+    return r
+
+
 def _described(rows, x, device, how):
     """Rows (list) of the crystals ``rows`` at parameters ``x`` [n, d], built and re-described: ``how`` is
     ``identity_description`` or ``canonicalize_aunit``."""
@@ -798,7 +827,8 @@ def finish_minima(rows: list, library: MinimaLibrary, optim_target: str, kT: flo
                   supercell_size: int = 10, predictor=None, exp6_kwargs: Optional[dict] = None,
                   repulsion: float = 1.0, lj_envelope: Optional[float] = 1.0, max_iter: int = 40, tol: float = 1e-4,
                   merge_d2: float = 1.0, device='cpu', energy_chunk: int = 256,
-                  capture_d2: Optional[float] = None, polish: Optional[str] = None):
+                  capture_d2: Optional[float] = None, polish: Optional[str] = None,
+                  defer_after: Optional[int] = None):
     """Turn a last stage's output rows into converged minima, and update ``library``.
 
     - A row the stage captured (``capture_min`` >= 0) is reported as that library minimum: its parameters, handedness
@@ -816,6 +846,15 @@ def finish_minima(rows: list, library: MinimaLibrary, optim_target: str, kT: flo
       identity Hessian is positive semi-definite is matched against the library in the identity description
       (``MinimaLibrary.match`` at ``merge_d2``): a match makes it a recapture of that minimum (it keeps its own
       polished state), otherwise it is added as a new minimum. Rows with any other status are kept and not added.
+    - With ``defer_after``, the polish runs at most that many iterations in this call; a row it leaves at that cap,
+      having used fewer than ``max_iter`` iterations over its calls (its ``polish_iters``, 0 when absent), is not
+      finished here: it is returned in the effort record's ``deferred`` list, at its polished point in the identity
+      description with ``polish_iters`` raised and, under ``newton_polish``, its damping and trust factor
+      (``polish_mu``, ``polish_trust``), from which a later call continues. A polish's wall time is its number of iterations,
+      each a batched call, and a few rows far from a minimum set it (on qm9rc eLJ, 2026-10-31, half the polished
+      rows needed at most 3 Hessians and the slowest 37), so a row that needs many finishes over several calls,
+      its iterations shared with other rows, instead of holding one call open. Every row's total stays below
+      ``max_iter``.
 
     Every returned row is in the report description, re-analysed without ``lj_envelope`` under ``torch.no_grad`` as
     ``gradient_descent_optimization`` re-analyses its outputs (computes 'lj', 'elj' and the target's, ``repulsion``,
@@ -827,10 +866,15 @@ def finish_minima(rows: list, library: MinimaLibrary, optim_target: str, kT: flo
     Returns
     -------
     (list, dict)
-        The rows in their input order, and the effort: ``n_f`` energies, ``n_g`` gradients and ``n_h`` Hessians
+        The rows in their input order (less the deferred), and the effort: ``n_f`` energies, ``n_g`` gradients and
+        ``n_h`` Hessians
         evaluated, ``d`` (``polish_evals`` sums them in row-evaluations).
     """
     n = len(rows)
+    used_iters = [int(r.polish_iters) if 'polish_iters' in r.keys() else 0 for r in rows]  # over earlier calls
+    carried = [(float(r.polish_mu), float(r.polish_trust)) if 'polish_mu' in r.keys() else (1.0, 1.0) for r in rows]
+    for a_ in ('polish_iters', 'polish_mu', 'polish_trust'):  # a group mixes deferred rows with new ones: one schema
+        rows = [_without(r, a_) for r in rows]
     cap = [int(r.capture_min) if 'capture_min' in r.keys() else -1 for r in rows]
     todo = [i for i in range(n) if cap[i] < 0]
     d = int(rows[0].full_cell_parameters().shape[-1])
@@ -854,6 +898,8 @@ def finish_minima(rows: list, library: MinimaLibrary, optim_target: str, kT: flo
     kw = dict(optim_target=optim_target, kT=kT, cutoff=cutoff, supercell_size=supercell_size, predictor=predictor,
               lj_envelope=lj_envelope, exp6_kwargs=exp6_kwargs, device=device, chunk=energy_chunk)
     sib_of = {}  # row -> the row of this call whose converged polish captured it
+    deferred, deferred_idx = [], set()
+    it_call = max_iter if defer_after is None else max(1, min(int(defer_after), max_iter))
     if todo:
         # polish in the identity description: at Z' = 1 a reduced cell, well inside clean_cell_parameters' box. A
         # stage's own description can sit at or past the angle clamp, where StageEnergy (which cleans) is flat in
@@ -873,10 +919,15 @@ def finish_minima(rows: list, library: MinimaLibrary, optim_target: str, kT: flo
         method = polish or ('bfgs' if str(optim_target).lower() in MLIP_TARGETS else 'newton')
         if method not in ('newton', 'bfgs'):
             raise ValueError(f"polish must be 'newton' or 'bfgs', got {polish!r}")
-        res = (bfgs_polish if method == 'bfgs' else newton_polish)(StageEnergy(sub, **kw), x0, max_iter=max_iter,
+        more = {}
+        if method == 'newton' and defer_after is not None:  # a deferred row continues where it stopped
+            more = dict(mu0=torch.tensor([carried[i][0] for i in todo], dtype=F64),
+                        trust0=torch.tensor([carried[i][1] for i in todo], dtype=F64),
+                        keep_capped=torch.tensor([used_iters[i] + it_call < max_iter for i in todo]))
+        res = (bfgs_polish if method == 'bfgs' else newton_polish)(StageEnergy(sub, **kw), x0, max_iter=it_call,
                                                                    tol=tol, capture=capture,
                             capture_d2=float(capture_d2) if capture_d2 is not None else 0.0, keys=keys,
-                            merge_d2=merge_d2)
+                            merge_d2=merge_d2, **more)
         effort['n_f'] += int(res['n_f'].sum())
         effort['n_g'] += int(res['n_g'].sum())
         effort['n_h'] += int(res['n_h'].sum())
@@ -885,7 +936,21 @@ def finish_minima(rows: list, library: MinimaLibrary, optim_target: str, kT: flo
                 sib_of[todo[j]] = todo[int(res['sibling'][j])]
             else:
                 as_captured(todo[j], int(res['capture'][j]))
-        keep = torch.nonzero(res['status'] != 0).flatten()
+        back = torch.zeros(len(todo), dtype=torch.bool)
+        if defer_after is not None:  # left at this call's cap with iterations to spare: polished later
+            used = torch.tensor([used_iters[i] for i in todo])
+            back = (res['status'] == 3) & (used + it_call < max_iter)
+            dj = torch.nonzero(back).flatten()
+            if len(dj):
+                for j, r in zip(dj.tolist(), _described([sub[j] for j in dj.tolist()], res['x'][dj], device,
+                                                        lambda b: None)):
+                    r.polish_iters = torch.tensor([int(used[j]) + it_call])
+                    if 'mu' in res:
+                        r.polish_mu = res['mu'][j].reshape(1).clone()
+                        r.polish_trust = res['trust'][j].reshape(1).clone()
+                    deferred.append(r)
+                    deferred_idx.add(todo[j])
+        keep = torch.nonzero((res['status'] != 0) & ~back).flatten()
         todo, sub = [todo[j] for j in keep.tolist()], [sub[j] for j in keep.tolist()]
         res = {k: v[keep] for k, v in res.items()}
     if todo:
@@ -930,14 +995,15 @@ def finish_minima(rows: list, library: MinimaLibrary, optim_target: str, kT: flo
         recap[i] = mid[k] >= 0
         status[i] = 0 if mid[k] >= 0 else status[k]
 
-    plain = [r.clone() for r in rows]
+    kept = [i for i in range(n) if i not in deferred_idx]
+    plain = [rows[i].clone() for i in kept]
     for r in plain:  # consumed here (and rows of one stage carry it all or none)
         if 'capture_min' in r.keys():
             del r.capture_min
     computes = list({'lj', 'elj', str(optim_target).lower()})
     out = []
-    for c in range(0, n, int(energy_chunk)):  # in energy_chunk rows, as the polish evaluates (an MLIP call is costly)
-        part = range(c, min(c + int(energy_chunk), n))
+    for c in range(0, len(kept), int(energy_chunk)):  # in energy_chunk rows, as the polish evaluates (an MLIP call
+        part = kept[c:c + int(energy_chunk)]          # is costly)
         b = collate_data_list(plain[c:c + int(energy_chunk)]).to(device)
         b.aunit_handedness = torch.stack([rep[i]['hand'].reshape(-1) for i in part]).to(b.aunit_handedness)
         b.set_cell_parameters(torch.stack([rep[i]['x'] for i in part]).to(device, torch.float32),
@@ -948,7 +1014,7 @@ def finish_minima(rows: list, library: MinimaLibrary, optim_target: str, kT: flo
                       assign_outputs=True, elementwise=False, atomwise=True, bins=100,
                       **{f'exp6_{k}': v for k, v in (exp6_kwargs or {}).items()})
         out.extend(b.cpu().detach().batch_to_list())
-    for i, r in enumerate(out):
+    for i, r in zip(kept, out):
         r.minimum_id = torch.tensor([mid[i]])
         r.recapture = torch.tensor([recap[i]])
         r.polish_status = torch.tensor([status[i]])
@@ -957,4 +1023,5 @@ def finish_minima(rows: list, library: MinimaLibrary, optim_target: str, kT: flo
         r.id_params = torch.as_tensor(ident[i]['x']).to(torch.float32).reshape(1, d)
         r.id_handedness = torch.as_tensor(ident[i]['hand']).to(torch.float32).reshape(1, -1)
         r.id_hessian = torch.as_tensor(ident[i]['H']).to(torch.float32).reshape(1, d, d)
+    effort['deferred'] = deferred
     return out, effort
