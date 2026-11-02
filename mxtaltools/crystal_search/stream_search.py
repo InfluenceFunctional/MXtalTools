@@ -55,7 +55,7 @@ starts filling sooner: on MIPCAS eLJ (2026-10-30) a first group of 250 cut the p
 converged polishes from 510 to 272, but the extra group cost wall time, so it suits energies whose calls are costly
 rather than eLJ. With ``polish_defer`` (iterations; default ``POLISH_DEFER`` under the Newton polish, none under
 bfgs, whose inverse-Hessian estimate a deferral would lose), a group's polish stops there and a row it leaves
-unconverged awaits the next group, at its polished point (``finish_minima``'s ``defer_after``; never a seed), so the few rows far
+unconverged awaits the next group, at its polished point (``finish_minima``'s ``defer_after``; seeds too, except under ``stop_p``), so the few rows far
 from a minimum no longer hold every group open; the effort file counts them (``polish_deferred``), and at the end the
 remaining rows are polished in groups until none is deferred. At the end the run writes ``<run>_minima.pt``, one row
 per minimum with its hit counts (``minima.minimum_rows``), and with ``basin_set`` the same minima as a basin set
@@ -861,7 +861,7 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
 
     @timed('finish')
     def finish(rows, seeds=False):
-        """Polish and record a group; returns the rows the polish deferred (``polish_defer``; never seeds)."""
+        """Polish and record a group; returns the rows the polish deferred (``polish_defer``; for seeds not under ``stop_p``)."""
         n_lib0 = len(library) if library is not None else 0
         back = []
         if mcfg is not None:
