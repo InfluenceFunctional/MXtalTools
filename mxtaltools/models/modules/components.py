@@ -35,7 +35,7 @@ class Scalarizer(nn.Module):
         the dot products of the unit reduced vectors with ``embedding_dim`` unit
         directions, each a bias-free linear combination of the reduced vectors,
         [n, embedding_dim * r]. The concatenation passes through ``Linear(4 * r,
-        output_dim)``, :class:`Normalization` (called without a batch vector),
+        output_dim)``, :class:`Normalization` (given the batch vector when one is passed),
         :class:`Activation` and dropout. Norms in the denominators carry an epsilon of
         1e-3.
 
@@ -71,9 +71,10 @@ class Scalarizer(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
 
     def forward(self,
-                v: torch.Tensor
+                v: torch.Tensor,
+                batch: Optional[torch.LongTensor] = None
                 ) -> torch.Tensor:
-        """Return scalars [n, output_dim] from vectors ``v`` [n, 3, hidden_dim]."""
+        """Return scalars [n, output_dim] from vectors ``v`` [n, 3, hidden_dim]; ``batch`` is each row's graph index, for graph-level norms."""
         eps = 1e-3
         v_red = self.dim_red(v)
         norm = torch.linalg.norm(v_red, dim=1)
@@ -86,7 +87,7 @@ class Scalarizer(nn.Module):
 
         v2 = torch.cat([norm, projections.flatten(1)], dim=1)
 
-        return self.dropout(self.activation(self.norm(self.linear(v2))))
+        return self.dropout(self.activation(self.norm(self.linear(v2), batch=batch)))
 
 
 class VectorActivation(nn.Module):
@@ -727,9 +728,10 @@ class vectorMLP(scalarMLP):
         return_latent : bool, optional
             Also return the last hidden scalar activation, before the output layer.
         batch : torch.LongTensor, optional
-            Graph index of each row, forwarded to the scalar and vector block
-            normalizations (not to the gate normalizations or the :class:`Scalarizer`
-            layers).
+            Graph index of each row, forwarded to every normalization: the scalar and
+            vector blocks, the gates and the :class:`Scalarizer` layers. Without it, a
+            graph-level norm mode pools its statistics over the whole batch, so a row's
+            output depends on its batch-mates.
 
         Returns
         -------
@@ -758,9 +760,9 @@ class vectorMLP(scalarMLP):
             'scalar forward'
             if self.v_to_s_combination == 'concatenate':
                 # concatenate vector lengths to scalar values
-                x = torch.cat([x, v2s_linear(v)], dim=-1)
+                x = torch.cat([x, v2s_linear(v, batch=batch)], dim=-1)
             elif self.v_to_s_combination == 'sum':
-                x = x + v2s_linear(v)
+                x = x + v2s_linear(v, batch=batch)
             else:
                 assert False, f'{self.v_to_s_combination} not implemented'
 
@@ -770,7 +772,7 @@ class vectorMLP(scalarMLP):
                 x = res_x + s_dropout(s_act(s_linear(s_norm(x, batch=batch))))
 
             'vector forward'  # A(FC(x)) * FC(N(v))   # rescaling factor keeps norm from exploding
-            s2v_gating = s2v_act(s2v_norm(s2v_linear(x))[:, None, :])
+            s2v_gating = s2v_act(s2v_norm(s2v_linear(x), batch=batch)[:, None, :])
             v = v_act(v_norm(v_linear(v), batch=batch))
             v = (res_v + s2v_gating * v) / self.vector_addition_rescaling_factor
 

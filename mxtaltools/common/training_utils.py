@@ -150,7 +150,8 @@ def make_sequential_directory(yaml_path, workdir):  # make working directory
     Parameters
     ----------
     yaml_path : str or path-like
-        Config file path; must contain ``'configs'``.
+        Config file path. Without ``'configs'`` in it, the identifier starts from ``'_'``
+        plus the file's stem.
     workdir : str
         Prefix to which the identifier is appended by string concatenation (no separator is
         inserted).
@@ -164,13 +165,12 @@ def make_sequential_directory(yaml_path, workdir):  # make working directory
 
     Raises
     ------
-    IndexError
-        If ``'configs'`` does not occur in ``yaml_path``.
     FileExistsError
         If the directory already exists.
     """
-    run_identifier = str(yaml_path).split('.yaml')[0].split('configs')[1].replace('\\', '_').replace(
-        '/', '_') + '_' + datetime.today().strftime("%d-%m-%H-%M-%S")
+    stem = str(yaml_path).split('.yaml')[0]
+    tail = stem.split('configs')[1] if 'configs' in stem else '_' + os.path.basename(stem)
+    run_identifier = tail.replace('\\', '_').replace('/', '_') + '_' + datetime.today().strftime("%d-%m-%H-%M-%S")
     working_directory = workdir + run_identifier
     os.mkdir(working_directory)
     return run_identifier, working_directory

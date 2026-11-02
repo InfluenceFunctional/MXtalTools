@@ -167,12 +167,20 @@ class Mo3ENet(BaseGraphModel):
         Raises
         ------
         AssertionError
-            Unless ``override_centering``, when the norm of the mean position over all
-            nodes of the batch (not per graph) is not below 1e-3.
+            Unless ``override_centering``, when any graph's heavy-atom centroid (the
+            convention of ``MolData.recenter_molecules``' default) is 1e-3 or more from
+            the origin.
         """
         # normalize radii
         if not override_centering:
-            assert torch.linalg.norm(mol_batch.pos.mean(0)) < 1e-3, "Encoder trained only for centered molecules!"
+            heavy = mol_batch.z > 1
+            n_heavy = torch.zeros(mol_batch.num_graphs, device=mol_batch.pos.device).index_add_(
+                0, mol_batch.batch[heavy], torch.ones_like(mol_batch.batch[heavy], dtype=mol_batch.pos.dtype))
+            centroids = torch.zeros(mol_batch.num_graphs, 3, device=mol_batch.pos.device,
+                                    dtype=mol_batch.pos.dtype).index_add_(
+                0, mol_batch.batch[heavy], mol_batch.pos[heavy]) / n_heavy.clamp(min=1)[:, None]
+            assert torch.linalg.norm(centroids, dim=1).amax() < 1e-3, \
+                "Encoder expects each molecule centred on its heavy-atom centroid"
         mol_batch.pos /= self.radial_normalization
         _, encoding = self.encoder(mol_batch)
 

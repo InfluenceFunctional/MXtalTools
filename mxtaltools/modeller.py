@@ -3,6 +3,7 @@ import gc
 import glob
 import multiprocessing as mp
 import os
+import sys
 from argparse import Namespace
 from pathlib import Path
 from time import time
@@ -67,6 +68,10 @@ class Modeller:
         self.sweep_config = sweep_config
         self.device = self.config.device
         self.separator_string = "⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅"
+        try:  # a console in a legacy code page (Windows cp1252) cannot print it
+            self.separator_string.encode(sys.stdout.encoding or 'utf-8')
+        except (UnicodeEncodeError, LookupError):
+            self.separator_string = '-' * 80
         self.always_do_analysis = False
         if self.config.device == 'cuda':
             backends.cudnn.benchmark = True  # auto-optimizes certain backend processes
@@ -1051,7 +1056,7 @@ class Modeller:
 
     def embedding_regression_step(self, data, update_weights):
         data = data.to(self.device)
-        _, data = self.preprocess_ae_inputs(data, no_noise=True, orientation_override=None)
+        data = self.preprocess_ae_inputs(data, orientation_override=None)  # targets keep the input frame
         v_embedding = self.models_dict['autoencoder'].encode(data)
         s_embedding = self.models_dict['autoencoder'].scalarizer(v_embedding)
 
@@ -1644,7 +1649,7 @@ class Modeller:
 
     def preprocess_ae_inputs(self,
                              mol_batch,
-                             orientation_override: Optional[str] = None,
+                             orientation_override: str = 'random',
                              noise: Optional[float] = None,
                              deprotonate: bool = False,
                              affine_scale: Optional[float] = None):
@@ -1655,11 +1660,14 @@ class Modeller:
         if affine_scale is not None:
             mol_batch.scale_positions(affine_scale)
 
-        # random global roto-inversion or standardization
-        mol_batch.orient_molecule(
-            mode=orientation_override,
-            include_inversion=True,
-        )
+        # random global roto-inversion or standardization; None recenters without rotating
+        if orientation_override is None:
+            mol_batch.recenter_molecules()
+        else:
+            mol_batch.orient_molecule(
+                mode=orientation_override,
+                include_inversion=True,
+            )
 
         # optionally, deprotonate
         if deprotonate:

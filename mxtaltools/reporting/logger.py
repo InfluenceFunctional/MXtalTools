@@ -1,3 +1,5 @@
+import os
+import tempfile
 from time import time
 
 import numpy as np
@@ -275,24 +277,22 @@ class Logger:
         remainder_keys = [key for key in feat_keys if key not in rdf_keys + frag_keys]
         clipped_frag_keys = [key.split('_fragment_count')[0] for key in frag_keys]
 
-        fig_dict = {'mol_properties': property_comparison_fig([train_feats_dict, test_feats_dict],
-                                                              remainder_keys, dataset_names, num_cols=5,
-                                                              titles=remainder_keys,
-                                                              log=False),
-                    'mol_rdfs': property_comparison_fig([train_feats_dict, test_feats_dict],
-                                                        rdf_keys, dataset_names, num_cols=5, titles=rdf_keys,
-                                                        log=False),
-                    'mol_fragments': property_comparison_fig([train_feats_dict, test_feats_dict],
-                                                             frag_keys, dataset_names, num_cols=12,
-                                                             titles=clipped_frag_keys,
-                                                             log=True)}
+        fig_dict = {}
+        for name, keys, num_cols, titles, log in (('mol_properties', remainder_keys, 5, remainder_keys, False),
+                                                  ('mol_rdfs', rdf_keys, 5, rdf_keys, False),
+                                                  ('mol_fragments', frag_keys, 12, clipped_frag_keys, True)):
+            if keys:  # a feature family the analysis did not produce has no figure
+                fig_dict[name] = property_comparison_fig([train_feats_dict, test_feats_dict],
+                                                         keys, dataset_names, num_cols=num_cols,
+                                                         titles=titles, log=log)
         dists_dict, fig_dict['dataset_comparison'] = distribution_comparison(train_feats_dict, test_feats_dict,
                                                                              feat_keys)
 
         for key, fig in fig_dict.items():
-            fig.write_image(key + 'fig.png', width=2048,
+            image_path = os.path.join(tempfile.gettempdir(), key + 'fig.png')  # not the launch directory
+            fig.write_image(image_path, width=2048,
                             height=1024)  # save the image rather than the fig, for size reasons
-            fig_dict[key] = self.wandb.Image(key + 'fig.png')
+            fig_dict[key] = self.wandb.Image(image_path)
 
         self.wandb.log(data=fig_dict, commit=False)
         self.last_logged_dataset_stats = time()
