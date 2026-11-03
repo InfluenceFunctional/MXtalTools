@@ -408,7 +408,7 @@ def normalizer_images(batch, table=None):
     out.aunit_centroid = centroid
     if not hasattr(out, 'T_fc') or out.T_fc is None:
         out.box_analysis()
-    canonicalize_aunit(out)
+    canonicalize_aunit(out, origin_shift=False)  # an origin shift would move an image into another coset
     _snap_edge_sliver(out, moved)
     out.aunit_centroid[~moved], out.aunit_orientation[~moved], out.aunit_handedness[~moved] = kept
     return out, source, coset

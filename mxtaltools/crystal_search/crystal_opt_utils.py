@@ -67,19 +67,60 @@ def wrap_centroid(raw_centroid: torch.Tensor) -> torch.Tensor:
     return wrapped + (wrapped.clamp(0, CELL_EDGE) - wrapped).detach()
 
 
-def canonicalize_aunit(crystal_batch):
+AUNIT_BOX_TOL = 1e-5  # canonicalize_aunit: an image with margin >= -AUNIT_BOX_TOL is inside its box
+# canonicalize_aunit's candidate origin shifts: the half-cell grid, zero first (the order is the tie rule)
+ORIGIN_SHIFTS = tuple((x, y, z) for x in (0.0, 0.5) for y in (0.0, 0.5) for z in (0.0, 0.5))
+
+
+def _deepest_images(f, ops, has_op, box):
+    """For centres f [n, 3] (float64, fractional) under each row's operators ops [n, n_ops, 4, 4] (has_op [n, n_ops]
+    marks the real ones), the image deepest inside the row's box [n, 3]: (margin [n], centre [n, 3] wrapped into
+    [0, 1), operator index [n] long). margin = min over axes of 1 - c / box: > 0 strictly inside, 0 on a face. Ties
+    (face points) keep the earlier operator, the identity first."""
+    best_margin, best_c, best_j = None, None, None
+    for j in range(ops.shape[1]):
+        c = torch.einsum('nij,nj->ni', ops[:, j, :3, :3], f) + ops[:, j, :3, 3]
+        c = c - torch.floor(c)
+        c = torch.where(c >= 1, c - 1, c)  # c = -1e-17 rounds to 1; the builders clip 1 to CELL_EDGE, 1e-4 off
+        margin = (1 - c / box).amin(dim=1)
+        margin = torch.where(has_op[:, j], margin, torch.full_like(margin, -torch.inf))
+        if best_margin is None:
+            best_margin, best_c, best_j = margin, c, torch.zeros(len(f), dtype=torch.long, device=f.device)
+        else:  # strict: ties keep the earlier operator
+            take = margin > best_margin
+            best_margin = torch.where(take, margin, best_margin)
+            best_c = torch.where(take[:, None], c, best_c)
+            best_j = torch.where(take, torch.full_like(best_j, j), best_j)
+    return best_margin, best_c, best_j
+
+
+def canonicalize_aunit(crystal_batch, origin_shift: bool = True):
     """In place: re-express every asymmetric-unit molecule by the symmetry image whose centre lies in
-    its space group's asymmetric-unit box (ASYM_UNITS). The crystal is unchanged: the image of molecule k under
+    its space group's asymmetric-unit box (ASYM_UNITS). The crystal is unchanged (up to the rigid origin shift
+    below): the image of molecule k under
     (R, t) has centre R f + t (wrapped into the cell) and pose R_cart R(rotvec) diag(h, 1, 1), R_cart = T_fc R T_cf
     (as MolCrystalOps._transform_aunit_params); the pose is split back into a canonical rotvec and handedness by
     zp_doubling.proper_rotvecs, which projects it onto the nearest rotation first (float32 cell angles leave R_cart
     ~1e-7 off orthogonal, which rotmat2rotvec amplifies near a rotation by pi) and puts rotvecs on the +z hemisphere
     the latent transforms expect. Needed after a wrap-mode relaxation, whose centres may sit anywhere in the cell,
     before anything that reads asymmetric-unit coordinates (cleaning, latent transforms, datasets).
-    Requires current T_fc / T_cf (box_analysis). Raises ValueError if some molecule has no image in its box
-    (best margin below -1e-5), i.e. the tabulated box is not a fundamental domain for that crystal's operator list.
     The image chosen is the one whose centre is deepest inside the box (largest min over axes of 1 - c / box); ties
-    keep the lower operator index. Slots k with z_prime <= k are left unchanged. Builds and caches
+    keep the lower operator index.
+
+    Origin shift. Where SYM_OPS[sg] is ITA origin choice 2 but the tabulated box is an origin-choice-1 asymmetric
+    unit (P4_2/n, sg 86, among others), the box is not a fundamental domain of the operators: about half of all
+    centres have no image in it. With ``origin_shift`` (the default), a row in which some molecule has no image in
+    its box is first translated rigidly by the first v in ORIGIN_SHIFTS (half-cell grid, zero first) that maps the
+    row's own operator list onto itself ((R - I) v integral for every operator, so the same operators describe the
+    moved crystal) and gives every molecule of the row an image in its box; all of the row's molecules move by the
+    same v. The result is the same crystal (cell, poses, energy and RDF unchanged) with its atoms translated by v.
+    A row with an image for every molecule at v = 0 is never shifted, so its result is exactly that of
+    origin_shift=False. Callers that need the input's origin (standardize.normalizer_images) pass origin_shift=False.
+
+    Requires current T_fc / T_cf (box_analysis). Raises ValueError if some molecule has no image in its box (best
+    margin below -AUNIT_BOX_TOL) under every allowed origin shift, i.e. the tabulated box is not a fundamental domain
+    for that crystal's operator list even up to those shifts (with SYM_OPS: sg 70, 85, 126, 130, 133, 137). Slots k
+    with z_prime <= k are left unchanged. Builds and caches
     crystal_batch.asym_unit_dict if absent; replaces aunit_centroid, aunit_orientation and aunit_handedness with new
     tensors (the cell and T_fc / T_cf are not touched, box_analysis is not rerun) and returns None."""
     from mxtaltools.crystal_building.zp_doubling import proper_rotvecs
@@ -99,40 +140,51 @@ def canonicalize_aunit(crystal_batch):
     ops = torch.stack([torch.cat([o, eye.expand(n_ops - len(o), 4, 4)]) for o in op_lists])  # [n, n_ops, 4, 4]
     has_op = torch.stack([torch.arange(n_ops, device=device) < len(o) for o in op_lists])  # [n, n_ops]
     rows = torch.arange(len(ops), device=device)
+    zp = crystal_batch.z_prime.to(device).reshape(-1)
+    slots = [slice(3 * k, 3 * k + 3) for k in range(crystal_batch.max_z_prime)]
+    present = [zp > k for k in range(len(slots))]  # padding of lower-Z' crystals is left alone
 
-    for k in range(crystal_batch.max_z_prime):
-        sl = slice(3 * k, 3 * k + 3)
-        present = crystal_batch.z_prime.to(device).reshape(-1) > k  # padding of lower-Z' crystals is left alone
-        f = centroid[:, sl].to(f64)
-        best_margin, best_c, best_j = None, None, None
-        for j in range(n_ops):
-            c = torch.einsum('nij,nj->ni', ops[:, j, :3, :3], f) + ops[:, j, :3, 3]
-            c = c - torch.floor(c)
-            c = torch.where(c >= 1, c - 1, c)  # c = -1e-17 rounds to 1; the builders clip 1 to CELL_EDGE, 1e-4 off
-            margin = (1 - c / box).amin(dim=1)  # > 0 strictly inside the box, 0 on a face
-            margin = torch.where(has_op[:, j], margin, torch.full_like(margin, -torch.inf))
-            if best_margin is None:
-                best_margin, best_c, best_j = margin, c, torch.zeros_like(rows)
-            else:  # strict: ties (face points) keep the earlier operator, the identity first
-                take = margin > best_margin
-                best_margin = torch.where(take, margin, best_margin)
-                best_c = torch.where(take[:, None], c, best_c)
-                best_j = torch.where(take, torch.full_like(best_j, j), best_j)
-        bad = present & (best_margin < -1e-5)
-        if bad.any():
-            raise ValueError(f"canonicalize_aunit: {int(bad.sum())} molecule(s) have no symmetry image inside the "
-                             f"asymmetric-unit box (space groups {sorted(set(crystal_batch.sg_ind[bad].tolist()))})")
-        if not present.any():
+    images = [list(_deepest_images(centroid[:, sl].to(f64), ops, has_op, box)) for sl in slots]
+    row_ok = torch.stack([~p | (im[0] >= -AUNIT_BOX_TOL) for p, im in zip(present, images)]).all(0)
+    if origin_shift and not bool(row_ok.all()):
+        r_minus_i = ops[:, :, :3, :3] - torch.eye(3, dtype=f64, device=device)
+        for v in ORIGIN_SHIFTS[1:]:  # one pass over a fixed list
+            v = torch.tensor(v, dtype=f64, device=device)
+            d = torch.einsum('noij,j->noi', r_minus_i, v)
+            keeps_ops = ((d - torch.round(d)).abs() < 1e-6).all(-1).all(-1)  # padding operators are I: d = 0
+            todo = torch.nonzero(~row_ok & keeps_ops).flatten()
+            if len(todo) == 0:
+                continue
+            trial = [_deepest_images(centroid[todo, sl].to(f64) + v, ops[todo], has_op[todo], box[todo])
+                     for sl in slots]
+            ok = torch.stack([~p[todo] | (t[0] >= -AUNIT_BOX_TOL) for p, t in zip(present, trial)]).all(0)
+            take = todo[ok]
+            for im, t in zip(images, trial):
+                for q in range(3):
+                    im[q][take] = t[q][ok]
+            row_ok[take] = True
+            if bool(row_ok.all()):
+                break
+
+    bad = torch.stack([p & ~row_ok & (im[0] < -AUNIT_BOX_TOL) for p, im in zip(present, images)])  # [zp, n]
+    if bad.any():
+        raise ValueError(f"canonicalize_aunit: {int(bad.sum())} molecule(s) have no symmetry image inside the "
+                         f"asymmetric-unit box{' under any allowed origin shift' if origin_shift else ''} (space "
+                         f"groups {sorted(set(crystal_batch.sg_ind[bad.any(0)].tolist()))})")
+    for k, sl in enumerate(slots):
+        _, best_c, best_j = images[k]
+        pres = present[k]
+        if not pres.any():
             continue
-        r_frac = ops[rows[present], best_j[present], :3, :3]
-        r_cart = t_fc[present] @ r_frac @ t_cf[present]
-        h_old = handedness[present, k].to(f64)
-        pose = rotvec2rotmat(orientation[present, sl].to(f64))  # present rows only: padding may be NaN
+        r_frac = ops[rows[pres], best_j[pres], :3, :3]
+        r_cart = t_fc[pres] @ r_frac @ t_cf[pres]
+        h_old = handedness[pres, k].to(f64)
+        pose = rotvec2rotmat(orientation[pres, sl].to(f64))  # present rows only: padding may be NaN
         pose = pose * torch.stack([h_old, torch.ones_like(h_old), torch.ones_like(h_old)], 1)[:, None, :]
-        rv, h = proper_rotvecs(r_cart @ pose)
-        centroid[present, sl] = best_c[present].to(centroid.dtype)
-        orientation[present, sl] = rv.to(orientation.dtype)
-        handedness[present, k] = h.to(handedness.dtype)
+        rv, h = proper_rotvecs(r_cart @ pose)  # an origin shift is a pure translation: poses do not see it
+        centroid[pres, sl] = best_c[pres].to(centroid.dtype)
+        orientation[pres, sl] = rv.to(orientation.dtype)
+        handedness[pres, k] = h.to(handedness.dtype)
 
     crystal_batch.aunit_centroid = centroid
     crystal_batch.aunit_orientation = orientation
@@ -142,8 +194,8 @@ def canonicalize_aunit(crystal_batch):
 def fd_fold_aunit(crystal_batch):
     """In place, the wrap-mode end of a stage with ``fd_refold``: every Z' = 1 row re-described by its crystal_fd
     canonical form read off the BUILT lattice (``fd_refold.fold_batch``, sheet +1), instead of canonicalize_aunit.
-    Never raises for a row (canonicalize_aunit raises in sg 48, 50, 59, 68, 70, 85, 86, 126, 130, 133, 137, 141,
-    whose ASYM_UNITS box does not hold an image of every centre); centres wrapped into [0, 1); rotation vectors on the
+    Never raises for a row (canonicalize_aunit raises in sg 70, 85, 126, 130, 133, 137, whose ASYM_UNITS box does
+    not hold an image of every centre even up to an origin shift); centres wrapped into [0, 1); rotation vectors on the
     +z hemisphere; a row crystal_fd does not take keeps its wrapped centre and rotation. The centres are NOT re-expressed
     inside the ASYM_UNITS box: re-express them before a clamp-mode stage, latent transform or hop kick. Returns [num_graphs] int8
     ``fd_refold.REFOLD_STATUS`` codes (0: folded). Raises ValueError for a batch that is not Z' = 1."""

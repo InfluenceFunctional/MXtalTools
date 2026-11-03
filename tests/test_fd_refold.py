@@ -16,7 +16,8 @@ Contracts.
    (F < 0) with their own molecule; eLJ against the energy that run stored.
 3. A refold result is never itself a trigger (the termination argument), is inside the clean ranges with centres in
    [0, 1); results the next clean would change are refused and the row returned as it was.
-4. fold_batch (the end of a stage) never raises, also where canonicalize_aunit raises (control: it does there).
+4. fold_batch (the end of a stage) never raises, also where canonicalize_aunit(origin_shift=False) raises (control:
+   it does there).
 5. gradient_descent_optimization: fd_refold=False is the default and gives exactly what omitting it gives (records,
    outputs, no new keys); fd_refold=True refolds triggered rows before step 0 is evaluated, with step 0's energy equal
    to the unrefolded crystal's (the off run's step 0); records and outputs carry the counts; the attempt cap holds;
@@ -362,10 +363,10 @@ def test_triggers():
 def test_fold_batch_never_raises_where_canonicalize_aunit_does(mol):
     sg, p, h = _case('raising', n=36, seed=7)
     raised = set()
-    for i in range(len(sg)):  # control: the old end-of-stage call raises in each of these groups
+    for i in range(len(sg)):  # control: the box fold without its origin shift raises in each of these groups
         x = _rows(mol, sg[i:i + 1], p[i:i + 1], h[i:i + 1])
         try:
-            cou.canonicalize_aunit(x)
+            cou.canonicalize_aunit(x, origin_shift=False)
         except ValueError:
             raised.add(sg[i])
     assert raised == set(RAISING), sorted(set(RAISING) - raised)
