@@ -2750,7 +2750,8 @@ class MolCrystalOps:
                                n_kde: int = 200,
                                bw_factor: float = 0.05,
                                override_energy: Optional[torch.Tensor] = None,
-                               gauge_fix_free_axes: bool = True, ):
+                               gauge_fix_free_axes: bool = True,
+                               samples=None, ):
         """Plot one-sided violin (KDE) distributions of every cell parameter (plotly), one subplot per parameter.
 
         Batch only: for a single crystal it prints a message and returns None.
@@ -2790,6 +2791,10 @@ class MolCrystalOps:
             Energies used for ``quantiles`` instead of ``self.lj``.
         gauge_fix_free_axes : bool
             Forwarded to ``latent_params`` when ``space='latent'``.
+        samples : array-like, optional
+            [num_graphs, columns] coordinates of this batch's rows in ``space``, used in place of computing them (a
+            caller whose chart differs from this class's, e.g. another length box on ``'fd'``); NaN where a row has
+            none. The column labels are still ``space``'s.
 
         Returns
         -------
@@ -2800,7 +2805,13 @@ class MolCrystalOps:
             return None
 
         lattice_features = self._build_feature_labels(space=space)
-        samples = self._get_samples(space, gauge_fix_free_axes=gauge_fix_free_axes)
+        if samples is None:
+            samples = self._get_samples(space, gauge_fix_free_axes=gauge_fix_free_axes)
+        else:
+            samples = (samples.detach().cpu().double().numpy() if torch.is_tensor(samples)
+                       else np.asarray(samples, dtype=np.float64))
+            if samples.shape[0] != self.num_graphs:
+                raise ValueError(f"samples has {samples.shape[0]} rows for a batch of {self.num_graphs}")
         num_dists, dist_names, dists = self._collect_sample_dists(samples, ref_dist, quantiles, split_by_sg,
                                                                   split_by_zp, aux_dists, override_energy)
         # delete or NaN unused higher Z' elements
