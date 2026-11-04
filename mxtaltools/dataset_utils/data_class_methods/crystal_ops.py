@@ -610,6 +610,11 @@ class MolCrystalOps:
 
                 if not torch.is_tensor(value):
                     if isinstance(value, list) and len(value) > 0 and isinstance(value[0], np.ndarray):
+                        if len({np.shape(v) for v in value}) > 1:
+                            # per-row arrays of different shapes (the symmetry operators of a batch over several
+                            # space groups): kept as the per-row list, as the batch holds them
+                            setattr(self, key, value)
+                            continue
                         value = np.asarray(value)
 
                     value = torch.as_tensor(

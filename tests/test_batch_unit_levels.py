@@ -1023,3 +1023,19 @@ def test_refusals_hold_under_python_O(under_O):
     assert under_O['optimize'] == 1 and not under_O['asserts_active']
     for name in REFUSALS:
         _judge(name, under_O[name])
+
+
+def test_set_mol_attrs_keeps_per_row_arrays_of_different_shapes_as_a_list():
+    """GFN's blank-batch route over several space groups: the source's per-row symmetry operators are arrays of
+    different lengths (2 for sg 2, 4 for sg 14); they are kept as the per-row list, not stacked (which raised)."""
+    from mxtaltools.dataset_utils.data_classes import MolCrystalData
+    from mxtaltools.dataset_utils.utils import collate_data_list
+    src = collate_data_list([_mol('A'), _mol('B')])
+    ops = [np.zeros((2, 4, 4)), np.zeros((4, 4, 4))]
+    src.symmetry_operators = ops
+    blank = collate_data_list([MolCrystalData(max_z_prime=1)], max_z_prime=1)
+    blank.__dict__['_num_graphs'] = src.num_graphs
+    blank['device'] = src.device
+    blank.set_mol_attrs(src.clone())
+    del blank['device']
+    assert [o.shape for o in blank.symmetry_operators] == [(2, 4, 4), (4, 4, 4)]
