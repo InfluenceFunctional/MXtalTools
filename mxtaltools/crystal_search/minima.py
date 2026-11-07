@@ -47,7 +47,7 @@ POLISH_PAR = 3  # of those tries, evaluated together in one call: the first that
 # another would take it (a call's cost is mostly its latency; on qm9rc eLJ, 2026-10-31, 3.4 tries per iteration)
 TRUST_RANGE = (1 / 16, 16.0)  # bounds of the per-row factor on POLISH_CAPS (doubled on an accepted step, halved else)
 POLISH_STATUS = {0: 'captured (in the stage or the polish)', 1: 'converged', 2: 'stalled', 3: 'iteration cap',
-                 4: 'left the cell-parameter box'}
+                 4: 'left the cell-parameter box', 5: 'endpoint (no polish: the last stage converged it)'}
 NEG_REL = 1e-6  # a Hessian counts as positive semi-definite when its lowest eigenvalue is above -NEG_REL * its highest
 FLAT_REL = 1e-9  # an eigen-direction whose |curvature| is below this times the largest is flat (the energy ignores it)
 FLAT_GRAD = 1e-3  # E/kT per unit coordinate: a flat direction with a smaller gradient component is converged along it
@@ -109,6 +109,90 @@ def ellipsoid_factor(H: torch.Tensor) -> torch.Tensor:
     direction, such as a free centre axis in a polar group, adds nothing)."""
     lam, V = torch.linalg.eigh(H.to(F64))
     return V * lam.clamp_min(0).sqrt().unsqueeze(-2)
+
+
+def so3_jacobian(r: torch.Tensor) -> torch.Tensor:
+    """[n, 3, 3] the right Jacobian of SO(3) at rotation vectors ``r`` [n, 3]: omega = J(r) dr is the body angular
+    step of the step dr, J = I - (1 - cos t) / t^2 K + (t - sin t) / t^3 K^2 with t = |r| and K = [r]x (series near 0).
+    The left Jacobian is R J, so |omega| does not depend on the side."""
+    r = torch.as_tensor(r, dtype=F64).reshape(-1, 3)
+    t = r.norm(dim=1)
+    K = torch.zeros(len(r), 3, 3, dtype=F64)
+    K[:, 0, 1], K[:, 0, 2], K[:, 1, 2] = -r[:, 2], r[:, 1], -r[:, 0]
+    K = K - K.transpose(1, 2)
+    small = t < 1e-4
+    ts = torch.where(small, torch.ones_like(t), t)
+    a = torch.where(small, 0.5 - t ** 2 / 24, (1 - torch.cos(ts)) / ts ** 2)
+    b = torch.where(small, 1 / 6 - t ** 2 / 120, (ts - torch.sin(ts)) / ts ** 3)
+    return torch.eye(3, dtype=F64) - a[:, None, None] * K + b[:, None, None] * (K @ K)
+
+
+def metric_factor(x: torch.Tensor, rg) -> torch.Tensor:
+    """W [n, 12, 12] with |W^T dx| the Angstrom length of a parameter step dx at the Z' = 1 parameters ``x`` [n, 12]
+    in the FD identity metric's coordinates (crystal_fd.metric): lengths as they are; angles times sqrt(b c),
+    sqrt(a c), sqrt(a b); the fractional centre through the cell matrix T_fc; the rotation vector times the molecule's
+    radius of gyration ``rg`` (A, ``molecule_rg``; a float or one per row). W = A^T for that step map A, so a library built with these factors
+    measures d^2 in A^2 (a ball), as one built with ``ellipsoid_factor`` measures it in kT. The rotation block is
+    rg times the SO(3) Jacobian J(r) of the rotation vector r = x[9:12], so a small step's length is rg times the
+    geodesic angle between the two orientations, as crystal_fd.metric measures it (2 sin(|r|/2) / |r| = 0.64 of the
+    plain step perpendicular to r at |r| = pi)."""
+    from mxtaltools.crystal_fd.ops import cell_matrices
+    x = torch.as_tensor(x, dtype=F64).reshape(-1, x.shape[-1]).cpu()
+    if x.shape[1] != 12:
+        raise NotImplementedError("metric_factor: Z' = 1 (12 parameters) only")
+    n = len(x)
+    A = torch.zeros(n, 12, 12, dtype=F64)
+    A[:, :3, :3] = torch.eye(3, dtype=F64)
+    a, b, c = x[:, 0], x[:, 1], x[:, 2]
+    A[:, 3:6, 3:6] = torch.diag_embed(torch.stack([torch.sqrt(b * c), torch.sqrt(a * c), torch.sqrt(a * b)], 1))
+    A[:, 6:9, 6:9] = cell_matrices(x[:, :6])
+    rg = torch.as_tensor(rg, dtype=F64).reshape(-1).expand(n)
+    A[:, 9:12, 9:12] = rg[:, None, None] * so3_jacobian(x[:, 9:12])
+    return A.transpose(1, 2)
+
+
+def ball_net(x: torch.Tensor, keys: list, rg: torch.Tensor, radius: float, chunk: int = 256) -> torch.Tensor:
+    """Greedy net of identity-description Z' = 1 rows ``x`` [n, 12] taken in the given order (e.g. ascending energy):
+    a row is kept when no kept row of its key (``identity_key``) lies within ``radius`` A of it, measured with the
+    kept row's ``metric_factor`` (``rg`` [n], A) at the nearest centre image (``centre_images``, ``min_image``).
+    Returns the kept rows' indices, ascending. The kept set is a ``radius``-net of the input: every row lies within
+    ``radius`` of a kept one, and kept ones are at least ``radius`` apart under the earlier one's factor."""
+    x = torch.as_tensor(x, dtype=F64).cpu()
+    rg = torch.as_tensor(rg, dtype=F64).reshape(-1).expand(len(x)).cpu()
+    r2 = float(radius) ** 2
+    groups = {}
+    for i, k in enumerate(keys):
+        groups.setdefault(tuple(k), []).append(i)
+    kept = []
+
+    def d2_to(X, W, y, shifts, block=2048):  # [b, m]: |W_m^T (y_b - X_m - s)|^2 at the nearest shift
+        out = []
+        for m0 in range(0, len(X), block):
+            Xb, Wb, best = X[m0:m0 + block], W[m0:m0 + block], None
+            for s_ in shifts:
+                v = torch.einsum('mji,bmj->bmi', Wb, min_image(y[:, None, :] - Xb[None] - s_)).pow(2).sum(-1)
+                best = v if best is None else torch.minimum(best, v)
+            out.append(best)
+        return torch.cat(out, 1)
+
+    for key, rows_ in groups.items():
+        shifts = centre_images(key, x.shape[1])
+        Xk = torch.empty(0, x.shape[1], dtype=F64)
+        Wk = torch.empty(0, x.shape[1], x.shape[1], dtype=F64)
+        for c in range(0, len(rows_), int(chunk)):
+            r = torch.tensor(rows_[c:c + int(chunk)])
+            if len(Xk):
+                r = r[d2_to(Xk, Wk, x[r], shifts).min(1).values > r2]
+            if not len(r):
+                continue
+            Wr = metric_factor(x[r], rg[r])
+            close = d2_to(x[r], Wr, x[r], shifts).T <= r2  # close[a, b]: b within the radius of a (a's factor)
+            keep = torch.zeros(len(r), dtype=torch.bool)
+            for j in range(len(r)):
+                keep[j] = not bool((keep[:j] & close[:j, j]).any())
+            Xk, Wk = torch.cat([Xk, x[r[keep]]]), torch.cat([Wk, Wr[keep]])
+            kept.extend(r[keep].tolist())
+    return torch.tensor(sorted(kept), dtype=torch.long)
 
 
 def is_psd(H: torch.Tensor) -> torch.Tensor:
@@ -466,10 +550,14 @@ class MinimaLibrary:
     E/kT there, E/kT and its key (``identity_key``: molecule, space group, Z', handedness signs); ``nearest`` and
     ``match`` measure against these, d^2 = dx^T H_+ dx (``ellipsoid_factor``) at the nearest image of dx
     (``min_image`` over the offsets of ``centre_images``), minima of the same key only. In the report description (asymmetric-unit box, ``canonicalize_aunit``): parameters, handedness and Hessian,
-    which a row reported as the minimum carries."""
+    which a row reported as the minimum carries.
 
-    def __init__(self, fd_merge: Optional[float] = FD_MERGE_A):
+    A ball library (``ball``, the endpoint mode of ``finish_endpoints``) holds no Hessians: each minimum's factor is
+    ``metric_factor`` at its parameters, so d^2 is in A^2 and ``capture_d2`` / ``merge_d2`` are squared radii."""
+
+    def __init__(self, fd_merge: Optional[float] = FD_MERGE_A, ball: bool = False):
         self.fd_merge = fd_merge  # A; None: merge by the ellipsoids alone
+        self.ball = bool(ball)
         self.fd_merged = 0  # matches made by the glued FD distance (the ellipsoids missed)
         self.x, self.H, self.W, self.f, self.key = [], [], [], [], []
         self.report = []  # dicts: x [d], hand [zp], H [d, d] in the asymmetric-unit-box description
@@ -479,12 +567,16 @@ class MinimaLibrary:
     def __len__(self):
         return len(self.x)
 
-    def add(self, x, H, f, key, report: dict) -> int:
-        """Append one minimum (identity-description x, H, E/kT, key; report-description dict); returns its id."""
+    def add(self, x, H, f, key, report: dict, W: Optional[torch.Tensor] = None) -> int:
+        """Append one minimum (identity-description x, H, E/kT, key; report-description dict); returns its id. A ball
+        library takes the factor ``W`` (``metric_factor``) and no H."""
+        if self.ball != (W is not None):
+            raise ValueError("MinimaLibrary.add: a ball library takes W and no H; an ellipsoid library H and no W")
         i = len(self.x)
         self.x.append(torch.as_tensor(x, dtype=F64).cpu().reshape(-1))
-        self.H.append(torch.as_tensor(H, dtype=F64).cpu())
-        self.W.append(ellipsoid_factor(self.H[-1]))
+        self.H.append(None if self.ball else torch.as_tensor(H, dtype=F64).cpu())
+        self.W.append(torch.as_tensor(W, dtype=F64).cpu().reshape(len(self.x[-1]), -1) if self.ball
+                      else ellipsoid_factor(self.H[-1]))
         self.f.append(float(f))
         self.key.append(tuple(key))
         self.report.append({k: torch.as_tensor(v).cpu().clone() for k, v in report.items()})
@@ -584,22 +676,34 @@ class MinimaLibrary:
         return int(mids[near[k]])
 
     @classmethod
-    def from_rows(cls, rows):
+    def from_rows(cls, rows, ball: bool = False):
         """Rebuild from search outputs: every row with ``minimum_id`` >= 0 that is not a recapture defines its minimum
         (``id_params``, ``id_hessian``, ``id_handedness``, ``minimum_f``; its own parameters, handedness and
         ``hessian`` as the report), added in ``minimum_id`` order (a resumed run continues the ids). Raises
         ValueError when those ids are not 0, 1, ..., m - 1: a recapture's ``minimum_id`` would then name another
-        minimum."""
-        lib = cls()
-        own = sorted([r for r in rows if 'id_hessian' in r.keys() and int(r.minimum_id) >= 0
-                      and not bool(r.recapture)], key=lambda r: int(r.minimum_id))
+        minimum. Rows of the endpoint mode (``finish_endpoints``: ``id_params`` and no ``id_hessian``) rebuild a ball
+        library (``metric_factor``); ``ball`` says which kind the run wants, and an empty list starts that kind.
+        Raises ValueError on a mix of the two kinds or a kind the run did not ask for."""
+        own = sorted([r for r in rows if 'id_params' in r.keys() and 'minimum_id' in r.keys()
+                      and int(r.minimum_id) >= 0 and not bool(r.recapture)], key=lambda r: int(r.minimum_id))
+        kinds = {'id_hessian' not in r.keys() for r in own}
+        if len(kinds) > 1:
+            raise ValueError("minima library: the saved rows mix polished minima (with Hessians) and endpoints")
+        if kinds and kinds.pop() != bool(ball):
+            raise ValueError(f"minima library: the saved rows are {'polished minima' if ball else 'endpoints'}, the "
+                             f"run asks for {'endpoints' if ball else 'polished minima'}")
+        lib = cls(ball=ball)
         if [int(r.minimum_id) for r in own] != list(range(len(own))):
             raise ValueError("minima library: the saved rows' own minimum ids are not 0..m-1; the outputs and the "
                              "library they were written with disagree")
         for r in own:
-            lib.add(r.id_params[0], r.id_hessian[0], float(r.minimum_f), identity_key(row_key(r), r.id_handedness),
-                    dict(x=r.full_cell_parameters().reshape(-1), hand=r.aunit_handedness.reshape(-1),
-                         H=r.hessian[0]))
+            key = identity_key(row_key(r), r.id_handedness)
+            rep = dict(x=r.full_cell_parameters().reshape(-1), hand=r.aunit_handedness.reshape(-1))
+            if ball:
+                lib.add(r.id_params[0], None, float(r.minimum_f), key, rep,
+                        W=metric_factor(r.id_params[0].reshape(1, -1), molecule_rg(r))[0])
+            else:
+                lib.add(r.id_params[0], r.id_hessian[0], float(r.minimum_f), key, dict(rep, H=r.hessian[0]))
         return lib
 
 
@@ -813,6 +917,115 @@ def _without(row, attr: str):
     return r
 
 
+def _reported(rows, reps, optim_target, cutoff, supercell_size, repulsion, predictor, exp6_kwargs, device,
+              energy_chunk):
+    """The ``rows`` (their ``capture_min`` dropped) at their report descriptions ``reps`` (dicts with ``x`` and
+    ``hand``), re-analysed without the envelope on the hard cutoff under ``torch.no_grad``, in ``energy_chunk`` rows:
+    'lj', 'elj' and the target's compute, atomwise."""
+    plain = [r.clone() for r in rows]
+    for r in plain:  # consumed here (and rows of one stage carry it all or none)
+        if 'capture_min' in r.keys():
+            del r.capture_min
+    computes = list({'lj', 'elj', str(optim_target).lower()})
+    out = []
+    for c in range(0, len(plain), int(energy_chunk)):  # in energy_chunk rows, as the polish evaluates (an MLIP call
+        part = reps[c:c + int(energy_chunk)]           # is costly)
+        b = collate_data_list(plain[c:c + int(energy_chunk)]).to(device)
+        b.aunit_handedness = torch.stack([p['hand'].reshape(-1) for p in part]).to(b.aunit_handedness)
+        b.set_cell_parameters(torch.stack([p['x'] for p in part]).to(device, torch.float32),
+                              skip_box_analysis=False)
+        with torch.no_grad():
+            b.analyze(computes=computes, cutoff=cutoff, rdf_cutoff=cutoff, supercell_size=supercell_size,
+                      return_cluster=False, repulsion=repulsion, surface_padding=0, predictor=predictor,
+                      assign_outputs=True, elementwise=False, atomwise=True, bins=100,
+                      **{f'exp6_{k}': v for k, v in (exp6_kwargs or {}).items()})
+        out.extend(b.cpu().detach().batch_to_list())
+    return out
+
+
+def finish_endpoints(rows: list, library: MinimaLibrary, optim_target: str, kT: float, cutoff: float = 10,
+                     supercell_size: int = 10, predictor=None, exp6_kwargs: Optional[dict] = None,
+                     repulsion: float = 1.0, lj_envelope: Optional[float] = 1.0, merge_d2: float = 0.04,
+                     device='cpu', energy_chunk: int = 256):
+    """``finish_minima`` without a polish or Hessians: each row's last-stage endpoint is its minimum (the endpoint
+    mode, ``minima.polish: 'none'``; the last stage must converge it, e.g. a bfgs stage with ``fmax``). ``library``
+    is a ball library (``MinimaLibrary(ball=True)``) and ``merge_d2`` a squared radius in A^2.
+
+    - A row the stage captured (``capture_min`` >= 0) is reported as that library minimum (status 0).
+    - A row whose last stage did not pass its force test (``stage_converged`` false or absent: cascaded, at the step
+      cap, or given up away from a minimum) is kept with status 2 and is no minimum.
+    - Every other row is re-described in the identity description, its E/kT taken there (one evaluation, under the
+      envelope, as the stages evaluate); a row whose cell ``clean_cell_parameters`` would change gets status 4 and
+      is kept, not added. In ascending E/kT, the rest (status 5) are matched against the library
+      (``MinimaLibrary.match`` with ``metric_factor``, both balls, then the glued FD fallback): a match makes the row
+      a recapture of that minimum, else it is added as a new one, with its report description (``canonicalize_aunit``).
+
+    Every returned row is re-analysed as ``finish_minima``'s are and carries ``minimum_id``, ``recapture``,
+    ``polish_status``, ``minimum_f``, ``id_params`` and ``id_handedness``; no Hessian. Returns (rows, effort) with the
+    effort of ``finish_minima`` (``n_f`` energies; no gradients or Hessians; ``deferred`` always empty)."""
+    if not library.ball:
+        raise ValueError('finish_endpoints: needs a ball library (MinimaLibrary(ball=True))')
+    n = len(rows)
+    d = int(rows[0].full_cell_parameters().shape[-1]) if n else 12
+    effort = dict(n_f=0, n_g=0, n_h=0, d=d, deferred=[])
+    if not n:
+        return [], effort
+    cap = [int(r.capture_min) if 'capture_min' in r.keys() else -1 for r in rows]
+    rep, ident = [None] * n, [None] * n
+    out_f, mid, recap, status = [float('nan')] * n, [-1] * n, [False] * n, [0] * n
+    for i in range(n):
+        if cap[i] >= 0:
+            m = cap[i]
+            rep[i] = dict(library.report[m])
+            ident[i] = dict(x=library.x[m], hand=torch.tensor(library.key[m][3], dtype=torch.float32))
+            out_f[i], mid[i], recap[i] = library.f[m], m, True
+    conv = [bool(r.stage_converged) if 'stage_converged' in r.keys() else False for r in rows]
+    todo = [i for i in range(n) if cap[i] < 0]
+    if todo:
+        sub0 = [rows[i] for i in todo]
+        x00 = torch.stack([r.full_cell_parameters().reshape(-1) for r in sub0]).double()
+        sub = _described(sub0, x00, device, identity_description)
+        x_id = torch.stack([r.full_cell_parameters().reshape(-1) for r in sub]).double()
+        rep_rows = _described(sub0, x00, device, canonicalize_aunit)
+        x_rep = torch.stack([r.full_cell_parameters().reshape(-1) for r in rep_rows]).double()
+        E = StageEnergy(sub, optim_target, kT, cutoff=cutoff, supercell_size=supercell_size, predictor=predictor,
+                        lj_envelope=lj_envelope, exp6_kwargs=exp6_kwargs, device=device, chunk=energy_chunk)
+        F = E.f(x_id, torch.arange(len(sub)))
+        effort['n_f'] += len(sub)
+        inside = _inside_clean_box(sub, x_id, device)
+        for j in sorted(range(len(todo)), key=lambda j: float(F[j]) if torch.isfinite(F[j]) else float('inf')):
+            i = todo[j]
+            rep[i] = dict(x=x_rep[j], hand=rep_rows[j].aunit_handedness.reshape(-1))
+            ident[i] = dict(x=x_id[j], hand=sub[j].aunit_handedness.reshape(-1))
+            out_f[i] = float(F[j])
+            if not bool(inside[j]) or not torch.isfinite(F[j]):
+                status[i] = 4
+                continue
+            if not conv[i]:
+                status[i] = 2
+                continue
+            status[i] = 5
+            rg = molecule_rg(rows[i])
+            W = metric_factor(x_id[j].reshape(1, -1), rg)[0]
+            key = identity_key(row_key(rows[i]), ident[i]['hand'])
+            m = library.match(x_id[j], W, key, merge_d2, f=float(F[j]), rg=rg)
+            if m >= 0:
+                mid[i], recap[i] = m, True
+            else:
+                mid[i] = library.add(x_id[j], None, F[j], key, rep[i], W=W)
+    plain = [_without(r, 'stage_converged') for r in rows]
+    out = _reported(plain, rep, optim_target, cutoff, supercell_size, repulsion, predictor, exp6_kwargs, device,
+                    energy_chunk)
+    for i, r in enumerate(out):
+        r.minimum_id = torch.tensor([mid[i]])
+        r.recapture = torch.tensor([recap[i]])
+        r.polish_status = torch.tensor([status[i]])
+        r.minimum_f = torch.tensor([out_f[i]], dtype=F64)
+        r.id_params = torch.as_tensor(ident[i]['x']).to(torch.float32).reshape(1, d)
+        r.id_handedness = torch.as_tensor(ident[i]['hand']).to(torch.float32).reshape(1, -1)
+    return out, effort
+
+
 def _described(rows, x, device, how):
     """Rows (list) of the crystals ``rows`` at parameters ``x`` [n, d], built and re-described: ``how`` is
     ``identity_description`` or ``canonicalize_aunit``."""
@@ -870,6 +1083,8 @@ def finish_minima(rows: list, library: MinimaLibrary, optim_target: str, kT: flo
         ``n_h`` Hessians
         evaluated, ``d`` (``polish_evals`` sums them in row-evaluations).
     """
+    if library.ball:
+        raise ValueError('finish_minima: a ball library holds no Hessians; use finish_endpoints')
     n = len(rows)
     used_iters = [int(r.polish_iters) if 'polish_iters' in r.keys() else 0 for r in rows]  # over earlier calls
     carried = [(float(r.polish_mu), float(r.polish_trust)) if 'polish_mu' in r.keys() else (1.0, 1.0) for r in rows]
@@ -996,24 +1211,8 @@ def finish_minima(rows: list, library: MinimaLibrary, optim_target: str, kT: flo
         status[i] = 0 if mid[k] >= 0 else status[k]
 
     kept = [i for i in range(n) if i not in deferred_idx]
-    plain = [rows[i].clone() for i in kept]
-    for r in plain:  # consumed here (and rows of one stage carry it all or none)
-        if 'capture_min' in r.keys():
-            del r.capture_min
-    computes = list({'lj', 'elj', str(optim_target).lower()})
-    out = []
-    for c in range(0, len(kept), int(energy_chunk)):  # in energy_chunk rows, as the polish evaluates (an MLIP call
-        part = kept[c:c + int(energy_chunk)]          # is costly)
-        b = collate_data_list(plain[c:c + int(energy_chunk)]).to(device)
-        b.aunit_handedness = torch.stack([rep[i]['hand'].reshape(-1) for i in part]).to(b.aunit_handedness)
-        b.set_cell_parameters(torch.stack([rep[i]['x'] for i in part]).to(device, torch.float32),
-                              skip_box_analysis=False)
-        with torch.no_grad():
-            b.analyze(computes=computes, cutoff=cutoff, rdf_cutoff=cutoff, supercell_size=supercell_size,
-                      return_cluster=False, repulsion=repulsion, surface_padding=0, predictor=predictor,
-                      assign_outputs=True, elementwise=False, atomwise=True, bins=100,
-                      **{f'exp6_{k}': v for k, v in (exp6_kwargs or {}).items()})
-        out.extend(b.cpu().detach().batch_to_list())
+    out = _reported([rows[i] for i in kept], [rep[i] for i in kept], optim_target, cutoff, supercell_size,
+                    repulsion, predictor, exp6_kwargs, device, energy_chunk)
     for i, r in zip(kept, out):
         r.minimum_id = torch.tensor([mid[i]])
         r.recapture = torch.tensor([recap[i]])

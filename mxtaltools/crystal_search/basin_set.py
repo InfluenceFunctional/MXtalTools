@@ -24,6 +24,11 @@ sheet, Sohncke rows per ``off_sheet``), with its reference molecule, identifier 
 ``min_eig``         the smallest eigenvalue of ``H`` on the live coordinates.
 ``hits``, ``seed_hits``, ``polish_status``   as the search wrote them.
 
+``H`` and ``min_eig`` are absent when the rows carry no Hessian (the search's endpoint mode, ``minima.polish: 'none'``).
+A band set (header ``kind: 'band'``, ``write_band_set``) holds thinned low-energy states of a search's descents
+instead of minima: ``basin_id`` numbers the states, ``group_id`` is the minimum the state's descent ended in, and
+``start_index``, ``stage`` and ``step`` locate it in that descent.
+
 The header (the dataset's ``provenance``) carries ``format``, ``energy``, ``search`` (with ``kT``), ``identity``,
 ``sheets`` and the row counts; the writer's caller supplies the energy, search and identity records.
 """
@@ -61,12 +66,15 @@ def _scalar(v) -> float:
 
 def write_basin_set(rows: Sequence, path: str, *, kT: float, energy_attr: str, energy: dict, search: dict,
                     identity: dict, sheet: int = 1, off_sheet: str = 'enantiomorph',
-                    provenance: Optional[dict] = None) -> dict:
+                    provenance: Optional[dict] = None, kind: str = 'minima',
+                    extra_columns: Optional[dict] = None) -> dict:
     """Write ``rows`` (MolCrystalData, one per library minimum, as ``minima.minimum_rows`` returns them) as a basin set
     at ``path`` (which must not exist). ``kT`` is the search's, in ``energy['units']``; ``energy_attr`` names the row
     attribute holding the hard-cutoff target energy (e.g. ``'elj'``). Returns the dataset's ``meta.json``.
 
-    Rows the importer refuses are left out and counted in the header (``counts``). Raises if no row is written."""
+    Rows the importer refuses are left out and counted in the header (``counts``). Raises if no row is written.
+    Rows without ``id_hessian`` (all or none) leave out ``H`` and ``min_eig``. ``extra_columns`` maps a column name to
+    (tensor with one entry per input row, doc); ``kind`` ('minima' or 'band') goes in the header."""
     from mxtaltools.crystal_fd import canon
     from mxtaltools.crystal_fd.dataset import save_dataset
     from mxtaltools.crystal_fd.io_mxt import from_mol_crystal_data
@@ -99,19 +107,22 @@ def write_basin_set(rows: Sequence, path: str, *, kT: float, energy_attr: str, e
     sg = torch.tensor([int(_scalar(r.sg_ind)) for r in src])
     p = torch.stack([torch.as_tensor(r.id_params, dtype=torch.float64).reshape(D) for r in src])
     ph = torch.tensor([_scalar(r.id_handedness) for r in src], dtype=torch.float64)
-    H = torch.stack([torch.as_tensor(r.id_hessian, dtype=torch.float64).reshape(D, D) for r in src]) * float(kT)
-    H = 0.5 * (H + H.transpose(1, 2))
+    with_H = {'id_hessian' in r.keys() for r in rows}
+    if len(with_H) > 1:
+        raise ValueError('write_basin_set: some rows carry a Hessian and some do not')
+    with_H = with_H.pop()
     live = torch.stack([live_mask(int(g)) for g in sg.tolist()])
-    min_eig = torch.stack([torch.linalg.eigvalsh(H[i][live[i]][:, live[i]]).min() for i in range(len(src))])
+    if with_H:
+        H = torch.stack([torch.as_tensor(r.id_hessian, dtype=torch.float64).reshape(D, D) for r in src]) * float(kT)
+        H = 0.5 * (H + H.transpose(1, 2))
+        min_eig = torch.stack([torch.linalg.eigvalsh(H[i][live[i]][:, live[i]]).min() for i in range(len(src))])
     columns = {
         'basin_id': torch.tensor([int(_scalar(r.minimum_id)) for r in src], dtype=torch.long),
         'p': p,
         'p_handedness': ph,
         'E': torch.tensor([_scalar(getattr(r, energy_attr)) for r in src], dtype=torch.float64),
         'E_env': torch.tensor([_scalar(r.minimum_f) for r in src], dtype=torch.float64) * float(kT),
-        'H': H,
         'live_mask': live,
-        'min_eig': min_eig,
         'hits': torch.tensor([int(_scalar(getattr(r, 'hits', 0))) for r in src], dtype=torch.long),
         'seed_hits': torch.tensor([int(_scalar(getattr(r, 'seed_hits', 0))) for r in src], dtype=torch.long),
         'polish_status': torch.tensor([int(_scalar(getattr(r, 'polish_status', -1))) for r in src],
@@ -123,8 +134,15 @@ def write_basin_set(rows: Sequence, path: str, *, kT: float, energy_attr: str, e
             'live_mask': 'basin_set.live_mask(sg)', 'min_eig': 'smallest eigenvalue of H on live coordinates',
             'hits': 'random starts ending here', 'seed_hits': 'seeds ending here',
             'polish_status': 'minima.POLISH_STATUS code'}
+    if with_H:
+        columns.update(H=H, min_eig=min_eig)
+    else:
+        docs.pop('H'), docs.pop('min_eig')
+    for name, (col, doc) in (extra_columns or {}).items():
+        columns[name] = torch.as_tensor(col)[kept]
+        docs[name] = doc
     header = dict(provenance or {})
-    header.update({'format': FORMAT, 'energy': dict(energy), 'search': dict(search, kT=float(kT)),
+    header.update({'format': FORMAT, 'kind': kind, 'energy': dict(energy), 'search': dict(search, kT=float(kT)),
                    'identity': dict(identity), 'sheets': {'sheet': sheet, 'off_sheet': off_sheet},
                    'counts': {'rows_in': len(rows), 'written': int(kept.numel()),
                               'refused': {str(k): int(v) for k, v in zip(*np.unique(

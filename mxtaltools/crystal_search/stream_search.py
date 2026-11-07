@@ -115,6 +115,35 @@ to hold a new minimum (finishing them took about 30% of a MIPCAS eLJ run, 2026-1
 (``stopped.dropped``). A resumed run draws them again. The estimates are recorded in the effort file. A stop request
 (``stop``) still drains: no new starts, the slots in flight finish.
 
+The endpoint mode (``minima.polish: 'none'``; example ``configs/crystal_searches/minima_stream/mipcas_elj_balls.yaml``)
+drops the polish and every Hessian. The last stage must be bfgs with ``fmax`` (kT / A): it stops a row when every
+component of its force in the FD identity metric's Angstrom-like coordinates is below ``fmax``, and with
+``energy_noise`` (kT) it accepts a step within the energy's noise on the slope test (``_bfgs_step``). The row is
+emitted at its accepted point, where the force was taken, and an endpoint whose force test passed is then its minimum
+(``minima.finish_endpoints``; a row cascaded, at the step cap or given up away from a minimum is kept with status 2
+and is no minimum): identified by a ball of ``minima.merge_A`` in that metric, captured
+during the last stage by a ball of ``capture_A`` (``minima.MinimaLibrary(ball=True)``, factors
+``minima.metric_factor``), and counted by the same stop rule. Groups are small (``ENDPOINT_POLISH_CHUNK`` by default),
+so the library fills as the endpoints arrive; seeds start in the last stage, before any random start, and their own
+bound is checked as each group finishes. (MIPCAS eLJ, 2026-11-06, 1,000 starts, the polish run only as a reference:
+85% of fixed-bfgs endpoints within 0.1 A of their polished minimum, against 30% under the decrement test; descents and
+no polish 178k evaluations, against 193k for descents and polish; ball capture at 0.1-0.3 A saved 11-14% of the
+descents' evaluations, 0.13-0.15% of captures to another minimum. These ran at fmax 0.05 in the loss's raw units,
+0.0073 kT / A, and with the rotation block rg times the plain rotation-vector step, not yet the geodesic angle.)
+Z' = 1 only: the config check refuses fmax and the mode for any other Z'. While seeds are queued or in flight the
+random starts' stop rule waits, so no seed is dropped with the rows in flight.
+
+With ``trajectories`` (``TRAJECTORY_DEFAULTS``: ``every``, ``band_kT``, ``thin_A``) the stream keeps descent states:
+every ``every`` steps, each evaluated state of a stage without compression at or below its condition's lowest
+finished energy + ``band_kT`` (every state before the first finishes) and at least ``thin_A`` A from its start's last
+kept one. A finished start's states join the next part file of ``<run>_traj_parts/``; at the end they merge into
+``<run>_traj.pt`` (``_merge_trajectories``), and with ``basin_set`` the states within ``band_kT`` of their
+condition's lowest minimum, thinned to a ``thin_A`` net within each descent group, are written as a band set in
+``<run>_band/`` (``write_band``): the low-energy states a prior is built from, each tagged with the minimum its descent
+ended at. Only states of stages evaluated as the last stage is (target, cutoff, supercell size) are kept, so their
+E/kT is the minima's. A resumed run keeps, per start, one attempt's states whole, and an earlier invocation's merged
+file is the base a re-invocation adds to.
+
 Termination: a start is in a slot for at most the sum of its stages' max_num_steps - 1 steps (rounded up to
 check_every), the starts (seeds and ``num_samples`` random ones per condition) are finite, each call for a start draws
 a block, retires a condition or returns one (``next_start``), and the polish is bounded, so the loop ends; ``stop_p``
@@ -135,10 +164,14 @@ from mxtaltools.dataset_utils.utils import collate_data_list
 
 STREAM_DEFAULTS = dict(slots=None, check_every=5, polish_chunk=None, first_polish_chunk=None, seeds=None, stop_p=None,
                        stop_band_kT=5.0, connected_starts=True, quota=None, quota_band_kT=10.0, window=None,
-                       polish_defer=None, basin_set=False)
+                       polish_defer=None, basin_set=False, trajectories=None)
+TRAJECTORY_DEFAULTS = dict(every=10, band_kT=15.0, thin_A=0.1)  # cfg:stream.trajectories (module docstring)
+ENDPOINT_POLISH_CHUNK = 25  # polish_chunk's default without a polish: a group is cheap, and the library (capture,
+# the stop rule) should fill as the endpoints arrive
 STAGE_KEYS = {'optim_target', 'enforce_reduced', 'compression_factor', 'cutoff', 'init_lr', 'convergence_eps',
               'optimizer_func', 'anneal_lr', 'grad_norm_clip', 'show_tqdm', 'max_num_steps', 'target_packing_coeff',
-              'centroid_boundary', 'early_stop', 'early_stop_kT', 'supercell_size', 'convergence'}
+              'centroid_boundary', 'early_stop', 'early_stop_kT', 'supercell_size', 'convergence',
+              'fmax', 'energy_noise'}
 ETAS, STEP_SIZES = (0.5, 1.2), (1e-6, 50.0)  # torch.optim.Rprop defaults (init_opt uses them)
 EMA_ALPHA, CONV_WINDOW = 0.1, 50  # check_convergence's smoothing and window
 REGROW_STEPS = 200  # clean steps before a halved evaluation chunk is doubled again
@@ -148,6 +181,7 @@ MAX_REDRAWS = 20  # redraws of a start whose contact network is not 3-periodic; 
 REDRAW_BLOCK = 100000  # a redraw's block index offset per attempt (get_initial_state seeds by block index)
 BFGS_MIN_UPDATES = 3  # accepted BFGS updates before a row's decrement can end its stage (B starts as a guess)
 BFGS_SHRINK = 0.25  # a rejected trial's step is shortened by this factor for the next trial
+BFGS_HZ_DELTA = 0.1  # delta of the approximate Wolfe acceptance (Hager and Zhang 2005's default)
 POLISH_DEFER = 8  # newton polish iterations per group before an unconverged row awaits the next group (default; on
 # qm9rc eLJ, 2026-10-31, half the polish's sequential calls for the same minima and polish evaluations)
 
@@ -176,7 +210,10 @@ def check_stream_config(config):
         raise ValueError(f"cfg:stream: unknown key(s) {unknown}; known {sorted(STREAM_DEFAULTS)}")
     s = {**STREAM_DEFAULTS, **block}
     s['slots'] = int(s['slots'] or config.batch_size)
-    s['polish_chunk'] = int(s['polish_chunk'] or 1000)
+    minima_ = getattr(config, 'minima', None)
+    minima_ = {} if minima_ is None else dict(minima_ if isinstance(minima_, dict) else vars(minima_))
+    endpoint = minima_.get('polish') == 'none'
+    s['polish_chunk'] = int(s['polish_chunk'] or (ENDPOINT_POLISH_CHUNK if endpoint else 1000))
     s['first_polish_chunk'] = int(s['first_polish_chunk'] or s['polish_chunk'])
     s['check_every'] = int(s['check_every'])
     if s['slots'] < 1 or s['check_every'] < 1 or s['polish_chunk'] < 1 or s['first_polish_chunk'] < 1:
@@ -212,6 +249,19 @@ def check_stream_config(config):
             raise ValueError(f"cfg:stream.seeds: no file {s['seeds']!r}")
         if getattr(config, 'minima', None) is None:
             raise ValueError("cfg:stream.seeds are polished: they need the cfg:minima block")
+    if s['trajectories'] is not None:
+        t_ = s['trajectories']
+        t_ = dict(t_ if isinstance(t_, dict) else vars(t_))
+        bad = sorted(set(t_) - set(TRAJECTORY_DEFAULTS))
+        if bad:
+            raise ValueError(f"cfg:stream.trajectories: unknown key(s) {bad}; known {sorted(TRAJECTORY_DEFAULTS)}")
+        t_ = {**TRAJECTORY_DEFAULTS, **t_}
+        t_ = dict(every=int(t_['every']), band_kT=float(t_['band_kT']), thin_A=float(t_['thin_A']))
+        if t_['every'] < 1 or not t_['band_kT'] > 0 or t_['thin_A'] < 0:
+            raise ValueError(f"cfg:stream.trajectories: every >= 1, band_kT > 0 and thin_A >= 0, got {t_}")
+        if not minima_:
+            raise ValueError("cfg:stream.trajectories keeps states by E/kT: it needs the cfg:minima block")
+        s['trajectories'] = t_
     if getattr(config, 'coord_dir', None):
         raise ValueError("cfg:stream does not run in a campaign (cfg:coord_dir) yet")
     if config.init_sample_method not in ('random', 'reasonable'):
@@ -230,10 +280,17 @@ def check_stream_config(config):
                 raise ValueError("cfg:stream: a bfgs stage measures its decrement in kT: it needs the cfg:minima block")
             if st.get('compression_factor'):
                 raise ValueError(f"cfg:stream: cfg:opt[{i}]: a bfgs stage takes no compression_factor")
-            if not float(st.get('convergence_eps', 1e-4)) > 0:
-                raise ValueError(f"cfg:stream: cfg:opt[{i}]: a bfgs stage needs convergence_eps > 0 (kT)")
+            if st.get('fmax') is not None:
+                if not float(st['fmax']) > 0:
+                    raise ValueError(f"cfg:stream: cfg:opt[{i}].fmax must be positive (kT / A), got {st['fmax']!r}")
+            elif not float(st.get('convergence_eps', 1e-4)) > 0:
+                raise ValueError(f"cfg:stream: cfg:opt[{i}]: a bfgs stage needs convergence_eps > 0 (kT) or fmax")
+            if st.get('energy_noise') is not None and not float(st['energy_noise']) >= 0:
+                raise ValueError(f"cfg:stream: cfg:opt[{i}].energy_noise must be >= 0 (kT), got {st['energy_noise']!r}")
         elif opt != 'rprop':
             raise ValueError(f"cfg:stream: cfg:opt[{i}].optimizer_func must be rprop (or bfgs on the last stage)")
+        elif st.get('fmax') is not None or st.get('energy_noise') is not None:
+            raise ValueError(f"cfg:stream: cfg:opt[{i}]: fmax and energy_noise are bfgs stage keys")
         elif st.get('init_lr') is None:
             raise ValueError(f"cfg:stream: cfg:opt[{i}]: an rprop stage needs init_lr")
         if st.get('centroid_boundary', 'clamp') != 'wrap':
@@ -249,6 +306,12 @@ def check_stream_config(config):
         if env is not None and any(float(st.get('cutoff') or 10) <= float(env) for st in stages):
             raise ValueError(f"cfg:stream: every stage's cutoff must exceed cfg:minima.lj_envelope ({env} A), "
                              "which every stage is evaluated with")
+    if (endpoint or any(st.get('fmax') is not None for st in stages)) and \
+            any(int(z) != 1 for z in (getattr(config, 'zp_to_search', None) or [1])):
+        raise ValueError("cfg:stream: fmax and minima.polish 'none' measure in the FD identity metric: Z' = 1 only")
+    if endpoint and (str(stages[-1].get('optimizer_func', '')).lower() != 'bfgs' or stages[-1].get('fmax') is None):
+        raise ValueError("cfg:minima.polish 'none' takes each last-stage endpoint as its minimum: the last stage must "
+                         "be bfgs with fmax, which converges it")
     last_target = str(stages[-1]['optim_target']).lower()
     for i, st in enumerate(stages):
         if str(st['optim_target']).lower() != last_target and st.get('early_stop'):
@@ -290,6 +353,10 @@ class _Slots:
         self.bnupd = torch.zeros(n, dtype=torch.long)  # BFGS updates since B was last set
         self.balpha = torch.ones(n, dtype=torch.float64)  # fraction of the capped step the next trial takes
         self.bdone = torch.zeros(n, dtype=torch.bool)  # converged, or given up: leaves at the next check
+        self.bconv = torch.zeros(n, dtype=torch.bool)  # fmax: the force test passed at the accepted point
+        self.rg = torch.ones(n, dtype=torch.float64)  # the row's molecule radius of gyration (A): the fmax metric
+        self.tlast = torch.full((n, d), float('nan'), dtype=torch.float64)  # trajectories: the last state kept
+        self.tbuf = [[] for _ in range(n)]  # trajectories: (stage, step, params [d], E/kT) kept for this start
 
     def occupied(self):
         return [i for i, r in enumerate(self.row) if r is not None]
@@ -308,19 +375,15 @@ class _Slots:
         self.B[i] = torch.eye(self.B.shape[-1], dtype=torch.float64)
         self.btrust[i] = 1.0
         self.btries[i] = 0
-        self.bhave[i] = self.bupd[i] = self.breset[i] = self.bdone[i] = False
+        self.bhave[i] = self.bupd[i] = self.breset[i] = self.bdone[i] = self.bconv[i] = False
         self.bnupd[i] = 0
         self.balpha[i] = 1.0
 
 
-def _write_basins(table, path, config, stages, mcfg, scfg, counts) -> dict:
-    """Write a stream run's minima (``minima.minimum_rows``) as a basin set at ``path``
-    (``basin_set.write_basin_set``), first moving an existing folder there aside to ``<path>_superseded_<k>``; returns
-    a record for the effort file (the path and counts, or why nothing was written: Z' > 1 and lattice types that tie
-    cell lengths are outside the format)."""
+def _basin_records(config, stages, mcfg, scfg, counts):
+    """(energy, search, identity) records of a stream run for a basin or band set's header."""
     import hashlib
     from mxtaltools.crystal_search import minima as mn
-    from mxtaltools.crystal_search.basin_set import write_basin_set
     from mxtaltools.crystal_search.coordinator import energy_model_id
     key = str(stages[-1]['optim_target']).lower()
     if key in mn.MLIP_TARGETS:
@@ -336,13 +399,34 @@ def _write_basins(table, path, config, stages, mcfg, scfg, counts) -> dict:
                   config_sha1=hashlib.sha1(cfg_text.encode()).hexdigest()[:16],
                   stop=dict(quota=scfg['quota'], quota_band_kT=scfg['quota_band_kT'], stop_p=scfg['stop_p'],
                             stop_band_kT=scfg['stop_band_kT']), counts=counts)
-    identity = dict(key="(identifier, space group, Z', handedness signs)", merge_d2=float(mcfg['merge_d2']),
-                    capture_d2=float(mcfg['capture_d2']), fd_merge_A=mn.FD_MERGE_A, fd_merge_kT=mn.FD_MERGE_KT)
+    if mcfg['polish'] == 'none':
+        identity = dict(key="(identifier, space group, Z', handedness signs)", mode='endpoint balls',
+                        merge_A=float(mcfg['merge_A']), capture_A=float(mcfg['capture_A']), fd_merge_A=mn.FD_MERGE_A,
+                        fd_merge_kT=mn.FD_MERGE_KT)
+    else:
+        identity = dict(key="(identifier, space group, Z', handedness signs)", merge_d2=float(mcfg['merge_d2']),
+                        capture_d2=float(mcfg['capture_d2']), fd_merge_A=mn.FD_MERGE_A, fd_merge_kT=mn.FD_MERGE_KT)
+    return energy, search, identity
+
+
+def _set_aside(path):
+    """Move an existing folder at ``path`` aside to ``<path>_superseded_<k>``."""
     if os.path.exists(path):
         k = 0
         while os.path.exists(f'{path}_superseded_{k}'):
             k += 1
         os.rename(path, f'{path}_superseded_{k}')
+
+
+def _write_basins(table, path, config, stages, mcfg, scfg, counts) -> dict:
+    """Write a stream run's minima (``minima.minimum_rows``) as a basin set at ``path``
+    (``basin_set.write_basin_set``), first moving an existing folder there aside to ``<path>_superseded_<k>``; returns
+    a record for the effort file (the path and counts, or why nothing was written: Z' > 1 and lattice types that tie
+    cell lengths are outside the format)."""
+    from mxtaltools.crystal_search.basin_set import write_basin_set
+    key = str(stages[-1]['optim_target']).lower()
+    energy, search, identity = _basin_records(config, stages, mcfg, scfg, counts)
+    _set_aside(path)
     try:
         meta = write_basin_set(table, path, kT=float(mcfg['kT']), energy_attr=key, energy=energy, search=search,
                                identity=identity)
@@ -352,6 +436,132 @@ def _write_basins(table, path, config, stages, mcfg, scfg, counts) -> dict:
     counts_ = (meta.get('provenance') or {}).get('counts') if isinstance(meta, dict) else None
     print(f"{config.run_name}: basin set {path} ({counts_})")
     return dict(path=path, counts=counts_)
+
+
+def _merge_trajectories(traj_dir, path, opt_outs, keys, tcfg, kT) -> dict:
+    """cfg:stream.trajectories at the end of a run: the kept states of the starts in ``opt_outs``, from the merged
+    file an earlier invocation of this run left at ``path`` (the base) and then the part files in order, merged into
+    ``path``, the parts removed. A start held by several of these sources (a resumed run relaxed it again) keeps only
+    the records of the last source that holds it, one attempt whole. Returns the effort file's record.
+
+    The file is a dict: ``format`` 'stream_trajectories/1'; ``keys`` the conditions (identifier, space group, Z');
+    ``kT``; ``settings`` (cfg:stream.trajectories); and per state ``start_index``, ``condition`` (into ``keys``),
+    ``handedness``, ``stage``, ``step``, ``params`` (the evaluated full cell parameters, cleaned, centre unwrapped,
+    float64), ``f_kT`` (the stage's E/kT there, under the minima block's envelope) and ``minimum_id`` (the minimum the
+    start ended at, -1 if none)."""
+    sources = []  # one list of records per source, in order
+    if os.path.exists(path):
+        b = torch.load(path, weights_only=False)
+        hb = b['handedness']
+        sources.append([dict(start=int(b['start_index'][q]), c=int(b['condition'][q]), hand=hb[q],
+                             stage=int(b['stage'][q]), step=int(b['step'][q]), x=b['params'][q],
+                             f=float(b['f_kT'][q])) for q in range(len(b['f_kT']))])
+    names = sorted(f_ for f_ in os.listdir(traj_dir) if f_.startswith('part_') and f_.endswith('.pt')) \
+        if os.path.isdir(traj_dir) else []
+    for f_ in names:
+        sources.append(torch.load(os.path.join(traj_dir, f_), weights_only=False))
+    finished = {int(r.start_index): r for r in opt_outs if 'start_index' in r.keys()}
+    last_source = {}
+    for k_, src in enumerate(sources):
+        for r in src:
+            last_source[r['start']] = k_
+    sel = [r for k_, src in enumerate(sources) for r in src
+           if r['start'] in finished and last_source[r['start']] == k_]
+    d = int(sel[0]['x'].numel()) if sel else 12
+    hands = [r['hand'].reshape(-1) for r in sel]
+    same = len({tuple(h.shape) for h in hands}) <= 1
+
+    def mid(r):
+        o = finished[r['start']]
+        return int(o.minimum_id) if 'minimum_id' in o.keys() else -1
+
+    out = dict(format='stream_trajectories/1', keys=[tuple(k_) for k_ in keys], kT=float(kT), settings=dict(tcfg),
+               start_index=torch.tensor([r['start'] for r in sel], dtype=torch.long),
+               condition=torch.tensor([r['c'] for r in sel], dtype=torch.long),
+               handedness=torch.stack(hands) if hands and same else hands,
+               stage=torch.tensor([r['stage'] for r in sel], dtype=torch.long),
+               step=torch.tensor([r['step'] for r in sel], dtype=torch.long),
+               params=torch.stack([r['x'] for r in sel]) if sel else torch.zeros(0, d, dtype=torch.float64),
+               f_kT=torch.tensor([r['f'] for r in sel], dtype=torch.float64),
+               minimum_id=torch.tensor([mid(r) for r in sel], dtype=torch.long))
+    atomic_torch_save(out, path)
+    for f_ in names:
+        os.remove(os.path.join(traj_dir, f_))
+    if os.path.isdir(traj_dir) and not os.listdir(traj_dir):
+        os.rmdir(traj_dir)
+    return dict(path=path, states=len(sel), starts=len({r['start'] for r in sel}))
+
+
+def write_band(traj: dict, templates: dict, path: str, *, library, kT: float, key: str, band_kT: float,
+               net_A: float, energy: dict, search: dict, identity: dict, device='cpu', predictor=None,
+               cutoff: float = 10, supercell_size: int = 10, energy_chunk: int = 256):
+    """A band set at ``path`` (``basin_set.write_basin_set``, kind 'band') from a run's merged trajectories
+    (``_merge_trajectories``' dict): the Z' = 1 states within ``band_kT`` of their condition's lowest library minimum
+    (``library.f``, E/kT under the envelope), in the identity description, thinned in ascending E/kT to a net of
+    radius ``net_A`` A (``minima.ball_net``) within each descent group (the minimum the state's descent ended at:
+    states of one valley are compared with each other, which keeps the net's cost to the sum over groups of their
+    sizes times their kept counts; two groups' states near a shared path can both be kept), each re-analysed on the
+    hard cutoff (its energy ``E``). ``templates``
+    maps a condition (identifier, space group, Z') to a row of its molecule. An existing folder at ``path`` is moved
+    aside. Returns (meta or None, the record for the effort file, the evaluations spent)."""
+    from mxtaltools.crystal_search import minima as mn
+    from mxtaltools.crystal_search.basin_set import write_basin_set
+    keys = [tuple(k_) for k_ in traj['keys']]
+    lows = {}
+    for k_, f_ in zip(library.key, library.f):
+        lows[tuple(k_[:3])] = min(lows.get(tuple(k_[:3]), math.inf), f_)
+    cond = traj['condition']
+    lo = torch.tensor([lows.get(keys[int(c)], math.inf) for c in cond.tolist()], dtype=torch.float64)
+    zp1 = torch.tensor([int(keys[int(c)][2]) == 1 for c in cond.tolist()], dtype=torch.bool)
+    sel = torch.nonzero(zp1 & (traj['f_kT'] <= lo + float(band_kT))).flatten()
+    rec = dict(path=None, states_in=int(len(cond)), in_band=int(len(sel)), net_A=float(net_A), band_kT=float(band_kT))
+    if not len(sel):
+        return None, dict(rec, reason="no Z' = 1 state in the band"), 0
+    hand = traj['handedness']
+    rows, x_id, k_id, rg = [], [], [], []
+    for lo_ in range(0, len(sel), 2000):
+        part = sel[lo_:lo_ + 2000].tolist()
+        base = []
+        for q in part:
+            r = templates[keys[int(cond[q])]].clone()
+            r.aunit_handedness = torch.as_tensor(hand[q]).reshape(r.aunit_handedness.shape).to(r.aunit_handedness.dtype)
+            base.append(r)
+        sub = mn._described(base, traj['params'][part].double(), device, mn.identity_description)
+        rows.extend(sub)
+        x_id.append(torch.stack([r.full_cell_parameters().reshape(-1) for r in sub]).double())
+        k_id.extend(mn.identity_key(mn.row_key(r), r.aunit_handedness) for r in sub)
+        rg.extend(mn.molecule_rg(r) for r in sub)
+    x_id = torch.cat(x_id)
+    f = traj['f_kT'][sel]
+    order = torch.argsort(f)
+    grp = traj['minimum_id'][sel]
+    net = order[mn.ball_net(x_id[order], [tuple(k_id[int(i)]) + (int(grp[int(i)]),) for i in order],
+                            torch.tensor(rg)[order], float(net_A))]
+    net = net[torch.argsort(f[net])]
+    kept_rows = [rows[int(i)] for i in net]
+    reps = [dict(x=x_id[int(i)], hand=rows[int(i)].aunit_handedness.reshape(-1)) for i in net]
+    out = mn._reported(kept_rows, reps, key, cutoff, supercell_size, 1.0, predictor, None, device, energy_chunk)
+    for j, (r, i) in enumerate(zip(out, net.tolist())):
+        r.minimum_id = torch.tensor([j])
+        r.minimum_f = torch.tensor([float(f[i])], dtype=torch.float64)
+        r.id_params = x_id[i].to(torch.float32).reshape(1, -1)
+        r.id_handedness = rows[i].aunit_handedness.reshape(1, -1).to(torch.float32)
+        r.polish_status = torch.tensor([-1])
+    q = sel[net]
+    extra = {'group_id': (traj['minimum_id'][q], 'the minimum the descent of this state ended at (-1: none)'),
+             'start_index': (traj['start_index'][q], "the state's start (negative: a seed)"),
+             'stage': (traj['stage'][q], 'the stage the state was evaluated in'),
+             'step': (traj['step'][q], 'its step in that stage')}
+    search = dict(search, band=dict(band_kT=float(band_kT), net_A=float(net_A), states_in=int(len(cond)),
+                                    in_band=int(len(sel)), net=int(len(net))))
+    _set_aside(path)
+    try:
+        meta = write_basin_set(out, path, kT=float(kT), energy_attr=key, energy=energy, search=search,
+                               identity=identity, kind='band', extra_columns=extra)
+    except NotImplementedError as e:
+        return None, dict(rec, reason=str(e)), len(out)
+    counts_ = (meta.get('provenance') or {}).get('counts') if isinstance(meta, dict) else None
+    return meta, dict(rec, path=path, net=int(len(net)), counts=counts_), len(out)
 
 
 def load_stream_outputs(out_path, progress):
@@ -489,7 +699,7 @@ def _converged(slots, i, eps):
     return float(ring.diff(dim=0).abs().mean()) < eps
 
 
-def _bfgs_step(slots, ib, f, g, kT, tol, d):
+def _bfgs_step(slots, ib, f, g, kT, tol, d, fmax=None, noise=None):
     """One bfgs-stage step for the slots ``ib`` [m] (long), whose trial points (``slots.X``) evaluated to loss ``f``
     [m] and gradient ``g`` [m, d]. A slot's first evaluation is its accepted point. Later trials are accepted on the
     Armijo test (c1 1e-4, and a strict decrease): the inverse Hessian estimate B gets the BFGS update (the first one
@@ -500,8 +710,20 @@ def _bfgs_step(slots, ib, f, g, kT, tol, d):
     at its accepted point is done (``slots.bdone``); after ``minima.POLISH_TRIES`` rejections in a row, B is reset to
     the identity, and after a second such run with no accepted trial between, the slot is done. Every other slot gets
     its next trial x + alpha * scale * (-B g): scale the largest <= 1 keeping each block within
-    ``minima.POLISH_CAPS`` times its trust, alpha its step fraction."""
-    from mxtaltools.crystal_search.minima import POLISH_CAPS, POLISH_TRIES, TRUST_RANGE, blocks
+    ``minima.POLISH_CAPS`` times its trust, alpha its step fraction.
+
+    With ``fmax`` (kT / A) a slot is done instead when every component of its force in the FD identity metric's
+    Angstrom-like coordinates, F = -A^-T g / kT (``minima.metric_factor``, the slot's molecule radius of gyration
+    ``slots.rg``), is below ``fmax`` after ``BFGS_MIN_UPDATES`` updates (``slots.bconv``, also for a row
+    that gave up this step, when its accepted point passes): the decrement trusts B, which is too small
+    along the soft directions of a strongly anisotropic basin, so it ends rows far along the valley floor (MIPCAS
+    eLJ, 2026-11-06: 99% of rows passed it, a median 0.36 A from their minimum). Z' = 1 only. With ``noise`` (kT) a
+    trial whose E/kT is within ``noise`` of the accepted point's is accepted also on the gradient form of the Armijo
+    test, g_t . s <= (1 - 2 delta) |g . s| with delta ``BFGS_HZ_DELTA`` (Hager and Zhang's approximate Wolfe
+    conditions, 2005): the gradient stays accurate below the energy's float32 noise floor, where the energy test
+    rejects every short step (the rejections shrink the step under the floor, and the row gives up far from its
+    minimum)."""
+    from mxtaltools.crystal_search.minima import POLISH_CAPS, POLISH_TRIES, TRUST_RANGE, blocks, metric_factor
     F64 = torch.float64
     x_t = slots.X[ib].detach().to('cpu', F64)
     f_t, g_t = f.detach().to('cpu', F64), g.detach().to('cpu', F64)
@@ -509,6 +731,9 @@ def _bfgs_step(slots, ib, f, g, kT, tol, d):
     s_ = x_t - slots.bx[ib]
     slope = (slots.bg[ib] * s_).sum(1)
     acc = first | (torch.isfinite(f_t) & (f_t <= slots.bf[ib] + 1e-4 * slope) & (f_t < slots.bf[ib]))
+    if noise is not None:  # within the energy's noise, the gradient decides (approximate Wolfe, the Armijo half)
+        near = torch.isfinite(f_t) & ((f_t - slots.bf[ib]).abs() <= float(noise) * kT) & (slope < 0)
+        acc = acc | (near & torch.isfinite(g_t).all(1) & ((g_t * s_).sum(1) <= (1 - 2 * BFGS_HZ_DELTA) * slope.abs()))
     upd = acc & ~first
     if bool(upd.any()):
         r = ib[upd]
@@ -550,8 +775,17 @@ def _bfgs_step(slots, ib, f, g, kT, tol, d):
     slots.btrust[again] = 1.0
     slots.balpha[again] = 1.0
     gk = slots.bg[ib]
-    dec = 0.5 * torch.einsum('ni,nij,nj->n', gk, slots.B[ib], gk) / kT
-    slots.bdone[ib[(dec < tol) & (slots.bnupd[ib] >= BFGS_MIN_UPDATES)]] = True
+    if fmax is None:
+        dec = 0.5 * torch.einsum('ni,nij,nj->n', gk, slots.B[ib], gk) / kT
+        slots.bdone[ib[(dec < tol) & (slots.bnupd[ib] >= BFGS_MIN_UPDATES)]] = True
+    else:
+        if d != 12:
+            raise NotImplementedError("bfgs stage fmax: Z' = 1 only")
+        W = metric_factor(slots.bx[ib], slots.rg[ib])
+        force = torch.linalg.solve(W, gk[..., None])[..., 0].abs().amax(1) / kT  # A^-T g = W^-1 g, in kT / A
+        conv = ib[(force < float(fmax)) & (slots.bnupd[ib] >= BFGS_MIN_UPDATES)]  # a row that gave up passes too
+        slots.bconv[conv] = True                                                  # if its accepted point does
+        slots.bdone[conv] = True
     go = ib[~slots.bdone[ib]]
     if len(go):
         cap = torch.zeros(d, dtype=F64)
@@ -592,22 +826,32 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
     envelope = {} if mcfg is None or mcfg['lj_envelope'] is None else {'lj_envelope': float(mcfg['lj_envelope'])}
     stage_lr = lambda k: 0.0 if is_bfgs[k] else float(stages[k]['init_lr'])  # noqa: E731  (bfgs has no lr)
     captures = [k == n_st - 1 for k in range(n_st)]  # the last stage only (module docstring)
-    newton = mcfg is not None and (mcfg['polish'] or ('bfgs' if key in mn.MLIP_TARGETS else 'newton')) == 'newton'
+    endpoint = mcfg is not None and mcfg['polish'] == 'none'  # endpoints are the minima: no polish, no Hessians
+    newton = mcfg is not None and not endpoint and         (mcfg['polish'] or ('bfgs' if key in mn.MLIP_TARGETS else 'newton')) == 'newton'
     polish_defer = scfg['polish_defer'] if scfg['polish_defer'] is not None else (POLISH_DEFER if newton else None)
+    capture_d2 = None if mcfg is None else (float(mcfg['capture_A']) ** 2 if endpoint else float(mcfg['capture_d2']))
+    tcfg = scfg['trajectories']  # cfg:stream.trajectories, or None
+    traj_dir = str(out_path)[:-3] + '_traj_parts'
+    traj_buf, traj_parts = [], [0]  # finished starts' kept states not yet written; part files written
     S = scfg['slots']
 
     # resume: the committed outputs (the merged file's first `base` rows, then the part files)
     parts_dir = str(out_path)[:-3] + '_parts'
     opt_outs, n_parts, base = [], [0], [0]
     if config.force_restart_run:
-        for f_ in (sorted(os.listdir(parts_dir)) if os.path.isdir(parts_dir) else []):
-            if f_.startswith('part_') and f_.endswith('.pt'):  # this run name's own earlier parts
-                os.remove(os.path.join(parts_dir, f_))
+        if os.path.exists(str(out_path)[:-3] + '_traj.pt'):
+            os.remove(str(out_path)[:-3] + '_traj.pt')
+        for dir_ in (parts_dir, traj_dir):
+            for f_ in (sorted(os.listdir(dir_)) if os.path.isdir(dir_) else []):
+                if f_.startswith('part_') and f_.endswith('.pt'):  # this run name's own earlier parts
+                    os.remove(os.path.join(dir_, f_))
     else:
         opt_outs, n_parts[0], base[0] = load_stream_outputs(out_path, progress)
     saved = [len(opt_outs)]  # rows already in the merged file or a part
     done = {int(r.start_index) for r in opt_outs if 'start_index' in r.keys()}
-    library = mn.MinimaLibrary.from_rows(opt_outs) if mcfg is not None else None
+    library = mn.MinimaLibrary.from_rows(opt_outs, ball=endpoint) if mcfg is not None else None
+    if os.path.isdir(traj_dir):  # a resumed run's trajectory parts: the next part continues their numbering
+        traj_parts[0] = len([f_ for f_ in os.listdir(traj_dir) if f_.startswith('part_') and f_.endswith('.pt')])
     def final_energy(r):
         """A finished row's energy for the cascade's running minimum: with ``minima``, the enveloped E at the last
         stage's cutoff (``minimum_f`` x kT), as the stages evaluate; else the target compute."""
@@ -624,7 +868,8 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
                   starts_disconnected=0, starts_redrawn=0, starts_kept_disconnected=0, quota_met=0, quota_dropped=0,
                   slot_steps=0, polish_deferred=0, seeds_skipped=0, basin_set=None, wall_s=0.0,
                   time_s=dict(starts=0.0, emit=0.0, finish=0.0),  # the rest of wall_s is the descent
-                  missing_mass=[], stopped=None, seed_missing_mass=[], seeds_stopped=None)
+                  missing_mass=[], stopped=None, seed_missing_mass=[], seeds_stopped=None, trajectory_states=0,
+                  band_set=None, band_evals=0)
     saturated = [False]  # cfg:stream.stop_p met: no new starts
 
     def timed(name):
@@ -645,6 +890,11 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         rows; rewriting the whole list each group grew with the run, 1.5 ms a row on qm9rc, 2026-10-31), then the
         progress file; with ``final``, the whole list as ``out_path`` and the part files removed."""
         lease.check()
+        if tcfg is not None and traj_buf:
+            os.makedirs(traj_dir, exist_ok=True)
+            atomic_torch_save(list(traj_buf), os.path.join(traj_dir, f'part_{traj_parts[0]:06d}.pt'))
+            traj_parts[0] += 1
+            traj_buf.clear()
         if final:
             atomic_torch_save(opt_outs, out_path)
             n_old, n_parts[0], base[0], saved[0] = n_parts[0], 0, len(opt_outs), len(opt_outs)
@@ -721,6 +971,8 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
             effort['starts_kept_disconnected'] += len(bad)
         return [(c * N + j, rows[j - lo]) for j in todo]
 
+    seed_queue = []  # the endpoint mode's seeds, (k, row) in a random order: they go first, into the last stage
+
     def need(c):
         """Rows condition c may have outstanding (in slots or awaiting the polish): the minima it still needs for
         its quota, unbounded without one."""
@@ -732,7 +984,16 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         condition is admitted, in order and at most ``window`` drawing at once; when none can be, the start goes to
         the drawing condition least over its need rather than leave a slot idle; None when no condition is drawing.
         Each pass returns, draws a block, retires a condition whose starts are all drawn, or admits one, and each of
-        these happens finitely often."""
+        these happens finitely often. In the endpoint mode the seeds come first, as (k, row, last stage): each pass
+        pops one, so they end too."""
+        while seed_queue:
+            k_, row_ = seed_queue.pop(0)
+            c_ = cidx[mn.row_key(row_)]
+            if closed[c_]:  # its quota met
+                effort['seeds_skipped'] += 1
+                continue
+            inflight[c_] += 1
+            return k_, row_, n_st - 1
         while True:
             ok = [t for t, c_ in enumerate(issuing) if inflight[c_] + waiting[c_] < need(c_)]
             if not ok:
@@ -779,14 +1040,17 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
     energy_chunk = [16 if key in mn.MLIP_TARGETS else 256]  # finish_minima's rows per energy evaluation (and emit's
     # per re-analysis); halved on out-of-memory. An MLIP call holds far fewer rows (MACE-OFF24, MIPCAS: ~175 MB a row)
 
-    def load(i, k, row):
+    def load(i, k, row, stage=0):
         slot_c[i] = cidx[mn.row_key(row)]
         slots.row[i] = row
         slots.start[i] = k
-        slots.stage[i] = 0
+        slots.stage[i] = stage
         slots.steps_in[i] = 0
         slots.cap_id[i] = -1
-        slots.begin_stage(i, row.full_cell_parameters().reshape(-1), stage_lr(0))
+        slots.rg[i] = mn.molecule_rg(row) if d == 12 else 1.0
+        slots.tlast[i] = float('nan')
+        slots.tbuf[i] = []
+        slots.begin_stage(i, row.full_cell_parameters().reshape(-1), stage_lr(stage))
 
     @timed('emit')
     def analysed(b):
@@ -823,13 +1087,26 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
     def emit(idx):
         rows = [slots.row[i] for i in idx]
         b = collate_data_list(rows).to(device)
-        b.set_cell_parameters(slots.best_x[idx].to(device), skip_box_analysis=False)
+        x_out = slots.best_x[idx].clone()
+        if endpoint:  # a bfgs row's accepted point, where the force test was taken (best_x may be a rejected trial)
+            for j, i in enumerate(idx):
+                if int(slots.stage[i]) == n_st - 1 and bool(slots.bhave[i]):
+                    x_out[j] = slots.bx[i].to(x_out.dtype)
+        b.set_cell_parameters(x_out.to(device), skip_box_analysis=False)
         b.aunit_centroid = wrap_centroid(b.aunit_centroid)
         canonicalize_aunit(b)
         out = analysed(b)
         for r, i in zip(out, idx):
             r.start_index = torch.tensor([int(slots.start[i])])
             r.stage_steps = slots.steps_in[i, :n_st].clone().reshape(1, n_st)
+            if endpoint:  # finish_endpoints makes a minimum only of a row whose force test passed
+                r.stage_converged = torch.tensor([int(slots.stage[i]) == n_st - 1 and bool(slots.bconv[i])])
+            if tcfg is not None and slots.tbuf[i]:
+                hand_ = slots.row[i].aunit_handedness.reshape(-1).float()
+                traj_buf.extend(dict(start=int(slots.start[i]), c=slot_c[i], hand=hand_, stage=st_, step=n_,
+                                     x=x_, f=f_) for st_, n_, x_, f_ in slots.tbuf[i])
+                effort['trajectory_states'] += len(slots.tbuf[i])
+                slots.tbuf[i] = []
             if mcfg is not None:
                 r.capture_min = torch.tensor([int(slots.cap_id[i])])
             slots.row[i] = None
@@ -868,6 +1145,13 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
             n_lib = len(library)
             while True:  # on a CUDA out-of-memory error: undo this group's adds, halve the energy chunk, redo
                 try:
+                    if endpoint:
+                        done_rows, eff = mn.finish_endpoints(rows, library, key, float(mcfg['kT']), cutoff=cutoff,
+                                                             predictor=predictors.get(key), supercell_size=supercell,
+                                                             lj_envelope=mcfg['lj_envelope'],
+                                                             merge_d2=float(mcfg['merge_A']) ** 2, device=device,
+                                                             energy_chunk=energy_chunk[0])
+                        break
                     done_rows, eff = mn.finish_minima(rows, library, key, float(mcfg['kT']), cutoff=cutoff,
                                                       predictor=predictors.get(key),
                                                       supercell_size=supercell, lj_envelope=mcfg['lj_envelope'],
@@ -901,7 +1185,17 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
                     cond_minima[cidx[tuple(library.key[m_][:3])]].append(m_)
         quota_check(cidx[mn.row_key(r)] for r in rows if mn.row_key(r) in cidx)
         save()
-        if scfg['stop_p'] is not None and not seeds:  # the seeds' own bound is checked by the seed loop
+        if endpoint and seed_queue and scfg['stop_p'] is not None:  # the seeds' own bound, as each group finishes
+            mm = mn.missing_mass(opt_outs, library, scfg['stop_band_kT'], seeds=True)
+            if mm['n']:
+                effort['seed_missing_mass'].append(mm)
+            if mm['p_hi'] < scfg['stop_p']:
+                effort['seeds_stopped'] = dict(skipped=len(seed_queue), **mm)
+                print(f"{config.run_name}: a new minimum within {scfg['stop_band_kT']} kT of the lowest is "
+                      f"expected in under {scfg['stop_p']} of seeds ({mm}); {len(seed_queue)} seeds skipped")
+                seed_queue.clear()
+        seeds_busy = bool(seed_queue) or (slots is not None and any(int(slots.start[i]) < 0 for i in slots.occupied()))
+        if scfg['stop_p'] is not None and not seeds and not seeds_busy:  # the seeds' own bound: the seed loop / groups
             mm = mn.missing_mass(opt_outs, library, scfg['stop_band_kT'])
             effort['missing_mass'].append(mm)
             if mm['p_hi'] < scfg['stop_p'] and not saturated[0]:
@@ -919,6 +1213,14 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         order = torch.randperm(len(seeds), generator=torch.Generator().manual_seed(int(config.opt_seed))).tolist()
         seeds = [seeds[i] for i in order]  # a random order: the seeds' missing-mass sample
         quota_check(range(C))  # a resumed run: conditions already at their quota take no seed either
+    if scfg['seeds'] is not None and endpoint:  # no polish: seeds start in the last stage, before any random start
+        seed_queue.extend(seeds)
+        if scfg['stop_p'] is not None:  # a resumed run whose seeds had met their bound skips the rest
+            mm = mn.missing_mass(opt_outs, library, scfg['stop_band_kT'], seeds=True)
+            if mm['p_hi'] < scfg['stop_p']:
+                effort['seeds_stopped'] = dict(skipped=len(seed_queue), **mm)
+                seed_queue.clear()
+    elif scfg['seeds'] is not None:
         for c in range(0, len(seeds), scfg['polish_chunk']):
             if scfg['stop_p'] is not None:  # checked before the group, so a resumed run skips seeds it had stopped
                 mm = mn.missing_mass(opt_outs, library, scfg['stop_band_kT'], seeds=True)
@@ -953,6 +1255,35 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
     clean = 0  # steps since the last out-of-memory error                 error in that target's call (rows independent)
     stopping = False  # a stop request: no new starts; the loop ends when the slots in flight are done
     nz = (d - 6) // 6 if d is not None else 0
+
+    def keep_states(idx, x, loss):
+        """cfg:stream.trajectories: of the evaluated states of the slots ``idx`` (parameters ``x``, loss ``loss`` in
+        target units), keep each one at or below its condition's lowest finished energy + ``band_kT`` (every state
+        before the first finishes), of a stage without compression evaluated as the last stage is (target, cutoff and
+        supercell size, so its E/kT is the minima's currency), at least ``thin_A`` from the slot's last kept
+        state (``minima.metric_factor`` there; the first state of a start is always kept)."""
+        kT_ = float(mcfg['kT'])
+        f = loss.detach().double().cpu() / kT_
+        x = x.detach().double().cpu()
+        ok = torch.isfinite(f) & torch.isfinite(x).all(1)
+        ok &= torch.tensor([not stages[int(slots.stage[i])].get('compression_factor')
+                            and cuts[int(slots.stage[i])] == cuts[-1] for i in idx.tolist()])
+        ref = torch.tensor([running_min.get(keys[slot_c[i]], math.inf) / kT_ for i in idx.tolist()],
+                           dtype=torch.float64)
+        ok &= (f <= ref + tcfg['band_kT']) | ~torch.isfinite(ref)
+        last = slots.tlast[idx]
+        far = torch.isnan(last).any(1)
+        if d == 12 and tcfg['thin_A'] > 0 and bool((~far).any()):
+            j = torch.nonzero(~far).flatten()
+            W = mn.metric_factor(last[j], slots.rg[idx[j]])
+            dist = torch.einsum('nji,nj->ni', W, mn.min_image(x[j] - last[j])).norm(dim=1)
+            far[j] = dist >= tcfg['thin_A']
+        elif not (d == 12 and tcfg['thin_A'] > 0):
+            far[:] = True
+        for k_ in torch.nonzero(ok & far).flatten().tolist():
+            i = int(idx[k_])
+            slots.tbuf[i].append((int(slots.stage[i]), int(slots.nstep[i]), x[k_].clone(), float(f[k_])))
+            slots.tlast[i] = x[k_]
 
     def step_chunk(template, idx, cut):
         """One evaluation of the rows ``idx`` (built on ``template``) at ``cut`` (cutoff, supercell size, target):
@@ -1054,10 +1385,15 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
             slots.ema_den[tmpl] = (1 - EMA_ALPHA) * slots.ema_den[tmpl] + 1
             ring_pos = slots.nstep[tmpl] % CONV_WINDOW
             slots.smooth[tmpl, ring_pos] = slots.ema_num[tmpl] / slots.ema_den[tmpl, None]
+            if tcfg is not None:
+                due = slots.nstep[tmpl] % tcfg['every'] == 0
+                if bool(due.any()):
+                    keep_states(tmpl[due], rec_c[due], lc[due])
             bf_rows = torch.tensor([is_bfgs[int(st_)] for st_ in slots.stage[tmpl].tolist()], dtype=torch.bool)
             if bool(bf_rows.any()):
                 _bfgs_step(slots, tmpl[bf_rows], lc[bf_rows], g[bf_rows.to(g.device)], float(mcfg['kT']),
-                           float(stages[-1].get('convergence_eps', 1e-4)), d)
+                           float(stages[-1].get('convergence_eps', 1e-4)), d, fmax=stages[-1].get('fmax'),
+                           noise=stages[-1].get('energy_noise'))
             rp, rpd = tmpl[~bf_rows], (~bf_rows).to(g.device)
             gr = g[rpd]
             sgn = gr * slots.prev[rp]
@@ -1105,7 +1441,7 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
                 hid, hd2 = library.capture_query(sub, mn.batch_keys(sub))
                 del sub
                 for k, m, v in zip(live, hid.tolist(), hd2.tolist()):
-                    if v < float(mcfg['capture_d2']):
+                    if v < capture_d2:
                         i = int(tmpl[k])
                         slots.cap_id[i] = m
                         out.append(i)
@@ -1158,17 +1494,29 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         pending.clear()
         polish(group)
     save(final=True)
+    if tcfg is not None:
+        effort['trajectories'] = _merge_trajectories(traj_dir, str(out_path)[:-3] + '_traj.pt', opt_outs, keys, tcfg,
+                                                     float(mcfg['kT']))
     effort.update(wall_s=time.time() - t0, global_steps=gstep, rows=len(opt_outs),
                   occupancy=effort['slot_steps'] / max(gstep * S, 1),
                   fd_merged=library.fd_merged if library is not None else 0)
     if mcfg is not None:
         table = mn.minimum_rows(opt_outs)
         atomic_torch_save(table, str(out_path)[:-3] + '_minima.pt')
+        counts = dict(conditions=C, starts_per_condition=N, rows=len(opt_outs), minima=len(table),
+                      stage_evals=effort['stage_evals'], polish_evals=effort['polish_evals'])
         if scfg['basin_set'] and table:
             effort['basin_set'] = _write_basins(table, str(out_path)[:-3] + '_basins', config, stages, mcfg, scfg,
-                                                dict(conditions=C, starts_per_condition=N, rows=len(opt_outs),
-                                                     minima=len(table), stage_evals=effort['stage_evals'],
-                                                     polish_evals=effort['polish_evals']))
+                                                counts)
+        if scfg['basin_set'] and tcfg is not None and len(library):
+            traj = torch.load(str(out_path)[:-3] + '_traj.pt', weights_only=False)
+            energy, search, identity = _basin_records(config, stages, mcfg, scfg, counts)
+            _, effort['band_set'], effort['band_evals'] = write_band(
+                traj, tmpl_of, str(out_path)[:-3] + '_band', library=library, kT=float(mcfg['kT']), key=key,
+                band_kT=tcfg['band_kT'], net_A=tcfg['thin_A'], energy=energy, search=search, identity=identity,
+                device=device, predictor=predictors.get(key), cutoff=cutoff, supercell_size=supercell,
+                energy_chunk=energy_chunk[0])
+            print(f"{config.run_name}: band set {effort['band_set']}")
         per = {}
         for r in opt_outs:
             if mn.row_key(r) in cidx and int(r.start_index) >= 0:

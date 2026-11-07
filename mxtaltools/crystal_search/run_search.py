@@ -55,7 +55,10 @@ def check_fd_refold_stages(opt_stages, coord):
 
 
 MINIMA_DEFAULTS = dict(kT=None, capture_d2=9.0, capture_every=10, merge_d2=1.0, max_iter=40, tol=None, lj_envelope=1.0,
-                       polish=None)
+                       polish=None, capture_A=0.2, merge_A=0.2)
+# capture_A / merge_A: the endpoint mode's (polish 'none') ball radii in A of the FD identity metric. On MIPCAS eLJ
+# (2026-11-06, fixed-bfgs stage, 998 descents) a 0.1-0.3 A capture saved 11-14% of the descents' evaluations and sent
+# 0.13-0.15% of captured descents to another minimum (0.8% at 0.5 A); band minima were 1.3 A apart at P10.
 MLIP_TOL = 2e-3  # kT: the polish's default tolerance on MLIP targets, above MACE-OFF24's float32 energy noise (~3e-4 kT
 # at a minimum, up to 9e-4 between repeats; with 1e-4, 2 to 18 of 40 MIPCAS re-relaxations stalled, 2026-10-30)
 
@@ -68,7 +71,8 @@ def check_minima_config(config):
     Keys: ``kT`` (required, in the last stage target's units), ``capture_d2``, ``capture_every``, ``merge_d2``,
     ``max_iter`` and ``tol``
     (the polish's; ``tol`` defaults to 1e-4 kT, or ``MLIP_TOL`` on an MLIP target), ``polish`` ('newton' or 'bfgs';
-    default by target, ``minima.finish_minima``), ``lj_envelope`` (A; None for the hard cutoff, which leaves the LJ Hessian undefined at
+    default by target, ``minima.finish_minima``; 'none', in the stream only: each last-stage endpoint is its minimum,
+    ``minima.finish_endpoints``, with no Hessian, identified and captured by balls of ``merge_A`` and ``capture_A``), ``lj_envelope`` (A; None for the hard cutoff, which leaves the LJ Hessian undefined at
     the cutoff). Raises ValueError on an unknown key, a kT that is not positive, or a last stage the polish cannot
     follow: a target that is not an energy (``minima.ENERGY_TARGETS``), a clamp-mode stage (the polish moves centres
     freely and re-expresses them in the ASYM_UNITS box), ``enforce_reduced`` (the polish has no wall term, so a row
@@ -95,8 +99,14 @@ def check_minima_config(config):
     from mxtaltools.crystal_search.minima import MLIP_TARGETS
     if m['tol'] is None:
         m['tol'] = MLIP_TOL if str(last['optim_target']).lower() in MLIP_TARGETS else 1e-4
-    if m['polish'] not in (None, 'newton', 'bfgs'):
-        raise ValueError(f"cfg:minima.polish must be 'newton' or 'bfgs', got {m['polish']!r}")
+    if m['polish'] not in (None, 'newton', 'bfgs', 'none'):
+        raise ValueError(f"cfg:minima.polish must be 'newton', 'bfgs' or 'none', got {m['polish']!r}")
+    if m['polish'] == 'none':
+        if getattr(config, 'stream', None) is None:
+            raise ValueError("cfg:minima.polish 'none' (endpoints as minima, no Hessians) runs in the stream only")
+        m['capture_A'], m['merge_A'] = float(m['capture_A']), float(m['merge_A'])
+        if not m['capture_A'] >= 0 or not m['merge_A'] > 0:
+            raise ValueError(f"cfg:minima: capture_A must be >= 0 and merge_A positive (A), got {m}")
     return m
 
 
