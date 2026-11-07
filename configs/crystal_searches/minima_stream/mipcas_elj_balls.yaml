@@ -42,10 +42,10 @@ stream:
   stop_band_kT: 5.0  # ... counting only minima within this of the lowest
   seeds: null  # a saved list of crystal rows relaxed first, in the last stage (e.g. another search's _minima.pt)
   basin_set: true
-  trajectories:  # descent states kept at every step, within 15 kT of the lowest finished, 0.1 A apart
+  trajectories:  # every descent step recorded with E/kT and gradient; band set: within 15 kT, a 0.1 A net
     every: 1
     band_kT: 15.0
-    thin_A: 0.1
+    net_A: 0.1
 opt:
 - optim_target: elj
   enforce_reduced: false

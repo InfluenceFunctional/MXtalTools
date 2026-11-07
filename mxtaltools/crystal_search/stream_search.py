@@ -140,16 +140,15 @@ and the stop's bound below 0.01 at 1,200 starts; every polished-run minimum with
 Z' = 1 only: the config check refuses fmax and the mode for any other Z'. While seeds are queued or in flight the
 random starts' stop rule waits, so no seed is dropped with the rows in flight.
 
-With ``trajectories`` (``TRAJECTORY_DEFAULTS``: ``every``, ``band_kT``, ``thin_A``) the stream keeps descent states:
-every ``every`` steps, each evaluated state of a stage without compression at or below its condition's lowest
-finished energy + ``band_kT`` (every state before the first finishes) and at least ``thin_A`` A from its start's last
-kept one; the finish step's saddle descents (``minima.finish_endpoints``) add their accepted steps under the same rules. A finished start's states join the next part file of ``<run>_traj_parts/``; at the end they merge into
-``<run>_traj.pt`` (``_merge_trajectories``), and with ``basin_set`` the states within ``band_kT`` of their
-condition's lowest minimum, thinned to a ``thin_A`` net within each descent group, are written as a band set in
-``<run>_band/`` (``write_band``): the low-energy states a prior is built from, each tagged with the minimum its descent
-ended at. Only states of stages evaluated as the last stage is (target, cutoff, supercell size) are kept, so their
-E/kT is the minima's. A resumed run keeps, per start, one attempt's states whole, and an earlier invocation's merged
-file is the base a re-invocation adds to.
+With ``trajectories`` (``TRAJECTORY_DEFAULTS``: ``every``, ``band_kT``, ``net_A``) the stream records descent
+states: every ``every`` steps (default every step), each evaluated state of a stage without compression evaluated as
+the last stage is (target, cutoff, supercell size: the minima's currency), with its E/kT and the gradient of E/kT,
+and the finish step's saddle descents (``minima.finish_endpoints``) add their accepted steps. Nothing is thinned or cut
+while recording. A finished start's states join the next part file of ``<run>_traj_parts/``; at the end they merge
+into ``<run>_traj.pt`` (``_merge_trajectories``; a start keeps the states of the attempt its output row names), and
+with ``basin_set`` the states within ``band_kT`` of their condition's lowest minimum, thinned to a ``net_A`` net
+within each descent group, are written as a band set in ``<run>_band/`` (``write_band``): the low-energy states a prior
+is built from, each tagged with the minimum its descent ended at.
 
 Termination: a start is in a slot for at most the sum of its stages' max_num_steps - 1 steps (rounded up to
 check_every), the starts (seeds and ``num_samples`` random ones per condition) are finite, each call for a start draws
@@ -172,7 +171,7 @@ from mxtaltools.dataset_utils.utils import collate_data_list
 STREAM_DEFAULTS = dict(slots=None, check_every=5, polish_chunk=None, first_polish_chunk=None, seeds=None, stop_p=None,
                        stop_band_kT=5.0, connected_starts=True, quota=None, quota_band_kT=10.0, window=None,
                        polish_defer=None, basin_set=False, trajectories=None)
-TRAJECTORY_DEFAULTS = dict(every=1, band_kT=15.0, thin_A=0.1)  # cfg:stream.trajectories (module docstring)
+TRAJECTORY_DEFAULTS = dict(every=1, band_kT=15.0, net_A=0.1)  # cfg:stream.trajectories (module docstring)
 ENDPOINT_POLISH_CHUNK = 25  # polish_chunk's default without a polish: a group is cheap, and the library (capture,
 # the stop rule) should fill as the endpoints arrive
 STAGE_KEYS = {'optim_target', 'enforce_reduced', 'compression_factor', 'cutoff', 'init_lr', 'convergence_eps',
@@ -263,9 +262,9 @@ def check_stream_config(config):
         if bad:
             raise ValueError(f"cfg:stream.trajectories: unknown key(s) {bad}; known {sorted(TRAJECTORY_DEFAULTS)}")
         t_ = {**TRAJECTORY_DEFAULTS, **t_}
-        t_ = dict(every=int(t_['every']), band_kT=float(t_['band_kT']), thin_A=float(t_['thin_A']))
-        if t_['every'] < 1 or not t_['band_kT'] > 0 or t_['thin_A'] < 0:
-            raise ValueError(f"cfg:stream.trajectories: every >= 1, band_kT > 0 and thin_A >= 0, got {t_}")
+        t_ = dict(every=int(t_['every']), band_kT=float(t_['band_kT']), net_A=float(t_['net_A']))
+        if t_['every'] < 1 or not t_['band_kT'] > 0 or not t_['net_A'] > 0:
+            raise ValueError(f"cfg:stream.trajectories: every >= 1, band_kT > 0 and net_A > 0, got {t_}")
         if not minima_:
             raise ValueError("cfg:stream.trajectories keeps states by E/kT: it needs the cfg:minima block")
         s['trajectories'] = t_
@@ -362,8 +361,7 @@ class _Slots:
         self.bdone = torch.zeros(n, dtype=torch.bool)  # converged, or given up: leaves at the next check
         self.bconv = torch.zeros(n, dtype=torch.bool)  # fmax: the force test passed at the accepted point
         self.rg = torch.ones(n, dtype=torch.float64)  # the row's molecule radius of gyration (A): the fmax metric
-        self.tlast = torch.full((n, d), float('nan'), dtype=torch.float64)  # trajectories: the last state kept
-        self.tbuf = [[] for _ in range(n)]  # trajectories: (stage, step, params [d], E/kT) kept for this start
+        self.tbuf = [[] for _ in range(n)]  # trajectories: (stage, step, params [d], E/kT, gradient [d]) of this start
 
     def occupied(self):
         return [i for i, r in enumerate(self.row) if r is not None]
@@ -457,7 +455,9 @@ def _merge_trajectories(traj_dir, path, opt_outs, keys, tcfg, kT) -> dict:
     ``kT``; ``settings`` (cfg:stream.trajectories); and per state ``start_index``, ``condition`` (into ``keys``),
     ``handedness``, ``stage``, ``step``, ``params`` (the evaluated full cell parameters, cleaned, centre unwrapped,
     float64; a finish-step saddle descent's steps are stage = the number of stages, in the identity description),
-    ``f_kT`` (the stage's E/kT there, under the minima block's envelope), ``attempt`` (the start's attempt token) and
+    ``f_kT`` (the stage's E/kT there, under the minima block's envelope), ``grad_kT`` (its gradient with respect to the
+    parameters it was evaluated at: a stage's own description, before the cell clean, so a component the clean held at
+    its bound reads that bound's gradient), ``attempt`` (the start's attempt token) and
     ``minimum_id`` (the minimum the start ended at, -1 if none)."""
     sources = []  # one list of records per source, in order
     if os.path.exists(path):
@@ -465,7 +465,7 @@ def _merge_trajectories(traj_dir, path, opt_outs, keys, tcfg, kT) -> dict:
         hb = b['handedness']
         sources.append([dict(start=int(b['start_index'][q]), c=int(b['condition'][q]), hand=hb[q],
                              stage=int(b['stage'][q]), step=int(b['step'][q]), x=b['params'][q],
-                             f=float(b['f_kT'][q]), att=tuple(b['attempt'][q].tolist()))
+                             f=float(b['f_kT'][q]), g=b['grad_kT'][q], att=tuple(b['attempt'][q].tolist()))
                         for q in range(len(b['f_kT']))])
     names = sorted(f_ for f_ in os.listdir(traj_dir) if f_.startswith('part_') and f_.endswith('.pt')) \
         if os.path.isdir(traj_dir) else []
@@ -491,6 +491,7 @@ def _merge_trajectories(traj_dir, path, opt_outs, keys, tcfg, kT) -> dict:
                params=torch.stack([r['x'] for r in sel]) if sel else torch.zeros(0, d, dtype=torch.float64),
                f_kT=torch.tensor([r['f'] for r in sel], dtype=torch.float64),
                attempt=torch.tensor([list(r['att']) for r in sel], dtype=torch.long).reshape(-1, 2),
+               grad_kT=torch.stack([r['g'] for r in sel]) if sel else torch.zeros(0, d, dtype=torch.float64),
                minimum_id=torch.tensor([mid(r) for r in sel], dtype=torch.long))
     atomic_torch_save(out, path)
     for f_ in names:
@@ -1057,7 +1058,6 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         slots.steps_in[i] = 0
         slots.cap_id[i] = -1
         slots.rg[i] = mn.molecule_rg(row) if d == 12 else 1.0
-        slots.tlast[i] = float('nan')
         slots.tbuf[i] = []
         slots.begin_stage(i, row.full_cell_parameters().reshape(-1), stage_lr(stage))
 
@@ -1117,7 +1117,7 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
             if tcfg is not None and slots.tbuf[i]:
                 hand_ = slots.row[i].aunit_handedness.reshape(-1).float()
                 traj_buf.extend(dict(start=int(slots.start[i]), c=slot_c[i], hand=hand_, stage=st_, step=n_,
-                                     x=x_, f=f_, att=att) for st_, n_, x_, f_ in slots.tbuf[i])
+                                     x=x_, f=f_, g=g_, att=att) for st_, n_, x_, f_, g_ in slots.tbuf[i])
                 effort['trajectory_states'] += len(slots.tbuf[i])
                 slots.tbuf[i] = []
             if mcfg is not None:
@@ -1275,56 +1275,35 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
 
     def keep_slides(rows_in, slides):
         """cfg:stream.trajectories: the accepted steps of the saddle descents finish_endpoints ran (``slides``, per
-        input row), as states of stage n_st (the finish step) of the row's start and attempt: every step, then the
-        band and thinning rules of ``keep_states`` (the first compared with the saddle)."""
-        kT_ = float(mcfg['kT'])
+        input row), as states of stage n_st (the finish step) of the row's start and attempt: every accepted step,
+        its E/kT and gradient (identity description)."""
         for i, sl in slides.items():
             r = rows_in[i]
             if 'traj_attempt' not in r.keys() or not len(sl['f']):
                 continue
             c = cidx[mn.row_key(r)]
-            ref = running_min.get(keys[c], math.inf) / kT_
-            last, rg = sl['saddle'], mn.molecule_rg(r)
-            for k_, (x_, f_) in enumerate(zip(sl['x'], sl['f'].tolist())):
-                if math.isfinite(ref) and f_ > ref + tcfg['band_kT']:
-                    continue
-                if tcfg['thin_A'] > 0:
-                    W = mn.metric_factor(last.reshape(1, -1), rg)[0]
-                    if float((W.T @ mn.min_image(x_ - last)).norm()) < tcfg['thin_A']:
-                        continue
+            for k_, (x_, f_, g_) in enumerate(zip(sl['x'], sl['f'].tolist(), sl['g'])):
                 traj_buf.append(dict(start=int(r.start_index), c=c, hand=sl['hand'].float(), stage=n_st, step=k_,
-                                     x=x_.clone(), f=float(f_), att=tuple(r.traj_attempt.reshape(-1).tolist())))
+                                     x=x_.clone(), f=float(f_), g=g_.clone(),
+                                     att=tuple(r.traj_attempt.reshape(-1).tolist())))
                 effort['trajectory_states'] += 1
-                last = x_
 
-    def keep_states(idx, x, loss):
-        """cfg:stream.trajectories: of the evaluated states of the slots ``idx`` (parameters ``x``, loss ``loss`` in
-        target units), keep each one at or below its condition's lowest finished energy + ``band_kT`` (every state
-        before the first finishes), of a stage without compression evaluated as the last stage is (target, cutoff and
-        supercell size, so its E/kT is the minima's currency), at least ``thin_A`` from the slot's last kept
-        state (``minima.metric_factor`` there; the first state of a start is always kept)."""
+    def keep_states(idx, x, loss, grad):
+        """cfg:stream.trajectories: record the evaluated states of the slots ``idx`` (parameters ``x``, loss ``loss`` in
+        target units, its gradient ``grad`` with respect to the slot's parameters) of a stage without compression
+        evaluated as the last stage is (target, cutoff and supercell size, so its E/kT is the minima's currency):
+        every one, with E/kT and the gradient of E/kT; no distance check (the band set's net thins them once)."""
         kT_ = float(mcfg['kT'])
         f = loss.detach().double().cpu() / kT_
         x = x.detach().double().cpu()
+        g = grad.detach().double().cpu() / kT_
         ok = torch.isfinite(f) & torch.isfinite(x).all(1)
         ok &= torch.tensor([not stages[int(slots.stage[i])].get('compression_factor')
                             and cuts[int(slots.stage[i])] == cuts[-1] for i in idx.tolist()])
-        ref = torch.tensor([running_min.get(keys[slot_c[i]], math.inf) / kT_ for i in idx.tolist()],
-                           dtype=torch.float64)
-        ok &= (f <= ref + tcfg['band_kT']) | ~torch.isfinite(ref)
-        last = slots.tlast[idx]
-        far = torch.isnan(last).any(1)
-        if d == 12 and tcfg['thin_A'] > 0 and bool((~far).any()):
-            j = torch.nonzero(~far).flatten()
-            W = mn.metric_factor(last[j], slots.rg[idx[j]])
-            dist = torch.einsum('nji,nj->ni', W, mn.min_image(x[j] - last[j])).norm(dim=1)
-            far[j] = dist >= tcfg['thin_A']
-        elif not (d == 12 and tcfg['thin_A'] > 0):
-            far[:] = True
-        for k_ in torch.nonzero(ok & far).flatten().tolist():
+        for k_ in torch.nonzero(ok).flatten().tolist():
             i = int(idx[k_])
-            slots.tbuf[i].append((int(slots.stage[i]), int(slots.nstep[i]), x[k_].clone(), float(f[k_])))
-            slots.tlast[i] = x[k_]
+            slots.tbuf[i].append((int(slots.stage[i]), int(slots.nstep[i]), x[k_].clone(), float(f[k_]),
+                                  g[k_].clone()))
 
     def step_chunk(template, idx, cut):
         """One evaluation of the rows ``idx`` (built on ``template``) at ``cut`` (cutoff, supercell size, target):
@@ -1429,7 +1408,7 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
             if tcfg is not None:
                 due = slots.nstep[tmpl] % tcfg['every'] == 0
                 if bool(due.any()):
-                    keep_states(tmpl[due], rec_c[due], lc[due])
+                    keep_states(tmpl[due], rec_c[due], lc[due], g[due.to(g.device)])
             bf_rows = torch.tensor([is_bfgs[int(st_)] for st_ in slots.stage[tmpl].tolist()], dtype=torch.bool)
             if bool(bf_rows.any()):
                 _bfgs_step(slots, tmpl[bf_rows], lc[bf_rows], g[bf_rows.to(g.device)], float(mcfg['kT']),
@@ -1554,7 +1533,7 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
             energy, search, identity = _basin_records(config, stages, mcfg, scfg, counts)
             _, effort['band_set'], effort['band_evals'] = write_band(
                 traj, tmpl_of, str(out_path)[:-3] + '_band', library=library, kT=float(mcfg['kT']), key=key,
-                band_kT=tcfg['band_kT'], net_A=tcfg['thin_A'], energy=energy, search=search, identity=identity,
+                band_kT=tcfg['band_kT'], net_A=tcfg['net_A'], energy=energy, search=search, identity=identity,
                 device=device, predictor=predictors.get(key), cutoff=cutoff, supercell_size=supercell,
                 energy_chunk=energy_chunk[0])
             print(f"{config.run_name}: band set {effort['band_set']}")

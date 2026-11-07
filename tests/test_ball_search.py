@@ -220,12 +220,17 @@ def test_trajectories_and_band_set(mol, tmp_path, monkeypatch):
         return rows
 
     monkeypatch.setattr(rs, 'init_samples_to_optim', named)
-    cfg = _endpoint_cfg(tmp_path, n, basin_set=True, trajectories={'every': 2, 'band_kT': 1000.0, 'thin_A': 0.05})
+    cfg = _endpoint_cfg(tmp_path, n, basin_set=True, trajectories={'every': 2, 'band_kT': 1000.0, 'net_A': 0.05})
     out = rs.crystal_search(cfg)
     tr = torch.load(tmp_path / 'streamtest_traj.pt', weights_only=False)
     assert tr['format'] == 'stream_trajectories/1' and len(tr['f_kT']) > n
     starts = {int(r.start_index) for r in out}
     assert set(tr['start_index'].tolist()) <= starts and bool(torch.isfinite(tr['f_kT']).all())
+    assert tr['grad_kT'].shape == tr['params'].shape and bool(torch.isfinite(tr['grad_kT']).all())
+    per = {}
+    for s_, st_, n_ in zip(tr['start_index'].tolist(), tr['stage'].tolist(), tr['step'].tolist()):
+        per.setdefault((s_, st_), []).append(n_)
+    assert all(sorted(v) == list(range(0, 2 * len(v), 2)) for (s_, st_), v in per.items() if st_ == 0)  # every 2nd step
     mid = {int(r.start_index): int(r.minimum_id) for r in out}
     assert all(int(m) == mid[int(s)] for s, m in zip(tr['start_index'], tr['minimum_id']))
     assert not (tmp_path / 'streamtest_traj_parts').exists()
@@ -248,7 +253,7 @@ def test_the_endpoint_example_config_passes_the_checks():
     s = ss.check_stream_config(cfg)
     m = rs.check_minima_config(cfg)
     assert m['polish'] == 'none' and m['capture_A'] == 0.2 and m['merge_A'] == 0.2
-    assert s['polish_chunk'] == ss.ENDPOINT_POLISH_CHUNK and s['trajectories']['thin_A'] == 0.1 and s['basin_set']
+    assert s['polish_chunk'] == ss.ENDPOINT_POLISH_CHUNK and s['trajectories']['net_A'] == 0.1 and s['basin_set']
     assert cfg.opt[-1]['optimizer_func'] == 'bfgs' and cfg.opt[-1]['fmax'] == 0.02
 
 
@@ -270,7 +275,7 @@ def test_trajectory_merge_keeps_one_attempt_per_start(tmp_path):
     they were saved (its first attempt in part 0, the redo split over parts 0 and 1); a start of an earlier
     invocation's merged file survives a merge of new parts; unfinished starts are dropped."""
     def rec(start, step, f, att):
-        return dict(start=start, c=0, hand=torch.ones(1), stage=1, step=step, att=att,
+        return dict(start=start, c=0, hand=torch.ones(1), stage=1, step=step, att=att, g=torch.zeros(12, dtype=torch.float64),
                     x=torch.full((12,), float(f), dtype=torch.float64), f=f)
     rows = []
     for k, att in ((0, (5, 2)), (1, (5, 1)), (2, (6, 1))):
@@ -331,7 +336,7 @@ def test_saddle_slides_join_the_trajectories(mol, tmp_path, monkeypatch):
     n = 4
     monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None, num_samples=None: _placeholders(mol, n))
     monkeypatch.setattr(mn, 'candidate_is_minimum', lambda H: torch.zeros(len(H), dtype=torch.bool))
-    out = rs.crystal_search(_endpoint_cfg(tmp_path, n, trajectories={'band_kT': 1000.0, 'thin_A': 0.0}))
+    out = rs.crystal_search(_endpoint_cfg(tmp_path, n, trajectories={'band_kT': 1000.0}))
     tr = torch.load(tmp_path / 'streamtest_traj.pt', weights_only=False)
     slid = {int(r.start_index) for r in out if int(r.polish_status) == 6}
     assert slid and set(tr['start_index'][tr['stage'] == 2].tolist()) <= slid
