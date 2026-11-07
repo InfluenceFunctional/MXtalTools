@@ -739,16 +739,20 @@ def glued_fd_distance(sg: int, rg: float, hand: int, x: torch.Tensor, X: torch.T
     return metric.distance(prep, torch.zeros(len(X), dtype=torch.long), torch.arange(1, len(P)))
 
 
-def missing_mass(rows, library: MinimaLibrary, band_kT: float, conf: float = 0.9, seeds: bool = False) -> dict:
+def missing_mass(rows, library: MinimaLibrary, band_kT: float, conf: float = 0.9, seeds: bool = False,
+                 credit_seeds: bool = True) -> dict:
     """Good-Turing estimate of the chance that the next random start (with ``seeds``: the next seed, the seeds
     taken in a random order) ends at a minimum not yet found within ``band_kT`` of the lowest minimum in ``library``.
 
     The sample is the rows of random starts (``start_index`` >= 0), or with ``seeds`` the seeds' rows (negative
     indices); rows without a ``minimum_id`` are left out. Each is a draw of the minimum it ended at (``minimum_id``; -1, not converged, counts
     as a draw of no minimum). With n such rows and f1 the band's minima reached by exactly one of them, the estimate
-    is p = f1 / n, and p_hi = poisson_upper(f1, conf) / n its one-sided upper bound (coordinator.py's bound on f1). A
-    minimum known from a seed but reached by one random start counts in f1, so p over-states the chance of an
-    unknown minimum. Band membership is by the library's E/kT."""
+    is p = f1 / n, and p_hi = poisson_upper(f1, conf) / n its one-sided upper bound (coordinator.py's bound on f1).
+    For the random starts with ``credit_seeds``, a minimum some seed also reached is known and left out of f1
+    (``seed_known`` counts those left out): f1 / n estimates the mass of minima the random starts have not reached,
+    and the singletons a seed reached stand in for the share of that mass the seeds already know. This assumes a
+    seed is about as likely to have reached a minimum the random starts reached once as one they never reached.
+    Without seeds it changes nothing. Band membership is by the library's E/kT."""
     from mxtaltools.crystal_search.coordinator import poisson_upper
     if not len(library):
         return dict(n=0, f1=0, band_minima=0, p=float('nan'), p_hi=float('inf'))
@@ -758,9 +762,16 @@ def missing_mass(rows, library: MinimaLibrary, band_kT: float, conf: float = 0.9
                         and (int(r.start_index) < 0) == bool(seeds)], dtype=torch.long)
     hits = torch.bincount(ids[ids >= 0], minlength=len(library)) if len(ids) else torch.zeros(len(library))
     n = len(ids)
-    f1 = int(((hits == 1) & in_band).sum())
-    return dict(n=n, f1=f1, band_minima=int(in_band.sum()), p=f1 / n if n else float('nan'),
-                p_hi=poisson_upper(f1, conf) / n if n else float('inf'))
+    single = (hits == 1) & in_band
+    known = torch.zeros(len(library), dtype=torch.bool)
+    if credit_seeds and not seeds:
+        sid = [int(r.minimum_id) for r in rows if 'minimum_id' in r.keys() and 'start_index' in r.keys()
+               and int(r.start_index) < 0 and int(r.minimum_id) >= 0]
+        if sid:
+            known[torch.tensor(sid, dtype=torch.long)] = True
+    f1 = int((single & ~known).sum())
+    return dict(n=n, f1=f1, band_minima=int(in_band.sum()), seed_known=int((single & known).sum()),
+                p=f1 / n if n else float('nan'), p_hi=poisson_upper(f1, conf) / n if n else float('inf'))
 
 
 def minimum_rows(rows) -> list:

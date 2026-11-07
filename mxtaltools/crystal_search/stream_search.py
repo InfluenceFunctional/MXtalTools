@@ -100,6 +100,7 @@ about as many evaluations for the eLJ seeds and about 30% fewer for the UMA seed
 14 of the 15.) The seeds are taken in a random order (seeded by ``opt_seed``), so that with ``stop_p`` they stop as
 the random starts do: before each seed group the Good-Turing bound over the seeds polished so far
 (``minima.missing_mass(seeds=True)``) is compared with ``stop_p``, and once below it the remaining seeds are skipped.
+The random starts' own bound leaves out of f1 the minima a seed also reached (``missing_mass``'s ``credit_seeds``).
 (Simulated on the eLJ-prior seeds above, 50 orders: stopped after 1,000-2,000 of the 13,505, with all 15 minima
 within 2 kT found.) In a file of distinct minima, such as another run's ``_minima.pt``, most seeds are singletons, the
 bound stays high, and the file is polished whole. Outputs are committed after every finished group, the group's rows as the next file of

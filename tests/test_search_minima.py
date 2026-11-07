@@ -368,10 +368,15 @@ def test_missing_mass_and_minimum_rows():
             _Row(start_index=2, minimum_id=1, recapture=False), _Row(start_index=3, minimum_id=2, recapture=False),
             _Row(start_index=4, minimum_id=-1, recapture=False),  # a random start that did not converge
             _Row(start_index=-1, minimum_id=1, recapture=True)]  # a seed: not in the sample
-    mm = mn.missing_mass(rows, lib, band_kT=5.0)
     from mxtaltools.crystal_search.coordinator import poisson_upper
+    mm = mn.missing_mass(rows, lib, band_kT=5.0, credit_seeds=False)
     assert (mm['n'], mm['f1'], mm['band_minima']) == (5, 1, 2)  # minimum 1 is the band's one singleton
     assert mm['p'] == pytest.approx(1 / 5) and mm['p_hi'] == pytest.approx(poisson_upper(1) / 5)
+    mm = mn.missing_mass(rows, lib, band_kT=5.0)  # the default credits the seed: minimum 1 is known
+    assert (mm['n'], mm['f1'], mm['seed_known']) == (5, 0, 1)
+    assert mm['p'] == 0 and mm['p_hi'] == pytest.approx(poisson_upper(0) / 5)
+    no_seed = [r for r in rows if int(r.start_index) >= 0]  # without seeds the default changes nothing
+    assert mn.missing_mass(no_seed, lib, band_kT=5.0) == mn.missing_mass(no_seed, lib, band_kT=5.0, credit_seeds=False)
     seeds = mn.missing_mass(rows, lib, band_kT=5.0, seeds=True)  # the seed's row alone: minimum 1 once
     assert (seeds['n'], seeds['f1']) == (1, 1)
     table = mn.minimum_rows(rows)
