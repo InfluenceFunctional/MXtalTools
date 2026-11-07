@@ -456,8 +456,8 @@ def _merge_trajectories(traj_dir, path, opt_outs, keys, tcfg, kT) -> dict:
     ``handedness``, ``stage``, ``step``, ``params`` (the evaluated full cell parameters, cleaned, centre unwrapped,
     float64; a finish-step saddle descent's steps are stage = the number of stages, in the identity description),
     ``f_kT`` (the stage's E/kT there, under the minima block's envelope), ``grad_kT`` (its gradient with respect to the
-    parameters it was evaluated at: a stage's own description, before the cell clean, so a component the clean held at
-    its bound reads that bound's gradient), ``attempt`` (the start's attempt token) and
+    parameters it was evaluated at: a stage's own description, before the hard cell clean, whose clip and hardtanh pass
+    no gradient, so a length or angle the clean held at its bound reads 0), ``attempt`` (the start's attempt token) and
     ``minimum_id`` (the minimum the start ended at, -1 if none)."""
     sources = []  # one list of records per source, in order
     if os.path.exists(path):
