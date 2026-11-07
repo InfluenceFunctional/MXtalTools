@@ -48,7 +48,7 @@ POLISH_PAR = 3  # of those tries, evaluated together in one call: the first that
 TRUST_RANGE = (1 / 16, 16.0)  # bounds of the per-row factor on POLISH_CAPS (doubled on an accepted step, halved else)
 POLISH_STATUS = {0: 'captured (in the stage or the polish)', 1: 'converged', 2: 'stalled', 3: 'iteration cap',
                  4: 'left the cell-parameter box', 5: 'endpoint (no polish: the last stage converged it)',
-                 6: 'endpoint at a saddle, descended to a minimum (bfgs_polish)'}
+                 6: 'endpoint not a minimum (a saddle, or short of convergence), descended to one (bfgs_polish)'}
 NEG_REL = 1e-6  # a Hessian counts as positive semi-definite when its lowest eigenvalue is above -NEG_REL * its highest
 FLAT_REL = 1e-9  # an eigen-direction whose |curvature| is below this times the largest is flat (the energy ignores it)
 FLAT_GRAD = 1e-3  # E/kT per unit coordinate: a flat direction with a smaller gradient component is converged along it
@@ -961,20 +961,24 @@ def finish_endpoints(rows: list, library: MinimaLibrary, optim_target: str, kT: 
     is a ball library (``MinimaLibrary(ball=True)``) and ``merge_d2`` a squared radius in A^2.
 
     - A row the stage captured (``capture_min`` >= 0) is reported as that library minimum (status 0).
-    - A row whose last stage did not pass its force test (``stage_converged`` false or absent: cascaded, at the step
-      cap, or given up away from a minimum) is kept with status 2 and is no minimum.
+    - A row whose bfgs stage did not end on its own (``stage_finished`` false or absent: cascaded, or at the step cap)
+      is kept with status 2 and is no minimum. One that ended by its force test or by giving up (the energy's float32
+      floor keeps about a fifth of MIPCAS minima above a 0.02 kT/A force) goes on.
     - Every other row is re-described in the identity description, its E/kT taken there (one evaluation, under the
       envelope, as the stages evaluate); a row whose cell ``clean_cell_parameters`` would change gets status 4 and
       is kept, not added. In ascending E/kT, the rest are matched against the library (``MinimaLibrary.match``
       with ``metric_factor``, both balls, then the glued FD fallback): a match makes the row a recapture of that
       minimum (status 5).
     - A row that matches nothing is a new candidate: the force test cannot tell a minimum from a saddle (on MIPCAS
-      eLJ, 2026-11-06, 58 of an endpoint run's 153 'minima' within 10 kT had a negative curvature), so its Hessian is
-      taken once. Positive semi-definite (``candidate_is_minimum``, ``is_psd``): it is added as a new minimum (status 5). Otherwise the descent
-      is finished from there by ``bfgs_polish`` (its first step, saddle-free, follows the gradient's own sign along
-      the negative direction: the side the descent was on), re-described, and matched or added in ascending energy
-      (status 6), the saddle kept on the row (``saddle_params``, ``saddle_f``); a saddle the polish does not converge
-      gets status 2 and is no minimum. Repeats never take a Hessian: their library entry was checked when added.
+      eLJ, 2026-11-06, 58 of an endpoint run's 153 'minima' within 10 kT had a negative curvature) and a row that gave
+      up need not be at one, so its gradient and Hessian are taken once. Positive semi-definite
+      (``candidate_is_minimum``, ``is_psd``) with a Newton decrement below ``tol`` (``_decrement``, flat directions
+      left out, as the polish converges): it is added as a new minimum (status 5). Otherwise the descent is finished
+      from there by ``bfgs_polish`` (at a saddle its first step, saddle-free, follows the gradient's own sign along the
+      negative direction: the side the descent was on), re-described, and matched or added in ascending energy
+      (status 6); a saddle is kept on the row (``saddle_params``, ``saddle_f``); an endpoint the polish does not
+      converge gets status 2 and is no minimum. Repeats never take a Hessian: their library entry was checked when
+      added.
 
     Every returned row is re-analysed as ``finish_minima``'s are and carries ``minimum_id``, ``recapture``,
     ``polish_status``, ``minimum_f``, ``id_params``, ``id_handedness``, ``saddle_params`` [1, d] and ``saddle_f`` (NaN
@@ -999,7 +1003,7 @@ def finish_endpoints(rows: list, library: MinimaLibrary, optim_target: str, kT: 
             rep[i] = dict(library.report[m])
             ident[i] = dict(x=library.x[m], hand=torch.tensor(library.key[m][3], dtype=torch.float32))
             out_f[i], mid[i], recap[i] = library.f[m], m, True
-    conv = [bool(r.stage_converged) if 'stage_converged' in r.keys() else False for r in rows]
+    conv = [bool(r.stage_finished) if 'stage_finished' in r.keys() else False for r in rows]
     todo = [i for i in range(n) if cap[i] < 0]
     if todo:
         sub0 = [rows[i] for i in todo]
@@ -1036,9 +1040,13 @@ def finish_endpoints(rows: list, library: MinimaLibrary, optim_target: str, kT: 
                 cand.append(j)
         steps = []
         if cand:  # new candidates: one Hessian each; a saddle's descent is finished by bfgs_polish
-            _, _, Hc = E.fgh(x_id[cand], torch.tensor(cand))
+            _, Gc, Hc = E.fgh(x_id[cand], torch.tensor(cand))
             effort['n_h'] += len(cand)
-            sad = [j for j, ok in zip(cand, candidate_is_minimum(Hc).tolist()) if not ok]
+            lam, V = torch.linalg.eigh(Hc)
+            psd = candidate_is_minimum(Hc)
+            done_ = psd & (_decrement(lam, V, Gc) < tol)
+            saddle = {j for j, ok in zip(cand, psd.tolist()) if not ok}
+            sad = [j for j, ok in zip(cand, done_.tolist()) if not ok]
             if sad:
                 res = bfgs_polish(StageEnergy([sub[j] for j in sad], optim_target, kT, cutoff=cutoff,
                                               supercell_size=supercell_size, predictor=predictor,
@@ -1060,7 +1068,8 @@ def finish_endpoints(rows: list, library: MinimaLibrary, optim_target: str, kT: 
                                                g=torch.stack([g_ for _, _, g_ in path]) if path else
                                                torch.zeros(0, d, dtype=F64),
                                                hand=sub[j].aunit_handedness.reshape(-1).clone(), saddle=x_id[j].clone())
-                    sad_x[i], sad_f[i] = x_id[j].clone(), float(F[j])
+                    if j in saddle:
+                        sad_x[i], sad_f[i] = x_id[j].clone(), float(F[j])
                     if int(res['status'][k_]) != 1 or not bool(ok_box[k_]):
                         status[i] = 2 if int(res['status'][k_]) != 1 else 4
                         continue
@@ -1080,7 +1089,7 @@ def finish_endpoints(rows: list, library: MinimaLibrary, optim_target: str, kT: 
                     mid[i], recap[i] = m, True
                 else:
                     mid[i] = library.add(ident[i]['x'], None, out_f[i], key, rep[i], W=W)
-    plain = [_without(r, 'stage_converged') for r in rows]
+    plain = [_without(r, 'stage_finished') for r in rows]
     out = _reported(plain, rep, optim_target, cutoff, supercell_size, repulsion, predictor, exp6_kwargs, device,
                     energy_chunk)
     for i, r in enumerate(out):

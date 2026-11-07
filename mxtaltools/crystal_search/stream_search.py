@@ -119,11 +119,12 @@ The endpoint mode (``minima.polish: 'none'``; example ``configs/crystal_searches
 drops the polish and every Hessian. The last stage must be bfgs with ``fmax`` (kT / A): it stops a row when every
 component of its force in the FD identity metric's Angstrom-like coordinates is below ``fmax``, and with
 ``energy_noise`` (kT) it accepts a step within the energy's noise on the slope test (``_bfgs_step``). The row is
-emitted at its accepted point, where the force was taken, and an endpoint whose force test passed is then its minimum
-(``minima.finish_endpoints``; a row cascaded, at the step cap or given up away from a minimum is kept with status 2
-and is no minimum). The force test cannot tell a minimum from a saddle, so an endpoint that matches no known minimum
-takes one Hessian; a saddle's descent is finished by ``minima.bfgs_polish`` (status 6, the saddle kept on the row).
-Repeats take none. Minima are identified by a ball of ``minima.merge_A`` in that metric, captured
+emitted at its accepted point, where the force was taken. An endpoint whose bfgs stage ended on its own (force test
+or giving up; not cascaded or at the step cap, which are kept with status 2 and are no minimum) is then matched as its
+minimum (``minima.finish_endpoints``). One that matches no known minimum takes one gradient and Hessian: positive
+semi-definite with a small Newton decrement, it is a new minimum; otherwise (a saddle, which the force test cannot tell
+from a minimum, or a row that gave up short of one) its descent is finished by ``minima.bfgs_polish`` (status 6, a
+saddle kept on the row). Repeats take none. Minima are identified by a ball of ``minima.merge_A`` in that metric, captured
 during the last stage by a ball of ``capture_A`` (``minima.MinimaLibrary(ball=True)``, factors
 ``minima.metric_factor``), and counted by the same stop rule. Groups are small (``ENDPOINT_POLISH_CHUNK`` by default),
 so the library fills as the endpoints arrive; seeds start in the last stage, before any random start, and their own
@@ -506,8 +507,10 @@ def write_band(traj: dict, templates: dict, path: str, *, library, kT: float, ke
                cutoff: float = 10, supercell_size: int = 10, energy_chunk: int = 256):
     """A band set at ``path`` (``basin_set.write_basin_set``, kind 'band') from a run's merged trajectories
     (``_merge_trajectories``' dict): the Z' = 1 states within ``band_kT`` of their condition's lowest library minimum
-    (``library.f``, E/kT under the envelope), in the identity description, thinned in ascending E/kT to a net of
-    radius ``net_A`` A (``minima.ball_net``) within each descent group (the minimum the state's descent ended at:
+    (``library.f``, E/kT under the envelope), first thinned along each recorded segment (a start's stage: a state kept
+    each time the path length since the segment's start passes another ``net_A``, in that state's own description),
+    then in the identity description thinned in ascending E/kT to a net of radius ``net_A`` A (``minima.ball_net``)
+    within each descent group (the minimum the state's descent ended at:
     states of one valley are compared with each other, which keeps the net's cost to the sum over groups of their
     sizes times their kept counts; two groups' states near a shared path can both be kept), each re-analysed on the
     hard cutoff (its energy ``E``). ``templates``
@@ -526,8 +529,36 @@ def write_band(traj: dict, templates: dict, path: str, *, library, kT: float, ke
     rec = dict(path=None, states_in=int(len(cond)), in_band=int(len(sel)), net_A=float(net_A), band_kT=float(band_kT))
     if not len(sel):
         return None, dict(rec, reason="no Z' = 1 state in the band"), 0
-    hand = traj['handedness']
-    rows, x_id, k_id, rg = [], [], [], []
+    hand = traj['handedness'] if torch.is_tensor(traj['handedness']) else None
+    if hand is None:
+        raise NotImplementedError("write_band: conditions of different Z' in one trajectory file")
+    # 1. along each recorded segment (a start's stage, in the order recorded) keep a state each time the path length
+    #    since the segment's start passes another net_A (the path is at least as long as the displacement, so this
+    #    keeps a superset of what a net of the segment would; tensors only)
+    sel = sel[torch.argsort(traj['start_index'][sel] * 1000003 + traj['stage'][sel] * 10007 + traj['step'][sel])]
+    x = traj['params'][sel].double()
+    seg = traj['start_index'][sel] * 64 + traj['stage'][sel]
+    rg_c = {c: mn.molecule_rg(templates[keys[c]]) for c in set(cond[sel].tolist())}
+    rg_s = torch.tensor([rg_c[int(c)] for c in cond[sel].tolist()], dtype=torch.float64)
+    same = torch.zeros(len(sel), dtype=torch.bool)
+    same[1:] = seg[1:] == seg[:-1]
+    step = torch.zeros(len(sel), dtype=torch.float64)
+    j = torch.nonzero(same).flatten()
+    for lo_ in range(0, len(j), 65536):
+        jj = j[lo_:lo_ + 65536]
+        W = mn.metric_factor(x[jj - 1], rg_s[jj - 1])
+        step[jj] = torch.einsum('nji,nj->ni', W, mn.min_image(x[jj] - x[jj - 1])).norm(dim=1)
+    seg_start = torch.nonzero(~same).flatten()
+    owner = torch.cumsum((~same).long(), 0) - 1
+    cum = torch.cumsum(step, 0)
+    cum = cum - cum[seg_start][owner]
+    tick = torch.floor(cum / float(net_A))
+    keep = ~same
+    keep[1:] |= same[1:] & (tick[1:] > tick[:-1])
+    sel = sel[keep]
+    rec['path_thinned'] = int(len(sel))
+    # 2. the survivors in the identity description, as tensors (crystals built in chunks, then dropped)
+    x_id, h_id = [], []
     for lo_ in range(0, len(sel), 2000):
         part = sel[lo_:lo_ + 2000].tolist()
         base = []
@@ -536,25 +567,31 @@ def write_band(traj: dict, templates: dict, path: str, *, library, kT: float, ke
             r.aunit_handedness = torch.as_tensor(hand[q]).reshape(r.aunit_handedness.shape).to(r.aunit_handedness.dtype)
             base.append(r)
         sub = mn._described(base, traj['params'][part].double(), device, mn.identity_description)
-        rows.extend(sub)
         x_id.append(torch.stack([r.full_cell_parameters().reshape(-1) for r in sub]).double())
-        k_id.extend(mn.identity_key(mn.row_key(r), r.aunit_handedness) for r in sub)
-        rg.extend(mn.molecule_rg(r) for r in sub)
-    x_id = torch.cat(x_id)
+        h_id.append(torch.stack([r.aunit_handedness.reshape(-1) for r in sub]).float())
+        del base, sub
+    x_id, h_id = torch.cat(x_id), torch.cat(h_id)
+    # 3. the net, within descent groups, in ascending energy
     f = traj['f_kT'][sel]
-    order = torch.argsort(f)
     grp = traj['minimum_id'][sel]
-    net = order[mn.ball_net(x_id[order], [tuple(k_id[int(i)]) + (int(grp[int(i)]),) for i in order],
-                            torch.tensor(rg)[order], float(net_A))]
+    order = torch.argsort(f)
+    netkeys = [mn.identity_key(keys[int(cond[sel[i]])], h_id[i]) + (int(grp[i]),) for i in order.tolist()]
+    rg_n = torch.tensor([rg_c[int(cond[sel[i]])] for i in order.tolist()], dtype=torch.float64)
+    net = order[mn.ball_net(x_id[order], netkeys, rg_n, float(net_A))]
     net = net[torch.argsort(f[net])]
-    kept_rows = [rows[int(i)] for i in net]
-    reps = [dict(x=x_id[int(i)], hand=rows[int(i)].aunit_handedness.reshape(-1)) for i in net]
+    # 4. crystals for the net only
+    kept_rows = []
+    for i in net.tolist():
+        r = templates[keys[int(cond[sel[i]])]].clone()
+        r.aunit_handedness = h_id[i].reshape(r.aunit_handedness.shape).to(r.aunit_handedness.dtype)
+        kept_rows.append(r)
+    reps = [dict(x=x_id[int(i)], hand=h_id[int(i)]) for i in net]
     out = mn._reported(kept_rows, reps, key, cutoff, supercell_size, 1.0, predictor, None, device, energy_chunk)
     for j, (r, i) in enumerate(zip(out, net.tolist())):
         r.minimum_id = torch.tensor([j])
         r.minimum_f = torch.tensor([float(f[i])], dtype=torch.float64)
         r.id_params = x_id[i].to(torch.float32).reshape(1, -1)
-        r.id_handedness = rows[i].aunit_handedness.reshape(1, -1).to(torch.float32)
+        r.id_handedness = h_id[i].reshape(1, -1).to(torch.float32)
         r.polish_status = torch.tensor([-1])
     q = sel[net]
     extra = {'group_id': (traj['minimum_id'][q], 'the minimum the descent of this state ended at (-1: none)'),
@@ -562,7 +599,7 @@ def write_band(traj: dict, templates: dict, path: str, *, library, kT: float, ke
              'stage': (traj['stage'][q], 'the stage the state was evaluated in'),
              'step': (traj['step'][q], 'its step in that stage')}
     search = dict(search, band=dict(band_kT=float(band_kT), net_A=float(net_A), states_in=int(len(cond)),
-                                    in_band=int(len(sel)), net=int(len(net))))
+                                    in_band=rec['in_band'], path_thinned=rec['path_thinned'], net=int(len(net))))
     _set_aside(path)
     try:
         meta = write_basin_set(out, path, kT=float(kT), energy_attr=key, energy=energy, search=search,
@@ -1108,8 +1145,9 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         for r, i in zip(out, idx):
             r.start_index = torch.tensor([int(slots.start[i])])
             r.stage_steps = slots.steps_in[i, :n_st].clone().reshape(1, n_st)
-            if endpoint:  # finish_endpoints makes a minimum only of a row whose force test passed
-                r.stage_converged = torch.tensor([int(slots.stage[i]) == n_st - 1 and bool(slots.bconv[i])])
+            if endpoint:  # finish_endpoints considers only a row whose bfgs stage ended on its own (force test or
+                # giving up), not one cascaded or at the step cap
+                r.stage_finished = torch.tensor([int(slots.stage[i]) == n_st - 1 and bool(slots.bdone[i])])
             if tcfg is not None:
                 attempt[1] += 1
                 att = (attempt[0], attempt[1])

@@ -177,7 +177,7 @@ def test_endpoint_stream_runs_every_start_once_and_resumes(mol, tmp_path, monkey
     out = rs.crystal_search(_endpoint_cfg(tmp_path, n))
     assert sorted(int(r.start_index) for r in out) == list(range(n))
     for r in out:
-        assert int(r.polish_status) in (0, 2, 4, 5) and 'hessian' not in r.keys() and 'id_hessian' not in r.keys()
+        assert int(r.polish_status) in (0, 2, 4, 5, 6) and 'hessian' not in r.keys() and 'id_hessian' not in r.keys()
         assert 'id_params' in r.keys() and math.isfinite(float(r.minimum_f))
     own = [r for r in out if int(r.minimum_id) >= 0 and not bool(r.recapture)]
     assert sorted(int(r.minimum_id) for r in own) == list(range(len(own))) and own
@@ -266,7 +266,7 @@ def test_unconverged_endpoints_are_no_minima(mol, tmp_path, monkeypatch):
     cfg.opt[1]['max_num_steps'] = 3
     out = rs.crystal_search(cfg)
     assert len(out) == n and all(int(r.minimum_id) == -1 and int(r.polish_status) in (2, 4) for r in out)
-    assert 'stage_converged' not in out[0].keys()
+    assert 'stage_finished' not in out[0].keys()
     assert torch.load(tmp_path / 'streamtest_minima.pt', weights_only=False) == []
 
 
@@ -308,7 +308,7 @@ def test_a_new_candidate_at_a_saddle_is_descended(mol, tmp_path, monkeypatch):
     monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None, num_samples=None: _placeholders(mol, n))
     (tmp_path / 'a').mkdir()
     out = rs.crystal_search(_endpoint_cfg(tmp_path / 'a', n))
-    assert all(math.isnan(float(r.saddle_f)) for r in out) and all(int(r.polish_status) != 6 for r in out)
+    assert all(math.isnan(float(r.saddle_f)) for r in out)  # no saddle here (a status 6 is a candidate short of tol)
     calls = []
     real = mn.bfgs_polish
 
