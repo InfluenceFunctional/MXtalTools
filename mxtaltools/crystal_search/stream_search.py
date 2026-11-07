@@ -121,7 +121,9 @@ component of its force in the FD identity metric's Angstrom-like coordinates is 
 ``energy_noise`` (kT) it accepts a step within the energy's noise on the slope test (``_bfgs_step``). The row is
 emitted at its accepted point, where the force was taken, and an endpoint whose force test passed is then its minimum
 (``minima.finish_endpoints``; a row cascaded, at the step cap or given up away from a minimum is kept with status 2
-and is no minimum): identified by a ball of ``minima.merge_A`` in that metric, captured
+and is no minimum). The force test cannot tell a minimum from a saddle, so an endpoint that matches no known minimum
+takes one Hessian; a saddle's descent is finished by ``minima.bfgs_polish`` (status 6, the saddle kept on the row).
+Repeats take none. Minima are identified by a ball of ``minima.merge_A`` in that metric, captured
 during the last stage by a ball of ``capture_A`` (``minima.MinimaLibrary(ball=True)``, factors
 ``minima.metric_factor``), and counted by the same stop rule. Groups are small (``ENDPOINT_POLISH_CHUNK`` by default),
 so the library fills as the endpoints arrive; seeds start in the last stage, before any random start, and their own
@@ -130,6 +132,11 @@ bound is checked as each group finishes. (MIPCAS eLJ, 2026-11-06, 1,000 starts, 
 no polish 178k evaluations, against 193k for descents and polish; ball capture at 0.1-0.3 A saved 11-14% of the
 descents' evaluations, 0.13-0.15% of captures to another minimum. These ran at fmax 0.05 in the loss's raw units,
 0.0073 kT / A, and with the rotation block rg times the plain rotation-vector step, not yet the geodesic angle.)
+(The endpoint run of 2,025 starts without that check: 58 of its 153 'minima' within 10 kT were saddles, and its
+stop needed 2,025 starts against the polished run's 1,642. Its endpoints replayed through the check: no saddle left
+within 10 kT, 136 minima as the polished run, 31 saddles descended, 7,660 evaluations for the checks and descents,
+and the stop's bound below 0.01 at 1,200 starts; every polished-run minimum within 5 kT found, plus 9 true minima
+0.3-1.7 A from its nearest.)
 Z' = 1 only: the config check refuses fmax and the mode for any other Z'. While seeds are queued or in flight the
 random starts' stop rule waits, so no seed is dropped with the rows in flight.
 
@@ -1150,7 +1157,8 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
                                                              predictor=predictors.get(key), supercell_size=supercell,
                                                              lj_envelope=mcfg['lj_envelope'],
                                                              merge_d2=float(mcfg['merge_A']) ** 2, device=device,
-                                                             energy_chunk=energy_chunk[0])
+                                                             energy_chunk=energy_chunk[0],
+                                                             max_iter=int(mcfg['max_iter']), tol=float(mcfg['tol']))
                         break
                     done_rows, eff = mn.finish_minima(rows, library, key, float(mcfg['kT']), cutoff=cutoff,
                                                       predictor=predictors.get(key),

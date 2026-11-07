@@ -183,7 +183,7 @@ def test_endpoint_stream_runs_every_start_once_and_resumes(mol, tmp_path, monkey
     assert sorted(int(r.minimum_id) for r in own) == list(range(len(own))) and own
     with open(tmp_path / 'streamtest_stream_effort.json') as fh:
         eff = json.load(fh)
-    assert eff['polish_evals'] <= n  # one energy per endpoint at most: no polish, no Hessian
+    assert eff['polish_evals'] < sum(eff['stage_evals']) / 4  # an energy per endpoint, a Hessian per new one
     again = rs.crystal_search(_endpoint_cfg(tmp_path, n, force=False))  # resume: the ball library rebuilds
     assert len(again) == n
     with pytest.raises(ValueError):  # a polished run cannot resume these endpoints
@@ -291,3 +291,32 @@ def test_trajectory_merge_keeps_one_attempt_per_start(tmp_path):
     ss._merge_trajectories(str(d), path, rows, [('A', 2, 1)], {'every': 10}, 1.0)
     t = torch.load(path, weights_only=False)
     assert sorted(t['start_index'].tolist()) == [0, 0, 1, 2] and t['minimum_id'].tolist().count(0) == 2
+
+
+def test_a_new_candidate_at_a_saddle_is_descended(mol, tmp_path, monkeypatch):
+    """Every new candidate takes one Hessian; one that is not positive semi-definite (here every one, candidate_is_minimum
+    False) is finished by bfgs_polish and stored at the minimum it reaches (status 6), the saddle kept on the row.
+    Repeats take no Hessian (their library entry was checked); without saddles saddle_f is NaN."""
+    n = 4
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None, num_samples=None: _placeholders(mol, n))
+    (tmp_path / 'a').mkdir()
+    out = rs.crystal_search(_endpoint_cfg(tmp_path / 'a', n))
+    assert all(math.isnan(float(r.saddle_f)) for r in out) and all(int(r.polish_status) != 6 for r in out)
+    calls = []
+    real = mn.bfgs_polish
+
+    def spy(*a, **k):
+        calls.append(len(a[1]))
+        return real(*a, **k)
+
+    monkeypatch.setattr(mn, 'candidate_is_minimum', lambda H: torch.zeros(len(H), dtype=torch.bool))
+    monkeypatch.setattr(mn, 'bfgs_polish', spy)
+    (tmp_path / 'b').mkdir()
+    out = rs.crystal_search(_endpoint_cfg(tmp_path / 'b', n))
+    own = [r for r in out if int(r.minimum_id) >= 0 and not bool(r.recapture)]
+    assert own and all(int(r.polish_status) == 6 and math.isfinite(float(r.saddle_f)) for r in own)
+    assert sum(calls) == sum(1 for r in out if math.isfinite(float(r.saddle_f)))  # one polish per saddle
+    for r in own:  # the polish moved down from the endpoint, not up
+        assert float(r.minimum_f) <= float(r.saddle_f) + 1e-6
+    with open(tmp_path / 'b' / 'streamtest_stream_effort.json') as fh:
+        assert json.load(fh)['polish_evals'] > n  # the Hessians and the polish are counted

@@ -47,7 +47,8 @@ POLISH_PAR = 3  # of those tries, evaluated together in one call: the first that
 # another would take it (a call's cost is mostly its latency; on qm9rc eLJ, 2026-10-31, 3.4 tries per iteration)
 TRUST_RANGE = (1 / 16, 16.0)  # bounds of the per-row factor on POLISH_CAPS (doubled on an accepted step, halved else)
 POLISH_STATUS = {0: 'captured (in the stage or the polish)', 1: 'converged', 2: 'stalled', 3: 'iteration cap',
-                 4: 'left the cell-parameter box', 5: 'endpoint (no polish: the last stage converged it)'}
+                 4: 'left the cell-parameter box', 5: 'endpoint (no polish: the last stage converged it)',
+                 6: 'endpoint at a saddle, descended to a minimum (bfgs_polish)'}
 NEG_REL = 1e-6  # a Hessian counts as positive semi-definite when its lowest eigenvalue is above -NEG_REL * its highest
 FLAT_REL = 1e-9  # an eigen-direction whose |curvature| is below this times the largest is flat (the energy ignores it)
 FLAT_GRAD = 1e-3  # E/kT per unit coordinate: a flat direction with a smaller gradient component is converged along it
@@ -193,6 +194,11 @@ def ball_net(x: torch.Tensor, keys: list, rg: torch.Tensor, radius: float, chunk
             Xk, Wk = torch.cat([Xk, x[r[keep]]]), torch.cat([Wk, Wr[keep]])
             kept.extend(r[keep].tolist())
     return torch.tensor(sorted(kept), dtype=torch.long)
+
+
+def candidate_is_minimum(H: torch.Tensor) -> torch.Tensor:
+    """[n] bool: the endpoint mode's check of a new candidate's Hessian [n, d, d] (``is_psd``)."""
+    return is_psd(H)
 
 
 def is_psd(H: torch.Tensor) -> torch.Tensor:
@@ -946,7 +952,7 @@ def _reported(rows, reps, optim_target, cutoff, supercell_size, repulsion, predi
 def finish_endpoints(rows: list, library: MinimaLibrary, optim_target: str, kT: float, cutoff: float = 10,
                      supercell_size: int = 10, predictor=None, exp6_kwargs: Optional[dict] = None,
                      repulsion: float = 1.0, lj_envelope: Optional[float] = 1.0, merge_d2: float = 0.04,
-                     device='cpu', energy_chunk: int = 256):
+                     device='cpu', energy_chunk: int = 256, max_iter: int = 40, tol: float = 1e-4):
     """``finish_minima`` without a polish or Hessians: each row's last-stage endpoint is its minimum (the endpoint
     mode, ``minima.polish: 'none'``; the last stage must converge it, e.g. a bfgs stage with ``fmax``). ``library``
     is a ball library (``MinimaLibrary(ball=True)``) and ``merge_d2`` a squared radius in A^2.
@@ -956,13 +962,22 @@ def finish_endpoints(rows: list, library: MinimaLibrary, optim_target: str, kT: 
       cap, or given up away from a minimum) is kept with status 2 and is no minimum.
     - Every other row is re-described in the identity description, its E/kT taken there (one evaluation, under the
       envelope, as the stages evaluate); a row whose cell ``clean_cell_parameters`` would change gets status 4 and
-      is kept, not added. In ascending E/kT, the rest (status 5) are matched against the library
-      (``MinimaLibrary.match`` with ``metric_factor``, both balls, then the glued FD fallback): a match makes the row
-      a recapture of that minimum, else it is added as a new one, with its report description (``canonicalize_aunit``).
+      is kept, not added. In ascending E/kT, the rest are matched against the library (``MinimaLibrary.match``
+      with ``metric_factor``, both balls, then the glued FD fallback): a match makes the row a recapture of that
+      minimum (status 5).
+    - A row that matches nothing is a new candidate: the force test cannot tell a minimum from a saddle (on MIPCAS
+      eLJ, 2026-11-06, 58 of an endpoint run's 153 'minima' within 10 kT had a negative curvature), so its Hessian is
+      taken once. Positive semi-definite (``candidate_is_minimum``, ``is_psd``): it is added as a new minimum (status 5). Otherwise the descent
+      is finished from there by ``bfgs_polish`` (its first step, saddle-free, follows the gradient's own sign along
+      the negative direction: the side the descent was on), re-described, and matched or added in ascending energy
+      (status 6), the saddle kept on the row (``saddle_params``, ``saddle_f``); a saddle the polish does not converge
+      gets status 2 and is no minimum. Repeats never take a Hessian: their library entry was checked when added.
 
     Every returned row is re-analysed as ``finish_minima``'s are and carries ``minimum_id``, ``recapture``,
-    ``polish_status``, ``minimum_f``, ``id_params`` and ``id_handedness``; no Hessian. Returns (rows, effort) with the
-    effort of ``finish_minima`` (``n_f`` energies; no gradients or Hessians; ``deferred`` always empty)."""
+    ``polish_status``, ``minimum_f``, ``id_params``, ``id_handedness``, ``saddle_params`` [1, d] and ``saddle_f`` (NaN
+    unless the endpoint was a saddle); no Hessian. Returns (rows, effort) with the effort of ``finish_minima`` (``n_f``
+    energies, ``n_g`` gradients and ``n_h`` Hessians of the candidates' checks and the saddles' polish; ``deferred``
+    always empty)."""
     if not library.ball:
         raise ValueError('finish_endpoints: needs a ball library (MinimaLibrary(ball=True))')
     n = len(rows)
@@ -973,6 +988,7 @@ def finish_endpoints(rows: list, library: MinimaLibrary, optim_target: str, kT: 
     cap = [int(r.capture_min) if 'capture_min' in r.keys() else -1 for r in rows]
     rep, ident = [None] * n, [None] * n
     out_f, mid, recap, status = [float('nan')] * n, [-1] * n, [False] * n, [0] * n
+    sad_x, sad_f = [None] * n, [float('nan')] * n
     for i in range(n):
         if cap[i] >= 0:
             m = cap[i]
@@ -993,6 +1009,7 @@ def finish_endpoints(rows: list, library: MinimaLibrary, optim_target: str, kT: 
         F = E.f(x_id, torch.arange(len(sub)))
         effort['n_f'] += len(sub)
         inside = _inside_clean_box(sub, x_id, device)
+        cand = []
         for j in sorted(range(len(todo)), key=lambda j: float(F[j]) if torch.isfinite(F[j]) else float('inf')):
             i = todo[j]
             rep[i] = dict(x=x_rep[j], hand=rep_rows[j].aunit_handedness.reshape(-1))
@@ -1012,7 +1029,44 @@ def finish_endpoints(rows: list, library: MinimaLibrary, optim_target: str, kT: 
             if m >= 0:
                 mid[i], recap[i] = m, True
             else:
-                mid[i] = library.add(x_id[j], None, F[j], key, rep[i], W=W)
+                cand.append(j)
+        if cand:  # new candidates: one Hessian each; a saddle's descent is finished by bfgs_polish
+            _, _, Hc = E.fgh(x_id[cand], torch.tensor(cand))
+            effort['n_h'] += len(cand)
+            sad = [j for j, ok in zip(cand, candidate_is_minimum(Hc).tolist()) if not ok]
+            if sad:
+                res = bfgs_polish(StageEnergy([sub[j] for j in sad], optim_target, kT, cutoff=cutoff,
+                                              supercell_size=supercell_size, predictor=predictor,
+                                              lj_envelope=lj_envelope, exp6_kwargs=exp6_kwargs, device=device,
+                                              chunk=energy_chunk), x_id[sad], max_iter=max_iter, tol=tol)
+                for k_ in ('n_f', 'n_g', 'n_h'):
+                    effort[k_] += int(res[k_].sum())
+                xs = res['x']
+                ok_box = _inside_clean_box([sub[j] for j in sad], xs, device)
+                d_id = _described([sub[j] for j in sad], xs, device, identity_description)
+                d_rep = _described([sub[j] for j in sad], xs, device, canonicalize_aunit)
+                for k_, j in enumerate(sad):
+                    i = todo[j]
+                    sad_x[i], sad_f[i] = x_id[j].clone(), float(F[j])
+                    if int(res['status'][k_]) != 1 or not bool(ok_box[k_]):
+                        status[i] = 2 if int(res['status'][k_]) != 1 else 4
+                        continue
+                    ident[i] = dict(x=d_id[k_].full_cell_parameters().reshape(-1).double(),
+                                    hand=d_id[k_].aunit_handedness.reshape(-1))
+                    rep[i] = dict(x=d_rep[k_].full_cell_parameters().reshape(-1).double(),
+                                  hand=d_rep[k_].aunit_handedness.reshape(-1))
+                    out_f[i] = float(res['f'][k_])
+                    status[i] = 6
+            for j in sorted([j for j in cand if status[todo[j]] in (5, 6)], key=lambda j: out_f[todo[j]]):
+                i = todo[j]
+                rg = molecule_rg(rows[i])
+                W = metric_factor(ident[i]['x'].reshape(1, -1), rg)[0]
+                key = identity_key(row_key(rows[i]), ident[i]['hand'])
+                m = library.match(ident[i]['x'], W, key, merge_d2, f=out_f[i], rg=rg)
+                if m >= 0:
+                    mid[i], recap[i] = m, True
+                else:
+                    mid[i] = library.add(ident[i]['x'], None, out_f[i], key, rep[i], W=W)
     plain = [_without(r, 'stage_converged') for r in rows]
     out = _reported(plain, rep, optim_target, cutoff, supercell_size, repulsion, predictor, exp6_kwargs, device,
                     energy_chunk)
@@ -1023,6 +1077,9 @@ def finish_endpoints(rows: list, library: MinimaLibrary, optim_target: str, kT: 
         r.minimum_f = torch.tensor([out_f[i]], dtype=F64)
         r.id_params = torch.as_tensor(ident[i]['x']).to(torch.float32).reshape(1, d)
         r.id_handedness = torch.as_tensor(ident[i]['hand']).to(torch.float32).reshape(1, -1)
+        r.saddle_params = (sad_x[i] if sad_x[i] is not None else torch.full((d,), float('nan'))).to(
+            torch.float32).reshape(1, d)
+        r.saddle_f = torch.tensor([sad_f[i]], dtype=F64)
     return out, effort
 
 
