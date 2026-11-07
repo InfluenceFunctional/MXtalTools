@@ -143,7 +143,7 @@ random starts' stop rule waits, so no seed is dropped with the rows in flight.
 With ``trajectories`` (``TRAJECTORY_DEFAULTS``: ``every``, ``band_kT``, ``thin_A``) the stream keeps descent states:
 every ``every`` steps, each evaluated state of a stage without compression at or below its condition's lowest
 finished energy + ``band_kT`` (every state before the first finishes) and at least ``thin_A`` A from its start's last
-kept one. A finished start's states join the next part file of ``<run>_traj_parts/``; at the end they merge into
+kept one; the finish step's saddle descents (``minima.finish_endpoints``) add their accepted steps under the same rules. A finished start's states join the next part file of ``<run>_traj_parts/``; at the end they merge into
 ``<run>_traj.pt`` (``_merge_trajectories``), and with ``basin_set`` the states within ``band_kT`` of their
 condition's lowest minimum, thinned to a ``thin_A`` net within each descent group, are written as a band set in
 ``<run>_band/`` (``write_band``): the low-energy states a prior is built from, each tagged with the minimum its descent
@@ -172,7 +172,7 @@ from mxtaltools.dataset_utils.utils import collate_data_list
 STREAM_DEFAULTS = dict(slots=None, check_every=5, polish_chunk=None, first_polish_chunk=None, seeds=None, stop_p=None,
                        stop_band_kT=5.0, connected_starts=True, quota=None, quota_band_kT=10.0, window=None,
                        polish_defer=None, basin_set=False, trajectories=None)
-TRAJECTORY_DEFAULTS = dict(every=10, band_kT=15.0, thin_A=0.1)  # cfg:stream.trajectories (module docstring)
+TRAJECTORY_DEFAULTS = dict(every=1, band_kT=15.0, thin_A=0.1)  # cfg:stream.trajectories (module docstring)
 ENDPOINT_POLISH_CHUNK = 25  # polish_chunk's default without a polish: a group is cheap, and the library (capture,
 # the stop rule) should fill as the endpoints arrive
 STAGE_KEYS = {'optim_target', 'enforce_reduced', 'compression_factor', 'cutoff', 'init_lr', 'convergence_eps',
@@ -447,33 +447,33 @@ def _write_basins(table, path, config, stages, mcfg, scfg, counts) -> dict:
 
 def _merge_trajectories(traj_dir, path, opt_outs, keys, tcfg, kT) -> dict:
     """cfg:stream.trajectories at the end of a run: the kept states of the starts in ``opt_outs``, from the merged
-    file an earlier invocation of this run left at ``path`` (the base) and then the part files in order, merged into
-    ``path``, the parts removed. A start held by several of these sources (a resumed run relaxed it again) keeps only
-    the records of the last source that holds it, one attempt whole. Returns the effort file's record.
+    file an earlier invocation of this run left at ``path`` (the base) and the part files, merged into ``path``, the
+    parts removed. Each record carries its start's attempt token (process, emission counter; ``emit``), and a start
+    keeps the records of the attempt its output row names (``traj_attempt``), one attempt whole: a resumed run that
+    relaxed a start again drops the earlier attempt's states, wherever they were saved. Returns the effort file's
+    record.
 
     The file is a dict: ``format`` 'stream_trajectories/1'; ``keys`` the conditions (identifier, space group, Z');
     ``kT``; ``settings`` (cfg:stream.trajectories); and per state ``start_index``, ``condition`` (into ``keys``),
     ``handedness``, ``stage``, ``step``, ``params`` (the evaluated full cell parameters, cleaned, centre unwrapped,
-    float64), ``f_kT`` (the stage's E/kT there, under the minima block's envelope) and ``minimum_id`` (the minimum the
-    start ended at, -1 if none)."""
+    float64; a finish-step saddle descent's steps are stage = the number of stages, in the identity description),
+    ``f_kT`` (the stage's E/kT there, under the minima block's envelope), ``attempt`` (the start's attempt token) and
+    ``minimum_id`` (the minimum the start ended at, -1 if none)."""
     sources = []  # one list of records per source, in order
     if os.path.exists(path):
         b = torch.load(path, weights_only=False)
         hb = b['handedness']
         sources.append([dict(start=int(b['start_index'][q]), c=int(b['condition'][q]), hand=hb[q],
                              stage=int(b['stage'][q]), step=int(b['step'][q]), x=b['params'][q],
-                             f=float(b['f_kT'][q])) for q in range(len(b['f_kT']))])
+                             f=float(b['f_kT'][q]), att=tuple(b['attempt'][q].tolist()))
+                        for q in range(len(b['f_kT']))])
     names = sorted(f_ for f_ in os.listdir(traj_dir) if f_.startswith('part_') and f_.endswith('.pt')) \
         if os.path.isdir(traj_dir) else []
     for f_ in names:
         sources.append(torch.load(os.path.join(traj_dir, f_), weights_only=False))
     finished = {int(r.start_index): r for r in opt_outs if 'start_index' in r.keys()}
-    last_source = {}
-    for k_, src in enumerate(sources):
-        for r in src:
-            last_source[r['start']] = k_
-    sel = [r for k_, src in enumerate(sources) for r in src
-           if r['start'] in finished and last_source[r['start']] == k_]
+    want = {s: tuple(r.traj_attempt.reshape(-1).tolist()) for s, r in finished.items() if 'traj_attempt' in r.keys()}
+    sel = [r for src in sources for r in src if r['start'] in want and tuple(r['att']) == want[r['start']]]
     d = int(sel[0]['x'].numel()) if sel else 12
     hands = [r['hand'].reshape(-1) for r in sel]
     same = len({tuple(h.shape) for h in hands}) <= 1
@@ -490,6 +490,7 @@ def _merge_trajectories(traj_dir, path, opt_outs, keys, tcfg, kT) -> dict:
                step=torch.tensor([r['step'] for r in sel], dtype=torch.long),
                params=torch.stack([r['x'] for r in sel]) if sel else torch.zeros(0, d, dtype=torch.float64),
                f_kT=torch.tensor([r['f'] for r in sel], dtype=torch.float64),
+               attempt=torch.tensor([list(r['att']) for r in sel], dtype=torch.long).reshape(-1, 2),
                minimum_id=torch.tensor([mid(r) for r in sel], dtype=torch.long))
     atomic_torch_save(out, path)
     for f_ in names:
@@ -840,6 +841,7 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
     tcfg = scfg['trajectories']  # cfg:stream.trajectories, or None
     traj_dir = str(out_path)[:-3] + '_traj_parts'
     traj_buf, traj_parts = [], [0]  # finished starts' kept states not yet written; part files written
+    attempt = [time.time_ns(), 0]  # (this process, emission counter): the token of a start's attempt
     S = scfg['slots']
 
     # resume: the committed outputs (the merged file's first `base` rows, then the part files)
@@ -1108,10 +1110,14 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
             r.stage_steps = slots.steps_in[i, :n_st].clone().reshape(1, n_st)
             if endpoint:  # finish_endpoints makes a minimum only of a row whose force test passed
                 r.stage_converged = torch.tensor([int(slots.stage[i]) == n_st - 1 and bool(slots.bconv[i])])
+            if tcfg is not None:
+                attempt[1] += 1
+                att = (attempt[0], attempt[1])
+                r.traj_attempt = torch.tensor([att], dtype=torch.long)  # the finish step's slide records carry it too
             if tcfg is not None and slots.tbuf[i]:
                 hand_ = slots.row[i].aunit_handedness.reshape(-1).float()
                 traj_buf.extend(dict(start=int(slots.start[i]), c=slot_c[i], hand=hand_, stage=st_, step=n_,
-                                     x=x_, f=f_) for st_, n_, x_, f_ in slots.tbuf[i])
+                                     x=x_, f=f_, att=att) for st_, n_, x_, f_ in slots.tbuf[i])
                 effort['trajectory_states'] += len(slots.tbuf[i])
                 slots.tbuf[i] = []
             if mcfg is not None:
@@ -1179,6 +1185,9 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
                     gc.collect()
                     torch.cuda.empty_cache()
                     print(f"{config.run_name}: out of memory in the polish; {energy_chunk[0]} rows per evaluation")
+            slides = eff.pop('slides', {})
+            if tcfg is not None and slides:
+                keep_slides(rows, slides)
             rows, back = done_rows, eff.pop('deferred', [])
             effort['polish_evals'] += mn.polish_evals(eff)
             effort['polish_deferred'] += len(back)
@@ -1263,6 +1272,30 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
     clean = 0  # steps since the last out-of-memory error                 error in that target's call (rows independent)
     stopping = False  # a stop request: no new starts; the loop ends when the slots in flight are done
     nz = (d - 6) // 6 if d is not None else 0
+
+    def keep_slides(rows_in, slides):
+        """cfg:stream.trajectories: the accepted steps of the saddle descents finish_endpoints ran (``slides``, per
+        input row), as states of stage n_st (the finish step) of the row's start and attempt: every step, then the
+        band and thinning rules of ``keep_states`` (the first compared with the saddle)."""
+        kT_ = float(mcfg['kT'])
+        for i, sl in slides.items():
+            r = rows_in[i]
+            if 'traj_attempt' not in r.keys() or not len(sl['f']):
+                continue
+            c = cidx[mn.row_key(r)]
+            ref = running_min.get(keys[c], math.inf) / kT_
+            last, rg = sl['saddle'], mn.molecule_rg(r)
+            for k_, (x_, f_) in enumerate(zip(sl['x'], sl['f'].tolist())):
+                if math.isfinite(ref) and f_ > ref + tcfg['band_kT']:
+                    continue
+                if tcfg['thin_A'] > 0:
+                    W = mn.metric_factor(last.reshape(1, -1), rg)[0]
+                    if float((W.T @ mn.min_image(x_ - last)).norm()) < tcfg['thin_A']:
+                        continue
+                traj_buf.append(dict(start=int(r.start_index), c=c, hand=sl['hand'].float(), stage=n_st, step=k_,
+                                     x=x_.clone(), f=float(f_), att=tuple(r.traj_attempt.reshape(-1).tolist())))
+                effort['trajectory_states'] += 1
+                last = x_
 
     def keep_states(idx, x, loss):
         """cfg:stream.trajectories: of the evaluated states of the slots ``idx`` (parameters ``x``, loss ``loss`` in

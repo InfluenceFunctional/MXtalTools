@@ -796,7 +796,8 @@ def _inside_clean_box(rows, x, device, tol: float = 1e-5):
 
 
 def bfgs_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol: float = 1e-4, capture=None,
-                capture_d2: float = 9.0, keys: Optional[list] = None, merge_d2: float = 1.0, hessian_every: int = 1):
+                capture_d2: float = 9.0, keys: Optional[list] = None, merge_d2: float = 1.0, hessian_every: int = 1,
+                trace: Optional[list] = None):
     """Per-row gradient-only BFGS polish of ``energy`` from ``x0`` [n, d], ``newton_polish``'s arguments
     (``hessian_every`` is accepted and ignored), captures and return dict.
 
@@ -891,6 +892,8 @@ def bfgs_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol: 
                 x[ra], F[ra], G[ra] = xn[acc], Fn[acc], Gn[acc]
                 trust[ra] = (trust[ra] * 2).clamp(max=TRUST_RANGE[1])
                 was_reset[ra] = False
+                if trace is not None:  # every accepted step: (row, x, E/kT)
+                    trace.extend((int(q), x[q].clone(), float(F[q])) for q in ra.tolist())
             rr = r[~acc]
             trust[rr] = (trust[rr] / 2).clamp(min=TRUST_RANGE[0])
             alpha[pj[~acc]] /= 4
@@ -977,12 +980,13 @@ def finish_endpoints(rows: list, library: MinimaLibrary, optim_target: str, kT: 
     ``polish_status``, ``minimum_f``, ``id_params``, ``id_handedness``, ``saddle_params`` [1, d] and ``saddle_f`` (NaN
     unless the endpoint was a saddle); no Hessian. Returns (rows, effort) with the effort of ``finish_minima`` (``n_f``
     energies, ``n_g`` gradients and ``n_h`` Hessians of the candidates' checks and the saddles' polish; ``deferred``
-    always empty)."""
+    always empty; ``slides``: per input row whose saddle was descended, the polish's accepted steps ``x`` [m, d] and
+    ``f`` [m] (E/kT) in the identity description, its ``hand`` and the ``saddle``)."""
     if not library.ball:
         raise ValueError('finish_endpoints: needs a ball library (MinimaLibrary(ball=True))')
     n = len(rows)
     d = int(rows[0].full_cell_parameters().shape[-1]) if n else 12
-    effort = dict(n_f=0, n_g=0, n_h=0, d=d, deferred=[])
+    effort = dict(n_f=0, n_g=0, n_h=0, d=d, deferred=[], slides={})
     if not n:
         return [], effort
     cap = [int(r.capture_min) if 'capture_min' in r.keys() else -1 for r in rows]
@@ -1030,6 +1034,7 @@ def finish_endpoints(rows: list, library: MinimaLibrary, optim_target: str, kT: 
                 mid[i], recap[i] = m, True
             else:
                 cand.append(j)
+        steps = []
         if cand:  # new candidates: one Hessian each; a saddle's descent is finished by bfgs_polish
             _, _, Hc = E.fgh(x_id[cand], torch.tensor(cand))
             effort['n_h'] += len(cand)
@@ -1038,7 +1043,8 @@ def finish_endpoints(rows: list, library: MinimaLibrary, optim_target: str, kT: 
                 res = bfgs_polish(StageEnergy([sub[j] for j in sad], optim_target, kT, cutoff=cutoff,
                                               supercell_size=supercell_size, predictor=predictor,
                                               lj_envelope=lj_envelope, exp6_kwargs=exp6_kwargs, device=device,
-                                              chunk=energy_chunk), x_id[sad], max_iter=max_iter, tol=tol)
+                                              chunk=energy_chunk), x_id[sad], max_iter=max_iter, tol=tol,
+                                  trace=steps)
                 for k_ in ('n_f', 'n_g', 'n_h'):
                     effort[k_] += int(res[k_].sum())
                 xs = res['x']
@@ -1047,6 +1053,11 @@ def finish_endpoints(rows: list, library: MinimaLibrary, optim_target: str, kT: 
                 d_rep = _described([sub[j] for j in sad], xs, device, canonicalize_aunit)
                 for k_, j in enumerate(sad):
                     i = todo[j]
+                    path = [(x_, f_) for q, x_, f_ in steps if q == k_]
+                    effort['slides'][i] = dict(x=torch.stack([x_ for x_, _ in path]) if path else
+                                               torch.zeros(0, d, dtype=F64),
+                                               f=torch.tensor([f_ for _, f_ in path], dtype=F64),
+                                               hand=sub[j].aunit_handedness.reshape(-1).clone(), saddle=x_id[j].clone())
                     sad_x[i], sad_f[i] = x_id[j].clone(), float(F[j])
                     if int(res['status'][k_]) != 1 or not bool(ok_box[k_]):
                         status[i] = 2 if int(res['status'][k_]) != 1 else 4

@@ -266,31 +266,33 @@ def test_unconverged_endpoints_are_no_minima(mol, tmp_path, monkeypatch):
 
 
 def test_trajectory_merge_keeps_one_attempt_per_start(tmp_path):
-    """_merge_trajectories: a start relaxed twice (its first attempt in part 0, the redo in part 1) keeps only the
-    redo's records; a start of an earlier invocation's merged file survives a merge of new parts; unfinished starts
-    are dropped."""
-    def rec(start, step, f):
-        return dict(start=start, c=0, hand=torch.ones(1), stage=1, step=step, x=torch.full((12,), float(f),
-                                                                                           dtype=torch.float64), f=f)
+    """_merge_trajectories: a start relaxed twice keeps only the records of the attempt its output row names, wherever
+    they were saved (its first attempt in part 0, the redo split over parts 0 and 1); a start of an earlier
+    invocation's merged file survives a merge of new parts; unfinished starts are dropped."""
+    def rec(start, step, f, att):
+        return dict(start=start, c=0, hand=torch.ones(1), stage=1, step=step, att=att,
+                    x=torch.full((12,), float(f), dtype=torch.float64), f=f)
     rows = []
-    for k in (0, 1, 2):
-        r = SimpleNamespace(start_index=torch.tensor([k]), minimum_id=torch.tensor([k]))
-        r.keys = lambda r=r: ['start_index', 'minimum_id']
+    for k, att in ((0, (5, 2)), (1, (5, 1)), (2, (6, 1))):
+        r = SimpleNamespace(start_index=torch.tensor([k]), minimum_id=torch.tensor([k]),
+                            traj_attempt=torch.tensor([att]))
+        r.keys = lambda r=r: ['start_index', 'minimum_id', 'traj_attempt']
         rows.append(r)
     d = tmp_path / 'traj_parts'
     d.mkdir()
-    torch.save([rec(0, 0, 1.0), rec(0, 10, 2.0), rec(1, 0, 3.0), rec(9, 0, 9.0)], d / 'part_000000.pt')
-    torch.save([rec(0, 0, 1.5), rec(0, 20, 2.5)], d / 'part_000001.pt')
+    torch.save([rec(0, 0, 1.0, (4, 9)), rec(0, 10, 2.0, (4, 9)), rec(1, 0, 3.0, (5, 1)), rec(0, 0, 1.5, (5, 2)),
+                rec(9, 0, 9.0, (5, 3))], d / 'part_000000.pt')
+    torch.save([rec(0, 20, 2.5, (5, 2))], d / 'part_000001.pt')
     path = str(tmp_path / 'run_traj.pt')
     ss._merge_trajectories(str(d), path, rows[:2], [('A', 2, 1)], {'every': 10}, 1.0)
     t = torch.load(path, weights_only=False)
     got = sorted(zip(t['start_index'].tolist(), t['step'].tolist(), t['f_kT'].tolist()))
     assert got == [(0, 0, 1.5), (0, 20, 2.5), (1, 0, 3.0)] and not d.exists()
     d.mkdir()
-    torch.save([rec(2, 0, 4.0)], d / 'part_000000.pt')  # a later invocation: one new start
+    torch.save([rec(2, 0, 4.0, (6, 1))], d / 'part_000000.pt')  # a later invocation: one new start
     ss._merge_trajectories(str(d), path, rows, [('A', 2, 1)], {'every': 10}, 1.0)
     t = torch.load(path, weights_only=False)
-    assert sorted(t['start_index'].tolist()) == [0, 0, 1, 2] and t['minimum_id'].tolist().count(0) == 2
+    assert sorted(t['start_index'].tolist()) == [0, 0, 1, 2] and t['attempt'].shape == (4, 2)
 
 
 def test_a_new_candidate_at_a_saddle_is_descended(mol, tmp_path, monkeypatch):
@@ -315,8 +317,24 @@ def test_a_new_candidate_at_a_saddle_is_descended(mol, tmp_path, monkeypatch):
     out = rs.crystal_search(_endpoint_cfg(tmp_path / 'b', n))
     own = [r for r in out if int(r.minimum_id) >= 0 and not bool(r.recapture)]
     assert own and all(int(r.polish_status) == 6 and math.isfinite(float(r.saddle_f)) for r in own)
+    assert not (tmp_path / 'b' / 'streamtest_traj.pt').exists()  # no trajectories asked for: none written
     assert sum(calls) == sum(1 for r in out if math.isfinite(float(r.saddle_f)))  # one polish per saddle
     for r in own:  # the polish moved down from the endpoint, not up
         assert float(r.minimum_f) <= float(r.saddle_f) + 1e-6
     with open(tmp_path / 'b' / 'streamtest_stream_effort.json') as fh:
         assert json.load(fh)['polish_evals'] > n  # the Hessians and the polish are counted
+
+
+def test_saddle_slides_join_the_trajectories(mol, tmp_path, monkeypatch):
+    """With trajectories, a saddle candidate's descent in the finish step adds its accepted steps as states of stage
+    n_st (here 2) of that start; every kept state's start names its own attempt."""
+    n = 4
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None, num_samples=None: _placeholders(mol, n))
+    monkeypatch.setattr(mn, 'candidate_is_minimum', lambda H: torch.zeros(len(H), dtype=torch.bool))
+    out = rs.crystal_search(_endpoint_cfg(tmp_path, n, trajectories={'band_kT': 1000.0, 'thin_A': 0.0}))
+    tr = torch.load(tmp_path / 'streamtest_traj.pt', weights_only=False)
+    slid = {int(r.start_index) for r in out if int(r.polish_status) == 6}
+    assert slid and set(tr['start_index'][tr['stage'] == 2].tolist()) <= slid
+    assert int((tr['stage'] == 2).sum()) > 0
+    att = {int(r.start_index): tuple(r.traj_attempt.reshape(-1).tolist()) for r in out}
+    assert all(tuple(a) == att[int(s)] for s, a in zip(tr['start_index'], tr['attempt'].tolist()))
