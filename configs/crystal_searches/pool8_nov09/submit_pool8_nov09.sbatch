@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --time=06:00:00
-#SBATCH --mem=32G
+#SBATCH --mem=64G
 #SBATCH --cpus-per-task=8
 #SBATCH --tasks-per-node=1
 #SBATCH --mail-user=mjakilgour@gmail.com
@@ -31,6 +31,27 @@ COMMIT=$(git -C "${MXT_ROOT}" rev-parse --short=12 HEAD 2>/dev/null || echo unkn
 OUT=/scratch/mk8347/data/crystal_datasets/conditional/pool8_nov09/search
 mkdir -p "${OUT}"
 echo "JOB ${SLURM_ARRAY_JOB_ID}_${JOB} tasks $(( JOB * TASKS_PER_JOB ))..$(( JOB * TASKS_PER_JOB + TASKS_PER_JOB - 1 )) code=${COMMIT} start=$(date -Is)"
+
+# A lease left by a job that no longer exists (OOM kill, node failure) would block its run for up to 30 min. Remove it
+# only on positive evidence that the job is gone: squeue answers and lists nothing, or says the id is invalid. (As
+# rc_oct22; run here, outside the container, where squeue exists.)
+clear_dead_lease() {
+    local f=$1 old q rc
+    [ -f "${f}" ] || return 0
+    old=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1])).get('job') or '')" "${f}" 2>/dev/null || true)
+    if [ -z "${old}" ] || [ "${old}" = "${SLURM_JOB_ID}" ]; then return 0; fi
+    q=$(squeue -h -j "${old}" -o %T 2>&1); rc=$?
+    if { [ ${rc} -eq 0 ] && [ -z "${q}" ]; } || [[ "${q}" == *"Invalid job id"* ]]; then
+        echo "removing ${f}: its job ${old} is gone"
+        rm -f "${f}"
+    fi
+}
+for J in $(seq 0 $(( TASKS_PER_JOB - 1 ))); do
+    T=$(( JOB * TASKS_PER_JOB + J ))
+    [ ${T} -lt ${N_TASKS} ] || break
+    R=$(awk '/^run_name:/{print $2}' "${HERE}/tasks/${T}.yaml" 2>/dev/null)
+    [ -n "${R}" ] && clear_dead_lease "${OUT}/${R}_owner.json"
+done
 
 srun singularity exec \
     --overlay ${OVERLAY}:ro \

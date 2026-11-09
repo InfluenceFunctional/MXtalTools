@@ -40,7 +40,7 @@ CPU (cluster cores may be slower) and about 125 GB of `_slim.pt` files.
 
 - `make_battery.py`: writes `tasks/<k>.yaml`, `INDEX.tsv` and the job script's array range; asserts distinct run
   names and seeds, seed slots no task can overrun, and no local path.
-- `submit_pool8_nov09.sbatch`: one array job = 8 tasks side by side, one core each (32 GB per job); job j runs tasks
+- `submit_pool8_nov09.sbatch`: one array job = 8 tasks side by side, one core each (64 GB per job: 32 GB ran one task out of memory in the smoke job); job j runs tasks
   8j..8j+7; a task with a `_slim.pt` is skipped, so resubmitting the array finishes what is left. Each task logs to
   `<out_dir>/<run>.log`; the job log prints one status line per task.
 - `slim_outputs.py`: the converter.
