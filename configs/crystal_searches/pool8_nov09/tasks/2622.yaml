@@ -1,0 +1,74 @@
+device: cpu
+mol_path: /scratch/mk8347/data/crystal_datasets/conditional/pool8_nov09/mols/pool8_mols_chunk2622.pt
+dataset_path: null
+target_path: null
+out_dir: /scratch/mk8347/data/crystal_datasets/conditional/pool8_nov09/search
+run_name: pool8_c2622
+target_identifier: null
+save_trajs: false
+init_sample_method: random
+init_reduced: true
+force_restart_run: false
+mol_seed: 0
+opt_seed: 202622000000
+sampling_mode: all
+mols_to_sample: 0
+num_samples: 100
+sgs_to_search:
+- 2
+zp_to_search:
+- 1
+batch_size: 50
+grow_batch_size: false
+init_target_cp: std
+oom_ceiling: false
+minima:
+  kT: 6.859493755713105
+  polish: none
+  capture_A: 0.2
+  merge_A: 0.2
+stream:
+  slots: 50
+  check_every: 5
+  stop_p: null
+  stop_band_kT: 5.0
+  seeds: null
+  basin_set: false
+  trajectories:
+    every: 1
+    band_kT: 15.0
+    net_A: 0.1
+  quota: null
+opt:
+- optim_target: elj
+  enforce_reduced: false
+  compression_factor: 0.0
+  cutoff: 10
+  init_lr: 0.05
+  convergence_eps: 0.01
+  optimizer_func: rprop
+  anneal_lr: false
+  grad_norm_clip: 0.1
+  show_tqdm: false
+  max_num_steps: 350
+  target_packing_coeff: null
+  centroid_boundary: wrap
+- optim_target: elj
+  enforce_reduced: false
+  compression_factor: 0.0
+  cutoff: 10
+  fmax: 0.02
+  energy_noise: 0.0001
+  optimizer_func: bfgs
+  show_tqdm: false
+  max_num_steps: 600
+  target_packing_coeff: null
+  centroid_boundary: wrap
+  early_stop:
+  - - 25
+    - 10.0
+  - - 50
+    - 8.0
+  - - 100
+    - 5.0
+  early_stop_kT: 6.859493755713105
