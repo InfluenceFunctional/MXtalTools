@@ -36,6 +36,32 @@ each task 2,500 starts in about 20 min on one core, peak 2.7 GB, 320k recorded s
 `_slim.pt` 43 MB per task (17 KB per start; 110 MB of sources deleted). Whole battery: about 1,000 core-hours on that
 CPU (cluster cores may be slower) and about 125 GB of `_slim.pt` files.
 
+## Band sets (the prior constructor's first step)
+
+`band_from_slim.py` turns one task's `_slim.pt` into band sets, one per split of `pool8_mols.tsv` (train,
+heldout_random, heldout_scaffold), at `band32/<split>/pool8_c<k>_band/`, through `stream_search.write_band`:
+
+1. the states inside the packing window [0.55, 0.95] (molecule volume x 2 / cell volume) and within 5 kT of their
+   molecule's lowest minimum (E/kT under the search's envelope);
+2. thinned along each descent at 0.1 A;
+3. 32 per molecule by `minima.banded_farthest_points` (owner, 2026-11-09): 8 in 0-1 kT, 12 in 1-3 kT, 12 in 3-5 kT;
+   each band's lowest state first, then the state farthest from every one kept so far, across descent groups;
+4. re-analysed at the hard cutoff and written (`basin_set.write_basin_set`, kind 'band', with `group_id`).
+
+`--starts N` keeps each molecule's first N starts (depth versus breadth). Measured on task 0 on the dev box (Intel
+Core Ultra 9 275HX, one core, 2026-11-09): 212 s per task. Of 799 picks, 724 written: the importer refused 75 as
+`pose_mismatch`, all in the train split, most on two molecules (5 and 11 rows kept of 32): molecules whose
+principal-axis frame is near-degenerate (`crystal_fd/io_mxt.py`). The search's own band settings (15 kT, 0.1 A net,
+no cap) lost 12% the same way.
+
+`band_pool8_nov09.sbatch`: 46 array jobs of 64 tasks on 8 cores; a task with `band32/done/<run>.json` is skipped,
+and a stopped task redoes only its unwritten splits. Done when `ls band32/done | wc -l` is 2899.
+
+Then one list file per split for `build_noised_prior.py --basins` (GFN `energy_sampling/data_processing/`):
+
+    cd /scratch/mk8347/data/crystal_datasets/conditional/pool8_nov09/band32
+    for s in train heldout_random heldout_scaffold; do ls -d $PWD/$s/pool8_c*_band > ${s}_list.txt; done
+
 ## Files
 
 - `make_battery.py`: writes `tasks/<k>.yaml`, `INDEX.tsv` and the job script's array range; asserts distinct run
@@ -44,6 +70,7 @@ CPU (cluster cores may be slower) and about 125 GB of `_slim.pt` files.
   8j..8j+7; a task with a `_slim.pt` is skipped, so resubmitting the array finishes what is left. Each task logs to
   `<out_dir>/<run>.log`; the job log prints one status line per task.
 - `slim_outputs.py`: the converter.
+- `band_from_slim.py`, `band_pool8_nov09.sbatch`: the band sets (above).
 
 ## Launch (cluster)
 

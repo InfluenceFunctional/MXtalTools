@@ -196,6 +196,64 @@ def ball_net(x: torch.Tensor, keys: list, rg: torch.Tensor, radius: float, chunk
     return torch.tensor(sorted(kept), dtype=torch.long)
 
 
+def banded_farthest_points(x: torch.Tensor, keys: list, rg: torch.Tensor, f: torch.Tensor, bands) -> torch.Tensor:
+    """Farthest-point picks of identity-description Z' = 1 rows ``x`` [n, 12], per condition (``keys[i][:3]``), in
+    energy bands: ``bands`` is a list of (lo, hi, budget) over ``f`` [n] (each row's energy above its condition's
+    reference, e.g. E/kT minus the lowest minimum's), taken in order; band one takes lo <= f <= hi, later bands
+    lo < f <= hi. Within a band the first pick is its lowest row, unless an earlier band already holds a row in
+    [lo, hi]; each next pick is the band row farthest from every row kept so far in the condition (any band), until
+    the budget is spent or every band row coincides with a kept one. A distance is ``ball_net``'s: in A, under the
+    kept row's ``metric_factor`` (``rg`` [n], A), at the nearest centre image; rows of another ``identity_key`` (its
+    handedness) never coincide. A band holding fewer rows than its budget gives what it has; the unspent budget is
+    not carried. Returns the picked indices, ascending."""
+    x = torch.as_tensor(x, dtype=F64).cpu()
+    f = torch.as_tensor(f, dtype=F64).reshape(-1).cpu()
+    rg = torch.as_tensor(rg, dtype=F64).reshape(-1).expand(len(x)).cpu()
+    bands = [(float(lo), float(hi), int(b)) for lo, hi, b in bands]
+    if any(not hi > lo or b < 0 for lo, hi, b in bands):
+        raise ValueError(f'banded_farthest_points: bands are (lo < hi, budget >= 0), got {bands}')
+    conds = {}
+    for i, k in enumerate(keys):
+        conds.setdefault(tuple(k[:3]), []).append(i)
+    picked = []
+    for cond, rows_ in conds.items():
+        r = torch.tensor(rows_)
+        X, F_ = x[r], f[r]
+        W = metric_factor(X, rg[r])
+        ident = [tuple(keys[i]) for i in rows_]
+        code = {k: j for j, k in enumerate(dict.fromkeys(ident))}
+        idc = torch.tensor([code[k] for k in ident])
+        shifts = centre_images(tuple(keys[rows_[0]]), X.shape[1])
+        dmin = torch.full((len(X),), float('inf'), dtype=F64)
+        kept = []
+
+        def add(i):
+            best = None
+            for s_ in shifts:
+                v = torch.einsum('ji,bj->bi', W[i], min_image(X - X[i] - s_)).pow(2).sum(-1)
+                best = v if best is None else torch.minimum(best, v)
+            dmin.copy_(torch.minimum(dmin, torch.where(idc == idc[i], best, torch.full_like(best, float('inf')))))
+            kept.append(i)
+
+        for b, (lo, hi, budget) in enumerate(bands):
+            cand = ((F_ >= lo) if b == 0 else (F_ > lo)) & (F_ <= hi)
+            if not bool(cand.any()) or budget == 0:
+                continue
+            idx = torch.nonzero(cand).flatten()
+            n0 = 0
+            if not any(lo <= float(F_[k]) <= hi for k in kept):
+                add(int(idx[torch.argmin(F_[idx])]))
+                n0 = 1
+            for _ in range(budget - n0):
+                d = dmin[idx]
+                j = int(torch.argmax(d))
+                if not float(d[j]) > 0:
+                    break
+                add(int(idx[j]))
+        picked.extend(r[torch.tensor(kept, dtype=torch.long)].tolist())
+    return torch.tensor(sorted(picked), dtype=torch.long)
+
+
 def candidate_is_minimum(H: torch.Tensor) -> torch.Tensor:
     """[n] bool: the endpoint mode's check of a new candidate's Hessian [n, d, d] (``is_psd``)."""
     return is_psd(H)

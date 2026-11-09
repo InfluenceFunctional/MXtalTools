@@ -519,7 +519,7 @@ def _bare_template(row):
 
 def write_band(traj: dict, templates: dict, path: str, *, library, kT: float, key: str, band_kT: float,
                net_A: float, energy: dict, search: dict, identity: dict, device='cpu', predictor=None,
-               cutoff: float = 10, supercell_size: int = 10, energy_chunk: int = 256):
+               cutoff: float = 10, supercell_size: int = 10, energy_chunk: int = 256, bands=None):
     """A band set at ``path`` (``basin_set.write_basin_set``, kind 'band') from a run's merged trajectories
     (``_merge_trajectories``' dict): the Z' = 1 states within ``band_kT`` of their condition's lowest library minimum
     (``library.f``, E/kT under the envelope), first thinned along each recorded segment (a start's stage: a state kept
@@ -528,11 +528,15 @@ def write_band(traj: dict, templates: dict, path: str, *, library, kT: float, ke
     within each descent group (the minimum the state's descent ended at:
     states of one valley are compared with each other, which keeps the net's cost to the sum over groups of their
     sizes times their kept counts; two groups' states near a shared path can both be kept), each re-analysed on the
-    hard cutoff (its energy ``E``). ``templates``
+    hard cutoff (its energy ``E``). With ``bands`` [(lo, hi, budget), ...] (E/kT above the condition's lowest
+    minimum; every hi at most ``band_kT``) the net is replaced by ``minima.banded_farthest_points``: per condition,
+    farthest-point picks within each energy band, across descent groups, at most the budgets' sum. ``templates``
     maps a condition (identifier, space group, Z') to a row of its molecule. An existing folder at ``path`` is moved
     aside. Returns (meta or None, the record for the effort file, the evaluations spent)."""
     from mxtaltools.crystal_search import minima as mn
     from mxtaltools.crystal_search.basin_set import write_basin_set
+    if bands is not None and any(float(hi) > float(band_kT) for _, hi, _ in bands):
+        raise ValueError(f"write_band: a band reaches above band_kT {band_kT}: {bands}")
     keys = [tuple(k_) for k_ in traj['keys']]
     templates = {k_: _bare_template(r) for k_, r in templates.items()}  # every band row is a clone of one
     lows = {}
@@ -591,9 +595,14 @@ def write_band(traj: dict, templates: dict, path: str, *, library, kT: float, ke
     f = traj['f_kT'][sel]
     grp = traj['minimum_id'][sel]
     order = torch.argsort(f)
-    netkeys = [mn.identity_key(keys[int(cond[sel[i]])], h_id[i]) + (int(grp[i]),) for i in order.tolist()]
     rg_n = torch.tensor([rg_c[int(cond[sel[i]])] for i in order.tolist()], dtype=torch.float64)
-    net = order[mn.ball_net(x_id[order], netkeys, rg_n, float(net_A))]
+    if bands is None:
+        netkeys = [mn.identity_key(keys[int(cond[sel[i]])], h_id[i]) + (int(grp[i]),) for i in order.tolist()]
+        net = order[mn.ball_net(x_id[order], netkeys, rg_n, float(net_A))]
+    else:   # f above each state's condition's lowest library minimum
+        idkeys = [mn.identity_key(keys[int(cond[sel[i]])], h_id[i]) for i in order.tolist()]
+        f_rel = (f.double() - lo[sel].double())[order]
+        net = order[mn.banded_farthest_points(x_id[order], idkeys, rg_n, f_rel, bands)]
     net = net[torch.argsort(f[net])]
     # 4. crystals for the net only
     kept_rows = []
@@ -616,7 +625,8 @@ def write_band(traj: dict, templates: dict, path: str, *, library, kT: float, ke
              'stage': (traj['stage'][q], 'the stage the state was evaluated in'),
              'step': (traj['step'][q], 'its step in that stage')}
     search = dict(search, band=dict(band_kT=float(band_kT), net_A=float(net_A), states_in=int(len(cond)),
-                                    in_band=rec['in_band'], path_thinned=rec['path_thinned'], net=int(len(net))))
+                                    in_band=rec['in_band'], path_thinned=rec['path_thinned'], net=int(len(net)),
+                                    bands=None if bands is None else [list(b_) for b_ in bands]))
     _set_aside(path)
     try:
         meta = write_basin_set(out, path, kT=float(kT), energy_attr=key, energy=energy, search=search,

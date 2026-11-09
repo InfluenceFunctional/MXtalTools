@@ -92,6 +92,49 @@ def test_ball_net_is_a_radius_net():
     assert float((kd + torch.eye(len(kept), dtype=torch.float64) * 1e9).min()) > r * 0.5
 
 
+def test_banded_farthest_points_spend_each_bands_budget_from_its_lowest_row():
+    """minima.banded_farthest_points: per condition, each band's first pick is its lowest row and the rest are the
+    band rows farthest from every pick so far; budgets are caps; conditions are picked apart; another handedness key
+    never coincides with a pick."""
+    torch.manual_seed(3)
+    n = 400
+    x = X0[None] + 0.05 * torch.randn(n, 12, dtype=torch.float64)
+    f = torch.rand(n, dtype=torch.float64) * 5
+    keys = [_key()] * n
+    bands = [(0.0, 1.0, 3), (1.0, 3.0, 4), (3.0, 5.0, 4)]
+    got = mn.banded_farthest_points(x, keys, torch.full((n,), 2.0), f, bands).tolist()
+    assert len(got) == 11 and len(set(got)) == 11
+    fg = f[got]
+    assert int((fg <= 1).sum()) == 3 and int(((fg > 1) & (fg <= 3)).sum()) == 4 and int((fg > 3).sum()) == 4
+    assert int(torch.argmin(f)) in got                                     # band one opens with the lowest row
+    assert int(torch.nonzero((f > 1) & (f <= 3)).flatten()[torch.argmin(f[(f > 1) & (f <= 3)])]) in got
+    # one band: farthest-point covers the rows better than random picks of the same size (the worst row's distance)
+    def worst(kept):
+        W = mn.metric_factor(x[kept], 2.0)
+        return float(torch.einsum('mji,bmj->bmi', W, mn.min_image(x[:, None] - x[kept][None])).norm(dim=-1)
+                     .min(1).values.max())
+    one = mn.banded_farthest_points(x, keys, torch.full((n,), 2.0), f, [(0.0, 5.0, 11)]).tolist()
+    g = torch.Generator().manual_seed(0)
+    rnd = sorted(worst(torch.randperm(n, generator=g)[:11].tolist()) for _ in range(20))
+    assert worst(one) < rnd[10]
+    # budgets are caps: a band with 2 rows gives 2
+    f2 = f.clone()
+    f2[(f2 > 3)] = 2.0
+    f2[:2] = 4.0
+    p2 = mn.banded_farthest_points(x, keys, torch.full((n,), 2.0), f2, bands)
+    assert int((f2[p2] > 3).sum()) == 2 and len(p2) == 3 + 4 + 2
+    # two conditions are picked apart; rows of the other handedness are never covered by a pick
+    other = [('B',) + _key()[1:]] * n
+    both = mn.banded_farthest_points(torch.cat([x, x]), keys + other, torch.full((2 * n,), 2.0), torch.cat([f, f]),
+                                     bands)
+    assert len(both) == 22 and int((both >= n).sum()) == 11
+    hand = [mn.identity_key(_key()[:3], torch.tensor([1.0 if i % 2 else -1.0])) for i in range(n)]
+    hp = mn.banded_farthest_points(x, hand, torch.full((n,), 2.0), f, [(0.0, 5.0, 2)]).tolist()
+    assert len(hp) == 2 and hp[0] % 2 != hp[1] % 2                        # the second pick is the other key's
+    with pytest.raises(ValueError):
+        mn.banded_farthest_points(x, keys, torch.full((n,), 2.0), f, [(1.0, 1.0, 3)])
+
+
 def _quadratic_y(x, xs, lam, rg):
     """E/kT = 0.5 sum lam_i y_i^2 with y = A (x - xs), A the metric map at xs; gradient in the parameters."""
     W = mn.metric_factor(xs, rg)
