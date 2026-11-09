@@ -343,3 +343,15 @@ def test_saddle_slides_join_the_trajectories(mol, tmp_path, monkeypatch):
     assert int((tr['stage'] == 2).sum()) > 0
     att = {int(r.start_index): tuple(r.traj_attempt.reshape(-1).tolist()) for r in out}
     assert all(tuple(a) == att[int(s)] for s, a in zip(tr['start_index'], tr['attempt'].tolist()))
+
+
+def test_band_templates_drop_the_search_rows_analysis_outputs(mol):
+    """write_band clones its templates once per band row: their per-row analysis outputs (an RDF of 88 KB on a MIPCAS
+    row) are dropped first, the template given leaves unchanged."""
+    r = _placeholders(mol, 1)[0]
+    r.rdf = torch.zeros(1, 45, 500)
+    r.fingerprint = torch.zeros(1, 2048)
+    bare = ss._bare_template(r)
+    assert not set(ss.BAND_TEMPLATE_DROP) & set(bare.keys())
+    assert set(ss.BAND_TEMPLATE_DROP) <= set(r.keys())
+    assert torch.equal(bare.full_cell_parameters(), r.full_cell_parameters()) and torch.equal(bare.pos, r.pos)

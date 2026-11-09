@@ -503,6 +503,20 @@ def _merge_trajectories(traj_dir, path, opt_outs, keys, tcfg, kT) -> dict:
     return dict(path=path, states=len(sel), starts=len({r['start'] for r in sel}))
 
 
+#: per-row analysis outputs a search row carries that a band row does not (MIPCAS: the RDF is 88 KB and the fingerprint
+#: 8 KB of a 97 KB row; cloned onto ~100k band rows they held 14 GB, 2026-11-09)
+BAND_TEMPLATE_DROP = ('rdf', 'fingerprint')
+
+
+def _bare_template(row):
+    """A clone of ``row`` without the attributes of ``BAND_TEMPLATE_DROP``."""
+    r = row.clone()
+    for k_ in BAND_TEMPLATE_DROP:
+        if k_ in r.keys():
+            delattr(r, k_)
+    return r
+
+
 def write_band(traj: dict, templates: dict, path: str, *, library, kT: float, key: str, band_kT: float,
                net_A: float, energy: dict, search: dict, identity: dict, device='cpu', predictor=None,
                cutoff: float = 10, supercell_size: int = 10, energy_chunk: int = 256):
@@ -520,6 +534,7 @@ def write_band(traj: dict, templates: dict, path: str, *, library, kT: float, ke
     from mxtaltools.crystal_search import minima as mn
     from mxtaltools.crystal_search.basin_set import write_basin_set
     keys = [tuple(k_) for k_ in traj['keys']]
+    templates = {k_: _bare_template(r) for k_, r in templates.items()}  # every band row is a clone of one
     lows = {}
     for k_, f_ in zip(library.key, library.f):
         lows[tuple(k_[:3])] = min(lows.get(tuple(k_[:3]), math.inf), f_)
@@ -588,6 +603,7 @@ def write_band(traj: dict, templates: dict, path: str, *, library, kT: float, ke
         kept_rows.append(r)
     reps = [dict(x=x_id[int(i)], hand=h_id[int(i)]) for i in net]
     out = mn._reported(kept_rows, reps, key, cutoff, supercell_size, 1.0, predictor, None, device, energy_chunk)
+    del kept_rows
     for j, (r, i) in enumerate(zip(out, net.tolist())):
         r.minimum_id = torch.tensor([j])
         r.minimum_f = torch.tensor([float(f[i])], dtype=torch.float64)
