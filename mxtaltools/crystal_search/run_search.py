@@ -157,6 +157,53 @@ def drop_contact_clashes(batch, min_contact):
     return (collate_data_list(rows).to(batch.device) if rows else None), n
 
 
+def attach_mlip_parity(config, samples, device):
+    """cfg:mlip_gas_reference and cfg:mlip_mirror_average (uma only; both default off). UMA/eSEN backbones are
+    rotation- but not reflection-equivariant: an isolated rigid molecule and its mirror image differ by up to 7.5 kJ/mol
+    (UMA-s 1.1, acetic acid, 2026-11-10), and the gas leg of a lattice energy then depends on which enantiomer a
+    description's asymmetric unit holds.
+
+    - mlip_gas_reference 'mirror_mean': every row (template) gets ``uma_gas_pot`` = the mean isolated energy (eV) of its
+      molecule and the molecule's mirror image, computed once per molecule identifier, so ``compute_lattice_uma``
+      skips the gas leg and the lattice energy no longer depends on the description.
+    - mlip_mirror_average true: every row gets ``uma_mirror_average`` = True, so its periodic energy is the mean over
+      the crystal and its mirror image (2x the MLIP cost; needed only in chiral space groups, where the two are
+      different crystals).
+    Raises ValueError when either is set without a uma stage, or with an unknown value."""
+    ref = getattr(config, 'mlip_gas_reference', None)
+    avg = bool(getattr(config, 'mlip_mirror_average', False))
+    if ref is None and not avg:
+        return
+    if ref not in (None, 'mirror_mean'):
+        raise ValueError(f"cfg:mlip_gas_reference must be 'mirror_mean' or null, got {ref!r}")
+    targets = {str((o if isinstance(o, dict) else vars(o))['optim_target']).lower() for o in config.opt}
+    if 'uma' not in targets:
+        raise ValueError('cfg:mlip_gas_reference / cfg:mlip_mirror_average act on the uma energy only; no stage '
+                         f'targets it ({sorted(targets)})')
+    if ref == 'mirror_mean':
+        from mxtaltools.mlip_interfaces.uma_utils import init_uma_crystal_predictor
+        pred = init_uma_crystal_predictor(config.uma_predictor_path, device=device, activation_checkpointing=False,
+                                          tf32=False)
+        cache = {}
+        for r in samples:
+            key = str(r.identifier)
+            if key not in cache:
+                pair = []
+                for flip in (1.0, -1.0):
+                    m = r.clone()
+                    m.pos = m.pos * torch.tensor([flip, 1.0, 1.0], dtype=m.pos.dtype)
+                    with torch.no_grad():
+                        pair.append(float(collate_data_list([m]).to(device).compute_lattice_gas_phase_uma(pred)[0]))
+                cache[key] = 0.5 * (pair[0] + pair[1])
+                print(f"cfg:mlip_gas_reference: {key}: gas {pair[0]:.6f} / mirror {pair[1]:.6f} eV "
+                      f"(difference {96.485 * (pair[1] - pair[0]):.3f} kJ/mol); mean used")
+            r.uma_gas_pot = torch.tensor([cache[key]], dtype=torch.float64)
+        del pred
+    if avg:
+        for r in samples:
+            r.uma_mirror_average = torch.tensor([True])
+
+
 def crystal_search(config):
     reject_retired_keys(config)
     device = config.device
@@ -173,6 +220,7 @@ def crystal_search(config):
     stream_cfg = check_stream_config(config)  # cfg:stream (crystal_search/stream_search.py) or None
     # the stream draws each condition's starts as it needs them: one template per molecule, space group and Z'
     samples_to_optim = init_samples_to_optim(config, target=target, num_samples=1) if stream_cfg else         init_samples_to_optim(config, target=target)
+    attach_mlip_parity(config, samples_to_optim, device)  # cfg:mlip_gas_reference, cfg:mlip_mirror_average
     data_mode = config.init_sample_method == 'data'
     if data_mode:
         # outputs carry the index of the seed they came from: the enforce_reduced filter drops rows, so position in

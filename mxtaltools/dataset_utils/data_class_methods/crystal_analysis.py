@@ -1333,6 +1333,11 @@ class MolCrystalAnalysis:
         ``std_orientation=False``), ``uma_pot`` from
         ``compute_crystal_uma(predictor, std_orientation=std_orientation)``.
 
+        Rows carrying ``uma_mirror_average`` True get, as ``uma_pot``, the mean of their periodic energy and that of
+        their mirror image (all unit-cell atoms inverted), which a parity-blind backbone (rotation- but not
+        reflection-equivariant) scores differently. A row carrying ``uma_gas_pot`` (eV), such as the mirror-mean
+        reference ``run_search.attach_mlip_parity`` sets for a rigid molecule, skips the gas leg.
+
         Parameters
         ----------
         predictor
@@ -1357,9 +1362,24 @@ class MolCrystalAnalysis:
                 'uma_gas_pot')
 
         if not hasattr(self, 'uma_pot'):
-            self.add_graph_attr(
-                self.compute_crystal_uma(predictor, std_orientation=std_orientation),
-                'uma_pot')
+            pot = self.compute_crystal_uma(predictor, std_orientation=std_orientation)
+            avg = getattr(self, 'uma_mirror_average', None)
+            if avg is not None and bool(torch.as_tensor(avg).any()):
+                # parity: UMA/eSEN are rotation- but not reflection-equivariant, so a crystal and its mirror image
+                # score differently (in a chiral space group the two are different crystals with one true energy).
+                # The rows marked uma_mirror_average get the mean of the two periodic energies; the mirror image is
+                # every unit-cell atom inverted through the origin and moved back by a + b + c (same lattice).
+                if getattr(self, 'unit_cell_pos', None) is None:
+                    raise RuntimeError('uma_mirror_average needs the unit cell built (analyze builds it for uma)')
+                mirror = self.clone()
+                shift = self.T_fc.sum(dim=2)  # [num_graphs, 3]: a + b + c of each cell
+                mirror.unit_cell_pos = -self.unit_cell_pos + shift[self.unit_cell_batch.long()]
+                from mxtaltools.mlip_interfaces.uma_utils import compute_crystal_uma_on_mxt_batch
+                pot_m = compute_crystal_uma_on_mxt_batch(mirror, std_orientation, predictor, pbc=True,
+                                                         force_rebuild=False)
+                mask = torch.as_tensor(avg, device=pot.device).reshape(-1).bool()
+                pot = torch.where(mask, 0.5 * (pot + pot_m), pot)
+            self.add_graph_attr(pot, 'uma_pot')
 
         # lattice energy per molecule, in eV
         # multiply by 96.485 to get kJ/mol
