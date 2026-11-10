@@ -475,15 +475,17 @@ def test_a_row_past_the_angle_clamp_polishes_to_its_own_minimum(finished, mol):
 
 
 def test_held_marks_the_cell_coordinates_the_lattice_system_fixes(mol):
-    """StageEnergy.held: a monoclinic (P2_1/c) row holds alpha and gamma, a triclinic (P-1) row holds nothing, and
-    the molecule's pose coordinates are never held."""
+    """StageEnergy.held: a monoclinic (P2_1/c) row holds alpha and gamma, a triclinic (P-1) row holds nothing, a
+    polar P2_1 row also holds the centre's b coordinate (a translation of the whole crystal), and fgh's Hessian is
+    exactly zero in every held row and column."""
     torch.manual_seed(0)
     _, p, h = _case('normal', n=2, seed=31)
     tri = _rows(mol, 2, p, h)
     pm = p.clone()
     pm[:, 3] = pm[:, 5] = torch.pi / 2
     mono = _rows(mol, 14, pm, h)
-    for rows, want in ((tri, []), (mono, [3, 5])):
+    polar = _rows(mol, 4, pm, h)  # P2_1: the centre's b coordinate is a continuous origin
+    for rows, want in ((tri, []), (mono, [3, 5]), (polar, [3, 5, 7])):
         rows = rows.batch_to_list() if hasattr(rows, 'batch_to_list') else rows
         E = mn.StageEnergy(rows, 'elj', kT=KT, lj_envelope=1.0)
         x = torch.stack([r.full_cell_parameters().reshape(-1) for r in rows]).double()
@@ -491,6 +493,8 @@ def test_held_marks_the_cell_coordinates_the_lattice_system_fixes(mol):
         expect = torch.zeros_like(held)
         expect[:, want] = True
         assert torch.equal(held, expect)
+        _, G, H = E.fgh(x, torch.arange(len(rows)))
+        assert bool((H[:, held[0], :] == 0).all()) and bool((G[:, held[0]] == 0).all())
 
 
 class _HeldQuadratic(_Quadratic):

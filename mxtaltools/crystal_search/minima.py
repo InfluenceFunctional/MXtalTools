@@ -326,7 +326,16 @@ class StageEnergy:
         alpha and gamma. Coordinate k is held when moving it by +delta and by -delta gives the same cleaned value.
         The polishes keep these coordinates where they are: their gradient is exactly zero, but an eigendecomposition
         of a Hessian with other near-flat directions mixes them into the step (eSEN-S on imidazole P2_1/c,
-        2026-11-10: alpha and gamma moved by 3e-4 rad, and the converged minimum then failed ``_inside_clean_box``)."""
+        2026-11-10: alpha and gamma moved by 3e-4 rad, and the converged minimum then failed ``_inside_clean_box``).
+
+        Also held, at Z' = 1: a centre coordinate along a continuous origin direction of the group (a polar axis,
+        ``CONTINUOUS_DIMS``), found as a shift by delta that moves every atom of the unit cell by one common vector
+        (to 1e-4 in fractions, modulo the lattice), i.e. translates the whole crystal. The energy does not depend on
+        it, so its true curvature is zero, and ``fgh`` zeroes it: a finite-difference Hessian otherwise put noise of
+        either sign there and failed ``is_psd`` (UMA-s 1.1 on naphthalene in P2_1 and acetic acid in Pna2_1,
+        2026-11-10: lowest eigenvalue -0.6 to +0.5 E/kT per unit^2 over repeats, the largest ~3e4, so converged
+        minima stalled). With Z' > 1 no centre coordinate is held (only a joint shift of every unit is a
+        translation)."""
         n, d = x.shape
         out = torch.zeros(n, d, dtype=torch.bool)
         rows = [self.rows[int(i)] for i in idx]
@@ -340,6 +349,29 @@ class StageEnergy:
                 b.clean_cell_parameters(mode='hard', canonicalize_orientations=False)
                 vals.append(torch.cat([b.cell_lengths, b.cell_angles], 1)[:, k].double().cpu())
             out[:, k] = (vals[0] - vals[1]).abs() < 1e-2 * delta
+        if d == 12:
+            for k in range(3):
+                pos = []
+                for sgn in (0.0, 1.0):
+                    xk = x.clone().to(F64)
+                    xk[:, 6 + k] += sgn * delta
+                    b = collate_data_list(rows).to(self.device)
+                    b.set_cell_parameters(xk.to(self.device, torch.float32), skip_box_analysis=False)
+                    b.pose_aunit()
+                    b.build_unit_cell()
+                    T_cf = torch.linalg.inv(b.T_fc.double())
+                    ub = b.unit_cell_batch.long()
+                    pos.append((torch.einsum('nij,nj->ni', T_cf[ub], b.unit_cell_pos.double()).cpu(), ub.cpu()))
+                dfr = pos[1][0] - pos[0][0]
+                dfr = dfr - torch.round(dfr)
+                ub = pos[0][1]
+                first = torch.zeros(n, dtype=torch.long)
+                counts = torch.bincount(ub, minlength=n)
+                first[1:] = torch.cumsum(counts, 0)[:-1]
+                spread = dfr - dfr[first[ub]]
+                spread = (spread - torch.round(spread)).abs().amax(1)
+                worst = torch.zeros(n, dtype=F64).scatter_reduce(0, ub, spread, reduce='amax')
+                out[:, 6 + k] = worst < 1e-4
         return out
 
     @torch.no_grad()
@@ -365,7 +397,19 @@ class StageEnergy:
         the sum over rows of gradient component k, and the d of them come from one backward batched over the d unit
         vectors (``is_grads_batched``: for 256 MIPCAS rows on a GPU 0.57 s against 1.2 s for d sequential passes, the
         same values to 3e-6, 2026-10-29). With ``hessian='fd'``: (g(x + h e_k) - g(x - h e_k)) / 2h for each
-        coordinate k, h = ``FD_STEP``, all 2d displaced copies evaluated together in ``fg``'s chunks."""
+        coordinate k, h = ``FD_STEP``, all 2d displaced copies evaluated together in ``fg``'s chunks.
+
+        The gradient entries and Hessian rows and columns of ``held`` coordinates are set to zero: the energy does not
+        depend on them, and every test on the result (``is_psd``, ``_decrement``, ``candidate_is_minimum``) then
+        sees an exact zero instead of finite-difference noise."""
+        F, G, H = self._fgh(x, idx)
+        hold = self.held(x, idx)
+        if bool(hold.any()):
+            G = G.masked_fill(hold, 0.0)
+            H = H.masked_fill(hold[:, :, None] | hold[:, None, :], 0.0)
+        return F, G, H
+
+    def _fgh(self, x: torch.Tensor, idx):
         if self.hessian == 'fd':
             n, d = x.shape
             F, G = self.fg(x, idx)
