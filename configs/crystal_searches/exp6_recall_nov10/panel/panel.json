@@ -1,0 +1,42 @@
+{
+ "imidazole": {
+  "refcode": "IMAZOL06",
+  "sg_searched": 14,
+  "smiles": "N1C=CN=C1",
+  "csd_sg": "P21/c",
+  "csd_z_prime": 1.0,
+  "ok": true,
+  "reason": "",
+  "sg_found": 14,
+  "n_subgroups": 1,
+  "fit_rmsd_max_A": 1.541149702107085e-15,
+  "residual_max_A": 1.3601846101659996e-06,
+  "n_mirrored": 2,
+  "cell_strain": 0.0,
+  "angle_change_deg": 0.0,
+  "canonical": true,
+  "anchor": "imidazole_anchor.pt",
+  "n_atoms": 9,
+  "mol": "imidazole_mol.pt"
+ },
+ "acetic_acid": {
+  "refcode": "ACETAC07",
+  "sg_searched": 33,
+  "smiles": "CC(O)=O",
+  "csd_sg": "Pna21",
+  "csd_z_prime": 1.0,
+  "ok": true,
+  "reason": "",
+  "sg_found": 33,
+  "n_subgroups": 1,
+  "fit_rmsd_max_A": 2.3196256332928078e-15,
+  "residual_max_A": 1.158892567621452e-06,
+  "n_mirrored": 2,
+  "cell_strain": 1.1102230246251565e-16,
+  "angle_change_deg": 0.0,
+  "canonical": true,
+  "anchor": "acetic_acid_anchor.pt",
+  "n_atoms": 8,
+  "mol": "acetic_acid_mol.pt"
+ }
+}
