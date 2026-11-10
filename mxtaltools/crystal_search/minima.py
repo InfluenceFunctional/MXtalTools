@@ -320,6 +320,29 @@ class StageEnergy:
             yield slice(c, min(c + self.chunk, n))
 
     @torch.no_grad()
+    def held(self, x: torch.Tensor, idx, delta: float = 1e-2) -> torch.Tensor:
+        """[n, d] bool: the cell coordinates (lengths, angles) that ``_energy``'s ``clean_cell_parameters`` sets
+        regardless of their value -- those the lattice system fixes or ties to another, such as a monoclinic cell's
+        alpha and gamma. Coordinate k is held when moving it by +delta and by -delta gives the same cleaned value.
+        The polishes keep these coordinates where they are: their gradient is exactly zero, but an eigendecomposition
+        of a Hessian with other near-flat directions mixes them into the step (eSEN-S on imidazole P2_1/c,
+        2026-11-10: alpha and gamma moved by 3e-4 rad, and the converged minimum then failed ``_inside_clean_box``)."""
+        n, d = x.shape
+        out = torch.zeros(n, d, dtype=torch.bool)
+        rows = [self.rows[int(i)] for i in idx]
+        for k in range(6):
+            vals = []
+            for sgn in (1.0, -1.0):
+                xk = x.clone().to(F64)
+                xk[:, k] += sgn * delta
+                b = collate_data_list(rows).to(self.device)
+                b.set_cell_parameters(xk.to(self.device, torch.float32), skip_box_analysis=True)
+                b.clean_cell_parameters(mode='hard', canonicalize_orientations=False)
+                vals.append(torch.cat([b.cell_lengths, b.cell_angles], 1)[:, k].double().cpu())
+            out[:, k] = (vals[0] - vals[1]).abs() < 1e-2 * delta
+        return out
+
+    @torch.no_grad()
     def f(self, x: torch.Tensor, idx) -> torch.Tensor:
         """[n] float64 E/kT at the rows ``idx`` with parameters ``x`` [n, d]."""
         return torch.cat([self._energy(x[s].to(self.device, torch.float32), idx[s]).double().cpu()
@@ -480,6 +503,8 @@ def newton_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol
     lam_all = torch.ones(n, d, dtype=F64)
     V_all = torch.eye(d, dtype=F64).expand(n, d, d).clone()
     n_h = torch.zeros(n, dtype=torch.long)
+    hold = (energy.held(x, torch.arange(n)) if n and hasattr(energy, 'held')  # never stepped
+            else torch.zeros(n, d, dtype=torch.bool))
     live = captured(torch.arange(n))
     if len(live):
         F[live], G[live], H[live] = energy.fgh(x[live], live)
@@ -534,6 +559,7 @@ def newton_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol
             mus = mu[r][None] * k4[:, None]  # [w, m]
             trs = (trust[r][None] / (2.0 ** torch.arange(w, dtype=F64))[:, None]).clamp(min=TRUST_RANGE[0])
             step = -torch.einsum('nij,wnj->wni', V[pj], gv[pj][None] / (lam[pj].abs()[None] + mus[..., None]))
+            step = step.masked_fill(hold[r][None], 0.0)
             scale = (trs[..., None] * cap / step.abs().clamp_min(1e-300)).amin(2).clamp(max=1.0)
             xn = x[r][None] + scale[..., None] * step  # [w, m, d]
             fn = energy.f(xn.reshape(-1, d), r.repeat(w)).reshape(w, len(r))
@@ -903,6 +929,8 @@ def bfgs_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol: 
     n_h = torch.zeros(n, dtype=torch.long)
     trust = torch.ones(n, dtype=F64)
     was_reset = torch.zeros(n, dtype=torch.bool)  # B set from an exact Hessian at the current x, no step since
+    hold = (energy.held(x, torch.arange(n)) if n and hasattr(energy, 'held')  # never stepped
+            else torch.zeros(n, d, dtype=torch.bool))
 
     def reset(r, Hr):
         lam, V = torch.linalg.eigh(Hr)
@@ -933,7 +961,7 @@ def bfgs_polish(energy: StageEnergy, x0: torch.Tensor, max_iter: int = 40, tol: 
         ia = torch.nonzero(~done).flatten()
         if len(ia) == 0:
             continue
-        p = -torch.einsum('nij,nj->ni', B[ia], G[ia])
+        p = -torch.einsum('nij,nj->ni', B[ia], G[ia]).masked_fill(hold[ia], 0.0)
         pending = torch.ones(len(ia), dtype=torch.bool)
         alpha = torch.ones(len(ia), dtype=F64)
         for _ in range(POLISH_TRIES):
