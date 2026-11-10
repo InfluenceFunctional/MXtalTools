@@ -60,6 +60,10 @@ def live_mask(sg: int) -> torch.Tensor:
     return m
 
 
+class NoRowWritten(ValueError):
+    """``write_basin_set`` wrote nothing: the importer refused every row (the reasons are in the message)."""
+
+
 def _scalar(v) -> float:
     return float(torch.as_tensor(v).reshape(-1)[0])
 
@@ -72,7 +76,7 @@ def write_basin_set(rows: Sequence, path: str, *, kT: float, energy_attr: str, e
     at ``path`` (which must not exist). ``kT`` is the search's, in ``energy['units']``; ``energy_attr`` names the row
     attribute holding the hard-cutoff target energy (e.g. ``'elj'``). Returns the dataset's ``meta.json``.
 
-    Rows the importer refuses are left out and counted in the header (``counts``). Raises if no row is written.
+    Rows the importer refuses are left out and counted in the header (``counts``). Raises NoRowWritten if the importer refuses every row.
     Rows without ``id_hessian`` (all or none) leave out ``H`` and ``min_eig``. ``extra_columns`` maps a column name to
     (tensor with one entry per input row, doc); ``kind`` ('minima' or 'band') goes in the header."""
     from mxtaltools.crystal_fd import canon
@@ -100,7 +104,7 @@ def write_basin_set(rows: Sequence, path: str, *, kT: float, energy_attr: str, e
     desc, info = from_mol_crystal_data(staged, sheet=sheet, off_sheet=off_sheet)
     kept = info.row.long()
     if kept.numel() == 0:
-        raise ValueError(f'write_basin_set: the importer refused every row ({set(info.reason)})')
+        raise NoRowWritten(f'write_basin_set: the importer refused every row ({set(info.reason)})')
     can = canon.canonicalize(desc, sheet=sheet)
 
     src = [rows[i] for i in kept.tolist()]

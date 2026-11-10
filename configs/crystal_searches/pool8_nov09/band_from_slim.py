@@ -24,7 +24,8 @@ Before banding:
     c x num_samples + j, the stream's numbering; a depth-versus-breadth subset: the first N starts approximate an
     N-start search; the minima library, and so the band's reference minimum, stay the full search's).
 
-A split with no state in the band writes no folder. Writes OUT_DIR/<split>/<run>_band.json per split (write_band's
+A split with no state in the band, or whose every pick the importer refuses (pose_mismatch on a molecule with
+near-degenerate principal axes), writes no folder; its record says why (``reason``). Writes OUT_DIR/<split>/<run>_band.json per split (write_band's
 record: states in, in band, path-thinned, net, the importer's refusals; wall time), and when every split is written,
 OUT_DIR/done/<run>.json (the task is done; a rerun of a done task does nothing). A rerun skips a split whose record
 exists and redoes one whose folder exists without it (a task stopped mid-write).
@@ -165,7 +166,8 @@ def main(argv=None):
         records[split] = rec
         print(f"{run} {split}: {rec['conditions']} conditions, {rec['states_all']:,} states, "
               f"{rec['states_in_window']:,} in the packing window, {rec.get('in_band', 0):,} in band, "
-              f"{rec.get('path_thinned', 0):,} path-thinned, net {rec.get('net', 0):,}; {rec['wall_s']} s", flush=True)
+              f"{rec.get('path_thinned', 0):,} path-thinned, net {rec.get('net', 0):,}; {rec['wall_s']} s"
+              + (f"; no folder: {rec['reason']}" if 'reason' in rec else ''), flush=True)
     print(f'{run}: {n_all:,} states, {len(keys)} conditions, {time.time() - t0:.0f} s', flush=True)
     os.makedirs(os.path.dirname(done), exist_ok=True)
     with open(done + '.tmp', 'w') as fh:

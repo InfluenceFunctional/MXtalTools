@@ -534,7 +534,7 @@ def write_band(traj: dict, templates: dict, path: str, *, library, kT: float, ke
     maps a condition (identifier, space group, Z') to a row of its molecule. An existing folder at ``path`` is moved
     aside. Returns (meta or None, the record for the effort file, the evaluations spent)."""
     from mxtaltools.crystal_search import minima as mn
-    from mxtaltools.crystal_search.basin_set import write_basin_set
+    from mxtaltools.crystal_search.basin_set import NoRowWritten, write_basin_set
     if bands is not None and any(float(hi) > float(band_kT) for _, hi, _ in bands):
         raise ValueError(f"write_band: a band reaches above band_kT {band_kT}: {bands}")
     keys = [tuple(k_) for k_ in traj['keys']]
@@ -631,8 +631,8 @@ def write_band(traj: dict, templates: dict, path: str, *, library, kT: float, ke
     try:
         meta = write_basin_set(out, path, kT=float(kT), energy_attr=key, energy=energy, search=search,
                                identity=identity, kind='band', extra_columns=extra)
-    except NotImplementedError as e:
-        return None, dict(rec, reason=str(e)), len(out)
+    except (NotImplementedError, NoRowWritten) as e:   # no folder: Z' > 1 / tied lattice, or every row refused
+        return None, dict(rec, net=int(len(net)), reason=str(e)), len(out)
     counts_ = (meta.get('provenance') or {}).get('counts') if isinstance(meta, dict) else None
     return meta, dict(rec, path=path, net=int(len(net)), counts=counts_), len(out)
 
