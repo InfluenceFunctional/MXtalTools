@@ -12,6 +12,8 @@ false), and a picks file that exists is kept.
 
 --smoke DIR --local-panel DIR --uma PATH: a tiny local run of the same chain (6 UMA-s starts, 24 cheap starts, 4 picks,
 4 slots, GPU capped at --gpu-fraction) writing to DIR, for checking the chain before the cluster job.
+--local DIR (with --local-panel, --uma): the compressed local pilot (owner, 2026-11-10): 500 UMA-s starts on 5 slots,
+2,000 cheap starts on 128 slots, 100 picks per cheap energy.
 """
 import argparse
 import os
@@ -22,20 +24,25 @@ import torch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PICKS = 300  # the cheap arm's MLIP budget per energy (docs/design/exp6_recall_test.md in gfn_diffusion)
+PROFILES = {  # starts (UMA-s search, cheap searches), slots (UMA-s, cheap), picks per cheap energy
+    'smoke': dict(n_uma=6, n_cheap=24, slots_uma=4, slots_cheap=24, picks=4),
+    'local': dict(n_uma=500, n_cheap=2000, slots_uma=5, slots_cheap=128, picks=100),
+}
 
 
 def load(name, smoke):
     from mxtaltools.crystal_search.run_search import load_yaml
     c = load_yaml(os.path.join(HERE, 'configs', name + '.yaml'))
     if smoke is not None:
+        prof = PROFILES[smoke['profile']]
         c['out_dir'] = smoke['out']
         c['mol_path'] = os.path.join(smoke['panel'], os.path.basename(c['mol_path']))
         if c.get('uma_predictor_path'):
             c['uma_predictor_path'] = smoke['uma']
         uma = any(str(o['optim_target']).lower() == 'uma' for o in c['opt'])
         if c['num_samples']:
-            c['num_samples'] = 6 if uma else 24
-        c['batch_size'] = c['stream']['slots'] = 4 if uma else 24
+            c['num_samples'] = prof['n_uma'] if uma else prof['n_cheap']
+        c['batch_size'] = c['stream']['slots'] = prof['slots_uma'] if uma else prof['slots_cheap']
         if c['stream'].get('seeds'):
             c['stream']['seeds'] = os.path.join(smoke['out'], os.path.basename(c['stream']['seeds']))
     return c
@@ -73,6 +80,7 @@ def main():
     p.add_argument('name')
     p.add_argument('kind', choices=['reference', 'cheap'])
     p.add_argument('--smoke', default=None)
+    p.add_argument('--local', default=None)
     p.add_argument('--local-panel', default=None)
     p.add_argument('--uma', default=None)
     p.add_argument('--gpu-fraction', type=float, default=None)
@@ -80,15 +88,20 @@ def main():
     if a.gpu_fraction is not None:
         orig = torch.cuda.set_per_process_memory_fraction
         torch.cuda.set_per_process_memory_fraction = lambda f, device=None: orig(a.gpu_fraction, device=0)
-    smoke = None if a.smoke is None else dict(out=a.smoke, panel=a.local_panel, uma=a.uma)
+    if a.smoke and a.local:
+        raise SystemExit('--smoke or --local, not both')
+    out = a.smoke or a.local
+    smoke = None if out is None else dict(out=out, panel=a.local_panel, uma=a.uma,
+                                          profile='smoke' if a.smoke else 'local')
     if smoke is not None:
-        os.makedirs(a.smoke, exist_ok=True)
+        os.makedirs(out, exist_ok=True)
     if a.kind == 'reference':
         run(f'{a.name}_uma_search', smoke)
         return
     for e in ('exp6', 'elj'):
         c = run(f'{a.name}_{e}_search', smoke)
-        pick(c, os.path.join(c['out_dir'], f'{a.name}_{e}_picks.pt'), 4 if smoke else PICKS)
+        pick(c, os.path.join(c['out_dir'], f'{a.name}_{e}_picks.pt'),
+             PROFILES[smoke['profile']]['picks'] if smoke else PICKS)
         run(f'{a.name}_uma_seeds_from_{e}', smoke)
 
 
