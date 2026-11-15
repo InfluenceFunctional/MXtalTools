@@ -1,7 +1,7 @@
 # pool8sg_nov15
 
-The pool8_nov09 search battery repeated in six more space groups: C2/c (15), P2_12_12_1 (19), P2_1 (4), Pbca (61),
-Pna2_1 (33) and Cc (9). Same 72,464 pool8 molecules, same 2,899 chunks of 25, Z' = 1, 100 random starts per molecule,
+The pool8_nov09 search battery repeated in seven more space groups: P2_1/c (14), C2/c (15), P2_12_12_1 (19), P2_1 (4),
+Pbca (61), Pna2_1 (33) and Cc (9). Same 72,464 pool8 molecules, same 2,899 chunks of 25, Z' = 1, 100 random starts per molecule,
 streaming eLJ searches in the endpoint (ball) mode with every descent state recorded, CPU only. Built 2026-11-15 for
 the multi-group conditional prior (owner: more space groups before bigger molecules). P-1 (2) is pool8_nov09.
 
@@ -13,7 +13,7 @@ task 0 of every group equals pool8_nov09's task 0 in every key except `mol_path`
 
 - searches chunk k (`pool8_nov09/mols/pool8_mols_chunk<k>.pt`, the same files) in g alone (`sgs_to_search: [g]`);
 - is named `pool8sg<g>_c<k>` and writes to `pool8sg_nov15/search/sg<g>/`;
-- uses `opt_seed` = 3e11 + g x 1e10 + k x 1e6. The seeds are distinct across all 17,394 tasks and pool8_nov09's 2,899
+- uses `opt_seed` = 3e11 + g x 1e10 + k x 1e6. The seeds are distinct across all 20,293 tasks and pool8_nov09's 2,899
   (asserted). As in pool8_nov09, a start redrawn on attempt a of task k reuses the seed block of
   task k + 1000a, so redrawn starts are not independent across tasks; redraws are rare and the effect negligible.
 
@@ -39,7 +39,7 @@ task 0 of every group equals pool8_nov09's task 0 in every key except `mol_path`
   instead. In the smoke, every trajectory state, library minimum and written band row had handedness +1, in all seven
   groups.
 - **Why +1 is enough.**
-  - In 2, 15, 61, 33 and 9 an improper element of the group re-describes a handedness -1 crystal as the same crystal
+  - In 2, 14, 15, 61, 33 and 9 an improper element of the group re-describes a handedness -1 crystal as the same crystal
     at +1.
   - In the Sohncke groups 4 and 19, the -1 crystal is the enantiomorph of the mirror-image molecule. The trainer's -1
     augmentation covers it, and eLJ is mirror-invariant.
@@ -71,16 +71,17 @@ Every group costs 0.8 to 1.1 times P-1 per start, so the budget below takes P-1'
 - **Band sets:** the pool8_nov09 band step took 212 s per task (dev box), about 170 core-hours per group, or less: here
   it ran at half P-1's time. About 1.1 KB per row on disk, so about 2.5 GB per group.
 
-*Planned battery, six groups, 100 starts per molecule. Each figure is pool8_nov09's measured P-1 battery times the
-number of groups; per-group ratios to P-1 are 0.8 to 1.1 (table above).*
+*Planned battery, seven groups, 100 starts per molecule. Each figure is pool8_nov09's measured P-1 battery times the
+number of groups; per-group ratios to P-1 are 0.8 to 1.1 (table above; P2_1/c, added after the cost runs, was not
+timed at 100 starts: its smoke ran at P-1's speed).*
 
 | plan | search (core-hours) | band (core-hours) | `_slim.pt` kept (GB) | band sets (GB) |
 |---|---|---|---|---|
-| 100 starts, slims kept (BAND_AFTER=1) | ~7,200 | ≤ 1,000 | ~650 (100-126 per group) | ~15 |
-| 100 starts, DELETE_SLIM=1 | ~7,200 | ≤ 1,000 | only the tasks in flight (≤ 40 MB each) | ~15 |
-| 50 starts, slims kept (NUM_SAMPLES = 50, rerun make_battery.py) | ~3,600 | ≤ 1,000 | ~325 | ~15 |
+| 100 starts, slims kept (BAND_AFTER=1) | ~8,400 | ≤ 1,200 | ~760 (100-126 per group) | ~18 |
+| 100 starts, DELETE_SLIM=1 | ~8,400 | ≤ 1,200 | only the tasks in flight (≤ 40 MB each) | ~18 |
+| 50 starts, slims kept (NUM_SAMPLES = 50, rerun make_battery.py) | ~4,200 | ≤ 1,200 | ~380 | ~18 |
 
-`/scratch` is 5 TB and was 92% full in October. Without deleting slims, 650 GB probably does not fit. Deleting them
+`/scratch` is 5 TB and was 92% full in October. Without deleting slims, 760 GB probably does not fit. Deleting them
 keeps only the band sets. It also gives up re-banding with other settings and `band_from_slim.py --starts` (depth
 versus breadth) for these groups. That is the owner's call: `DELETE_SLIM` defaults to 0.
 
@@ -114,7 +115,7 @@ this folder. Run one smoke job per group, check it, then submit the rest:
     sbatch --array=1-362%100 submit_sg15.sbatch                  # the rest of the group
     sbatch --export=ALL,DELETE_SLIM=1 --array=1-362%100 submit_sg15.sbatch   # the same, deleting each slim once banded
 
-Repeat for 19, 4, 61, 33 and 9. Six groups at `%100` would put up to 600 eight-core jobs in the queue at once; the
+Repeat for 14, 19, 4, 61, 33 and 9. Seven groups at `%100` would put up to 700 eight-core jobs in the queue at once; the
 Slurm limit for the account has not been checked.
 
 **Outputs**, under `/scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/`:
@@ -127,7 +128,7 @@ A group is done when `ls band32/sg<g>/done | wc -l` is 2899. Then write one list
 `--set space_groups=[g]`:
 
     cd /scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/band32
-    for g in 15 19 4 61 33 9; do for s in train heldout_random heldout_scaffold; do
+    for g in 14 15 19 4 61 33 9; do for s in train heldout_random heldout_scaffold; do
         ls -d $PWD/sg$g/$s/pool8sg${g}_c*_band > sg${g}_${s}_list.txt; done; done
 
 ## Local smoke (2026-11-15)
@@ -142,6 +143,7 @@ symprec 0.01 Å; and the wall time of the three steps. One run per group.*
 | space group | minima per molecule | band rows written / refused | spglib group of the written rows (rows) | search + slim + band (s) |
 |---|---|---|---|---|
 | 2 P-1 | 9, 10, 9 | 96 / 0 | 2 (96) | 40 + 13 + 20 |
+| 14 P2_1/c | 9, 9, 7 | 96 / 0 | 14 (96) | 31 + 13 + 11 |
 | 15 C2/c | 9, 10, 7 | 96 / 0 | 15 (96) | 41 + 15 + 18 |
 | 19 P2_12_12_1 | 10, 9, 7 | 91 / 0 | 19 (90), 62 (1) | 40 + 15 + 19 |
 | 4 P2_1 | 10, 9, 8 | 96 / 0 | 4 (96) | 35 + 12 + 17 |

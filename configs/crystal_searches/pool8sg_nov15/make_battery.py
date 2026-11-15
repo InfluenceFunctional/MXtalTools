@@ -1,7 +1,7 @@
 """
 pool8sg_nov15: the pool8_nov09 search battery (streaming eLJ searches, endpoint/ball mode, Z' = 1, 100 random starts
-per molecule, every descent state recorded, CPU only) repeated in six more space groups on the same 72,464 pool8
-molecules and the same 2,899 chunks: C2/c (15), P2_1 2_1 2_1 (19), P2_1 (4), Pbca (61), Pna2_1 (33), Cc (9).
+per molecule, every descent state recorded, CPU only) repeated in seven more space groups on the same 72,464 pool8
+molecules and the same 2,899 chunks: P2_1/c (14), C2/c (15), P2_1 2_1 2_1 (19), P2_1 (4), Pbca (61), Pna2_1 (33), Cc (9).
 Owner, 2026-11-14/15: more space groups before bigger molecules. P-1 (2) is pool8_nov09.
 
 One battery per space group: task k of group g searches chunk k (pool8_mols_chunk<k>.pt) in g alone, run name
@@ -39,7 +39,7 @@ BASE = HERE.parent / 'minima_stream' / 'mipcas_elj_balls.yaml'
 #: then its band step. pool8_nov09's P-1 searches took 25 min per task on the cluster (Xeon 8592+, smoke job 22430710).
 #: Search wall time per start relative to P-1, on the dev box (5 pool8 molecules x 100 starts, 50 slots, 3 runs side
 #: by side, 2026-11-15; README "Cost"): 0.8 to 1.1 in every group; the band step is under 5 min per task.
-GROUPS = {15: ('C2/c', '02:00:00'), 19: ('P2_12_12_1', '02:00:00'), 4: ('P2_1', '02:00:00'),
+GROUPS = {14: ('P2_1/c', '02:00:00'), 15: ('C2/c', '02:00:00'), 19: ('P2_12_12_1', '02:00:00'), 4: ('P2_1', '02:00:00'),
           61: ('Pbca', '02:00:00'), 33: ('Pna2_1', '02:00:00'), 9: ('Cc', '02:00:00')}
 N_CHUNKS, LAST_CHUNK_SIZE, CHUNK_SIZE = 2899, 14, 25
 MOLS = '/scratch/mk8347/data/crystal_datasets/conditional/pool8_nov09/mols'   # pool8_nov09's molecule files, shared
