@@ -1,0 +1,17 @@
+task	sg	chunk	starts_per_molecule	run_name	opt_seed	out_dir
+0	2	1287	1000	pool8ctl2_c1287	1020000000000	/scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search/sg2
+1	2	1571	1000	pool8ctl2_c1571	1020010000000	/scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search/sg2
+2	14	1287	1000	pool8ctl14_c1287	1140000000000	/scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search/sg14
+3	14	1571	1000	pool8ctl14_c1571	1140010000000	/scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search/sg14
+4	15	1287	1000	pool8ctl15_c1287	1150000000000	/scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search/sg15
+5	15	1571	1000	pool8ctl15_c1571	1150010000000	/scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search/sg15
+6	19	1287	1000	pool8ctl19_c1287	1190000000000	/scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search/sg19
+7	19	1571	1000	pool8ctl19_c1571	1190010000000	/scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search/sg19
+8	4	1287	1000	pool8ctl4_c1287	1040000000000	/scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search/sg4
+9	4	1571	1000	pool8ctl4_c1571	1040010000000	/scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search/sg4
+10	61	1287	1000	pool8ctl61_c1287	1610000000000	/scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search/sg61
+11	61	1571	1000	pool8ctl61_c1571	1610010000000	/scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search/sg61
+12	33	1287	1000	pool8ctl33_c1287	1330000000000	/scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search/sg33
+13	33	1571	1000	pool8ctl33_c1571	1330010000000	/scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search/sg33
+14	9	1287	1000	pool8ctl9_c1287	1090000000000	/scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search/sg9
+15	9	1571	1000	pool8ctl9_c1571	1090010000000	/scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search/sg9
