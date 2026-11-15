@@ -78,12 +78,14 @@ timed at 100 starts: its smoke ran at P-1's speed).*
 | plan | search (core-hours) | band (core-hours) | `_slim.pt` kept (GB) | band sets (GB) |
 |---|---|---|---|---|
 | 100 starts, slims kept (BAND_AFTER=1) | ~8,400 | ≤ 1,200 | ~760 (100-126 per group) | ~18 |
-| 100 starts, DELETE_SLIM=1 | ~8,400 | ≤ 1,200 | only the tasks in flight (≤ 40 MB each) | ~18 |
+| 100 starts, DELETE_SLIM=1 | ~8,400 | ≤ 1,200 | the tasks in flight (≤ 40 MB each), plus `_minima.pt` (~25 GB) | ~18 |
 | 50 starts, slims kept (NUM_SAMPLES = 50, rerun make_battery.py) | ~4,200 | ≤ 1,200 | ~380 | ~18 |
 
 `/scratch` is 5 TB and was 92% full in October. Without deleting slims, 760 GB probably does not fit. Deleting them
-keeps only the band sets. It also gives up re-banding with other settings and `band_from_slim.py --starts` (depth
-versus breadth) for these groups. That is the owner's call: `DELETE_SLIM` defaults to 0.
+keeps the band sets and, per task, `<run>_minima.pt`: the slim without its trajectories (the minima library with hit
+counts, the search effort and settings; about 3% of the slim, measured 18.5 of 532 KB on a smoke task). It gives up
+re-banding with other settings and `band_from_slim.py --starts` (depth versus breadth), which need the trajectories.
+That is the owner's call: `DELETE_SLIM` defaults to 0.
 
 ## Job scripts
 
@@ -108,7 +110,13 @@ rendered files. Account `torch_pr_226_chemistry`, no partition line (as pool8_no
 
 The molecule files and the split file are pool8_nov09's, already on the cluster
 (`/scratch/mk8347/data/crystal_datasets/conditional/pool8_nov09/mols/`). Pull MXtalTools at the commit that carries
-this folder. Run one smoke job per group, check it, then submit the rest:
+this folder.
+
+Each job refuses to start unless `mxtaltools/common/geometry_utils.py` is the frame rule the pool8 data were built
+with (git blob `ff4e836e`, as at b6155c4a) and the `mxtaltools/` tree has no local changes: the search orients every
+start with that rule and the GFN trainer re-applies it at load. Since 2026-11-15 the packing-target draw of each start
+block is seeded (`utils.get_initial_state`), so a task reproduces bit for bit from its config (checked on a smoke task
+run twice; before, two runs of one config gave different trajectories). Run one smoke job per group, check it, then submit the rest:
 
     cd /scratch/mk8347/projects/gfn_cond/MXtalTools/configs/crystal_searches/pool8sg_nov15
     sbatch --array=0 submit_sg15.sbatch                          # smoke: tasks 0-7 of C2/c

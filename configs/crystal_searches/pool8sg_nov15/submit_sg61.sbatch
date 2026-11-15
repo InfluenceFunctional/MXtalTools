@@ -16,7 +16,8 @@
 # (resuming from its progress file if it was stopped), then pool8_nov09's slim_outputs.py (<run>_slim.pt, the bulky
 # outputs deleted), then, with BAND_AFTER=1 (default), pool8_nov09's band_from_slim.py into BANDOUT (the band sets;
 # BANDOUT/done/<run>.json marks the task done), and with DELETE_SLIM=1 (default 0) deletes <run>_slim.pt once that
-# record exists. Both are read from the environment: sbatch --export=ALL,DELETE_SLIM=1 submit_sg61.sbatch.
+# record exists, keeping <run>_minima.pt (the slim without its trajectories: the minima library, ~3% of the slim).
+# Both are read from the environment: sbatch --export=ALL,DELETE_SLIM=1 submit_sg61.sbatch.
 # A task is skipped when its band record exists (BAND_AFTER=1) or its _slim.pt exists (BAND_AFTER=0); a task with a
 # _slim.pt and no band record runs only the band step. Resubmitting the same array finishes only what is left. Each
 # task logs to <out_dir>/<run>.log; this job's log prints one line per task with its exit status.
@@ -44,6 +45,15 @@ SPLIT=/scratch/mk8347/data/crystal_datasets/conditional/pool8_nov09/mols/pool8_m
 mkdir -p "${OUT}"
 [ "${BAND_AFTER}" = 1 ] || [ "${DELETE_SLIM}" = 0 ] || { echo "FATAL: DELETE_SLIM=1 needs BAND_AFTER=1"; exit 1; }
 [ "${BAND_AFTER}" = 0 ] || [ -f "${SPLIT}" ] || { echo "FATAL: split file missing ${SPLIT}"; exit 1; }
+# The search orients every start with MXtalTools' standard-frame rule, and GFN's trainer re-applies that rule at load:
+# every task must use the rule the pool8 molecules and P-1 rows were built with (geometry_utils.py blob below,
+# MXtalTools b6155c4a), and no local edit to the library. A tie-stable rule exists on a side branch; it must not reach
+# this checkout until the battery and its training runs are done.
+FRAME_BLOB=ff4e836e446452b74dadf3c83ce01a7b8a000513
+[ "$(git -C "${MXT_ROOT}" hash-object mxtaltools/common/geometry_utils.py)" = "${FRAME_BLOB}" ] \
+    || { echo "FATAL: mxtaltools/common/geometry_utils.py is not the battery's frame rule (blob ${FRAME_BLOB})"; exit 1; }
+git -C "${MXT_ROOT}" diff --quiet HEAD -- mxtaltools \
+    || { echo "FATAL: local changes under ${MXT_ROOT}/mxtaltools; the search must run committed code"; exit 1; }
 echo "JOB ${SLURM_ARRAY_JOB_ID}_${JOB} sg ${SG} tasks $(( JOB * TASKS_PER_JOB ))..$(( JOB * TASKS_PER_JOB + TASKS_PER_JOB - 1 )) code=${COMMIT} band_after=${BAND_AFTER} delete_slim=${DELETE_SLIM} start=$(date -Is)"
 
 # A lease left by a job that no longer exists (OOM kill, node failure) would block its run for up to 30 min. Remove it
@@ -80,13 +90,25 @@ srun singularity exec \
         python -c 'import torch, spglib, yaml, mxtaltools.crystal_search.stream_search' \
             || { echo 'FATAL: import check failed in the container'; exit 1; }
         echo \"DEVICE cpu: \$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)\"
+        keep_minima() {   # <run>_minima.pt: the slim without its trajectories (minima library, hits, effort), ~3%
+            [ -f \"\$1\" ] || return 0
+            [ -f \"\${1%_slim.pt}_minima.pt\" ] && return 0
+            python - \"\$1\" <<'PY'
+import os, sys, torch
+s = torch.load(sys.argv[1], weights_only=False)
+s.pop('traj')
+p = sys.argv[1][:-len('_slim.pt')] + '_minima.pt'
+torch.save(s, p + '.tmp')
+os.replace(p + '.tmp', p)
+PY
+        }
         run_task() {
             local T=\$1 CFG=${TASKS}/\$1.yaml RUN MOL S D RC=0
             [ -f \"\$CFG\" ] || { echo \"task \$T: no config\"; return 1; }
             RUN=\$(awk '/^run_name:/{print \$2}' \"\$CFG\"); MOL=\$(awk '/^mol_path:/{print \$2}' \"\$CFG\")
             S=${OUT}/\$RUN'_slim.pt'; D=${BANDOUT}/done/\$RUN.json
             if [ ${BAND_AFTER} = 1 ] && [ -f \"\$D\" ]; then
-                [ ${DELETE_SLIM} = 1 ] && rm -f \"\$S\"
+                [ ${DELETE_SLIM} = 1 ] && keep_minima \"\$S\" && rm -f \"\$S\"
                 echo \"task \$T \$RUN: done before\"; return 0
             fi
             if [ ! -f \"\$S\" ]; then
@@ -108,7 +130,7 @@ PY
             if [ \$RC -eq 0 ] && [ ${BAND_AFTER} = 1 ]; then
                 python -u ${BAND} \"\$S\" ${BANDOUT} --split ${SPLIT} >> ${OUT}/\$RUN.log 2>&1
                 RC=\$?
-                if [ \$RC -eq 0 ] && [ ${DELETE_SLIM} = 1 ] && [ -f \"\$D\" ]; then rm -f \"\$S\"; fi
+                if [ \$RC -eq 0 ] && [ ${DELETE_SLIM} = 1 ] && [ -f \"\$D\" ]; then keep_minima \"\$S\" && rm -f \"\$S\"; fi
             fi
             echo \"task \$T \$RUN: status \$RC \$(date -Is)\"
             return \$RC
