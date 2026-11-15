@@ -324,6 +324,7 @@ def get_initial_state(config, crystal_batch, device, batch_idx):
 
     - ``'std'``: per crystal, normal with mean 0.6226 and standard deviation 0.0447, clipped to [0.45, 0.95];
     - ``'wide'``: per crystal, uniform on [0.1, 0.7);
+    both drawn on CPU from a generator seeded ``config.opt_seed + int(batch_idx * 10000) + 1``;
     - any other value that is not None: used as given;
     - None: None.
 
@@ -366,10 +367,14 @@ def get_initial_state(config, crystal_batch, device, batch_idx):
     if config.init_sample_method == 'data' or config.init_sample_method == 'in_config':
         return crystal_batch
 
+    # the target draw is seeded like the cell draw (its own generator, seed offset 1), so a task reproduces from its
+    # config; it used the global generator, unseeded at this point of the first batch (2026-11-15)
+    g_cp = torch.Generator().manual_seed(int(config.opt_seed) + int(batch_idx * 10000) + 1)
     if config.init_target_cp == 'std':
-        target_cp = (torch.randn(crystal_batch.num_graphs, device=device) * 0.0447 + 0.6226).clip(min=0.45, max=0.95)
+        target_cp = (torch.randn(crystal_batch.num_graphs, generator=g_cp) * 0.0447 + 0.6226).clip(
+            min=0.45, max=0.95).to(device)
     elif config.init_target_cp == 'wide':
-        target_cp = torch.rand(crystal_batch.num_graphs, device=device) * 0.6 + 0.1  # range of 0.1 to 0.7
+        target_cp = (torch.rand(crystal_batch.num_graphs, generator=g_cp) * 0.6 + 0.1).to(device)  # 0.1 to 0.7
     elif config.init_target_cp is not None:
         target_cp = config.init_target_cp
     else:
