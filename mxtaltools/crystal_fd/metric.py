@@ -15,7 +15,8 @@ improper element of G; pose folded into ASU(Gamma+) x SO(3)). Then
 g runs over GroupTable.gamma_plus (crystal_fd.tables.group_table(sg)); r_g is the RMS distance of all atoms from the
 heavy-atom centroid (the builder's centre). ``FDMetric`` compares the two canonical cells directly, so two nearly equal
 crystals whose reduced cells lie on opposite sides of a cell-domain face are far apart in d; ``GluedFDMetric`` also
-minimises over each crystal's near-minimal bases, which glues those faces (sg 1-15).
+minimises over each crystal's near-minimal bases, which glues those faces (sg 1-15) and, through the allowed axis
+orders, the orthorhombic axis-order faces (sg 16-74).
 
 Molecular point symmetry is ignored in d. For a molecule with an approximate improper self-symmetry sigma (a
 near-planar molecule: the mirror through its plane), d_twin(A, B) = min(d(A, B), d(A, B~)) with B~ the canonical form of
@@ -252,7 +253,7 @@ def _setting_candidates(sg, max_entry=2):
 
 
 class GluedFDMetric(FDMetric):
-    """``FDMetric`` with the faces of the cell domain glued (sg 1-15): d(A, B) is also minimised over B's near-minimal
+    """``FDMetric`` with the faces of the cell domain glued (sg 1-74): d(A, B) is also minimised over B's near-minimal
     bases, so two crystals on opposite sides of a reduction face are as close as their atoms are.
 
     The cell domain's faces are glued by lattice basis changes N (integer, det +1, in the space group's setting group).
@@ -269,8 +270,10 @@ class GluedFDMetric(FDMetric):
     pairs whose nearest images lie within the expanded set -- lattice shifts in {-1, 0, 1}^3, Gamma+ elements, and
     basis changes of the candidate set within ``margin``. (With {-1, 0, 1} only on sg 14, five NEHZOR pairs that
     COMPACK matches at 0.02-0.09 A sat at 2.5-3.5 A: their cells lie on the face |c cos beta| = a, glued by
-    c -> c + 2a; 2026-10-28.) For pairs farther apart it is an upper bound. sg >= 16
-    (snapped cells, canonical axis order) gets the identity only: axis-order faces are not glued here.
+    c -> c + 2a; 2026-10-28.) For pairs farther apart it is an upper bound. sg 16-74 take B in every axis order the
+    group allows (``axis_order.axis_orders``: 1, 2, 3 or 6 bases, each with its origin shift), which glues the
+    axis-order faces (a = b, b = c; Pbca's seams). Without it two crystals 0.016 A apart on a = b measured 4.6 A in
+    P2_1 2_1 2_1 and 7.1 A in Pbca (2026-11-17). sg 75-230 get the identity only: their cells have no setting faces.
 
     ``device``: tensors live there; CUDA runs float32 (distances to ~1e-5 A), CPU float64.
     """
@@ -291,6 +294,11 @@ class GluedFDMetric(FDMetric):
                     ss.append(o)
             self.N = torch.as_tensor(np.stack(Ns), dtype=F64)
             self.s = torch.as_tensor(np.stack(ss), dtype=F64)
+        elif sg <= 74:
+            from mxtaltools.crystal_fd import axis_order
+            orders = axis_order.axis_orders(sg)  # a group: identity first, every order with its origin shift
+            self.N = orders.N.to(F64)
+            self.s = orders.s.to(F64)
         else:
             self.N = torch.eye(3, dtype=F64)[None]
             self.s = torch.zeros(1, 3, dtype=F64)
