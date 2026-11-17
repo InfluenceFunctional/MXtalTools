@@ -5,7 +5,8 @@ into different axis orders, so the plain ``FDMetric`` measures them several Angs
 one side over the orders the group allows (``axis_order.axis_orders``) and must read the step itself.
 
 1. Across each face of sg 18 (a <-> b), 19 (all six orders) and 61 (cyclic), the glued distance equals the same-basis
-   distance of the step, 2 sqrt(2) delta, within 1%; the plain FDMetric reads more than 1 A (the control).
+   distance of the step (the plain FDMetric on the pair as given, in one basis) within 1%; the plain FDMetric between
+   the canonical forms reads more than 1 A (the control).
 2. Off the faces, a crystal re-described in every allowed axis order is at glued distance ~0 from itself.
 3. A one-order group (sg 33) keeps the identity basis only: glued and plain distances are equal.
 """
@@ -59,11 +60,13 @@ def test_step_across_an_axis_order_face(sg, face):
     B = CrystalDescription.from_parts(sg, _crystals(sg, hi).cell, A.t[:, 0], A.R[:, 0])  # same pose, lengths swapped
     cA, cB = canonical_desc(A), canonical_desc(B)
     assert set(cA['status']) == set(cB['status']) == {'canonical'}
-    step = 2 * math.sqrt(2) * DELTA  # the same-basis distance: two lengths moved by 2 delta, pose unchanged
+    raw = {k: v for k, v in (('cell', A.cell), ('t', A.t[:, 0]), ('R', A.R[:, 0]), ('h', A.h[:, 0]))}
+    rawB = {k: v for k, v in (('cell', B.cell), ('t', B.t[:, 0]), ('R', B.R[:, 0]), ('h', B.h[:, 0]))}
+    step = _distance(FDMetric(sg, RG), raw, rawB)  # the same-basis distance: the pair as given, in one basis
     glued = _distance(GluedFDMetric(sg, RG), cA, cB)
     plain = _distance(FDMetric(sg, RG), cA, cB)
-    assert float(glued.max()) <= 1.01 * step, (glued, step)
-    assert float(glued.min()) >= 0.99 * step
+    assert bool((glued <= step * (1 + 1e-6)).all()), (glued, step)
+    assert bool((glued >= 0.99 * step).all())
     assert float(plain.min()) > 1.0, plain  # the face is real: unglued, the two sides are far apart
 
 

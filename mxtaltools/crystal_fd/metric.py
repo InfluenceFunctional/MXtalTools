@@ -5,12 +5,19 @@ improper element of G; pose folded into ASU(Gamma+) x SO(3)). Then
 
     d(A, B) = min over g = (W, w) in Gamma+ and n in {-1, 0, 1}^3 of  sqrt( D_cell^2 + D_cent(g, n)^2 + D_rot(g)^2 )
 
-    D_cell^2   = (a_A - a_B)^2 + (b_A - b_B)^2 + (c_A - c_B)^2
-                 + (dalpha sqrt(b c))^2 + (dbeta sqrt(a c))^2 + (dgamma sqrt(a b))^2      [A^2; angles in rad,
-                 lengths in the scale factors the means of A's and B's]
-    D_cent     = | Tbar (u - n) |,  u = t_A - (W t_B + w) wrapped to [-1/2, 1/2)^3,  Tbar = (T_A + T_B) / 2   [A]
-    D_rot      = r_g * theta(R_A, Q_W R_B),  theta the geodesic angle (rad) of R_A^T Q_W R_B,
+    D_cell^2   = rho^2 / 12 * tr[(Gbar^-1 (G_A - G_B))^2],  Gbar = (G_A + G_B) / 2,  rho = (V(Gbar) / Z)^(1/3)   [A^2]
+                 G the Gram matrix of the cell, Z = len(SYM_OPS[sg]) molecules in the conventional cell: the RMS
+                 displacement, under the Green strain E = (1/2) Tbar^-T (G_A - G_B) Tbar^-1, of a point on a sphere of
+                 radius rho (rho^2 / 3 ||E||_F^2), rho the cube root of the volume per molecule
+    D_cent     = | Tbar (u - n) |,  u = t_A - (W t_B + w) wrapped to [-1/2, 1/2)^3,  Tbar = (T_A + P T_B) / 2   [A]
+    D_rot      = r_g * theta(R_A, P Q_W R_B),  theta the geodesic angle (rad) of R_A^T P Q_W R_B,
                  Q_W = T_B W T_B^-1 projected on O(3),  r_g the molecule's radius of gyration           [A]
+    P          = the rotation of the polar decomposition of T_A T_B^-1: it carries B's Cartesian frame onto A's
+
+Every term is unchanged by a basis change applied to both crystals (G -> N^T G N; frames, Q_W and R re-expressed with
+it), so near a face of the cell domain the distance read in either crystal's reduced basis is the same (2026-11-17,
+fix M2 of gfn_diffusion docs/design/fd_si_draft.md; before it the cell term compared lengths and angles directly and
+read up to 1.5x the same pair's distance in a shared basis at the monoclinic face |c cos beta| = a).
 
 g runs over GroupTable.gamma_plus (crystal_fd.tables.group_table(sg)); r_g is the RMS distance of all atoms from the
 heavy-atom centroid (the builder's centre). ``FDMetric`` compares the two canonical cells directly, so two nearly equal
@@ -22,8 +29,10 @@ Molecular point symmetry is ignored in d. For a molecule with an approximate imp
 near-planar molecule: the mirror through its plane), d_twin(A, B) = min(d(A, B), d(A, B~)) with B~ the canonical form of
 (t_B, P_B sigma) is offered as a flagged variant (``twin_canonical``, ``merge_twin``).
 
-Calibration (gfn_diffusion eval/fd_analysis, 2026-10-28): the glued distance runs at about 2.5 x COMPACK's RMSD on
-MIPCAS and NEHZOR, and 0.05 A separates the same crystal from distinct ones. Moved here from gfn_diffusion
+Calibration (gfn_diffusion eval/fd_analysis compack_glued, recalibrated 2026-11-17 for the M2 terms on the same
+COMPACK-judged pairs): the glued distance with the twin runs at 1.17 x (MIPCAS) and 1.30 x (NEHZOR) COMPACK's RMSD on
+matched pairs (median; it was ~2.5 x with the old cell term), Spearman 0.997 / 0.981; every pair below 0.05 A is a
+COMPACK match (126/126, 154/154), as is every pair below 0.3 A. The 0.05 A identity cut stands. Moved here from gfn_diffusion
 energy_sampling/eval/fd_analysis/fd_distance.py (2026-10-30), which now imports it, so that MXtalTools' minima library
 can use it.
 """
@@ -116,6 +125,39 @@ def twin_canonical(sg, can, sigma, chunk=4096):
 # ----------------------------------------------------------------------------
 # the distance
 # ----------------------------------------------------------------------------
+def _gram6(cell):
+    """The six entries (00, 11, 22, 12, 02, 01) of the Gram matrix of cells [p, 6] (lengths, angles in rad)."""
+    a, b, c, al, be, ga = cell.unbind(1)
+    return a * a, b * b, c * c, b * c * torch.cos(al), a * c * torch.cos(be), a * b * torch.cos(ga)
+
+
+def _sym3(e):
+    """[p, 3, 3] symmetric matrices from their six entries (00, 11, 22, 12, 02, 01)."""
+    e00, e11, e22, e12, e02, e01 = e
+    return torch.stack([torch.stack([e00, e01, e02], -1), torch.stack([e01, e11, e12], -1),
+                        torch.stack([e02, e12, e22], -1)], -2)
+
+
+def _sym_adjugate(e):
+    """(adjugate [p, 3, 3], determinant [p]) of symmetric matrices given by six entries (00, 11, 22, 12, 02, 01)."""
+    m00, m11, m22, m12, m02, m01 = e
+    i00, i11, i22 = m11 * m22 - m12 * m12, m00 * m22 - m02 * m02, m00 * m11 - m01 * m01
+    i01, i02, i12 = m02 * m12 - m01 * m22, m01 * m12 - m02 * m11, m01 * m02 - m00 * m12
+    return _sym3((i00, i11, i22, i12, i02, i01)), m00 * i00 + m01 * i01 + m02 * i02
+
+
+def _inv3(M):
+    """Inverses of [p, 3, 3] matrices by the adjugate (elementwise: fast in batches on any device)."""
+    a, b, c = M[:, 0, 0], M[:, 0, 1], M[:, 0, 2]
+    d, e, f = M[:, 1, 0], M[:, 1, 1], M[:, 1, 2]
+    g, h, i = M[:, 2, 0], M[:, 2, 1], M[:, 2, 2]
+    c0, c1, c2 = e * i - f * h, f * g - d * i, d * h - e * g
+    adj = torch.stack([torch.stack([c0, c * h - b * i, b * f - c * e], -1),
+                       torch.stack([c1, a * i - c * g, c * d - a * f], -1),
+                       torch.stack([c2, b * g - a * h, a * e - b * d], -1)], -2)
+    return adj / (a * c0 + b * c1 + c * c2)[:, None, None]
+
+
 class FDMetric:
     """d(A, B) of the module docstring for one space group and molecule (r_g)."""
 
@@ -128,6 +170,8 @@ class FDMetric:
         self.m = len(self.W)
         self.n27 = torch.stack(torch.meshgrid(*[torch.arange(-1, 2)] * 3, indexing='ij'), -1).reshape(-1, 3).to(F64)
         self.rg = float(rg)
+        from mxtaltools.constants.space_group_info import SYM_OPS
+        self.z = len(SYM_OPS[int(sg)])  # molecules in the conventional cell at Z' = 1: D_cell's rho
 
     def prepare(self, can):
         """Per-crystal tensors: cell, T, t, R and Q_W R for every element."""
@@ -144,14 +188,31 @@ class FDMetric:
             QR[lo:lo + b] = Q @ R[lo:lo + b, None]
         return dict(cell=cell, T=T, t=t, R=R, QR=QR)
 
+    def cell2(self, ca, cb):
+        """[p] D_cell^2 for paired cells [p, 6]: rho^2 / 12 tr[(Gbar^-1 dG)^2] (module docstring), in closed form and in
+        float64 whatever the device (dG is a small difference of large entries)."""
+        A, B = _gram6(ca.to(F64)), _gram6(cb.to(F64))
+        dG = _sym3([x - y for x, y in zip(A, B)])
+        Gm = [0.5 * (x + y) for x, y in zip(A, B)]
+        adj, det = _sym_adjugate(Gm)
+        X = adj @ dG / det[:, None, None]
+        rho2 = (torch.sqrt(det) / self.z) ** (2.0 / 3.0)
+        return (rho2 / 12.0 * (X * X.transpose(1, 2)).sum((1, 2))).to(ca.dtype)
+
     @staticmethod
-    def cell2(ca, cb):
-        """[p] D_cell^2 for paired cells [p, 6]."""
-        dl = ca[:, :3] - cb[:, :3]
-        L = 0.5 * (ca[:, :3] + cb[:, :3])
-        sc = torch.stack([torch.sqrt(L[:, 1] * L[:, 2]), torch.sqrt(L[:, 0] * L[:, 2]), torch.sqrt(L[:, 0] * L[:, 1])], 1)
-        da = (ca[:, 3:] - cb[:, 3:]) * sc
-        return (dl * dl).sum(1) + (da * da).sum(1)
+    def frame(Ta, Tb, max_iters=32, tol=1e-12):
+        """[p, 3, 3] P: the rotation of the polar decomposition of T_A T_B^-1, carrying B's Cartesian frame onto A's.
+        Newton's iteration X <- (X + X^-T) / 2 with closed-form 3x3 inverses (a batched SVD was ~100x slower on the
+        GPU), stopped when no entry moves by more than ``tol`` (checked every 2 steps): nearby cells converge in a few
+        steps; 16 reach the SVD's rotation to 1e-11 on 200,000 random pairs of cells 3-40 A with angles 69-132 deg
+        (2026-11-17)."""
+        X = Ta @ _inv3(Tb)
+        for k in range(max_iters):
+            Y = 0.5 * (X + _inv3(X).transpose(1, 2))
+            if k % 2 and len(Y) and float((Y - X).abs().amax()) <= tol:
+                return Y
+            X = Y
+        return X
 
     def theta(self, Ra, QRb):
         """[p, m] geodesic angles between R_A [p,3,3] and Q_W R_B [p,m,3,3]."""
@@ -177,8 +238,9 @@ class FDMetric:
         for lo in range(0, len(ia), chunk):
             a, b = ia[lo:lo + chunk], ib[lo:lo + chunk]
             c2 = self.cell2(A['cell'][a], B['cell'][b])
-            th = self.theta(A['R'][a], B['QR'][b])
-            ce = self.cent(A['t'][a], B['t'][b], A['T'][a], B['T'][b])
+            P = self.frame(A['T'][a], B['T'][b])
+            th = self.theta(A['R'][a], P[:, None] @ B['QR'][b])
+            ce = self.cent(A['t'][a], B['t'][b], A['T'][a], P @ B['T'][b])
             tot = c2[:, None] + ce * ce + (self.rg * th) ** 2
             v, k = tot.min(1)
             out[lo:lo + chunk] = v.sqrt()
@@ -190,7 +252,8 @@ class FDMetric:
     def lower_bound(self, A, ia, B, ib):
         """[p] sqrt(D_cell^2 + (r_g min_g theta)^2) <= d (the pre-screen: no centroid term)."""
         c2 = self.cell2(A['cell'][ia], B['cell'][ib])
-        th = self.theta(A['R'][ia], B['QR'][ib]).amin(1)
+        P = self.frame(A['T'][ia], B['T'][ib])
+        th = self.theta(A['R'][ia], P[:, None] @ B['QR'][ib]).amin(1)
         return (c2 + (self.rg * th) ** 2).sqrt()
 
     def one_to_many(self, A, i, B, idx, cut):

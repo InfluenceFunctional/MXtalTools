@@ -10,11 +10,10 @@ glued distance that finds every nearby image cannot exceed it by more than the f
 2. Symmetry: d(A, B) = d(B, A) exactly.
 3. Off the cell faces: in clusters of 0.1% perturbations, glued d never exceeds the same-basis distance, and the
    triangle inequality holds.
-4. On the cell faces: the triclinic Niggli faces b = c and a = b read within 5% of the same-basis distance (measured
-   up to 3.2%), the monoclinic face beta = 90 deg exactly, and the FREE class's face a = c within 10% (measured
-   4.8%). The monoclinic face |c cos beta| = a reads up to 1.5x (sg 14) and 1.3x (sg 4, 15). Both excesses come from
-   the cell term's dependence on the basis (fix M2, not built): the bounds pin today's behaviour, and a fix of M2
-   should tighten them to ~1.
+4. On the cell faces (triclinic b = c and a = b; monoclinic beta = 90 deg, |c cos beta| = a in all three setting
+   classes, and the FREE class's a = c), glued d never exceeds the same-basis distance. Before fix M2 (basis-free cell
+   term and frame alignment, 2026-11-17) these read up to 1.5x (|c cos beta| = a, sg 14), 1.13x (triclinic a = b
+   after the cell term alone) and 1.05x (FREE a = c).
 5. Control: on every face of 4 the unglued FDMetric between the canonical forms reads more than 10x the same-basis
    distance (measured 460-620x), so 4 tests the gluing.
 """
@@ -171,14 +170,16 @@ def test_off_faces_glued_never_exceeds_the_same_basis_distance(sg):
     assert tri < 1e-9
 
 
+TIGHT = 1.0 + 1e-6  # glued / same-basis on a face: the cell term is basis-free since M2
+
 FACES = [  # (name, sg, cell, free angles, bound on glued / same-basis)
-    ('triclinic b = c', 2, [6.0, 8.0, 8.0, 80.0, 95.0, 100.0], [0, 1, 2], 1.05),
-    ('triclinic a = b', 2, [8.0, 8.0, 10.0, 80.0, 95.0, 100.0], [0, 1, 2], 1.05),
-    ('monoclinic beta = 90', 14, [9.0, 7.0, 11.0, 90.0, 90.0, 90.0], [1], 1.0 + 1e-9),
-    ('monoclinic a = c, FREE', 4, [9.0, 7.0, 9.0, 90.0, 110.0, 90.0], [1], 1.1),
-    ('monoclinic |c cos beta| = a, GLIDE', 14, [9.0, 7.0, 15.0, 90.0, math.acos(-0.6) / D2R, 90.0], [1], 1.6),
-    ('monoclinic |c cos beta| = a, CENTRED', 15, [9.0, 7.0, 15.0, 90.0, math.acos(-0.6) / D2R, 90.0], [1], 1.6),
-    ('monoclinic |c cos beta| = a, FREE', 4, [9.0, 7.0, 15.0, 90.0, math.acos(-0.6) / D2R, 90.0], [1], 1.6),
+    ('triclinic b = c', 2, [6.0, 8.0, 8.0, 80.0, 95.0, 100.0], [0, 1, 2], TIGHT),
+    ('triclinic a = b', 2, [8.0, 8.0, 10.0, 80.0, 95.0, 100.0], [0, 1, 2], TIGHT),
+    ('monoclinic beta = 90', 14, [9.0, 7.0, 11.0, 90.0, 90.0, 90.0], [1], TIGHT),
+    ('monoclinic a = c, FREE', 4, [9.0, 7.0, 9.0, 90.0, 110.0, 90.0], [1], TIGHT),
+    ('monoclinic |c cos beta| = a, GLIDE', 14, [9.0, 7.0, 15.0, 90.0, math.acos(-0.6) / D2R, 90.0], [1], TIGHT),
+    ('monoclinic |c cos beta| = a, CENTRED', 15, [9.0, 7.0, 15.0, 90.0, math.acos(-0.6) / D2R, 90.0], [1], TIGHT),
+    ('monoclinic |c cos beta| = a, FREE', 4, [9.0, 7.0, 15.0, 90.0, math.acos(-0.6) / D2R, 90.0], [1], TIGHT),
 ]
 
 
