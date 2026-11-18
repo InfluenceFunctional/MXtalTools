@@ -200,6 +200,37 @@ def test_seeds_go_first_straight_to_the_polish(mol, tmp_path, monkeypatch):
 
 
 
+def test_a_clashing_row_is_dropped_before_the_polish(mol, tmp_path, monkeypatch):
+    """cfg:min_intermolecular_contact on the stream: a seed crushed into interpenetrating molecules (an MLIP hole's
+    geometry, as MACE-OFF24's on acridine) is dropped before the polish -- not in the outputs, not a minimum, counted
+    in the effort file -- and the other seeds are polished as usual."""
+    import json
+    n = 4
+    monkeypatch.setattr(rs, 'init_samples_to_optim', lambda config, target=None, num_samples=None: _placeholders(mol, n))
+    (tmp_path / 'a').mkdir()
+    (tmp_path / 'b').mkdir()
+    first = rs.crystal_search(_run_cfg(tmp_path / 'a', n))
+    seeds = [r.clone() for r in first] + [first[0].clone()]  # the last, start index -(n + 1), is crushed
+    b = collate_data_list(seeds)
+    x = b.full_cell_parameters().clone()
+    x[-1, :3] = x[-1, :3] * 0.5
+    b.set_cell_parameters(x, skip_box_analysis=False)
+    closest = rs.closest_intermolecular_contact(b)
+    assert float(closest[-1]) < 1.5 and bool((closest[:-1] >= 1.5).all()), closest
+    torch.save(b.batch_to_list(), tmp_path / 'seeds.pt')
+    cfg = _run_cfg(tmp_path / 'b', n)
+    cfg.stream.seeds = str(tmp_path / 'seeds.pt')
+    cfg.min_intermolecular_contact = 1.5
+    out = rs.crystal_search(cfg)
+    got = {int(r.start_index) for r in out}
+    assert set(range(-n, 0)) <= got and -(n + 1) not in got  # every normal seed in, the crushed one out
+    with open(tmp_path / 'b' / 'streamtest_stream_effort.json') as fh:
+        # this test's descents are 14 steps, so a random start can also be emitted with an unrelaxed clash and dropped
+        assert json.load(fh)['contact_dropped'] == 1 + sum(k not in got for k in range(n))
+    assert all(float(d) >= 1.5 for d in rs.closest_intermolecular_contact(collate_data_list([r.clone() for r in out
+                                                                                              if 'minimum_id' in r.keys()])))
+
+
 def test_stop_p_skips_the_remaining_seeds(mol, tmp_path, monkeypatch):
     """With stop_p the seeds' own bound (missing_mass over the seeds) is checked before each seed group: once it is
     met the remaining seeds are skipped, the random starts run, and a resumed run skips those seeds too."""

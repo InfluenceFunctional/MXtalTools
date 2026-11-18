@@ -63,7 +63,11 @@ per minimum with its hit counts (``minima.minimum_rows``), and with ``basin_set`
 analysis settings), the search (run, config hash, stop rule, counts) and the identity rules; an earlier folder there
 is moved aside, never overwritten. Seeds are deferred as random starts are (except under ``stop_p``, whose seed rule
 counts whole groups), and with a ``quota`` a seed whose condition has met it is skipped (``seeds_skipped``); with
-``cfg:num_samples`` 0 a run polishes its seeds and draws no random start.
+``cfg:num_samples`` 0 a run polishes its seeds and draws no random start. With ``cfg:min_intermolecular_contact``
+(A; default off) every group is tested before its polish, and a row (seed or emitted start) whose closest
+intermolecular atom pair is nearer is dropped (``drop_contact_clashes``; ``contact_dropped`` in the effort file), so
+an MLIP hole of interpenetrating molecules never enters the library, the outputs, the cascade's running minimum or the
+stop rule. A row emitted unrelaxed (cascaded, or at a stage's step cap) is tested as it is.
 
 A search's conditions are its (molecule, space group, Z') combinations (``minima.row_key``; the stream gets one
 template of each, ``utils.init_samples_to_optim`` with ``num_samples=1``), in identifier order, each with
@@ -707,6 +711,30 @@ def _cell_matrix(lengths, angles):
     return np.array([[a, b * cg, c * cb], [0.0, b * sg, c * (ca - cb * cg) / sg], [0.0, 0.0, c * cz]])
 
 
+def drop_contact_clashes(rows, min_contact: float, chunk: int = 64) -> list:
+    """The rows (crystal rows) whose closest intermolecular atom pair (``run_search.closest_intermolecular_contact``,
+    ``chunk`` rows at a time) is at least ``min_contact`` A, in order; prints the number dropped. The caller counts
+    them (``len(rows) - len(kept)``). A group can mix rows with different keys (a deferred row carries the polish's),
+    so each chunk is measured on clones holding only the keys its rows share."""
+    from mxtaltools.crystal_search.run_search import closest_intermolecular_contact
+    keep = []
+    for c in range(0, len(rows), chunk):
+        part = rows[c:c + chunk]
+        shared = set.intersection(*(set(r.keys()) for r in part))
+        clones = []
+        for r in part:
+            r_ = r.clone()
+            for k_ in set(r_.keys()) - shared:
+                del r_[k_]
+            clones.append(r_)
+        closest = closest_intermolecular_contact(collate_data_list(clones))
+        keep.extend(r for r, d in zip(part, closest.tolist()) if d >= min_contact)
+    if len(keep) < len(rows):
+        print(f"stream: dropped {len(rows) - len(keep)} of {len(rows)} rows with an intermolecular contact below "
+              f"{min_contact} A")
+    return keep
+
+
 def contact_dimension(rows, cutoff: float, max_offsets: int = 200000) -> list:
     """Per crystal row: the dimension (0-3) of the lattice of translations its molecules' contact network reaches,
     or -1 when the network falls into more than one piece.
@@ -908,6 +936,10 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
     traj_buf, traj_parts = [], [0]  # finished starts' kept states not yet written; part files written
     attempt = [time.time_ns(), 0]  # (this process, emission counter): the token of a start's attempt
     S = scfg['slots']
+    # cfg:min_intermolecular_contact (Angstrom; None: off): an emitted row or seed whose closest intermolecular atom pair
+    # is nearer is dropped before the polish, so it never enters the library, the outputs or the cascade's running
+    # minimum (run_search.drop_contact_clashes is the batch search's; why there)
+    min_contact = getattr(config, 'min_intermolecular_contact', None)
 
     # resume: the committed outputs (the merged file's first `base` rows, then the part files)
     parts_dir = str(out_path)[:-3] + '_parts'
@@ -940,7 +972,7 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
             running_min[k_] = min(running_min.get(k_, math.inf), final_energy(r))
     effort = dict(stage_evals=[0] * n_st, polish_evals=0, final_evals=0, captured=0, cascaded=0, flat_dropped=0,
                   starts_disconnected=0, starts_redrawn=0, starts_kept_disconnected=0, quota_met=0, quota_dropped=0,
-                  slot_steps=0, polish_deferred=0, seeds_skipped=0, basin_set=None, wall_s=0.0,
+                  slot_steps=0, polish_deferred=0, seeds_skipped=0, contact_dropped=0, basin_set=None, wall_s=0.0,
                   time_s=dict(starts=0.0, emit=0.0, finish=0.0),  # the rest of wall_s is the descent
                   missing_mass=[], stopped=None, seed_missing_mass=[], seeds_stopped=None, trajectory_states=0,
                   band_set=None, band_evals=0)
@@ -1219,7 +1251,11 @@ def stream_search(config, samples_to_optim, device, out_path, progress, num_samp
         """Polish and record a group; returns the rows the polish deferred (``polish_defer``; for seeds not under ``stop_p``)."""
         n_lib0 = len(library) if library is not None else 0
         back = []
-        if mcfg is not None:
+        if min_contact is not None and rows:
+            n_in = len(rows)
+            rows = drop_contact_clashes(rows, float(min_contact))
+            effort['contact_dropped'] += n_in - len(rows)
+        if mcfg is not None and rows:
             n_lib = len(library)
             while True:  # on a CUDA out-of-memory error: undo this group's adds, halve the energy chunk, redo
                 try:

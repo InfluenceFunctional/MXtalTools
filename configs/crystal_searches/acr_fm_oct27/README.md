@@ -1,5 +1,7 @@
 # acr_fm_oct27: acridine P2_1/c Z'=1 landscapes under foundation models
 
+**History (2026-11-17): superseded by `../acr_mlip_nov17` (streaming minima searches); these campaigns never launched.** That folder still reads `seed_pool.pt` from here and uses the conformers built by `build_conformer.py`.
+
 One coordinated campaign (`crystal_search/coordinator.py`) per energy model: MACE-OFF24 medium (`maceoff24m`), UMA-s 1.1 (`umas1p1`) and UMA-s 1.2 (`umas1p2`). The models, their files and the relaxation schedule are in `campaign.py`. Each campaign has three streams with acr_zp1_sep30's coordinator settings:
 - **seeded:** re-relaxes every distinct state of the earlier acridine landscapes under the model, plus ACRDIN04 and ACRDIN12. That is 21,882 states: the premerge basins of the acr_newmodel prior rebuild (pool_acr_oct03) and the old prior's anchors, thinned to atomwise RDF leaders at 0.134. `seed_pool.pt` comes from `build_seed_pool.py`.
 - **random.**
