@@ -35,3 +35,9 @@ median share of the minima within 5 kT_s that the first 100 reach (`--per_molecu
 `--window` to vary). On the local preview above it reproduces the table.
 
     python read_control.py /scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search
+
+`miss_curve.py` gives the miss (lowest minimum reached minus the 1,000-start lowest, kT_s) of an N-start search as a
+function of N, as quantiles over random orderings of each molecule's starts pooled over the group (TSV). Both readers
+count a start cascaded by the full search as reaching nothing, so small-N figures are pessimistic (its docstring).
+
+    python miss_curve.py /scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search
