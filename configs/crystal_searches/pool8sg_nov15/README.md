@@ -126,6 +126,14 @@ run twice; before, two runs of one config gave different trajectories). Run one 
 Repeat for 14, 19, 4, 61, 33 and 9. Seven groups at `%100` would put up to 700 eight-core jobs in the queue at once; the
 Slurm limit for the account has not been checked.
 
+**Launched 2026-11-18 (owner):** 14, 19 and 61 first, at 100 starts (as P-1), with `DELETE_SLIM=1`. The control
+searches (`control1000/`) measured what 100 starts miss: the 1,000-start lowest minimum is reached for 28% (P2_1/c),
+58% (P2_12_12_1) and 52% (Pbca) of molecules. The owner's target is packing-mode coverage over all molecules, not each
+molecule's global minimum. If a group's band sets come out thin (rows per molecule, `net / conditions` per split in
+`band32/sg<g>/done/*.json`, well below the 32 requested), rerun that group with more starts. 15, 4, 33 and 9 are not yet submitted.
+
+    for g in 14 19 61; do sbatch --export=ALL,DELETE_SLIM=1 --array=0-362%100 submit_sg${g}.sbatch; done
+
 **Outputs**, under `/scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/`:
 
 - `search/sg<g>/pool8sg<g>_c<k>_slim.pt` and `.log`;
