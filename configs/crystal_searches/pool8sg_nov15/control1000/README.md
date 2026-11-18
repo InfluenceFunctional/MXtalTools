@@ -41,3 +41,11 @@ function of N, as quantiles over random orderings of each molecule's starts pool
 count a start cascaded by the full search as reaching nothing, so small-N figures are pessimistic (its docstring).
 
     python miss_curve.py /scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search
+
+`failed_molecules.py` finds the molecules a search failed on: no minimum in the packing window (default 0.55-0.95)
+within 5 kT_s of the lowest minimum reached, or none in window at all, at the first 100 starts and at all 1,000.
+Per group it prints those shares, the share whose lowest minimum is out of window, and how starts ended (converged,
+step cap, cascade, other); `--list` names each failed molecule with its lowest minimum, the gap to its lowest
+in-window minimum and its starts' endings. Disconnected starts are redrawn and only counted per file.
+
+    python failed_molecules.py /scratch/mk8347/data/crystal_datasets/conditional/pool8sg_nov15/control1000/search --list
