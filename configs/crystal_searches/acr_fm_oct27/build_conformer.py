@@ -1,7 +1,10 @@
 """The acridine gas-phase conformer under one energy model, for a campaign under that model (the universal-conformer rule:
 one conformer per model, its gas-phase minimum, used everywhere: searches, priors, training).
 
-    python build_conformer.py mace|uma MODEL_PATH LABEL [--out_dir D:/crystal_datasets/acridine] [--write]
+    python build_conformer.py mace|uma MODEL_PATH LABEL [--out_dir D:/crystal_datasets/acridine] [--src_dir DIR] [--write]
+
+--src_dir: the folder holding opt_acridine_conformer.pt and acridine_conformer.pt (default D:/crystal_datasets/acridine;
+acr_mlip_nov19's run.py passes the cluster's data folder).
 
 Generalises acr_zp1_sep30's build (D:/crystal_datasets/acridine/acr_newmodel_conformer_build/): BFGS to fmax 1e-4 eV/A
 on CPU from opt_acridine_conformer.pt (N first: the atom order of every search state and seed file), MACE in float64,
@@ -20,8 +23,8 @@ from ase import Atoms
 from ase.optimize import BFGS
 
 EV = 96.485332
-SRC = 'D:/crystal_datasets/acridine/opt_acridine_conformer.pt'
-OLD = 'D:/crystal_datasets/acridine/acridine_conformer.pt'
+SRC_DIR = 'D:/crystal_datasets/acridine'
+SRC_NAME, OLD_NAME = 'opt_acridine_conformer.pt', 'acridine_conformer.pt'
 
 
 def calculator(kind, path):
@@ -46,12 +49,13 @@ def main():
     ap.add_argument('path')
     ap.add_argument('label')
     ap.add_argument('--out_dir', default='D:/crystal_datasets/acridine')
+    ap.add_argument('--src_dir', default=SRC_DIR)
     ap.add_argument('--write', action='store_true')
     a = ap.parse_args()
     calc = calculator(a.kind, a.path)
-    m = torch.load(SRC, weights_only=False)
+    m = torch.load(os.path.join(a.src_dir, SRC_NAME), weights_only=False)
     at, ok, e, f = relaxed(m, calc)
-    at2, ok2, e2, f2 = relaxed(torch.load(OLD, weights_only=False), calc)
+    at2, ok2, e2, f2 = relaxed(torch.load(os.path.join(a.src_dir, OLD_NAME), weights_only=False), calc)
     print(f'{a.label}: from opt E {e:.6f} eV (converged {ok}, max |F| {f:.1e}); from the old compressed conformer '
           f'{e2:.6f} eV (converged {ok2}); difference {(e2 - e) * EV:+.4f} kJ/mol', flush=True)
     old = m.pos.double().numpy()
