@@ -10,6 +10,8 @@ import torch
 from mxtaltools.common.geometry_utils import fractional_transform
 from mxtaltools.mlip_interfaces.pbc_neighbours import batched_pbc_neighbour_list
 
+EDGES_PER_CHUNK = 250_000
+
 
 class D3Dispersion:
     """D3 dispersion energy of a batch of periodic cells or isolated molecules.
@@ -28,7 +30,8 @@ class D3Dispersion:
     cnthr : float, default 15.0
         Coordination-number cutoff, Angstrom; clipped to `cutoff`.
     n_chunks : int or None
-        Passed to torch-dftd to split the C6 computation and lower peak memory.
+        Passed to torch-dftd to split the C6 computation and lower peak memory; None: one chunk per
+        ``EDGES_PER_CHUNK`` edges of each call.
     """
 
     def __init__(self, xc='pbe', damping='bj', cutoff=15.0, cnthr=15.0, n_chunks=None):
@@ -38,6 +41,7 @@ class D3Dispersion:
         self.module = DFTD3Module(get_dftd3_default_params(damping, xc), cutoff=float(cutoff),
                                   cnthr=min(float(cnthr), float(cutoff)), dtype=torch.float64, bidirectional=True,
                                   n_chunks=n_chunks)
+        self.n_chunks = n_chunks
         self._device = None
 
     def __call__(self, z, pos, batch_ind, T_fc, pbc=True):
@@ -68,7 +72,10 @@ class D3Dispersion:
         e_i, e_s, e_g = batched_pbc_neighbour_list(pos.detach(), batch_ind, cells_t.detach(), self.cutoff, pbc=pbc)
         shifts = fractional_transform(e_s.to(T_fc.dtype), T_fc[e_g]) if pbc else pos.new_zeros((e_g.numel(), 3))
         # torch-dftd: r_ij = |pos_i - (pos_j + shift)|, the neighbour list's convention; `cell` sizes the per-graph
-        # sum (and is read only by the three-body term, which is off)
+        # sum (and is read only by the three-body term, which is off). With no n_chunks given, the C6 step is split
+        # into blocks of about EDGES_PER_CHUNK edges: unsplit, 8 crystals of up to 160 atoms at 15 A ran a 6.4 GB
+        # GPU cap out of memory inside it (2026-11-19)
+        self.module.n_chunks = self.n_chunks or max(1, -(-e_i.shape[1] // EDGES_PER_CHUNK))
         e = self.module.calc_energy_batch(z.long(), pos.double(), e_i, cell=cells_t.double(), shift_pos=shifts.double(),
                                           batch=batch_ind, batch_edge=e_g, damping=self.damping)
         return e.to(pos.dtype)
