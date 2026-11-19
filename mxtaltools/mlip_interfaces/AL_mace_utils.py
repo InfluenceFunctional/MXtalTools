@@ -112,7 +112,8 @@ def load_mace_model(model_path, device, dtype, dispersion=None):
     model.eval()
     if dispersion is not None:
         from mxtaltools.mlip_interfaces.dispersion import D3Dispersion
-        model.mxt_dispersion = D3Dispersion(**dict(dispersion))
+        # a search config arrives through run_search.dict2namespace, which turns the dict into a Namespace
+        model.mxt_dispersion = D3Dispersion(**(dict(dispersion) if isinstance(dispersion, dict) else vars(dispersion)))
 
     return model
 
