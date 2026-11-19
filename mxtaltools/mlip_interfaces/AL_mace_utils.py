@@ -39,7 +39,7 @@ from mxtaltools.common.utils import is_cuda_oom
 from mxtaltools.crystal_building.utils import unit_cell_gather_index, unit_cell_z
 
 
-def load_mace_model(model_path, device, dtype):
+def load_mace_model(model_path, device, dtype, dispersion=None):
     """
     Load a whole-model MACE file, optionally convert it to cuequivariance, and
     put it in eval mode.
@@ -52,6 +52,10 @@ def load_mace_model(model_path, device, dtype):
         ``map_location`` for the load and the device the model is moved to.
     dtype : torch.dtype
         dtype the model is cast to, before and after any conversion.
+    dispersion : dict or None
+        Keyword arguments of ``dispersion.D3Dispersion`` (e.g. ``{'xc': 'pbe', 'damping': 'bj'}``), for a model
+        trained without dispersion; stored as ``model.mxt_dispersion`` and added to every energy
+        ``compute_crystal_mace_on_mxt_batch`` returns, periodic and isolated alike. None: no dispersion term.
 
     Returns
     -------
@@ -106,6 +110,9 @@ def load_mace_model(model_path, device, dtype):
 
     model.to(device, dtype=dtype)
     model.eval()
+    if dispersion is not None:
+        from mxtaltools.mlip_interfaces.dispersion import D3Dispersion
+        model.mxt_dispersion = D3Dispersion(**dict(dispersion))
 
     return model
 
@@ -449,6 +456,12 @@ def compute_crystal_mace_on_mxt_batch(batch, model,
         # 2026-10-26). For a checkpoint with small E0s the two differ by a constant per composition.
         inter = output.get('interaction_energy')
         energy = inter if inter is not None else output['energy']
+        disp = getattr(model, 'mxt_dispersion', None)  # set by load_mace_model(dispersion=...)
+        if disp is not None:
+            z_tab = torch.as_tensor(list(model.atomic_numbers), device=batch.device)
+            z_all = z_tab[input_data['node_attrs'].argmax(dim=1)]
+            energy = energy + disp(z_all, input_data['positions'], batch.unit_cell_batch, batch.T_fc,
+                                   pbc=pbc).to(energy.dtype)
     return energy
 
 

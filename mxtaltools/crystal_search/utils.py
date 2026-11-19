@@ -611,7 +611,10 @@ def parse_opt_config(opt_config, config, device, target):
             activation_checkpointing=bool(getattr(config, 'uma_activation_checkpointing', True)), tf32=False)
     if opt_config['optim_target'] in ['mace']:
         pred_path = config.mace_predictor_path  # smaller mol crystal model
-        opt_config['predictor'] = load_mace_model(pred_path, device=device, dtype=torch.float32)
+        # cfg:mace_dispersion (default None): D3Dispersion kwargs for a model trained without dispersion
+        # (MACE-CSP-25.2: {xc: pbe, damping: bj})
+        opt_config['predictor'] = load_mace_model(pred_path, device=device, dtype=torch.float32,
+                                                  dispersion=getattr(config, 'mace_dispersion', None))
     if opt_config['optim_target'] in ['rdf_dist']:
         opt_config['elementwise'] = False
         opt_config['atomwise'] = True
